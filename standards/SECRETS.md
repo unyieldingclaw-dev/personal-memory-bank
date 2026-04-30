@@ -77,7 +77,7 @@ Some frameworks make `.env` hard to avoid in local dev. When you must:
 
 ### Incident: secret may have been exposed
 
-Follow `templates/INCIDENT-RUNBOOK.md`. Minimum:
+Minimum steps:
 
 1. Rotate the affected credentials **immediately**, regardless of confidence level.
 2. Preserve evidence (logs, commit diff, shell history snapshot if available).

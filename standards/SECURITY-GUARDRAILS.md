@@ -319,12 +319,12 @@ For compliance, AI should log security-relevant actions:
 
 If a guardrail is bypassed:
 
-1. **Secrets exposed**: Rotate immediately, check git history, follow `templates/INCIDENT-RUNBOOK.md`
+1. **Secrets exposed**: Rotate immediately, check git history, write a post-mortem
 2. **Force push occurred**: Contact team, restore from backup, file incident
 3. **Files deleted**: Check git reflog, restore if needed
 4. **Rules-file tampered**: Revert, rotate any credentials the agent could have accessed, follow `standards/RULES-FILE-INTEGRITY.md` "What to do if you find a violation"
 5. **Agent runaway / budget blowout**: Stop the session, review what was consumed, check for loops, file incident if recurring
-6. **Production affected**: Follow `templates/INCIDENT-RUNBOOK.md`
+6. **Production affected**: Stop, assess scope, rotate any exposed credentials, write a post-mortem
 
 ## Success Indicators
 

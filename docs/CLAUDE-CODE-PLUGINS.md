@@ -67,8 +67,7 @@ Slash commands live in `~/.claude/commands/` as markdown files. They're availabl
 └── commands/
     ├── feature-dev.md              ← /feature-dev
     ├── security-review.md          ← /security-review
-    ├── code-review.md              ← /code-review
-    └── accessibility-review.md     ← /accessibility-review
+    └── code-review.md              ← /code-review
 ```
 
 ### Setup
@@ -98,25 +97,6 @@ Deep multi-agent code review. Unlike `/security-review` (which runs a single 9-p
 
 Usage: `/code-review` (git diff), `/code-review src/auth/login.py`, or `/code-review src/api/`. In Cursor, say "do a code review" or "review src/api/routes.py" — the `.cursor/rules/code-review.mdc` rule triggers the same flow.
 
-### /accessibility-review
-
-On-demand WCAG 2.1 Level AA audit of UI code. Complements the always-on glob-scoped rule `.cursor/rules/accessibility.mdc` (which auto-applies to `.html`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.astro`, `.css`, `.scss`, `.sass`, `.less`).
-
-The audit checks nine dimensions from `standards/ACCESSIBILITY.md`:
-
-1. Semantic HTML (native elements, heading hierarchy, landmarks)
-2. ARIA (roles, states, properties, `aria-live`)
-3. Keyboard navigation (tab order, focus trap, skip nav)
-4. Focus indicators (≥3:1 contrast)
-5. Color & contrast (4.5:1 normal, 3:1 large)
-6. Forms & inputs (labels, error association, `fieldset`/`legend`)
-7. Images & media (`alt`, captions, transcripts)
-8. Motion & animation (`prefers-reduced-motion`, flash limits)
-9. Testing expectations (screen reader compatibility, accessibility tree)
-
-Output is a findings table (severity × dimension × file:line) and a remediation checklist with code-level fixes for every CRITICAL or HIGH finding.
-
-Usage: `/accessibility-review` (git diff), `/accessibility-review src/components/Form.tsx`, or `/accessibility-review src/pages/`.
 
 ---
 
@@ -184,7 +164,7 @@ After this, every new project automatically has:
 - Workflow rules (7-phase feature development)
 - Karpathy Coding Principles (Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution)
 - Rules-file integrity hygiene (`.cursor/rules/rules-file-integrity.mdc` — glob-scoped to `.cursorrules` / `CLAUDE.md` / `AGENTS.md` / `.mdc` / slash-command `.md` files)
-- `/feature-dev`, `/security-review`, `/code-review`, and `/accessibility-review` slash commands
+- `/feature-dev`, `/security-review`, and `/code-review` slash commands
 
 The only per-project step remaining is running `init-memory-bank.ps1` to scaffold the `memory-bank/` directory with project-specific content.
 
@@ -195,11 +175,10 @@ The only per-project step remaining is running `init-memory-bank.ps1` to scaffol
 After setup, test each piece:
 
 ```
-1. Slash commands:       Type /feature-dev → should trigger 7-phase workflow
-2. Security review:      Type /security-review → should scan diff for 9 patterns
-3. Code review:          Type /code-review → should spawn 3 role subagents + test coverage + auditor
-4. Accessibility review: Type /accessibility-review → should audit UI files against WCAG 2.1 AA
-5. Global CLAUDE.md:     New session → Claude should follow memory-bank protocol without being told
-6. AGENTS.md:            In Cursor, type @AGENTS.md → rules should be visible
-7. Cursor rules:         Ask "what rules are you following?" → should list security + quality rules
+1. Slash commands:   Type /feature-dev → should trigger 7-phase workflow
+2. Security review:  Type /security-review → should scan diff for 9 patterns
+3. Code review:      Type /code-review → should spawn 3 role subagents + test coverage + auditor
+4. Global CLAUDE.md: New session → Claude should follow memory-bank protocol without being told
+5. AGENTS.md:        In Cursor, type @AGENTS.md → rules should be visible
+6. Cursor rules:     Ask "what rules are you following?" → should list security + quality rules
 ```

@@ -70,7 +70,7 @@ For `CLAUDE.md` / `AGENTS.md`, the first section must be human-readable prose na
 1. Stop the current work.
 2. Preserve the offending file via `git show HEAD:<path>` so diff history is retained.
 3. Revert the offending change (`git revert` or manual edit).
-4. File an incident record using `templates/INCIDENT-RUNBOOK.md`.
+4. Write a brief post-mortem documenting how the compromise occurred.
 5. Rotate any credentials the agent could have accessed during the time the compromised rules file was active.
 
 ## References

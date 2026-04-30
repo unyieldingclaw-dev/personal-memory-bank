@@ -22,9 +22,8 @@ Instead of copying Memory Bank rules to every project, you can set up **global r
     ├── memory-bank.mdc
     ├── security.mdc
     ├── code-quality.mdc
-    ├── enterprise-logging.mdc
     ├── workflow.mdc
-    └── accessibility.mdc     ← glob-scoped to UI files (.html, .jsx, .tsx, .vue, .svelte, .astro, .css, .scss)
+    └── rules-file-integrity.mdc
 ```
 
 On Windows: `C:\Users\<username>\.cursor\rules\`
@@ -189,7 +188,6 @@ Then symlink or copy rules during setup.
 |-----------|-------|-----------|
 | Security | User/Org | Same everywhere |
 | Code Quality | User/Org | Consistent standards |
-| **Accessibility** | **User/Org** | **WCAG 2.1 AA; glob-scoped to UI files so backend projects see no noise** |
 | Logging | User/Org | Production defaults (structlog / pino) |
 | Workflow | User/Org | 7-phase feature flow |
 | Memory Bank | Project | Project-specific content |

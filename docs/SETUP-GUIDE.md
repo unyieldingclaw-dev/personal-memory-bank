@@ -78,8 +78,8 @@ The script will:
    │   ├── memory-bank.mdc
    │   ├── security.mdc
    │   ├── code-quality.mdc
-   │   ├── enterprise-logging.mdc
-   │   └── workflow.mdc
+   │   ├── workflow.mdc
+   │   └── rules-file-integrity.mdc
    ├── CLAUDE.md                    # For Claude Code (project-level)
    └── AGENTS.md                    # Cross-tool (Claude Code + Cursor + Codex + Gemini)
    ```

@@ -11,6 +11,15 @@ Thumbs.db
 # Local Claude Code permissions & secrets — never commit
 .claude/settings.local.json
 
+# Credential files — never commit
+.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_ed25519
+credentials.json
+
 # Superpowers brainstorming sessions
 .superpowers/
 

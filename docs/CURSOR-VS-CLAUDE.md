@@ -107,7 +107,7 @@ When working with `.py` files:
 - Run mypy for type checking
 ```
 
-**Real-world example in this repo — Accessibility (`.cursor/rules/accessibility.mdc`):** uses Cursor's glob scoping so WCAG 2.1 AA enforcement fires **only** on UI files (`.html`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.astro`, `.css`, `.scss`). Backend-only projects see zero accessibility noise. Claude Code users get the same content via the on-demand `/accessibility-review` slash command instead — since Claude Code can't auto-scope rules, the audit is explicit rather than passive.
+**Real-world example in this repo — Security (`.cursor/rules/security.mdc`):** uses `alwaysApply: true` so the BLOCK/CONFIRM/WARN guardrails fire on every file in every session. No scoping needed — security rules apply everywhere.
 
 ### Global User Rules via ~/.claude/CLAUDE.md
 Claude Code supports global rules via `~/.claude/CLAUDE.md` — this file applies to **all projects automatically**. No copying needed.

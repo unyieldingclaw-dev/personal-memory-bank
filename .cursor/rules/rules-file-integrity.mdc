@@ -36,6 +36,6 @@ This project follows the Rules-File Integrity standard documented in `standards/
 
 ## If you detect a violation
 
-Stop, preserve the evidence, revert, open an incident using `templates/INCIDENT-RUNBOOK.md`, and rotate any credentials the agent could have accessed while the compromised file was active.
+Stop, preserve the evidence, revert, rotate any credentials the agent could have accessed while the compromised file was active, and write a brief post-mortem.
 
 See `standards/RULES-FILE-INTEGRITY.md` for the full threat model and references.

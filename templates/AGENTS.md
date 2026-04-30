@@ -48,15 +48,14 @@ Always follow this sequence for any non-trivial feature:
 - Each function does one thing
 - Default to no comments — only add one when the WHY is non-obvious
 - Run tests and report results before claiming done
-- **UI code only**: follow `standards/ACCESSIBILITY.md` (WCAG 2.1 Level AA) for `.html`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.astro`, `.css`, `.scss`. Run `/accessibility-review` on demand.
+- **UI code only:** apply WCAG 2.1 AA basics (semantic HTML, alt text, form labels, keyboard nav). See `standards/ACCESSIBILITY.md`.
 
-## Enterprise hygiene (v1.5)
+## Personal Safety Rules
 
-- **Data classification:** Public / Internal / Confidential / Restricted — `standards/DATA-CLASSIFICATION.md`. Restricted-tier data never goes in prompts / memory-bank / logs / commits.
-- **Secrets:** Vault / AWS SM / Azure KV; no long-lived creds in agent env vars; rotate after agent sessions. `standards/SECRETS.md`.
-- **Model governance:** approved list + version pinning — `standards/MODEL-GOVERNANCE.md`.
+- **Secrets:** Never hardcode credentials — use env vars or secret managers (`.env`, OS keychain). See `standards/SECRETS.md`.
+- **Model:** Use the most capable Claude model available for the task.
+- **Agent safety:** Don't run destructive commands without user confirmation.
 - **Rules-file hygiene:** reject invisible Unicode, hidden HTML, guardrail-bypass phrasing in `.cursorrules` / `CLAUDE.md` / `AGENTS.md` / `.mdc` / slash-command `.md`. `standards/RULES-FILE-INTEGRITY.md`.
-- **Incidents:** `templates/INCIDENT-RUNBOOK.md` — includes an AI-involvement checklist.
 - **Agent resource controls:** token budgets, loop detection, 429 handling. See `standards/SECURITY-GUARDRAILS.md` "Agent resource controls".
 
 ## Logging
