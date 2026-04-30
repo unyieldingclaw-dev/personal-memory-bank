@@ -42,8 +42,7 @@ Three tiers — `standards/SECURITY-GUARDRAILS.md` has the full enumerated lists
 
 Before claiming done: tests pass, lint clean, build succeeds, describe what was tested. Comments: WHY not WHAT, no dead code. Structure: edit existing files first, small incremental changes, one thing per function. Errors: explicit, meaningful, never swallowed. Full spec: `standards/CODE-QUALITY.md`.
 
-### Accessibility (UI code only)
-For HTML/JSX/TSX/Vue/Svelte files: apply WCAG 2.1 AA basics (semantic HTML, alt text, form labels, keyboard nav). See `standards/ACCESSIBILITY.md`.
+**Accessibility (UI code only):** For HTML/JSX/TSX/Vue/Svelte files: apply WCAG 2.1 AA basics (semantic HTML, alt text, form labels, keyboard nav). See `standards/ACCESSIBILITY.md`.
 
 ## Personal Safety Rules
 
