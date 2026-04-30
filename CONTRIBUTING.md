@@ -8,7 +8,7 @@ Thank you for your interest in improving the Memory Bank Standard! This guide wi
 
 If you find a bug or have a suggestion:
 
-1. Check [existing issues](https://github.com/kcnolanjunk/personal-memory-bank/issues) to avoid duplicates
+1. Check [existing issues](https://github.com/unyieldingclaw-dev/personal-memory-bank/issues) to avoid duplicates
 2. Create a new issue with:
    - Clear title describing the problem or suggestion
    - Steps to reproduce (for bugs)
