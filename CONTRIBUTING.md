@@ -8,7 +8,7 @@ Thank you for your interest in improving the Memory Bank Standard! This guide wi
 
 If you find a bug or have a suggestion:
 
-1. Check [existing issues](https://gitlab.com/tmobile/ere/memory-bank/-/issues) to avoid duplicates
+1. Check [existing issues](https://github.com/kcnolanjunk/personal-memory-bank/issues) to avoid duplicates
 2. Create a new issue with:
    - Clear title describing the problem or suggestion
    - Steps to reproduce (for bugs)
@@ -23,7 +23,7 @@ For code changes, documentation improvements, or new features:
 2. **Make your changes** following our standards
 3. **Test thoroughly** - verify scripts work on target platforms
 4. **Update documentation** if you change behavior
-5. **Submit a merge request** with a clear description
+5. **Submit a pull request** with a clear description
 
 ## Contribution Guidelines
 
@@ -108,12 +108,12 @@ ls -la /tmp/test-project/memory-bank/
 3. Verify code examples are correct
 4. Ensure formatting renders properly
 
-## Merge Request Process
+## Pull Request Process
 
 1. **Title**: Use conventional commits format
    - `feat: Add Go language extension`
    - `fix: Correct PowerShell script path handling`
-   - `docs: Update setup guide with GitLab instructions`
+   - `docs: Update setup guide with GitHub instructions`
    - `chore: Update dependencies`
 
 2. **Description**: Include:
@@ -128,9 +128,7 @@ ls -la /tmp/test-project/memory-bank/
 
 ## Questions?
 
-- **Teams**: [RE - SkyNet Support - AI Discussion](https://teams.microsoft.com/l/channel/19%3A7130c6f6eb354efda1d4b3fa89546215%40thread.tacv2/RE%20-%20SkyNet%20Support%20-%20AI%20Discussion?groupId=4f72c46d-e46e-43b9-a3d6-1de811294cf8&tenantId=be0f980b-dd99-4b19-bd7b-bc71a09b026c)
-- **GitLab Issues**: For bugs and feature requests
-- **Email**: Contact the Release Engineering/AERO team
+- **GitHub Issues**: For bugs and feature requests
 
 ## Code of Conduct
 

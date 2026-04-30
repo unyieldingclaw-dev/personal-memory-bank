@@ -53,4 +53,4 @@ At 80% context, type "Handoff" and the AI will:
 
 ## More Information
 
-See the full [Memory Bank Standard](https://gitlab.com/tmobile/ere/memory-bank) for detailed documentation.
+See the full [Memory Bank Standard](https://github.com/kcnolanjunk/personal-memory-bank) for detailed documentation.

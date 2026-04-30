@@ -22,4 +22,4 @@ Personal fork of the enterprise Memory Bank standard.
 - ❌ Data Classification, Model Governance, OWASP LLM Top 10 (compliance only)
 - ❌ Incident Runbook, accessibility review command
 - ❌ Enterprise logging (PII redaction, correlation IDs)
-- ❌ GitLab integration scripts, training materials
+- ❌ Team onboarding scripts and training materials
