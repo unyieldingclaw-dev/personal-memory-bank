@@ -1,0 +1,37 @@
+---
+alwaysApply: true
+---
+
+# Code Quality Standards
+
+This project follows the Code Quality standard documented in `standards/CODE-QUALITY.md`.
+
+## Verification
+
+Before claiming done:
+1. Test scripts work on Windows (PowerShell)
+2. Verify templates are fillable (have placeholders)
+3. Check documentation is complete
+
+## Documentation Style
+
+- Use tables for structured data
+- Include "why" explanations, not just "how"
+- Provide examples where helpful
+- Keep files scannable (headers, bullets, tables)
+
+## Template Quality
+
+Templates must be:
+- Generic (no project-specific content)
+- Fillable (clear `[placeholder]` markers)
+- Complete (all sections present)
+- Consistent (same structure across files)
+
+## Script Quality
+
+Scripts must:
+- Work on target platform without errors
+- Have help text (`-h` or `--help`)
+- Use colored output for clarity
+- Handle existing files gracefully (`-Force` flag)

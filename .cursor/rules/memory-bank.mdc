@@ -1,0 +1,58 @@
+---
+alwaysApply: true
+---
+
+# Memory Bank - Persistent Context System
+
+At the start of every conversation (and after any context compaction), silently read ALL files in `memory-bank/` to restore full project context.
+Never ask the user to repeat constraints, decisions, or context already documented there.
+
+## Memory Bank Files (Read First, Always)
+
+**Core Context** (read these first):
+- `memory-bank/projectbrief.md` — What this standard is, constraints, goals
+- `memory-bank/systemPatterns.md` — Design decisions, file patterns, architecture
+- `memory-bank/techContext.md` — Repository structure, file formats, IDE support
+
+**Session Context** (read for current state):
+- `memory-bank/activeContext.md` — Current focus, next steps, known issues
+- `memory-bank/progress.md` — What's complete, in progress, and planned
+
+## Project-Specific Context
+
+This IS the Memory Bank Standard project - we use our own standard.
+
+Key directories:
+- `standards/` - Full documentation of the 3 standards
+- `templates/` - Files teams copy to their projects
+- `scripts/` - Setup and utility scripts
+- `docs/` - User-facing documentation
+- `training/` - Onboarding materials
+
+## Rules for This Project
+
+1. **Templates must be generic** - No project-specific examples
+2. **Support both IDEs** - Cursor (.mdc) and Claude Code (CLAUDE.md)
+3. **No external dependencies** - Everything self-contained
+4. **Explain the why** - Documentation includes rationale
+
+## Context Management and Handoffs
+
+**User triggers handoff** by either:
+- Typing "Handoff" (explicit trigger)
+- Telling the agent the context % is at or above 80%
+
+**When handoff is triggered**, you MUST:
+1. **STOP** all work immediately
+2. **CREATE** `handoff.md` in project root with session summary
+3. **RESPOND** with only: "Handoff ready at `handoff.md`. Start a new conversation."
+4. **STOP RESPONDING**
+
+## Quick Commands
+
+| Command | Action |
+|---------|--------|
+| `mb update` | Update all Memory Bank files |
+| `mb status` | Show file sizes and health |
+| `mb commit` | Commit Memory Bank changes |
+| `Handoff` | Create handoff and stop |

@@ -1,0 +1,58 @@
+---
+alwaysApply: true
+---
+
+# Enterprise Logging Standard
+
+## Core Rule: Always Use Structured Logging
+
+Use structured key-value logging on every logging call — never string concatenation.
+
+```python
+# ✅ GOOD — structured, queryable in Splunk/ELK
+logger.info("order_created", order_id="ORD-123", total=149.99)
+
+# ❌ BAD — unstructured, unsearchable
+logger.info(f"Order {order_id} created for {total}")
+```
+
+**Why:** Operations teams query logs by field (`order_id="ORD-123"`). String logs require regex. Structured logs also enable automatic PII redaction via processor pipelines.
+
+## Error Logging Pattern
+
+Always log before re-raising — include context, not just the message:
+
+```python
+try:
+    process_payment(order_id, amount)
+except PaymentError as e:
+    logger.error("payment_failed",
+        order_id=order_id,
+        error_type=type(e).__name__,
+        error_message=str(e),
+        exc_info=True
+    )
+    raise
+```
+
+## Log Levels
+
+| Level | When to Use |
+|-------|-------------|
+| DEBUG | Detailed diagnostics (development only) |
+| INFO | Normal operations, business events |
+| WARNING | Recoverable issues, degraded performance |
+| ERROR | Errors needing attention, don't crash |
+| CRITICAL | System failures, immediate action required |
+
+## Never Do These
+
+- ❌ String interpolation: `logger.info(f"User {user_id} logged in")`
+- ❌ Log secrets or API keys
+- ❌ Log PII: emails, phone numbers, SSN, IP addresses
+- ❌ Swallow exceptions without logging
+- ❌ Log every iteration in a loop — log batch summaries
+
+## Full Reference
+
+See `standards/LOGGING.md` for: PII sanitization setup, correlation IDs, environment variables, Python/TypeScript implementation, compliance (GDPR/SOC2), and monitoring examples.

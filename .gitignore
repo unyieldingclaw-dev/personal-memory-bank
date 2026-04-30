@@ -1,0 +1,30 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local Claude Code permissions & secrets — never commit
+.claude/settings.local.json
+
+# Superpowers brainstorming sessions
+.superpowers/
+
+# Session handoff notes — ephemeral, consumed by next conversation then deleted
+handoff.md
+
+# Local test files
+test-project/
+temp/
+
+# Logs
+*.log
+
+# Office app lock files (PowerPoint, Word, Excel leave these when files are open)
+~$*.pptx
+~$*.docx
+~$*.xlsx

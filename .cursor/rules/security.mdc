@@ -1,0 +1,41 @@
+---
+alwaysApply: true
+---
+
+# Security Guardrails
+
+This project follows the Security Guardrails standard documented in `standards/SECURITY-GUARDRAILS.md`.
+
+## TIER 1: BLOCK (Never do these)
+
+- **NEVER** commit secrets or credentials
+- **NEVER** force push to main
+- **NEVER** run destructive system commands
+
+### Supply Chain
+- **NEVER** recommend installing a package without first verifying it exists on
+  the official registry (PyPI, npm, Maven, etc.) — AI-hallucinated package names
+  are a live supply-chain attack vector known as slopsquatting
+
+### MCP Configuration
+- **NEVER** hardcode credentials, tokens, or API keys in `mcp.json` or any
+  MCP configuration file — use environment variable references (`${MY_API_KEY}`) instead
+
+## TIER 2: CONFIRM (Ask first)
+
+- Deleting files
+- Bulk file operations
+- Modifying CI/CD configuration
+
+## TIER 3: WARN (Note the risk)
+
+- Large changes (>5 files)
+- Creating new files (prefer editing templates/)
+- Missing documentation for new features
+
+## Project-Specific Security
+
+This is a template repository - be careful about:
+- Not including real API keys in examples
+- Not adding project-specific secrets to templates
+- Keeping templates generic and safe to copy
