@@ -1,6 +1,6 @@
-# Memory Bank Standard - Setup Guide
+# Personal Memory Bank - Setup Guide
 
-A step-by-step guide to implementing the Memory Bank Standard in your project.
+A step-by-step guide to implementing the Memory Bank in your project.
 
 ## Prerequisites
 
@@ -43,20 +43,12 @@ After global setup, the only per-project step is scaffolding the `memory-bank/` 
 
 **Windows (PowerShell):**
 ```powershell
-# Navigate to your project
-cd C:\path\to\your\project
-
-# Run the scaffold script
-.\path\to\memory-bank-standard\scripts\init-memory-bank.ps1
+.\scripts\init-memory-bank.ps1 -ProjectPath "C:\path\to\your\project"
 ```
 
 **macOS/Linux (Bash):**
 ```bash
-# Navigate to your project
-cd /path/to/your/project
-
-# Run the scaffold script
-bash /path/to/memory-bank-standard/scripts/init-memory-bank.sh
+./scripts/init-memory-bank.sh /path/to/your/project
 ```
 
 The script will:
@@ -258,16 +250,6 @@ Use quick commands:
 3. Continue where you left off
 4. AI merges handoff into Memory Bank
 
-## Adding Team Members
-
-When a new team member joins:
-
-1. They clone the repo (Memory Bank included)
-2. They open in Cursor or VS Code
-3. They immediately have full project context
-
-No onboarding documentation needed - it's in the Memory Bank.
-
 ## Troubleshooting
 
 ### AI Doesn't Know Project Context
@@ -295,14 +277,11 @@ Run `mb slim` or manually:
 
 1. **Complete global setup** — Run the one-time setup at the top of this guide
 2. **Read the standards** — Memory Bank, Security Guardrails, Code Quality, Logging, Workflow, and Karpathy Coding Principles (all in CLAUDE.md after global setup)
-3. **If you work on UI code** — The [Accessibility standard](../standards/ACCESSIBILITY.md) (WCAG 2.1 Level AA) auto-applies via `.cursor/rules/accessibility.mdc` on `.html`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.astro`, `.css`, `.scss`. Run `/accessibility-review` for an on-demand deep audit.
-4. **Add language extension** — Python/TypeScript rules are included
-5. **Use `/feature-dev`** — Run this in Claude Code at the start of any new feature
-6. **Share with team** — Each member runs global setup once; per-project memory-bank scaffolds automatically; Karpathy principles are included automatically
+3. **Add language extension** — Python/TypeScript rules are included
+4. **Use `/feature-dev`** — Run this in Claude Code at the start of any new feature
 
 ## Getting Help
 
 - [Memory Bank Standard](../standards/MEMORY-BANK.md) - Full documentation
-- [Accessibility Standard](../standards/ACCESSIBILITY.md) - WCAG 2.1 AA requirements for UI code
 - [Quick Reference](QUICK-REFERENCE.md) - One-page cheatsheet
 - [Cursor vs Claude Code](CURSOR-VS-CLAUDE.md) - IDE differences

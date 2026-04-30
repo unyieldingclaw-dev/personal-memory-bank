@@ -1,4 +1,4 @@
-# Memory Bank Standard - Quick Reference
+# Personal Memory Bank - Quick Reference
 
 One-page cheatsheet for daily use.
 
@@ -29,7 +29,6 @@ One-page cheatsheet for daily use.
 | `/feature-dev` | Run full 7-phase workflow (Claude Code) |
 | `/security-review` | Scan diff for 9 security patterns (Claude Code) |
 | `/code-review` | Multi-agent deep review: 3 parallel role subagents (security, performance, style) + test coverage review (generates missing tests) + opponent auditor compare (Claude Code / Cursor) |
-| `/accessibility-review` | WCAG 2.1 Level AA audit of UI code — 9 a11y dimensions, remediation checklist (Claude Code / Cursor; on-demand) |
 
 ---
 
@@ -52,19 +51,6 @@ One-page cheatsheet for daily use.
 | **BLOCK** | AI refuses | Commit secrets, force push main, rule-file injection patterns, long-lived creds in agent env |
 | **CONFIRM** | AI asks first | Delete files, amend commits, bulk ops on >3 files |
 | **WARN** | AI notes risk | Large changes, missing tests, new files |
-
-## Data Classification (quick check)
-
-Before pasting into a prompt / memory-bank / log / commit:
-
-| Tier | What to do |
-|------|------------|
-| **Public** | ✅ Use as-is |
-| **Internal** | ✅ Prefer summary over verbatim |
-| **Confidential** | ⚠️ Redact IDs, use synthetic examples, document the decision |
-| **Restricted** | ❌ Don't. Use a synthetic placeholder. Escalate if the task appears to require it. |
-
-Full tiers + per-destination rules: `standards/DATA-CLASSIFICATION.md`.
 
 ---
 
