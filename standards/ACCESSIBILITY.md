@@ -65,4 +65,4 @@ Treat every item below as a hard requirement, not a suggestion.
 
 **Version**: 1.0.0
 **Last Updated**: April 24, 2026
-**Owner**: T-Mobile Release Engineering/AERO Team
+**Owner**: Personal

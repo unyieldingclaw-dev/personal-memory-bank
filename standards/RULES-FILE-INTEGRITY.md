@@ -1,6 +1,5 @@
 # Rules-File Integrity
 
-> **TODO: Validate against T-Mobile internal security / legal / compliance policy before broad adoption.**
 
 Rule files such as `.cursorrules`, `CLAUDE.md`, `AGENTS.md`, and anything under `.cursor/rules/*.mdc` or `.claude/commands/*.md` are **executable input to AI assistants**. They travel with repositories, survive context summarization, and are treated as authoritative directives by Cursor and Claude Code. This makes them a high-value attack target — a compromised rules file can silently redirect an agent's behavior across every downstream project that installs it.
 
@@ -85,4 +84,4 @@ For `CLAUDE.md` / `AGENTS.md`, the first section must be human-readable prose na
 
 **Version**: 1.0.0
 **Last Updated**: April 24, 2026
-**Owner**: T-Mobile Release Engineering/AERO Team
+**Owner**: Personal

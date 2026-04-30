@@ -1,6 +1,5 @@
 # Secrets Management (Ephemeral by Default)
 
-> **TODO: Validate against T-Mobile internal security / legal / compliance policy before broad adoption.**
 
 This standard defines where secrets (API keys, tokens, passwords, certificates, connection strings) must live, when they must rotate, and what is never allowed. It extends `standards/SECURITY-GUARDRAILS.md`: the BLOCK tier refuses to commit secrets; this standard defines what to do with secrets **at runtime**, particularly when AI agents are active.
 
@@ -22,7 +21,7 @@ In March 2026, the LiteLLM supply-chain breach harvested `OPENAI_API_KEY`, `AWS_
 
 Secrets must live in a secrets manager, not in files or long-lived environment variables:
 
-- **Preferred:** HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, GCP Secret Manager, or the T-Mobile-approved equivalent.
+- **Preferred:** HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, GCP Secret Manager, or your preferred equivalent.
 - **Acceptable for dev only:** a developer-scoped keychain (`keyring` on macOS, Credential Manager on Windows, `libsecret` on Linux) combined with short-lived tokens.
 - **Never acceptable:** committed `.env` files, plaintext config stored in a wiki, credentials in `mcp.json`, credentials in a Cursor rules file, credentials in memory-bank files.
 
@@ -105,4 +104,4 @@ If the agent must operate against these systems, proxy the access through a shor
 
 **Version**: 1.0.0
 **Last Updated**: April 24, 2026
-**Owner**: T-Mobile Release Engineering/AERO Team
+**Owner**: Personal
