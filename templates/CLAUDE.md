@@ -43,20 +43,13 @@ Three tiers — `standards/SECURITY-GUARDRAILS.md` has the full enumerated lists
 Before claiming done: tests pass, lint clean, build succeeds, describe what was tested. Comments: WHY not WHAT, no dead code. Structure: edit existing files first, small incremental changes, one thing per function. Errors: explicit, meaningful, never swallowed. Full spec: `standards/CODE-QUALITY.md`.
 
 ### Accessibility (UI code only)
-- If you are editing UI files (`.html`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.astro`, `.css`, `.scss`), follow `standards/ACCESSIBILITY.md` — WCAG 2.1 Level AA is a hard requirement.
-- The Cursor rule `.cursor/rules/accessibility.mdc` auto-applies to those file types.
-- On-demand audit: `/accessibility-review` for a deep WCAG scan of the current diff or a target path.
+For HTML/JSX/TSX/Vue/Svelte files: apply WCAG 2.1 AA basics (semantic HTML, alt text, form labels, keyboard nav). See `standards/ACCESSIBILITY.md`.
 
-## Enterprise hygiene (v1.5 additions)
+## Personal Safety Rules
 
-Before prompting, committing, or logging, think about classification and credentials:
-
-- **Data Classification** — Public / Internal / Confidential / Restricted. See `standards/DATA-CLASSIFICATION.md`. Never put Restricted-tier data (credentials, PII beyond name/email, CPNI, health data) in prompts, memory-bank files, logs, or commits.
-- **Ephemeral secrets** — credentials live in Vault / AWS SM / Azure Key Vault (not in files, not in long-lived env vars). See `standards/SECRETS.md`. Rotate after any agent session that may have read them — no exceptions.
-- **Model governance** — only use approved models from `standards/MODEL-GOVERNANCE.md`. Pin versions in production. A model upgrade is a dependency upgrade — run tests and `/code-review` on a canary before merging.
-- **Rules-file hygiene** — `.cursorrules`, `CLAUDE.md`, `AGENTS.md`, `.mdc`, and slash-command `.md` files are executable input. Reject invisible Unicode, hidden HTML comments, or guardrail-bypass patterns. See `standards/RULES-FILE-INTEGRITY.md`.
-- **Incident response** — use `templates/INCIDENT-RUNBOOK.md` when something goes wrong. It has a required "Was AI-assisted code involved?" checklist.
-- **Agent resource controls** — token budgets, loop detection (pause after 3 identical tool calls), 429/rate-limit handling, MCP tool-call monitoring. See the "Agent resource controls" section in `standards/SECURITY-GUARDRAILS.md`.
+- **Secrets:** Never hardcode credentials — use env vars or secret managers (`.env`, OS keychain).
+- **Model:** Use the most capable Claude model available for the task.
+- **Agent safety:** Don't run destructive commands without user confirmation.
 
 ## Workflow
 
@@ -74,7 +67,7 @@ Always follow this sequence for any non-trivial feature:
 
 ## Logging
 
-Use structured logging with keyword args (no f-strings), redact PII, propagate correlation IDs. Full spec in `standards/LOGGING.md`. Python extension in `standards/extensions/logging-python.md`. Read these when touching logging code.
+Use structured logging (key-value pairs, not f-strings), use log levels, never log credentials. See `standards/LOGGING.md`.
 
 ## Handoff Protocol
 
