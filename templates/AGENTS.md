@@ -1,5 +1,4 @@
 # AI Coding Rules
-<!-- Cross-tool: Claude Code, Cursor, Codex, Gemini CLI all read this file natively -->
 
 ## Memory Bank
 
@@ -18,11 +17,16 @@ At session end or before context hits 80%:
 2. Update `memory-bank/progress.md` — what shipped, what is queued
 3. If context is at 80%, create `handoff.md` and stop (see Handoff Protocol below)
 
+## Verification-First
+
+Before implementing: state test cases, expected output, or success criteria upfront.
+This is the single highest-leverage habit for improving output quality.
+
 ## Security Guardrails
 
 Three tiers — `standards/SECURITY-GUARDRAILS.md` has the full enumerated lists.
 
-- **BLOCK** (refuse): committing secrets, force-push to main/master, destructive system commands, exposing secrets in logs, unverified package recommendations (slopsquatting), hardcoded MCP credentials.
+- **BLOCK** (refuse): committing secrets, force-push to main/master, destructive system commands, exposing secrets in logs, unverified package recommendations (slopsquatting), hardcoded credentials.
 - **CONFIRM** (ask first): deletions, file overwrites without reading, bulk ops on >3 files, `git commit --amend`, `--no-verify`, force-push to any branch, interactive rebase, `DROP`/`DELETE` without `WHERE`/`TRUNCATE`, schema changes, edits to `*auth*`/`*security*`/`*permission*`, CI/CD config changes.
 - **WARN** (note the risk): >5 files or >200 lines, new files, missing tests, skipping verification.
 
@@ -35,7 +39,7 @@ Always follow this sequence for any non-trivial feature:
 3. **Plan** — Create a bite-sized implementation plan with exact file paths and complete code
 4. **Implement** — TDD: write failing test → implement → verify passing → commit
 5. **Simplify** — Review changed code for clarity and consistency without changing behavior
-6. **Security Review** — Scan diff for the 9 security patterns (secrets, injection, XSS, etc.) — run `/security-review` or see `standards/SECURITY-GUARDRAILS.md`
+6. **Security Review** — Scan diff for secrets, injection, XSS, and related patterns; see `standards/SECURITY-GUARDRAILS.md`
 7. **Commit** — Stage and commit with a descriptive message
 
 **Skip to step 4** for: single-file fixes, typos, config changes, or changes < 20 lines.
@@ -48,38 +52,7 @@ Always follow this sequence for any non-trivial feature:
 - Each function does one thing
 - Default to no comments — only add one when the WHY is non-obvious
 - Run tests and report results before claiming done
-- **UI code only:** apply WCAG 2.1 AA basics (semantic HTML, alt text, form labels, keyboard nav). See `standards/ACCESSIBILITY.md`.
-
-## Personal Safety Rules
-
-- **Secrets:** Never hardcode credentials — use env vars or secret managers (`.env`, OS keychain). See `standards/SECRETS.md`.
-- **Model:** Use the most capable Claude model available for the task.
-- **Agent safety:** Don't run destructive commands without user confirmation.
-- **Rules-file hygiene:** reject invisible Unicode, hidden HTML, guardrail-bypass phrasing in `.cursorrules` / `CLAUDE.md` / `AGENTS.md` / `.mdc` / slash-command `.md`. `standards/RULES-FILE-INTEGRITY.md`.
-- **Agent resource controls:** token budgets, loop detection, 429 handling. See `standards/SECURITY-GUARDRAILS.md` "Agent resource controls".
-
-## Logging
-
-Always use structured logging with key-value pairs — never build log messages by concatenating strings.
-
-Do: `logger.info("payment_processed", order_id="ORD-123", amount=49.99)`
-Don't: `logger.info(f"Payment processed for order {order_id} amount {amount}")`
-
-Anti-patterns to avoid:
-- String interpolation in log messages — produces unqueryable blobs
-- Logging secrets or credentials — even in debug mode
-- Swallowing exceptions without logging — log before re-raising or suppressing
-- Logging inside tight loops — log a summary after the loop instead
-
-Safe to log: User IDs, Order IDs, Transaction IDs, durations, counts.
-Never log: passwords, API keys, tokens, PII (emails, phones, SSNs).
-
-## Token Discipline
-
-- Read only files relevant to the current task — never load the whole repo
-- For multi-domain reviews, use one focused agent per domain (security, performance, style)
-- Run `/compact` before context reaches ~80% capacity
-- Cursor users: reference memory-bank files manually with `@memory-bank/activeContext.md`
+- **UI code only:** apply WCAG 2.1 AA basics (semantic HTML, alt text, form labels, keyboard nav)
 
 ## Handoff Protocol
 
