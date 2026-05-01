@@ -37,6 +37,9 @@ Review the diff for:
 - Insecure use of cryptography (weak algorithms, hardcoded IVs/salts)
 - Any use of eval(), exec(), shell=True, or equivalent dangerous calls
 - Sensitive data logged or returned in API responses
+- New packages or imports that may not exist — verify they are real (hallucinated dependencies / slopsquatting)
+- Prompt injection vulnerabilities in code that constructs LLM prompts or processes LLM output
+- Insecure deserialization or blind trust of AI/external service responses
 
 Rate each finding: [CRITICAL], [HIGH], [MEDIUM], or [LOW]
 Return findings as a structured list with severity, description, and file:line.
@@ -64,6 +67,9 @@ Review the diff for:
 - Dead code, commented-out blocks, or debug statements left in
 - Magic numbers or strings that should be named constants
 - Copy-paste duplication that should be abstracted
+- Hallucinated imports or references to functions/libraries that do not exist
+- Unnecessary abstraction layers or wrapper classes that add no value (common AI over-engineering pattern)
+- Redundant boilerplate that AI introduced which duplicates existing utilities
 
 Rate each finding: [MEDIUM] or [LOW]
 Return findings as a structured list with severity, description, and file:line.
