@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const i=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); const c=i.command||''; const d=['rm -rf','git push --force','git push -f','DROP TABLE','DROP DATABASE']; const b=d.filter(x=>c.includes(x)); if(b.length){console.error('BLOCK: Dangerous command: '+b.join(', '));process.exit(1);}\" 2>/dev/null || python3 -c \"import sys,json; i=json.load(sys.stdin); c=i.get('command',''); d=['rm -rf','git push --force','git push -f','DROP TABLE','DROP DATABASE']; b=[x for x in d if x in c]; print('BLOCK: '+str(b),file=sys.stderr) if b else None; exit(1) if b else exit(0)\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -Command \"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('Claude has paused and is waiting for input.','Claude Code',[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)\" 2>/dev/null; osascript -e 'display notification \"Claude has paused and is waiting for input.\" with title \"Claude Code\"' 2>/dev/null; notify-send 'Claude Code' 'Claude has paused and is waiting for input.' 2>/dev/null; true"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(npm run lint)",
+      "Bash(npm run test)",
+      "Bash(npm test)",
+      "Bash(npx *)",
+      "Bash(python -m pytest *)",
+      "Bash(python -m mypy *)",
+      "Bash(python -m ruff *)"
+    ]
+  }
+}
