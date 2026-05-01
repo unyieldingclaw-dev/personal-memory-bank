@@ -55,3 +55,11 @@ Key directories:
 | `mb status` | Show file sizes and health |
 | `mb commit` | Commit Memory Bank changes |
 | `Handoff` | Create handoff and stop |
+
+## Verification-First
+Before implementing any feature: state test cases, expected output, or success criteria upfront. This cuts correction cycles significantly.
+
+## Tools Available in Claude Code
+- **Hooks** — `.claude/settings.json` enforces rules deterministically. See `docs/HOOKS-GUIDE.md`.
+- **Agents** — `.claude/agents/` has specialized subagents (security-reviewer, researcher). Cursor: ask me to take on these roles explicitly.
+- **MCP** — external service connections via `claude mcp add`. See `standards/MCP-SECURITY.md` first.
