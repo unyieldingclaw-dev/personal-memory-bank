@@ -14,27 +14,11 @@ This standard defines what AI should **BLOCK**, **CONFIRM**, or **WARN** about.
 
 ## The 3-Tier System
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ TIER 1: BLOCK                                               │
-│ AI MUST refuse, even if user insists                        │
-│ User must perform action manually if truly needed           │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ TIER 2: CONFIRM                                             │
-│ AI pauses and requires explicit "yes" before proceeding     │
-│ Prevents accidental damage from legitimate operations       │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ TIER 3: WARN                                                │
-│ AI proceeds but explicitly notes the risk                   │
-│ Builds awareness without blocking workflow                  │
-└─────────────────────────────────────────────────────────────┘
-```
+| Tier | Behavior | When |
+|------|----------|------|
+| **BLOCK** | AI refuses; no override | Action is irreversible or catastrophic |
+| **CONFIRM** | AI pauses; requires explicit "yes" | Action is destructive but legitimate |
+| **WARN** | AI proceeds; notes the risk | Action is risky but often intentional |
 
 ## Tier 1: BLOCK Rules
 
@@ -132,15 +116,8 @@ AI: "I cannot commit .env files as they may contain secrets.
 ```
 User: "Delete all test files in the tests/ folder"
 
-AI: "This will delete the following 12 files:
-     - tests/test_api.py
-     - tests/test_service.py
-     - tests/test_utils.py
-     [... 9 more files]
-
-     ⚠️ This action requires confirmation.
-
-     Type 'yes' to proceed, or describe what you actually want to delete."
+AI: "This will delete 12 files (tests/test_api.py, tests/test_service.py, ...).
+     ⚠️ Type 'yes' to confirm, or clarify what to delete."
 
 User: "yes"
 
@@ -179,120 +156,28 @@ AI: "Confirmed. Deleting 12 test files..."
 ### AI Response to WARN
 
 ```
-User: "Add user authentication to the app"
-
-AI: "I'll implement authentication.
-
-     ⚠️ Note: This is a large change (~8 files, ~300 lines)
-     ⚠️ Consider reviewing in smaller commits
-
-     Proceeding with implementation...
-
-     [creates files]
-
-     Done. I recommend reviewing these changes before committing."
+AI: "Implementing authentication.
+     ⚠️ Large change (~8 files, ~300 lines) — consider reviewing in smaller commits.
+     [proceeds] Done. Review before committing."
 ```
 
 ## Customization
 
-Organizations can adjust thresholds:
+Adjust tier thresholds to match environment:
 
-### Stricter (High-Security Environments)
-
-```yaml
-# Move items from WARN/CONFIRM to stricter tiers
-tier_1_block:
-  - skip_hooks  # Moved from CONFIRM
-  - large_changes_threshold: 3  # Lower threshold
-
-tier_2_confirm:
-  - any_new_file  # Moved from WARN
-  - any_external_dependency
-```
-
-### Looser (Trusted Developer Environments)
-
-```yaml
-# Move items to less strict tiers
-tier_2_confirm:
-  delete_threshold: 5  # Allow deleting up to 5 files without confirm
-
-tier_3_warn:
-  large_changes_threshold: 500  # Higher threshold
-```
-
-### Context-Aware
-
-```yaml
-# Different rules for different contexts
-development:
-  tier_2_confirm:
-    destructive_sql: warn  # Downgrade in dev
-
-production:
-  tier_1_block:
-    any_database_change: true  # Upgrade in prod
-```
+| Environment | Adjustment |
+|-------------|-----------|
+| High-security | Move `skip_hooks` to BLOCK; lower large-change threshold to 3 files; add `any_new_file` to CONFIRM |
+| Trusted dev | Raise delete threshold to 5 files without CONFIRM; raise large-change threshold to 500 lines |
+| Context-aware | Downgrade destructive SQL to WARN in dev environments; upgrade any DB change to BLOCK in prod |
 
 ## Implementation
 
-### Cursor IDE
+Copy the tier tables from this document into your rules file (`.cursor/rules/security.mdc`, `CLAUDE.md`, or `AGENTS.md`). Apply `alwaysApply: true` in Cursor. The condensed form needed for a rules file is:
 
-Create `.cursor/rules/security.mdc`:
-
-```yaml
----
-alwaysApply: true
----
-
-# Security Guardrails
-
-## TIER 1: BLOCK (Never do these)
-- Never commit files matching: *.env*, *credentials*, *secret*, *.pem, *.key
-- Never git push --force to main/master
-- Never run rm -rf / or equivalent destructive commands
-- Never expose secrets in logs or output
-- If asked to do these, explain why you cannot and suggest safe alternatives.
-
-## TIER 2: CONFIRM (Pause for approval)
-Before these actions, list what will happen and ask "Type 'yes' to confirm":
-- Deleting any files
-- Amending commits
-- Skipping git hooks (--no-verify)
-- Running DROP/DELETE/TRUNCATE SQL
-- Modifying auth/security configuration files
-
-## TIER 3: WARN (Note the risk)
-For these actions, proceed but note the risk:
-- Large changes (>5 files or >200 lines)
-- Creating new files (prefer editing existing)
-- Missing tests for new functionality
-- Skipping verification before completion
-```
-
-### Claude Code
-
-Add to `CLAUDE.md`:
-
-```markdown
-## Security Guardrails
-
-### BLOCK (I will refuse these)
-- Committing secrets (.env, credentials, API keys)
-- Force pushing to main/master
-- Destructive system commands
-
-### CONFIRM (I will ask first)
-- Deleting files
-- Amending commits
-- Skipping git hooks
-- Destructive SQL
-
-### WARN (I will note the risk)
-- Large changes (>5 files)
-- Creating new files
-- Missing tests
-```
+- **BLOCK**: secrets in commits, force push to main, destructive system commands, rules-file tampering
+- **CONFIRM**: file deletions, amend/rebase, skip-hooks flag, destructive SQL, auth/CI config changes
+- **WARN**: large changes (>5 files or >200 lines), new files, missing tests, skipping verification
 
 ## Complementary Tools
 
