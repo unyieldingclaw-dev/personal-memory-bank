@@ -62,6 +62,13 @@ A 7-phase workflow that front-loads understanding and defers code until the desi
 
 ### Phase 4 — Implement (TDD)
 
+**Verification-First:** Before asking Claude to start implementing, state upfront:
+- Test cases or expected outputs (even informal: "function should return X given Y")
+- The success criteria (what does "done" look like?)
+- Any constraints (must not change the API, must stay under N ms, etc.)
+
+This is the single highest-leverage prompt engineering habit — it cuts correction cycles significantly.
+
 For each task in the plan:
 
 ```
