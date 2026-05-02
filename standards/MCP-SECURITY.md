@@ -81,6 +81,8 @@ Commit a `mcp.json.example` with all values replaced by `${ENV_VAR_NAME}`.
 MCP server output reaches the AI's context. A compromised server can inject instructions.
 Apply the same scrutiny to MCP tool results as to user input from external sources.
 
+For task boundary setting and broader agentic safety guidance during live sessions, see `standards/AGENTIC-SAFETY.md`.
+
 ---
 
 **References:**
