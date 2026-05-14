@@ -6,7 +6,7 @@
     Quick commands for managing Memory Bank files.
 
 .PARAMETER Command
-    The command to run: status, update, archive, slim, commit
+    The command to run: status, update, archive, slim, commit, budget
 
 .EXAMPLE
     .\mb.ps1 status
@@ -20,7 +20,7 @@
 # Default to "help" so running "mb" alone shows usage, not an error.
 param(
     [Parameter(Position=0)]
-    [ValidateSet("status", "update", "archive", "slim", "commit", "help")]
+    [ValidateSet("status", "update", "archive", "slim", "commit", "budget", "help")]
     [string]$Command = "help"
 )
 
@@ -245,6 +245,39 @@ function Invoke-Commit {
     Write-Host ""
 }
 
+function Show-Budget {
+    Write-Host ""
+    Write-Host "Token Budget Health" -ForegroundColor Cyan
+    Write-Host "===================" -ForegroundColor Cyan
+    Write-Host ""
+    $claudeFile = "CLAUDE.md"
+    if (Test-Path $claudeFile) {
+        $claudeKB = [math]::Round((Get-Item $claudeFile).Length / 1KB, 1)
+        $claudeColor = if ($claudeKB -gt 8) { "Yellow" } else { "Green" }
+        $claudeStatus = if ($claudeKB -gt 8) { "WARN" } else { "OK" }
+        Write-Host "  CLAUDE.md      $claudeKB KB  [$claudeStatus] (loads every session)" -ForegroundColor $claudeColor
+    } else {
+        Write-Host "  CLAUDE.md      not found" -ForegroundColor Red
+    }
+    if (Test-Path $MemoryBankPath) {
+        $mbBytes = (Get-ChildItem $MemoryBankPath -Recurse -File | Measure-Object -Property Length -Sum).Sum
+        $mbKB = [math]::Round($mbBytes / 1KB, 1)
+        $mbColor = if ($mbKB -gt 40) { "Yellow" } else { "Green" }
+        $mbStatus = if ($mbKB -gt 40) { "WARN" } else { "OK" }
+        Write-Host "  memory-bank/   $mbKB KB  [$mbStatus] (re-read after every compaction)" -ForegroundColor $mbColor
+    }
+    Write-Host ""
+    Write-Host "  Quota tips:" -ForegroundColor DarkCyan
+    Write-Host "    /compact Focus on decisions and file paths   (after planning/debugging)" -ForegroundColor White
+    Write-Host "    /clear                                       (between unrelated tasks)" -ForegroundColor White
+    Write-Host "    /cost                                        (check usage mid-session)" -ForegroundColor White
+    Write-Host "    /model opus  ->  /model sonnet               (escalate then return)" -ForegroundColor White
+    Write-Host ""
+    if ($claudeKB -gt 8) { Write-Host "  CLAUDE.md is large. Trim unused sections." -ForegroundColor Yellow }
+    if ($mbKB -gt 40) { Write-Host "  memory-bank/ is large. Run 'mb slim' or 'mb archive'." -ForegroundColor Yellow }
+    Write-Host ""
+}
+
 # Run command
 switch ($Command) {
     "status" { Show-Status }
@@ -252,5 +285,6 @@ switch ($Command) {
     "archive" { Show-Archive }
     "slim" { Show-Slim }
     "commit" { Invoke-Commit }
+    "budget" { Show-Budget }
     "help" { Show-Help }
 }
