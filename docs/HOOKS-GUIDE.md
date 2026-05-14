@@ -24,12 +24,16 @@ If triggered, Claude sees the block message and stops. The command never runs.
 
 **Note:** Requires Node.js or Python 3 to be on PATH. If neither is available, the hook silently passes (fails open). Test with: `claude -p "run: echo test"` and verify no block fires on safe commands.
 
-### 2. Stop Notification (`Stop`)
+### 2. Stop Notification (`Stop`) — removed from template
 
-Sends a desktop notification when Claude pauses and is waiting for input. Works on:
-- **Windows** — PowerShell MessageBox
-- **macOS** — osascript notification
-- **Linux** — notify-send
+The Stop hook was removed from `templates/.claude/settings.json` because it causes indefinite hangs in `--Remote-Control` mode (Claude in Chrome). In that mode Claude runs headless; the hook fires but no user is present to dismiss the Windows MessageBox, stalling the session permanently. If you need a Stop notification in an interactive-only project, add it to that project's local `.claude/settings.json` manually.
+
+### 3. PostToolUse Lint (`PostToolUse`)
+
+Runs `npm run lint` after every `Write` or `Edit` tool call and streams the last 10 lines of output back to Claude, so lint errors appear immediately without a separate step.
+
+**Why `|| true`?**  
+`|| true` ensures the hook always exits 0. This matters for non-Node projects that have no `package.json` or no `lint` script — without it the hook would exit non-zero and Claude would treat every file write as an error. With `|| true` the hook is a best-effort advisory: output when lint is available, silent when it isn't.
 
 ## Adding Per-Project Hooks
 
