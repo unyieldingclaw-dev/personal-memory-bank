@@ -1,4 +1,10 @@
 {
+  "model": "sonnet",
+  "env": {
+    "MAX_THINKING_TOKENS": "10000",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku",
+    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1"
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -11,13 +17,12 @@
         ]
       }
     ],
-    "PostToolUse": [
+    "Stop": [
       {
-        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "npm run lint 2>&1 | tail -10 || true"
+            "command": "powershell.exe -Command \"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('Claude has paused and is waiting for input.','Claude Code',[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)\" 2>/dev/null; osascript -e 'display notification \"Claude has paused and is waiting for input.\" with title \"Claude Code\"' 2>/dev/null; notify-send 'Claude Code' 'Claude has paused and is waiting for input.' 2>/dev/null; true"
           }
         ]
       }

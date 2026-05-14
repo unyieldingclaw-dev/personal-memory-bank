@@ -69,3 +69,35 @@ When starting a new conversation:
 2. Merge info into Memory Bank
 3. Delete `handoff.md`
 4. Continue work
+
+## Token Budget
+
+**Model selection — default to Sonnet, escalate deliberately:**
+- Sonnet handles 90%+ of tasks. Start here every session.
+- Switch to Opus (`/model opus`) only for: complex architecture decisions, large multi-file refactors, deep cross-file debugging. Switch back after.
+- Subagents run on Haiku automatically (set in settings.json) — sufficient for file reads, test runs, and exploration.
+
+**Compact at task boundaries, not when forced:**
+- After planning: `/compact Focus on decisions and file paths`
+- After debugging: `/compact Focus on what was tried and what worked`
+- Before switching to unrelated work: `/clear`
+- Do NOT wait for auto-compaction — it fires mid-task at 75% and loses context
+
+**Be specific with file references — vague prompts scan broadly:**
+- Good: `Fix the JWT expiry check in src/auth/token.py around line 47`
+- Bad: `Fix the auth bug` — triggers a broad codebase read
+
+**Session commands:**
+- `/cost` — check quota before long sessions
+- `/usage` — token breakdown for current session
+- `/model sonnet` — reset to default after Opus work
+
+## Karpathy Coding Principles
+
+1. **Think Before Coding** — Surface tradeoffs, state assumptions explicitly, push back when a simpler approach exists. Stop and ask before implementing anything unclear.
+
+2. **Simplicity First** — Minimum code that solves the problem, nothing speculative. No unrequested features, abstractions, or flexibility. If 200 lines could be 50, rewrite it.
+
+3. **Surgical Changes** — Touch only what you must. Don't improve adjacent code, don't refactor things that aren't broken, match existing style. Every changed line must trace directly to the request.
+
+4. **Goal-Driven Execution** — Define success criteria and loop until verified. Transform vague tasks into testable goals. For multi-step work, state a brief plan with a verify step for each action.
