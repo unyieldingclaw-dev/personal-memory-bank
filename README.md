@@ -1,46 +1,156 @@
 # Personal Memory Bank
 
-A personal AI coding standard for Claude Code and Cursor. Copy it into any project for consistent, high-quality AI-assisted development.
+Give your AI coding assistant persistent project memory — so every session starts where the last one left off, with full context about your project, stack, and decisions.
 
-## What This Is
+## The Problem It Solves
 
-- **Standards** — code quality, security, logging, workflow, and more
-- **Claude Code commands** — `/code-review`, `/feature-dev`, `/security-review`
-- **Cursor rules** — auto-apply standards based on file type
-- **Memory Bank templates** — 5-file persistent context system for AI sessions
-- **Setup scripts** — scaffold any new project in under 10 minutes
+Every AI coding session starts blank. You re-explain your stack, re-describe your patterns, re-establish constraints. That overhead compounds across weeks and months.
 
-## Quick Start
+Memory Bank solves this by keeping a small set of structured files in your project that your AI reads automatically at the start of every session.
 
-### Windows
-```powershell
-.\scripts\init-memory-bank.ps1 -ProjectPath "C:\path\to\your\project"
+## Install (Windows)
+
+**1. Clone this repo**
+```
+git clone https://github.com/your-username/personal-memory-bank
+cd personal-memory-bank
 ```
 
-### Mac/Linux
+**2. Run the installer**
+```
+install.bat
+```
+Double-click it in Explorer, or run it from a terminal. Opens a new terminal automatically when done.
+
+**3. In any project, run:**
+```
+mb init
+```
+
+That's it. Start a Claude Code or Cursor session — your AI will have context immediately.
+
+---
+
+**Mac / Linux:**
 ```bash
-./scripts/init-memory-bank.sh /path/to/your/project
+chmod +x scripts/install.sh && ./scripts/install.sh
+```
+Then in any project: `mb init`
+
+---
+
+## First Session
+
+After `mb init`, open the two files that matter most:
+
+```
+memory-bank/projectbrief.md   ← what does this project do? (2-3 paragraphs)
+memory-bank/techContext.md    ← what is your stack?
 ```
 
-Fill in `memory-bank/projectbrief.md` with your project context.
+Fill those in. Everything else (systemPatterns, activeContext, progress) fills in naturally as you work.
 
-## Core Standards
+Then run:
+```
+mb status
+```
 
-| Standard | Description |
-|----------|-------------|
-| SECURITY-GUARDRAILS | BLOCK / CONFIRM / WARN for risky operations |
-| CODE-QUALITY | Testing, comments, structure, error handling |
-| LOGGING | Structured logs, log levels, no credentials |
-| WORKFLOW | 7-phase feature development |
-| SUPPLY-CHAIN | Package safety, slopsquatting prevention |
+to confirm the memory bank is healthy before you start.
 
-## Commands
+## Day-to-Day Commands
 
-| Command | Description |
-|---------|-------------|
-| `/code-review` | Multi-agent code review (security, performance, style, tests) |
-| `/feature-dev` | Full 7-phase feature development workflow |
-| `/security-review` | Scan diff for 9 security patterns |
+```
+mb status     Check file sizes and health
+mb validate   Verify required files and frontmatter are present
+mb audit      See freshness — flag stale or overdue files
+mb update     Get a prompt to update memory bank after a session
+mb commit     Commit memory bank changes separately from feature code
+mb help       Full command list
+```
+
+## How It Works
+
+The memory bank is five markdown files in `memory-bank/`:
+
+| File | What it holds | Changes how often |
+|------|--------------|------------------|
+| `projectbrief.md` | What the project does and must never do | Rarely |
+| `systemPatterns.md` | Architecture decisions and code patterns | When patterns change |
+| `techContext.md` | Stack, dependencies, environment | When stack changes |
+| `activeContext.md` | What you're working on right now | Every session |
+| `progress.md` | What's done, in progress, and planned | After completing work |
+
+Your AI reads all five at the start of every session. You update them when things change. The `mb` utility helps you manage them.
+
+## Advanced Features
+
+These exist when you need them — you don't need to understand them to get started.
+
+<details>
+<summary>Authority hierarchy and conflict resolution</summary>
+
+Files have explicit authority levels. When instructions conflict, higher authority wins:
+
+`projectbrief.md` (immutable) → `systemPatterns / techContext` (stable) → `activeContext` (volatile) → `progress` (accumulating)
+
+Your AI is instructed to surface conflicts rather than silently reconcile them.
+
+</details>
+
+<details>
+<summary>Freshness tracking and eviction</summary>
+
+Each memory bank file has frontmatter with `staleness-threshold` and `review-cycle`. The PostToolUse hook auto-updates `last-reviewed` whenever you edit a file.
+
+Run `mb audit` to see which files are stale. Run `mb compact` to get an AI prompt that deduplicates and summarizes memory across all files.
+
+</details>
+
+<details>
+<summary>Tag-based retrieval</summary>
+
+Files use hierarchical tags (`auth/session`, `infra/postgres`) in their frontmatter. Run `mb query auth` to find all memory bank content related to auth — by tag or section header.
+
+</details>
+
+<details>
+<summary>Worktree support</summary>
+
+Memory bank lives in the main worktree only. `mb commit` detects and refuses mutations from git subworktrees, preventing split-brain memory.
+
+</details>
+
+<details>
+<summary>AI commands (Claude Code)</summary>
+
+Three slash commands are installed in `.claude/commands/`:
+
+- `/code-review` — multi-agent review (security, performance, style, test coverage)
+- `/feature-dev` — full 7-phase feature development workflow
+- `/security-review` — scan current diff for 9 security patterns
+
+</details>
+
+<details>
+<summary>Context handoff protocol</summary>
+
+When Claude Code approaches its context limit, type `Handoff`. The AI creates `handoff.md` with a full summary of in-progress work. Start a new session — the AI reads `handoff.md`, merges it into memory bank, and continues from exactly where you left off.
+
+</details>
+
+## Troubleshooting
+
+**`mb init` says templates not found**
+Run `install.bat` again from the memory-bank repo directory.
+
+**AI isn't reading the memory bank**
+Check that `CLAUDE.md` is in your project root. For Cursor, verify `.cursor/rules/memory-bank.mdc` exists. Restart the IDE.
+
+**Memory bank is getting large**
+Run `mb status` to see which file is over its target. Run `mb compact` to get an AI prompt that rewrites and deduplicates memory.
+
+**Something looks corrupted**
+Run `mb doctor` for a full diagnostic.
 
 ## License
 
