@@ -1,3 +1,15 @@
+---
+authority: accumulating
+review-cycle: 30d
+retention: archive-after-6m
+staleness-threshold: 90d
+tags:
+  - work/completed
+  - work/in-progress
+  - work/backlog
+last-reviewed: 2026-05-14
+---
+
 # Progress
 
 ## Status: Ready

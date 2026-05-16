@@ -1,3 +1,15 @@
+---
+authority: stable
+review-cycle: 30d
+retention: permanent
+staleness-threshold: 90d
+tags:
+  - stack/backend
+  - stack/frontend
+  - env/tools
+last-reviewed: YYYY-MM-DD
+---
+
 # Technical Context & Stack
 
 **Last Updated**: [Date]

@@ -14,6 +14,11 @@ At the start of every conversation, and again after any context compaction, sile
 
 **Rules:** Never ask for info already in Memory Bank. Never violate projectbrief.md. Always follow systemPatterns.md. Update after significant changes. Never write secrets, credentials, PII, or full code dumps to memory-bank/ files.
 
+**Authority order (higher tier governs in any conflict):**
+`projectbrief.md` (immutable) > `systemPatterns.md` / `techContext.md` (stable) > `activeContext.md` (volatile) > `progress.md` (accumulating). When files contradict each other, surface the conflict — do not silently reconcile.
+
+**If in a git worktree:** read memory-bank/ from the main worktree (`git rev-parse --git-common-dir`/../memory-bank/). Never update or commit memory-bank/ from a subworktree.
+
 ## Context Compaction Recovery
 
 Claude Code compacts at ~75% — before the 65% handoff threshold. A "context was compacted" summary may appear at the top of the conversation.

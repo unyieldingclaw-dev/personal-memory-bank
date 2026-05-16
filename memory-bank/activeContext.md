@@ -1,3 +1,15 @@
+---
+authority: volatile
+review-cycle: 7d
+retention: archive-after-6m
+staleness-threshold: 14d
+tags:
+  - session/focus
+  - session/blockers
+  - session/next-steps
+last-reviewed: 2026-05-14
+---
+
 # Active Context
 
 ## Current Focus

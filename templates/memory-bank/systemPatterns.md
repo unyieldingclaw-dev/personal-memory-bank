@@ -1,3 +1,15 @@
+---
+authority: stable
+review-cycle: 90d
+retention: permanent
+staleness-threshold: 180d
+tags:
+  - architecture/decisions
+  - patterns/code
+  - anti-patterns
+last-reviewed: YYYY-MM-DD
+---
+
 # System Patterns & Architecture Decisions
 
 **Last Updated**: [Date]

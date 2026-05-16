@@ -7,6 +7,9 @@
 #
 # Commands:
 #   status   Show file sizes, timestamps, and health check
+#   audit    Freshness audit — flag stale or overdue files
+#   query    Search memory-bank by tag or section header
+#   compact  Print AI prompt to compact (deduplicate + summarize) memory
 #   update   Reminder to update Memory Bank (manual action)
 #   archive  Show instructions for archiving old content
 #   slim     Check if activeContext.md needs trimming
@@ -29,6 +32,11 @@ NC='\033[0m'
 MEMORY_BANK_PATH="memory-bank"
 
 COMMAND="${1:-help}"
+ARG="${2:-}"
+
+# WHY: Find templates via MB_HOME (set by install.sh) or relative to script location.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${MB_HOME:-$(dirname "$SCRIPT_DIR")}"
 
 show_help() {
     echo ""
@@ -38,12 +46,24 @@ show_help() {
     echo -e "${YELLOW}Usage: mb <command>${NC}"
     echo ""
     echo "Commands:"
+    echo "  init     Initialize Memory Bank in the current project"
+    echo "  validate Check that required files and frontmatter are present"
+    echo "  doctor   Full health check (git, hooks, file sizes, staleness)"
     echo "  status   Show file sizes, timestamps, and health check"
+    echo "  audit    Freshness audit — flag stale or overdue files"
+    echo "  query    Search memory-bank by tag or section header"
+    echo "  compact  Print AI prompt to compact (deduplicate + summarize) memory"
     echo "  update   Reminder to update Memory Bank (manual action)"
     echo "  archive  Show instructions for archiving old content"
     echo "  slim     Check if activeContext.md needs trimming"
     echo "  commit   Stage and commit Memory Bank changes"
+    echo "  budget   Check token budget health (CLAUDE.md + memory-bank/ sizes)"
     echo "  help     Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  mb audit              Check freshness of all memory-bank files"
+    echo "  mb query auth         Find files tagged auth/* or sections mentioning auth"
+    echo "  mb compact            Get AI prompt to compact memory"
     echo ""
 }
 
@@ -202,6 +222,16 @@ invoke_commit() {
     echo -e "${CYAN}==========================${NC}"
     echo ""
 
+    # WHY: Detect subworktrees so we refuse memory-bank/ mutations from the wrong root.
+    COMMON_GIT=$(git rev-parse --git-common-dir 2>/dev/null || true)
+    LOCAL_GIT="$PWD/.git"
+    if [ -n "$COMMON_GIT" ] && [ "$(realpath "$COMMON_GIT" 2>/dev/null)" != "$(realpath "$LOCAL_GIT" 2>/dev/null)" ]; then
+        echo -e "${RED}[ERROR] You are in a git subworktree.${NC}"
+        echo -e "${YELLOW}Commit memory-bank/ from the main worktree root instead.${NC}"
+        echo ""
+        return
+    fi
+
     # WHY: 2>/dev/null suppresses git errors if not in a repo (graceful handling).
     # --porcelain gives machine-readable output stable across git versions.
     STATUS=$(git status --porcelain "$MEMORY_BANK_PATH" 2>/dev/null)
@@ -231,13 +261,438 @@ invoke_commit() {
     echo ""
 }
 
+invoke_init() {
+    echo ""
+    echo -e "${CYAN}Memory Bank${NC}"
+    echo -e "${CYAN}===========${NC}"
+    echo ""
+
+    TEMPLATES_DIR="$REPO_ROOT/templates"
+    if [ ! -d "$TEMPLATES_DIR" ]; then
+        echo -e "${RED}[ERROR] Templates not found at $TEMPLATES_DIR${NC}"
+        echo -e "${YELLOW}Run install.sh from the memory-bank repo, or set MB_HOME.${NC}"
+        return
+    fi
+
+    TARGET="$(pwd)"
+    CREATED=()
+    SKIPPED=()
+
+    copy_if_new() {
+        local src="$1" dst="$2" label="$3"
+        mkdir -p "$(dirname "$dst")"
+        if [ ! -e "$dst" ]; then
+            cp "$src" "$dst"
+            CREATED+=("$label")
+        else
+            SKIPPED+=("$label")
+        fi
+    }
+
+    # memory-bank/ files
+    for f in "$TEMPLATES_DIR/memory-bank"/*; do
+        [ -f "$f" ] && copy_if_new "$f" "$TARGET/memory-bank/$(basename "$f")" "memory-bank/$(basename "$f")"
+    done
+
+    # CLAUDE.md
+    copy_if_new "$TEMPLATES_DIR/CLAUDE.md" "$TARGET/CLAUDE.md" "CLAUDE.md"
+
+    # .claude/commands/
+    for f in "$TEMPLATES_DIR/claude-commands"/*; do
+        [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/commands/$(basename "$f")" ".claude/commands/$(basename "$f")"
+    done
+
+    # .gitignore
+    if [ -f "$TARGET/.gitignore" ]; then
+        if ! grep -q "handoff\.md" "$TARGET/.gitignore"; then
+            printf "\n# Memory Bank\nhandoff.md\n" >> "$TARGET/.gitignore"
+            CREATED+=(".gitignore (added handoff.md)")
+        fi
+    else
+        printf "# Memory Bank\nhandoff.md\n" > "$TARGET/.gitignore"
+        CREATED+=(".gitignore")
+    fi
+
+    for item in "${CREATED[@]}"; do echo -e "  ${GREEN}[+] $item${NC}"; done
+    for item in "${SKIPPED[@]}"; do echo -e "  ${GRAY}[=] $item (kept existing)${NC}"; done
+
+    echo ""
+    if [ ${#CREATED[@]} -gt 0 ]; then
+        echo -e "${GREEN}Ready. Open Claude Code and start your first session.${NC}"
+    else
+        echo -e "${GRAY}Already initialized — no files changed.${NC}"
+    fi
+    echo ""
+    echo -e "${YELLOW}Next:${NC}"
+    echo "  Edit memory-bank/projectbrief.md  -- what does this project do?"
+    echo "  Edit memory-bank/techContext.md   -- what is your stack?"
+    echo "  Run: mb status"
+    echo ""
+}
+
+show_validate() {
+    echo ""
+    echo -e "${CYAN}Validation${NC}"
+    echo -e "${CYAN}==========${NC}"
+    echo ""
+
+    PASS=true
+
+    echo -e "${YELLOW}Required files${NC}"
+    for item in \
+        "memory-bank/projectbrief.md" \
+        "memory-bank/systemPatterns.md" \
+        "memory-bank/techContext.md" \
+        "memory-bank/activeContext.md" \
+        "memory-bank/progress.md" \
+        "CLAUDE.md"
+    do
+        if [ -f "$item" ]; then
+            echo -e "  ${GREEN}[OK]      $item${NC}"
+        else
+            echo -e "  ${RED}[MISSING] $item${NC}"
+            PASS=false
+        fi
+    done
+
+    echo ""
+    echo -e "${YELLOW}Frontmatter${NC}"
+    for name in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        path="memory-bank/$name"
+        [ ! -f "$path" ] && continue
+        HAS_AUTH=$(grep -c '^authority:' "$path" 2>/dev/null || echo 0)
+        HAS_REV=$(grep  -c '^last-reviewed:' "$path" 2>/dev/null || echo 0)
+        if [ "$HAS_AUTH" -gt 0 ] && [ "$HAS_REV" -gt 0 ]; then
+            echo -e "  ${GREEN}[OK]   $name${NC}"
+        else
+            MISSING=""
+            [ "$HAS_AUTH" -eq 0 ] && MISSING="authority"
+            [ "$HAS_REV"  -eq 0 ] && MISSING="$MISSING last-reviewed"
+            echo -e "  ${YELLOW}[WARN] $name -- missing:$MISSING${NC}"
+        fi
+    done
+
+    echo ""
+    [ -f "handoff.md" ] && echo -e "  ${YELLOW}[WARN] handoff.md present -- merge and delete${NC}"
+
+    echo ""
+    if [ "$PASS" = true ]; then
+        echo -e "${GREEN}All checks passed.${NC}"
+    else
+        echo -e "${RED}Issues found. Run 'mb init' to create missing files.${NC}"
+    fi
+    echo ""
+}
+
+show_doctor() {
+    echo ""
+    echo -e "${CYAN}Doctor${NC}"
+    echo -e "${CYAN}======${NC}"
+    echo ""
+
+    # 0. Version
+    VERSION_FILE="$REPO_ROOT/VERSION"
+    if [ -f "$VERSION_FILE" ]; then
+        VERSION=$(cat "$VERSION_FILE" | tr -d '[:space:]')
+        echo -e "${GREEN}[OK]   Memory Bank v${VERSION}${NC}"
+    else
+        echo -e "${YELLOW}[WARN] VERSION file not found${NC}"
+    fi
+
+    # 1. Git repo
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo -e "${GREEN}[OK]   Git repository detected${NC}"
+    else
+        echo -e "${YELLOW}[WARN] Not a git repository — mb commit won't work${NC}"
+    fi
+
+    # 2. Templates
+    if [ -d "$REPO_ROOT/templates" ]; then
+        echo -e "${GREEN}[OK]   Templates found (REPO_ROOT = $REPO_ROOT)${NC}"
+    else
+        echo -e "${RED}[ERROR] Templates not found — run install.sh from memory-bank repo${NC}"
+    fi
+
+    # 3. Required files
+    ALL_PRESENT=true
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        [ ! -f "memory-bank/$f" ] && ALL_PRESENT=false && break
+    done
+    if [ "$ALL_PRESENT" = true ]; then
+        echo -e "${GREEN}[OK]   All memory-bank files present${NC}"
+    else
+        echo -e "${RED}[ERROR] One or more memory-bank files missing — run 'mb init'${NC}"
+    fi
+
+    if [ -f "CLAUDE.md" ]; then
+        echo -e "${GREEN}[OK]   CLAUDE.md present${NC}"
+    else
+        echo -e "${RED}[ERROR] CLAUDE.md missing — run 'mb init'${NC}"
+    fi
+
+    # 4. Hooks
+    if [ -f ".claude/settings.json" ]; then
+        if grep -q "PostToolUse" ".claude/settings.json" 2>/dev/null; then
+            echo -e "${GREEN}[OK]   PostToolUse hook active (last-reviewed auto-updates)${NC}"
+        else
+            echo -e "${YELLOW}[WARN] No PostToolUse hook — last-reviewed won't auto-update${NC}"
+        fi
+    else
+        echo -e "${YELLOW}[WARN] No .claude/settings.json — safety hooks inactive${NC}"
+    fi
+
+    # 5. File sizes
+    OVER_LIMIT=false
+    check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb slim'${NC}" && OVER_LIMIT=true; }
+    [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   150
+    [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 300
+    [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    400
+    [ -f "memory-bank/activeContext.md"  ] && check_size "memory-bank/activeContext.md"  150
+    [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       400
+    [ "$OVER_LIMIT" = false ] && echo -e "${GREEN}[OK]   File sizes within limits${NC}"
+
+    # 6. Handoff
+    if [ -f "handoff.md" ]; then
+        echo -e "${YELLOW}[WARN] handoff.md found — merge into memory-bank/ and delete${NC}"
+    else
+        echo -e "${GREEN}[OK]   No pending handoff${NC}"
+    fi
+
+    echo ""
+}
+
+show_budget() {
+    echo ""
+    echo -e "${CYAN}Token Budget Health${NC}"
+    echo -e "${CYAN}===================${NC}"
+    echo ""
+
+    CLAUDE_FILE="CLAUDE.md"
+    if [ -f "$CLAUDE_FILE" ]; then
+        CLAUDE_KB=$(awk 'END {printf "%.1f", NR * 4 / 1024}' "$CLAUDE_FILE")
+        if awk "BEGIN {exit ($CLAUDE_KB > 8) ? 0 : 1}"; then
+            echo -e "${YELLOW}  CLAUDE.md      ${CLAUDE_KB} KB  [WARN] (loads every session)${NC}"
+        else
+            echo -e "${GREEN}  CLAUDE.md      ${CLAUDE_KB} KB  [OK] (loads every session)${NC}"
+        fi
+    else
+        echo -e "${RED}  CLAUDE.md      not found${NC}"
+    fi
+
+    if [ -d "$MEMORY_BANK_PATH" ]; then
+        MB_BYTES=$(find "$MEMORY_BANK_PATH" -maxdepth 1 -type f | xargs wc -c 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
+        MB_KB=$(awk "BEGIN {printf \"%.1f\", $MB_BYTES / 1024}")
+        if awk "BEGIN {exit ($MB_KB > 40) ? 0 : 1}"; then
+            echo -e "${YELLOW}  memory-bank/   ${MB_KB} KB  [WARN] (re-read after every compaction)${NC}"
+        else
+            echo -e "${GREEN}  memory-bank/   ${MB_KB} KB  [OK] (re-read after every compaction)${NC}"
+        fi
+    fi
+
+    echo ""
+    echo -e "${CYAN}  Quota tips:${NC}"
+    echo "    /compact Focus on decisions and file paths   (after planning/debugging)"
+    echo "    /clear                                       (between unrelated tasks)"
+    echo "    /cost                                        (check usage mid-session)"
+    echo "    /model opus  ->  /model sonnet               (escalate then return)"
+    echo ""
+}
+
+show_audit() {
+    echo ""
+    echo -e "${CYAN}Memory Bank Freshness Audit${NC}"
+    echo -e "${CYAN}===========================${NC}"
+    echo ""
+
+    if [ ! -d "$MEMORY_BANK_PATH" ]; then
+        echo -e "${RED}Error: memory-bank/ directory not found${NC}"
+        return
+    fi
+
+    TODAY=$(date +%s)
+    FILES=("projectbrief.md" "systemPatterns.md" "techContext.md" "activeContext.md" "progress.md")
+
+    printf "%-22s %-16s %-17s %s\n" "File" "Last Reviewed" "Stale Threshold" "Status"
+    printf "%-22s %-16s %-17s %s\n" "----" "-------------" "---------------" "------"
+
+    TOTAL_BYTES=0
+    STALE_COUNT=0
+
+    for NAME in "${FILES[@]}"; do
+        PATH_="$MEMORY_BANK_PATH/$NAME"
+        if [ ! -f "$PATH_" ]; then
+            printf "%-22s %-16s %-17s " "$NAME" "-" "-"
+            echo -e "${RED}MISSING${NC}"
+            continue
+        fi
+
+        TOTAL_BYTES=$((TOTAL_BYTES + $(wc -c < "$PATH_")))
+
+        LAST_REVIEWED=$(grep -m1 'last-reviewed:' "$PATH_" | sed 's/last-reviewed:\s*//' | tr -d ' \r' || true)
+        STALE_DAYS=$(grep -m1 'staleness-threshold:' "$PATH_" | sed 's/staleness-threshold:\s*//' | sed 's/d//' | tr -d ' \r' || echo "90")
+        REVIEW_DAYS=$(grep -m1 'review-cycle:' "$PATH_" | sed 's/review-cycle:\s*//' | sed 's/d//' | tr -d ' \r' || true)
+
+        if [ -z "$LAST_REVIEWED" ] || [ "$LAST_REVIEWED" = "YYYY-MM-DD" ]; then
+            printf "%-22s %-16s %-17s " "$NAME" "no frontmatter" "${STALE_DAYS}d"
+            echo -e "${YELLOW}NO FRONTMATTER${NC}"
+            continue
+        fi
+
+        # WHY: Convert date to epoch for arithmetic. date -d works on Linux;
+        # date -j -f works on macOS. Try both and fall back to awk.
+        REVIEWED_EPOCH=$(date -d "$LAST_REVIEWED" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$LAST_REVIEWED" +%s 2>/dev/null || echo "0")
+        DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
+
+        if [ "$DAYS_SINCE" -gt "${STALE_DAYS:-90}" ]; then
+            STATUS="[STALE] ${DAYS_SINCE}d ago"
+            COLOR=$RED
+            STALE_COUNT=$((STALE_COUNT + 1))
+        elif [ -n "$REVIEW_DAYS" ] && [ "$DAYS_SINCE" -gt "$REVIEW_DAYS" ]; then
+            STATUS="[DUE] ${DAYS_SINCE}d ago"
+            COLOR=$YELLOW
+        else
+            STATUS="OK (${DAYS_SINCE}d ago)"
+            COLOR=$GREEN
+        fi
+
+        printf "%-22s %-16s %-17s " "$NAME" "$LAST_REVIEWED" "${STALE_DAYS}d"
+        echo -e "${COLOR}${STATUS}${NC}"
+    done
+
+    TOTAL_KB=$(( TOTAL_BYTES / 1024 ))
+    echo ""
+    if [ "$TOTAL_KB" -gt 60 ]; then
+        echo -e "${YELLOW}Total memory-bank/ size: ${TOTAL_KB} KB${NC}"
+    else
+        echo -e "${GRAY}Total memory-bank/ size: ${TOTAL_KB} KB${NC}"
+    fi
+
+    if [ "$TOTAL_KB" -gt 60 ] && [ "$STALE_COUNT" -ge 2 ]; then
+        echo -e "${YELLOW}Compaction recommended: run 'mb compact' to get a cleanup prompt.${NC}"
+    elif [ "$STALE_COUNT" -gt 0 ]; then
+        echo -e "${YELLOW}Run 'mb archive' or evict stale entries per MEMORY-BANK.md criteria.${NC}"
+    else
+        echo -e "${GREEN}All files current.${NC}"
+    fi
+    echo ""
+}
+
+show_query() {
+    local KEYWORD="$1"
+
+    if [ -z "$KEYWORD" ]; then
+        echo -e "${YELLOW}Usage: mb query <keyword>${NC}"
+        echo -e "${YELLOW}Example: mb query auth${NC}"
+        return
+    fi
+
+    echo ""
+    echo -e "${CYAN}Query: $KEYWORD${NC}"
+    echo ""
+
+    if [ ! -d "$MEMORY_BANK_PATH" ]; then
+        echo -e "${RED}Error: memory-bank/ directory not found${NC}"
+        return
+    fi
+
+    FILES=("projectbrief.md" "systemPatterns.md" "techContext.md" "activeContext.md" "progress.md")
+    FOUND=false
+
+    for NAME in "${FILES[@]}"; do
+        PATH_="$MEMORY_BANK_PATH/$NAME"
+        if [ ! -f "$PATH_" ]; then continue; fi
+
+        # WHY: Two-pass search — tags in frontmatter, then ## section headers.
+        # Frontmatter ends at second --- delimiter; grep -A handles partial matches.
+        MATCHED_TAGS=$(awk '
+            /^---/ { fm_count++; next }
+            fm_count == 1 && /^\s+-\s+/ {
+                tag = $0; gsub(/^\s+-\s+/, "", tag)
+                if (tag ~ kw) print "  " tag
+            }
+            fm_count >= 2 { exit }
+        ' kw="$KEYWORD" "$PATH_" 2>/dev/null || true)
+
+        MATCHED_SECTIONS=$(grep -n "^## .*$KEYWORD" "$PATH_" 2>/dev/null | sed 's/^/  ## /' || true)
+
+        if [ -n "$MATCHED_TAGS" ] || [ -n "$MATCHED_SECTIONS" ]; then
+            FOUND=true
+            echo -e "${WHITE}$NAME${NC}"
+            [ -n "$MATCHED_TAGS" ] && echo -e "${CYAN}  Tags:${NC}$MATCHED_TAGS"
+            [ -n "$MATCHED_SECTIONS" ] && echo -e "${CYAN}$MATCHED_SECTIONS${NC}"
+            echo ""
+        fi
+    done
+
+    if [ "$FOUND" = false ]; then
+        echo -e "${YELLOW}No matches for '$KEYWORD' in tags or section headers.${NC}"
+        echo -e "${YELLOW}Check your tag vocabulary in standards/MEMORY-BANK.md.${NC}"
+    fi
+    echo ""
+}
+
+show_compact() {
+    echo ""
+    echo -e "${CYAN}Memory Compaction${NC}"
+    echo -e "${CYAN}=================${NC}"
+    echo ""
+
+    TOTAL_BYTES=0
+    if [ -d "$MEMORY_BANK_PATH" ]; then
+        TOTAL_BYTES=$(find "$MEMORY_BANK_PATH" -maxdepth 1 -type f | xargs wc -c 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
+    fi
+    TOTAL_KB=$(( TOTAL_BYTES / 1024 ))
+
+    if [ "$TOTAL_KB" -lt 60 ]; then
+        echo -e "${GREEN}memory-bank/ is ${TOTAL_KB} KB — below the 60 KB compaction threshold.${NC}"
+        echo -e "${YELLOW}Compaction is most valuable when size > 60 KB and mb audit shows stale files.${NC}"
+        echo ""
+    fi
+
+    echo -e "${YELLOW}Paste this prompt to the AI to compact your memory:${NC}"
+    echo ""
+    echo "---"
+    cat << 'EOF'
+Read all files in memory-bank/ in this authority order:
+  1. projectbrief.md (immutable — never remove)
+  2. systemPatterns.md
+  3. techContext.md
+  4. activeContext.md
+  5. progress.md
+
+Then compact the memory bank:
+  - Identify and remove duplicate decisions (keep the most recent / authoritative copy)
+  - Flag and surface any contradictions between files for my review
+  - Remove entries from activeContext.md that are already captured in progress.md
+  - Remove progress.md entries for work completed more than 6 months ago (archive them to docs/archive/progress/)
+  - Condense verbose descriptions to their essential decision + rationale
+  - Preserve all unique architectural decisions, constraints, and active work
+
+After compacting, show me:
+  - What was removed from each file and why
+  - Any contradictions found (do not resolve them — surface them for my decision)
+  - New line counts for each file
+
+Do not commit the changes until I confirm.
+EOF
+    echo "---"
+    echo ""
+}
+
 case "$COMMAND" in
-    status)  show_status ;;
-    update)  show_update ;;
-    archive) show_archive ;;
-    slim)    show_slim ;;
-    commit)  invoke_commit ;;
-    help)    show_help ;;
+    init)     invoke_init ;;
+    validate) show_validate ;;
+    doctor)   show_doctor ;;
+    status)   show_status ;;
+    audit)    show_audit ;;
+    query)    show_query "$ARG" ;;
+    compact)  show_compact ;;
+    update)   show_update ;;
+    archive)  show_archive ;;
+    slim)     show_slim ;;
+    commit)   invoke_commit ;;
+    budget)   show_budget ;;
+    help)     show_help ;;
     *)
         echo -e "${RED}Unknown command: $COMMAND${NC}"
         show_help

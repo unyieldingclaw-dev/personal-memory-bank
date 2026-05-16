@@ -78,6 +78,23 @@ Contains:
 
 Update when: Features completed, bugs found, milestones reached
 
+## Authority Tiers
+
+Memory Bank files have explicit authority levels. When an agent encounters a contradiction
+between files, the higher-tier file governs. The agent must surface the conflict and ask
+the user to resolve it before changing a higher-tier decision.
+
+| Tier | Level | Files | Behavior |
+|------|-------|-------|----------|
+| 1 | IMMUTABLE | projectbrief.md | Never negotiated; overrides all other files |
+| 2 | STABLE | systemPatterns.md, techContext.md | Change requires deliberate decision + user confirm |
+| 3 | VOLATILE | activeContext.md | Session state; evict stale content weekly |
+| 4 | ACCUMULATING | progress.md | Archive to `docs/archive/` partitioned by category |
+
+**Conflict resolution:** `projectbrief.md` > `systemPatterns.md` / `techContext.md` >
+`activeContext.md` > `progress.md`. Agents must not silently reconcile contradictions —
+they must flag them.
+
 ## File Size Guidelines
 
 Keep Memory Bank files focused and scannable:
@@ -87,8 +104,38 @@ Keep Memory Bank files focused and scannable:
 | projectbrief.md | 50-80 lines | 150 | Review - should rarely grow |
 | systemPatterns.md | 100-180 lines | 300 | Consolidate similar patterns |
 | techContext.md | 150-250 lines | 400 | Move details to docs/ |
-| activeContext.md | 50-100 lines | 150 | Archive to `docs/ARCHIVE.md` |
+| activeContext.md | 50-100 lines | 150 | Archive to `docs/archive/` |
 | progress.md | 100-250 lines | 400 | Archive old versions |
+
+## Eviction Criteria
+
+Content should leave Memory Bank files on objective criteria, not agent judgment.
+
+| File | Condition | Action |
+|------|-----------|--------|
+| activeContext.md | Entry > 14 days old and not an active blocker | Move to `docs/archive/context/YYYY-MM-<topic>.md` |
+| activeContext.md | "Next Steps" item completed | Move to `progress.md` immediately |
+| activeContext.md | Issue marked resolved | Delete — do not archive |
+| progress.md | Work completed > 6 months ago | Move to `docs/archive/progress/YYYY-MM-<topic>.md` |
+| progress.md | Bug fixed > 3 months ago | Move to `docs/archive/progress/YYYY-MM-<topic>.md` |
+
+Run `mb audit` to surface files that are stale or due for review.
+
+## Archive Structure
+
+Archival is partitioned by category to remain searchable. A monolithic `docs/archive/`
+becomes a retrieval dead-zone as it grows; partitioned directories stay queryable.
+
+```
+docs/archive/
+  context/     YYYY-MM-<topic>.md   (evicted from activeContext.md)
+  progress/    YYYY-MM-<topic>.md   (evicted from progress.md)
+  decisions/   YYYY-MM-<topic>.md   (evicted from systemPatterns.md — rare)
+```
+
+When archiving, create a new file in the appropriate subdirectory named with the current
+month and a short topic label (e.g., `2026-05-auth-refactor.md`). Never append to an
+existing archive file — keep each file focused on one topic or time period.
 
 ## What Must Never Appear in Memory Bank Files
 
@@ -133,6 +180,21 @@ Never ask the user to repeat constraints already documented there.
 ### Claude Code
 
 Create `CLAUDE.md` in project root with Memory Bank instructions (see template).
+
+## Worktree Guidance
+
+`memory-bank/` is canonical and lives in the **main worktree** only.
+
+- From a git subworktree, read memory-bank/ from the main worktree root:
+  ```bash
+  $(git rev-parse --git-common-dir)/../memory-bank/
+  ```
+- Never update or commit memory-bank/ files from within a subworktree. Update the
+  main worktree instead, then pull the changes into your branch if needed.
+- `mb commit` detects subworktrees and refuses with a redirect message.
+
+This keeps a single authoritative copy. Subworktrees are ephemeral execution branches;
+the memory-bank is shared state.
 
 ## Claude Code vs Cursor: Context Lifecycle
 
@@ -230,7 +292,7 @@ Teach AI to recognize these shortcuts:
 |---------|--------|
 | `mb update` | Update all relevant Memory Bank files |
 | `mb status` | Show file sizes, timestamps, health check |
-| `mb archive` | Move old history to `docs/ARCHIVE.md` |
+| `mb archive` | Move old history to `docs/archive/` |
 | `mb slim` | Trim activeContext.md to essentials |
 | `mb commit` | Stage and commit Memory Bank changes |
 
@@ -242,6 +304,43 @@ Agent should proactively update Memory Bank:
 - After adding dependencies → techContext.md
 - After establishing patterns → systemPatterns.md
 - At session end ("done", "wrap up") → offer to update
+
+## Tag-Based Retrieval
+
+Each memory-bank file carries YAML frontmatter with hierarchical tags:
+
+```yaml
+tags:
+  - auth/session
+  - infra/postgres
+```
+
+Use `domain/concept` format. Flat tags (`auth`, `session`) are not used — they accumulate
+synonym drift and require maintenance discipline that rarely survives project scale.
+
+`mb query <keyword>` searches tags and section headers across all memory-bank files.
+Partial hierarchical matches work: `mb query auth` matches `auth/session`, `auth/oauth`.
+
+**Upgrade path:** Tags are embedding labels. To add semantic retrieval later, wire the
+`tags:` field to a vector pipeline — no structural changes to the files required.
+
+## Memory Compaction
+
+Compaction is distinct from eviction. Eviction removes stale entries. Compaction rewrites,
+summarizes, deduplicates, and resolves contradictions across all memory-bank files.
+
+**When to compact:** when `mb audit` shows ≥ 2 files stale AND `memory-bank/` total size
+exceeds 60 KB. Run `mb compact` to get a structured AI prompt for the operation.
+
+**What compaction does (AI-driven):**
+1. Reads all files in authority order
+2. Identifies: duplicate decisions, contradictory claims, orphaned sections, entries
+   already captured elsewhere
+3. Rewrites each file to its canonical minimal form
+4. Reports what was removed and why
+
+Compaction requires human review of the AI's output before committing. It is never
+fully automatic — the AI proposes, the human approves.
 
 ## Integration with AGENTS.md
 
@@ -271,12 +370,12 @@ Memory Bank is working when:
 
 ### Memory Bank Getting Stale
 1. Review `activeContext.md` weekly
-2. Archive old decisions to `docs/ARCHIVE.md`
+2. Archive old decisions to `docs/archive/`
 3. Update `progress.md` after each milestone
 4. Clean up outdated information
 
 ### Memory Bank Too Large
-1. Move detailed session logs to `docs/ARCHIVE.md`
+1. Move detailed session logs to `docs/archive/`
 2. Remove implementation details (keep decisions only)
 3. Consolidate related patterns
-4. Archive historical context to `docs/ARCHIVE.md`
+4. Archive historical context to `docs/archive/`

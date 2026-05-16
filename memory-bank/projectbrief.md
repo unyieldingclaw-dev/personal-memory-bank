@@ -1,3 +1,14 @@
+---
+authority: immutable
+review-cycle: never
+retention: permanent
+staleness-threshold: 365d
+tags:
+  - requirements/core
+  - constraints/non-negotiable
+last-reviewed: 2026-05-14
+---
+
 # Project Brief
 
 ## Purpose

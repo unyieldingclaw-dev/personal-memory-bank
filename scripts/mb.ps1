@@ -20,9 +20,16 @@
 # Default to "help" so running "mb" alone shows usage, not an error.
 param(
     [Parameter(Position=0)]
-    [ValidateSet("status", "update", "archive", "slim", "commit", "budget", "help")]
-    [string]$Command = "help"
+    [ValidateSet("init", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "budget", "help")]
+    [string]$Command = "help",
+    [Parameter(Position=1)]
+    [string]$Arg = ""
 )
+
+# WHY: $PSScriptRoot is the directory containing mb.ps1 (scripts/).
+# The repo root is one level up; templates/ lives there.
+# $env:MB_HOME overrides this for globally installed mb (via install.bat).
+$RepoRoot = if ($env:MB_HOME) { $env:MB_HOME } else { Split-Path -Parent $PSScriptRoot }
 
 # WHY: Hardcoded relative path assumes script runs from project root.
 # This matches the expected usage pattern (developers run "mb" from their project).
@@ -36,12 +43,24 @@ function Show-Help {
     Write-Host "Usage: mb <command>" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Commands:"
+    Write-Host "  init     Initialize Memory Bank in the current project"
+    Write-Host "  validate Check that required files and frontmatter are present"
+    Write-Host "  doctor   Full health check (git, hooks, file sizes, staleness)"
     Write-Host "  status   Show file sizes, timestamps, and health check"
+    Write-Host "  audit    Freshness audit — flag stale or overdue files"
+    Write-Host "  query    Search memory-bank by tag or section header"
+    Write-Host "  compact  Print AI prompt to compact (deduplicate + summarize) memory"
     Write-Host "  update   Reminder to update Memory Bank (manual action)"
     Write-Host "  archive  Show instructions for archiving old content"
     Write-Host "  slim     Check if activeContext.md needs trimming"
     Write-Host "  commit   Stage and commit Memory Bank changes"
+    Write-Host "  budget   Check token budget health (CLAUDE.md + memory-bank/ sizes)"
     Write-Host "  help     Show this help message"
+    Write-Host ""
+    Write-Host "Examples:"
+    Write-Host "  mb audit              Check freshness of all memory-bank files"
+    Write-Host "  mb query auth         Find files tagged auth/* or sections mentioning auth"
+    Write-Host "  mb compact            Get AI prompt to compact memory"
     Write-Host ""
 }
 
@@ -216,6 +235,18 @@ function Invoke-Commit {
     Write-Host "==========================" -ForegroundColor Cyan
     Write-Host ""
     
+    # WHY: Detect subworktrees so we refuse memory-bank/ mutations from the wrong root.
+    # git rev-parse --git-common-dir returns the shared .git dir; in the main worktree
+    # that resolves to .git/ inside $PWD. In a subworktree it's a different path.
+    $commonGitDir = git rev-parse --git-common-dir 2>$null
+    $localGitDir  = Join-Path $PWD ".git"
+    if ($commonGitDir -and (Resolve-Path $commonGitDir -ErrorAction SilentlyContinue) -ne (Resolve-Path $localGitDir -ErrorAction SilentlyContinue)) {
+        Write-Host "[ERROR] You are in a git subworktree." -ForegroundColor Red
+        Write-Host "Commit memory-bank/ from the main worktree root instead." -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+
     # WHY: 2>$null suppresses git errors if not in a repo (graceful handling).
     # --porcelain gives machine-readable output (stable across git versions).
     $status = git status --porcelain $MemoryBankPath 2>$null
@@ -278,13 +309,453 @@ function Show-Budget {
     Write-Host ""
 }
 
+function Invoke-Init {
+    Write-Host ""
+    Write-Host "Memory Bank" -ForegroundColor Cyan
+    Write-Host "===========" -ForegroundColor Cyan
+    Write-Host ""
+
+    $TemplatesDir = Join-Path $RepoRoot "templates"
+    if (-not (Test-Path $TemplatesDir)) {
+        Write-Host "[ERROR] Templates not found at $TemplatesDir" -ForegroundColor Red
+        Write-Host "Run install.bat from the memory-bank repo, or set MB_HOME." -ForegroundColor Yellow
+        return
+    }
+
+    $Target = $PWD.Path
+    $Created = @()
+    $Skipped = @()
+
+    function Copy-IfNew {
+        param([string]$Src, [string]$Dst, [string]$Label)
+        $dir = Split-Path -Parent $Dst
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        if (-not (Test-Path $Dst)) {
+            Copy-Item -Path $Src -Destination $Dst -Force
+            $script:Created += $Label
+        } else {
+            $script:Skipped += $Label
+        }
+    }
+
+    # memory-bank/ files
+    foreach ($f in Get-ChildItem (Join-Path $TemplatesDir "memory-bank") -File) {
+        Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target "memory-bank\$($f.Name)") -Label "memory-bank/$($f.Name)"
+    }
+
+    # CLAUDE.md
+    Copy-IfNew -Src (Join-Path $TemplatesDir "CLAUDE.md") -Dst (Join-Path $Target "CLAUDE.md") -Label "CLAUDE.md"
+
+    # .claude/commands/
+    foreach ($f in Get-ChildItem (Join-Path $TemplatesDir "claude-commands") -File) {
+        Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"
+    }
+
+    # .gitignore
+    $gitignore = Join-Path $Target ".gitignore"
+    if (Test-Path $gitignore) {
+        if ((Get-Content $gitignore -Raw) -notmatch "handoff\.md") {
+            Add-Content -Path $gitignore -Value "`n# Memory Bank`nhandoff.md"
+            $Created += ".gitignore (added handoff.md)"
+        }
+    } else {
+        Set-Content -Path $gitignore -Value "# Memory Bank`nhandoff.md"
+        $Created += ".gitignore"
+    }
+
+    foreach ($item in $Created) { Write-Host "  [+] $item" -ForegroundColor Green }
+    foreach ($item in $Skipped) { Write-Host "  [=] $item (kept existing)" -ForegroundColor DarkGray }
+
+    Write-Host ""
+    if ($Created.Count -gt 0) {
+        Write-Host "Ready. Open Claude Code and start your first session." -ForegroundColor Green
+    } else {
+        Write-Host "Already initialized — no files changed." -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    Write-Host "Next:" -ForegroundColor Yellow
+    Write-Host "  Edit memory-bank/projectbrief.md  -- what does this project do?"
+    Write-Host "  Edit memory-bank/techContext.md   -- what is your stack?"
+    Write-Host "  Run: mb status"
+    Write-Host ""
+}
+
+function Show-Validate {
+    Write-Host ""
+    Write-Host "Validation" -ForegroundColor Cyan
+    Write-Host "==========" -ForegroundColor Cyan
+    Write-Host ""
+
+    $pass = $true
+
+    # Required files
+    $required = @(
+        @{Path="memory-bank/projectbrief.md";   Label="memory-bank/projectbrief.md"},
+        @{Path="memory-bank/systemPatterns.md"; Label="memory-bank/systemPatterns.md"},
+        @{Path="memory-bank/techContext.md";    Label="memory-bank/techContext.md"},
+        @{Path="memory-bank/activeContext.md";  Label="memory-bank/activeContext.md"},
+        @{Path="memory-bank/progress.md";       Label="memory-bank/progress.md"},
+        @{Path="CLAUDE.md";                     Label="CLAUDE.md"}
+    )
+
+    Write-Host "Required files" -ForegroundColor Yellow
+    foreach ($item in $required) {
+        if (Test-Path $item.Path) {
+            Write-Host "  [OK]      $($item.Label)" -ForegroundColor Green
+        } else {
+            Write-Host "  [MISSING] $($item.Label)" -ForegroundColor Red
+            $pass = $false
+        }
+    }
+
+    # Frontmatter check
+    Write-Host ""
+    Write-Host "Frontmatter" -ForegroundColor Yellow
+    $mbFiles = @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")
+    foreach ($name in $mbFiles) {
+        $path = "memory-bank/$name"
+        if (-not (Test-Path $path)) { continue }
+        $content = Get-Content $path -Raw
+        $hasAuth     = $content -match '(?m)^authority:'
+        $hasReviewed = $content -match '(?m)^last-reviewed:'
+        if ($hasAuth -and $hasReviewed) {
+            Write-Host "  [OK]   $name" -ForegroundColor Green
+        } else {
+            $missing = @()
+            if (-not $hasAuth)     { $missing += "authority" }
+            if (-not $hasReviewed) { $missing += "last-reviewed" }
+            Write-Host "  [WARN] $name -- missing: $($missing -join ', ')" -ForegroundColor Yellow
+        }
+    }
+
+    # Handoff check
+    Write-Host ""
+    if (Test-Path "handoff.md") {
+        Write-Host "  [WARN] handoff.md present -- merge it into memory-bank/ and delete" -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    if ($pass) {
+        Write-Host "All checks passed." -ForegroundColor Green
+    } else {
+        Write-Host "Issues found. Run 'mb init' to create missing files." -ForegroundColor Red
+    }
+    Write-Host ""
+}
+
+function Show-Doctor {
+    Write-Host ""
+    Write-Host "Doctor" -ForegroundColor Cyan
+    Write-Host "======" -ForegroundColor Cyan
+    Write-Host ""
+
+    # 0. Version
+    $versionFile = Join-Path $RepoRoot "VERSION"
+    if (Test-Path $versionFile) {
+        $version = (Get-Content $versionFile -Raw).Trim()
+        Write-Host "[OK]   Memory Bank v$version" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] VERSION file not found" -ForegroundColor Yellow
+    }
+
+    # 1. Git repo
+    $isGit = git rev-parse --is-inside-work-tree 2>$null
+    if ($isGit -eq "true") {
+        Write-Host "[OK]   Git repository detected" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Not a git repository — mb commit won't work" -ForegroundColor Yellow
+    }
+
+    # 2. Templates reachable
+    $TemplatesDir = Join-Path $RepoRoot "templates"
+    if (Test-Path $TemplatesDir) {
+        Write-Host "[OK]   Templates found (MB_HOME = $RepoRoot)" -ForegroundColor Green
+    } else {
+        Write-Host "[ERROR] Templates not found — run install.bat from the memory-bank repo" -ForegroundColor Red
+    }
+
+    # 3. Required files
+    $allFiles = $true
+    foreach ($f in @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")) {
+        if (-not (Test-Path "memory-bank/$f")) { $allFiles = $false; break }
+    }
+    if ($allFiles) {
+        Write-Host "[OK]   All memory-bank files present" -ForegroundColor Green
+    } else {
+        Write-Host "[ERROR] One or more memory-bank files missing — run 'mb init'" -ForegroundColor Red
+    }
+
+    if (Test-Path "CLAUDE.md") {
+        Write-Host "[OK]   CLAUDE.md present" -ForegroundColor Green
+    } else {
+        Write-Host "[ERROR] CLAUDE.md missing — run 'mb init'" -ForegroundColor Red
+    }
+
+    # 4. Hooks
+    $settingsPath = ".claude/settings.json"
+    if (Test-Path $settingsPath) {
+        $settings = Get-Content $settingsPath -Raw
+        if ($settings -match "PostToolUse") {
+            Write-Host "[OK]   PostToolUse hook active (last-reviewed auto-updates)" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] No PostToolUse hook — last-reviewed won't auto-update" -ForegroundColor Yellow
+            Write-Host "       Copy templates/.claude/settings.json to enable" -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Host "[WARN] No .claude/settings.json — safety hooks inactive" -ForegroundColor Yellow
+        Write-Host "       Copy templates/.claude/settings.json to enable" -ForegroundColor DarkGray
+    }
+
+    # 5. File sizes
+    $hasOverLimit = $false
+    $sizeSpecs = @(
+        @{Name="projectbrief.md"; Max=150},
+        @{Name="systemPatterns.md"; Max=300},
+        @{Name="techContext.md"; Max=400},
+        @{Name="activeContext.md"; Max=150},
+        @{Name="progress.md"; Max=400}
+    )
+    foreach ($s in $sizeSpecs) {
+        $p = "memory-bank/$($s.Name)"
+        if (Test-Path $p) {
+            $lines = (Get-Content $p).Count
+            if ($lines -gt $s.Max) {
+                Write-Host "[WARN] memory-bank/$($s.Name) is $lines lines (max $($s.Max)) — run 'mb slim'" -ForegroundColor Yellow
+                $hasOverLimit = $true
+            }
+        }
+    }
+    if (-not $hasOverLimit) {
+        Write-Host "[OK]   File sizes within limits" -ForegroundColor Green
+    }
+
+    # 6. Handoff
+    if (Test-Path "handoff.md") {
+        Write-Host "[WARN] handoff.md found — merge into memory-bank/ and delete" -ForegroundColor Yellow
+    } else {
+        Write-Host "[OK]   No pending handoff" -ForegroundColor Green
+    }
+
+    Write-Host ""
+}
+
+function Show-Audit {
+    Write-Host ""
+    Write-Host "Memory Bank Freshness Audit" -ForegroundColor Cyan
+    Write-Host "===========================" -ForegroundColor Cyan
+    Write-Host ""
+
+    if (-not (Test-Path $MemoryBankPath)) {
+        Write-Host "Error: memory-bank/ directory not found" -ForegroundColor Red
+        return
+    }
+
+    $today = Get-Date
+    $files = @("projectbrief.md", "systemPatterns.md", "techContext.md", "activeContext.md", "progress.md")
+
+    Write-Host "File                    Last Reviewed    Stale Threshold   Status" -ForegroundColor Yellow
+    Write-Host "----                    -------------    ---------------   ------"
+
+    $totalBytes = 0
+    $staleCount = 0
+
+    foreach ($name in $files) {
+        $path = Join-Path $MemoryBankPath $name
+        if (-not (Test-Path $path)) {
+            Write-Host "$($name.PadRight(22))   -                -                 " -NoNewline
+            Write-Host "MISSING" -ForegroundColor Red
+            continue
+        }
+
+        $totalBytes += (Get-Item $path).Length
+        $content = Get-Content $path -Raw
+
+        # WHY: Parse frontmatter fields directly from file content so the script
+        # works without a YAML parser dependency.
+        $lastReviewed = if ($content -match '(?m)^last-reviewed:\s*(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { $null }
+        $staleThreshold = if ($content -match '(?m)^staleness-threshold:\s*(\d+)d') { [int]$Matches[1] } else { 90 }
+        $reviewCycle = if ($content -match '(?m)^review-cycle:\s*(\d+)d') { [int]$Matches[1] } else { $null }
+
+        if ($null -eq $lastReviewed) {
+            Write-Host "$($name.PadRight(22))   no frontmatter   ${staleThreshold}d                " -NoNewline
+            Write-Host "NO FRONTMATTER" -ForegroundColor Yellow
+            continue
+        }
+
+        $reviewedDate = [datetime]::ParseExact($lastReviewed, "yyyy-MM-dd", $null)
+        $daysSince = ($today - $reviewedDate).Days
+
+        $staleStr = "${staleThreshold}d"
+        $reviewedStr = $lastReviewed.PadRight(15)
+
+        if ($daysSince -gt $staleThreshold) {
+            $status = "[STALE] $daysSince days ago"
+            $color = "Red"
+            $staleCount++
+        } elseif ($null -ne $reviewCycle -and $daysSince -gt $reviewCycle) {
+            $status = "[DUE] $daysSince days ago"
+            $color = "Yellow"
+        } else {
+            $status = "OK ($daysSince days ago)"
+            $color = "Green"
+        }
+
+        Write-Host "$($name.PadRight(22))   $reviewedStr   $($staleStr.PadRight(17))   " -NoNewline
+        Write-Host $status -ForegroundColor $color
+    }
+
+    $totalKB = [math]::Round($totalBytes / 1KB, 1)
+    Write-Host ""
+    Write-Host "Total memory-bank/ size: $totalKB KB" -ForegroundColor ($totalKB -gt 60 ? "Yellow" : "DarkCyan")
+
+    if ($totalKB -gt 60 -and $staleCount -ge 2) {
+        Write-Host ""
+        Write-Host "Compaction recommended: run 'mb compact' to get a cleanup prompt." -ForegroundColor Yellow
+    } elseif ($staleCount -gt 0) {
+        Write-Host "Run 'mb archive' or evict stale entries per MEMORY-BANK.md criteria." -ForegroundColor Yellow
+    } else {
+        Write-Host "All files current." -ForegroundColor Green
+    }
+    Write-Host ""
+}
+
+function Show-Query {
+    param([string]$Keyword)
+
+    if ([string]::IsNullOrWhiteSpace($Keyword)) {
+        Write-Host "Usage: mb query <keyword>" -ForegroundColor Yellow
+        Write-Host "Example: mb query auth" -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host ""
+    Write-Host "Query: $Keyword" -ForegroundColor Cyan
+    Write-Host "======$('=' * $Keyword.Length)" -ForegroundColor Cyan
+    Write-Host ""
+
+    if (-not (Test-Path $MemoryBankPath)) {
+        Write-Host "Error: memory-bank/ directory not found" -ForegroundColor Red
+        return
+    }
+
+    $files = @("projectbrief.md", "systemPatterns.md", "techContext.md", "activeContext.md", "progress.md")
+    $found = $false
+
+    foreach ($name in $files) {
+        $path = Join-Path $MemoryBankPath $name
+        if (-not (Test-Path $path)) { continue }
+
+        $lines = Get-Content $path
+        $matchedTags = @()
+        $matchedSections = @()
+        $inFrontmatter = $false
+        $frontmatterDone = $false
+        $frontmatterCount = 0
+
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+
+            # WHY: Track frontmatter boundaries (--- delimiters) to search tags: block.
+            if ($line -eq "---" -and -not $frontmatterDone) {
+                $frontmatterCount++
+                $inFrontmatter = $frontmatterCount -eq 1
+                if ($frontmatterCount -eq 2) { $frontmatterDone = $true; $inFrontmatter = $false }
+                continue
+            }
+
+            if ($inFrontmatter -and $line -match '^\s+-\s+(.+)$') {
+                $tag = $Matches[1]
+                # WHY: Hierarchical partial match — "auth" matches "auth/session".
+                if ($tag -like "*$Keyword*") { $matchedTags += $tag }
+                continue
+            }
+
+            if (-not $inFrontmatter -and $line -match '^##\s+(.+)$') {
+                $heading = $Matches[1]
+                if ($heading -like "*$Keyword*") { $matchedSections += "  ## $heading (line $($i+1))" }
+            }
+        }
+
+        if ($matchedTags.Count -gt 0 -or $matchedSections.Count -gt 0) {
+            $found = $true
+            Write-Host "$name" -ForegroundColor White
+            if ($matchedTags.Count -gt 0) {
+                Write-Host "  Tags: $($matchedTags -join ', ')" -ForegroundColor DarkCyan
+            }
+            foreach ($s in $matchedSections) { Write-Host $s -ForegroundColor DarkCyan }
+            Write-Host ""
+        }
+    }
+
+    if (-not $found) {
+        Write-Host "No matches for '$Keyword' in tags or section headers." -ForegroundColor Yellow
+        Write-Host "Check your tag vocabulary in standards/MEMORY-BANK.md." -ForegroundColor Yellow
+    }
+    Write-Host ""
+}
+
+function Show-Compact {
+    Write-Host ""
+    Write-Host "Memory Compaction" -ForegroundColor Cyan
+    Write-Host "=================" -ForegroundColor Cyan
+    Write-Host ""
+
+    # WHY: Check audit state first — compacting healthy files wastes effort.
+    $totalBytes = 0
+    if (Test-Path $MemoryBankPath) {
+        $totalBytes = (Get-ChildItem $MemoryBankPath -File | Measure-Object -Property Length -Sum).Sum
+    }
+    $totalKB = [math]::Round($totalBytes / 1KB, 1)
+
+    if ($totalKB -lt 60) {
+        Write-Host "memory-bank/ is $totalKB KB — below the 60 KB compaction threshold." -ForegroundColor Green
+        Write-Host "Compaction is most valuable when size > 60 KB and mb audit shows stale files." -ForegroundColor Yellow
+        Write-Host ""
+    }
+
+    Write-Host "Paste this prompt to the AI to compact your memory:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "---" -ForegroundColor DarkGray
+    Write-Host @"
+Read all files in memory-bank/ in this authority order:
+  1. projectbrief.md (immutable — never remove)
+  2. systemPatterns.md
+  3. techContext.md
+  4. activeContext.md
+  5. progress.md
+
+Then compact the memory bank:
+  - Identify and remove duplicate decisions (keep the most recent / authoritative copy)
+  - Flag and surface any contradictions between files for my review
+  - Remove entries from activeContext.md that are already captured in progress.md
+  - Remove progress.md entries for work completed more than 6 months ago (archive them to docs/archive/progress/)
+  - Condense verbose descriptions to their essential decision + rationale
+  - Preserve all unique architectural decisions, constraints, and active work
+
+After compacting, show me:
+  - What was removed from each file and why
+  - Any contradictions found (do not resolve them — surface them for my decision)
+  - New line counts for each file
+
+Do not commit the changes until I confirm.
+"@ -ForegroundColor White
+    Write-Host "---" -ForegroundColor DarkGray
+    Write-Host ""
+}
+
 # Run command
 switch ($Command) {
-    "status" { Show-Status }
-    "update" { Show-Update }
+    "init"    { Invoke-Init }
+    "validate"{ Show-Validate }
+    "doctor"  { Show-Doctor }
+    "status"  { Show-Status }
+    "audit"   { Show-Audit }
+    "query"   { Show-Query -Keyword $Arg }
+    "compact" { Show-Compact }
+    "update"  { Show-Update }
     "archive" { Show-Archive }
-    "slim" { Show-Slim }
-    "commit" { Invoke-Commit }
-    "budget" { Show-Budget }
-    "help" { Show-Help }
+    "slim"    { Show-Slim }
+    "commit"  { Invoke-Commit }
+    "budget"  { Show-Budget }
+    "help"    { Show-Help }
 }

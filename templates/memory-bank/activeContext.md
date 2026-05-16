@@ -1,3 +1,15 @@
+---
+authority: volatile
+review-cycle: 7d
+retention: archive-after-6m
+staleness-threshold: 14d
+tags:
+  - session/focus
+  - session/blockers
+  - session/next-steps
+last-reviewed: YYYY-MM-DD
+---
+
 # Active Context - Current State
 
 **Last Updated**: [Date and Time]

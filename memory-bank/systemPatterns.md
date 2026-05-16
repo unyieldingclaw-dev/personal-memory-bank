@@ -1,3 +1,15 @@
+---
+authority: stable
+review-cycle: 90d
+retention: permanent
+staleness-threshold: 180d
+tags:
+  - architecture/decisions
+  - patterns/code
+  - anti-patterns
+last-reviewed: 2026-05-14
+---
+
 # System Patterns
 
 ## Core Concepts
