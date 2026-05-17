@@ -131,6 +131,13 @@ lineage: []                 # additive chain of all ancestor files (empty for ca
 When `mb compact` rewrites a file, increment `compaction_generation` and add parent files to `lineage`.
 Use git commit refs for verifiability: `activeContext.md@a81d2f`.
 
+**Note on field orthogonality:** `source_type` (origin) and `compaction_generation` (transformation
+depth) are correlated now but will diverge as the system matures. A human-edited synthesis of
+multiple sources is `source_type: synthesized, compaction_generation: 0`. A file regenerated
+from scratch after lineage collapse is `source_type: canonical, compaction_generation: 2`. Do not
+treat them as a single axis. `authority:` is the third dimension and already exists as a separate
+field — do not conflate it with either.
+
 **Lineage must be additive, not replacement.** Every ancestor stays in the chain so trust
 can be traced back to canonical sources. Replacement lineage loses the chain after two
 generations; additive lineage enables partial reconstruction and canonical-source absence

@@ -501,7 +501,7 @@ show_doctor() {
                 # Skip tag-style entries (contain /)
                 if echo "$ancestor" | grep -q '/'; then continue; fi
                 if [ -n "$ancestor" ] && [ ! -e "$ancestor" ]; then
-                    INTEGRITY_ISSUES+=("${YELLOW}[WARN] memory-bank/$f lineage root missing: $ancestor${NC}")
+                    INTEGRITY_ISSUES+=("${RED}[ERROR] memory-bank/$f lineage root missing: $ancestor (recovery impossible)${NC}")
                 fi
             fi
         done < "$p"

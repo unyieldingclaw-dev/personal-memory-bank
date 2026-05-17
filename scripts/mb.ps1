@@ -582,7 +582,7 @@ function Show-Doctor {
                 # Skip entries inside frontmatter tags: block (they start with - not lineage list)
                 if ($ancestor -match '^[a-z].*\/') { continue }  # skip tag entries like "requirements/core"
                 if (-not [string]::IsNullOrWhiteSpace($ancestor) -and -not (Test-Path $ancestor)) {
-                    $integrityIssues += @{Level="WARN"; Msg="memory-bank/$f lineage root missing: $ancestor"}
+                    $integrityIssues += @{Level="ERROR"; Msg="memory-bank/$f lineage root missing: $ancestor (recovery impossible)"}
                 }
             }
         }
@@ -592,7 +592,7 @@ function Show-Doctor {
         Write-Host "[OK]   Compaction integrity — all files at generation 0-1" -ForegroundColor Green
     } else {
         foreach ($issue in $integrityIssues) {
-            $color = if ($issue.Level -eq "WARN") { "Yellow" } else { "DarkYellow" }
+            $color = if ($issue.Level -eq "ERROR") { "Red" } elseif ($issue.Level -eq "WARN") { "Yellow" } else { "DarkYellow" }
             Write-Host "[$($issue.Level)] $($issue.Msg)" -ForegroundColor $color
         }
         Write-Host "       Run 'mb compact' to regenerate from lower-generation sources" -ForegroundColor DarkGray
