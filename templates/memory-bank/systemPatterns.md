@@ -8,6 +8,10 @@ tags:
   - patterns/code
   - anti-patterns
 last-reviewed: YYYY-MM-DD
+compaction_generation: 0
+source_type: canonical
+confidence: high
+lineage: []
 ---
 
 # System Patterns & Architecture Decisions

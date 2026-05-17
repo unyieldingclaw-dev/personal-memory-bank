@@ -8,6 +8,10 @@ tags:
   - session/blockers
   - session/next-steps
 last-reviewed: YYYY-MM-DD
+compaction_generation: 0
+source_type: canonical
+confidence: high
+lineage: []
 ---
 
 # Active Context - Current State

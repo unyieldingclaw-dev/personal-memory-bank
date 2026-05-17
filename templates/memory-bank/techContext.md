@@ -8,6 +8,10 @@ tags:
   - stack/frontend
   - env/tools
 last-reviewed: YYYY-MM-DD
+compaction_generation: 0
+source_type: canonical
+confidence: high
+lineage: []
 ---
 
 # Technical Context & Stack

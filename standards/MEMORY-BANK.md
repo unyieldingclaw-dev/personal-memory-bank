@@ -95,6 +95,51 @@ the user to resolve it before changing a higher-tier decision.
 `activeContext.md` > `progress.md`. Agents must not silently reconcile contradictions —
 they must flag them.
 
+## Frontmatter Schema
+
+Every memory-bank file carries YAML frontmatter with two groups of fields:
+
+**Governance fields** (authority, freshness, retrieval):
+```yaml
+authority: immutable        # immutable | stable | volatile | accumulating
+review-cycle: never         # never | 7d | 30d | 90d
+retention: permanent        # permanent | archive-after-6m | archive-after-1y
+staleness-threshold: 365d   # age after last-reviewed before mb audit flags [STALE]
+tags:
+  - requirements/core
+last-reviewed: YYYY-MM-DD
+```
+
+**Provenance fields** (compaction lineage and confidence):
+```yaml
+compaction_generation: 0    # 0=human-authored, 1=first AI summary, 2+=risk increases
+source_type: canonical      # canonical | compacted | derived
+confidence: high            # high | medium | low — proxy for generation + lineage coherence
+lineage: []                 # additive chain of all ancestor files (empty for canonical)
+```
+
+### Compaction generation thresholds
+
+| Generation | Status | Meaning |
+|------------|--------|---------|
+| 0 | Healthy | Human-authored canonical source |
+| 1 | Healthy | First AI summary — still trustworthy |
+| 2 | Caution | Recursive abstraction risk |
+| 3+ | Degraded | Regenerate from lower-generation sources |
+| 5+ | Unreliable | Likely information loss; do not trust without verification |
+
+When `mb compact` rewrites a file, increment `compaction_generation` and add parent files to `lineage`.
+Use git commit refs for verifiability: `activeContext.md@a81d2f`.
+
+**Lineage must be additive, not replacement.** Every ancestor stays in the chain so trust
+can be traced back to canonical sources. Replacement lineage loses the chain after two
+generations; additive lineage enables partial reconstruction and canonical-source absence
+detection.
+
+`mb doctor` runs integrity heuristics against these fields:
+- Warns when any file reaches generation ≥ 2
+- Warns when lineage entries reference files that no longer exist (canonical-source absence)
+
 ## File Size Guidelines
 
 Keep Memory Bank files focused and scannable:

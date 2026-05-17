@@ -7,6 +7,10 @@ tags:
   - requirements/core
   - constraints/non-negotiable
 last-reviewed: 2026-05-14
+compaction_generation: 0
+source_type: canonical
+confidence: high
+lineage: []
 ---
 
 # Project Brief

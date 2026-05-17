@@ -8,6 +8,10 @@ tags:
   - work/in-progress
   - work/backlog
 last-reviewed: 2026-05-14
+compaction_generation: 0
+source_type: canonical
+confidence: high
+lineage: []
 ---
 
 # Progress

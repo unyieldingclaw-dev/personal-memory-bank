@@ -556,6 +556,48 @@ function Show-Doctor {
         Write-Host "[OK]   No pending handoff" -ForegroundColor Green
     }
 
+    # 8. Compaction integrity
+    $integrityIssues = @()
+    $mbFilesIntegrity = @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")
+    foreach ($f in $mbFilesIntegrity) {
+        $p = "memory-bank/$f"
+        if (-not (Test-Path $p)) { continue }
+        $content = Get-Content $p -Raw
+
+        # Compaction depth
+        if ($content -match '(?m)^compaction_generation:\s*(\d+)') {
+            $gen = [int]$Matches[1]
+            if ($gen -ge 3) {
+                $integrityIssues += @{Level="WARN"; Msg="memory-bank/$f compaction_generation=$gen (degraded — regenerate from canonical sources)"}
+            } elseif ($gen -eq 2) {
+                $integrityIssues += @{Level="CAUTION"; Msg="memory-bank/$f compaction_generation=$gen (recursive abstraction risk)"}
+            }
+        }
+
+        # Canonical-source absence: check lineage entries exist
+        if ($content -match '(?m)^lineage:') {
+            $lineageMatches = [regex]::Matches($content, '(?m)^\s+-\s+([^\s@]+)')
+            foreach ($lm in $lineageMatches) {
+                $ancestor = $lm.Groups[1].Value.Trim()
+                # Skip entries inside frontmatter tags: block (they start with - not lineage list)
+                if ($ancestor -match '^[a-z].*\/') { continue }  # skip tag entries like "requirements/core"
+                if (-not [string]::IsNullOrWhiteSpace($ancestor) -and -not (Test-Path $ancestor)) {
+                    $integrityIssues += @{Level="WARN"; Msg="memory-bank/$f lineage root missing: $ancestor"}
+                }
+            }
+        }
+    }
+
+    if ($integrityIssues.Count -eq 0) {
+        Write-Host "[OK]   Compaction integrity — all files at generation 0-1" -ForegroundColor Green
+    } else {
+        foreach ($issue in $integrityIssues) {
+            $color = if ($issue.Level -eq "WARN") { "Yellow" } else { "DarkYellow" }
+            Write-Host "[$($issue.Level)] $($issue.Msg)" -ForegroundColor $color
+        }
+        Write-Host "       Run 'mb compact' to regenerate from lower-generation sources" -ForegroundColor DarkGray
+    }
+
     Write-Host ""
 }
 

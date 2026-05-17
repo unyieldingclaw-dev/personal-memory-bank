@@ -8,6 +8,10 @@ tags:
   - patterns/code
   - anti-patterns
 last-reviewed: 2026-05-14
+compaction_generation: 0
+source_type: canonical
+confidence: high
+lineage: []
 ---
 
 # System Patterns

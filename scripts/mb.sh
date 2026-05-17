@@ -471,6 +471,51 @@ show_doctor() {
         echo -e "${GREEN}[OK]   No pending handoff${NC}"
     fi
 
+    # 8. Compaction integrity
+    INTEGRITY_ISSUES=()
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        p="memory-bank/$f"
+        [ ! -f "$p" ] && continue
+
+        # Compaction depth
+        GEN=$(grep -m1 '^compaction_generation:' "$p" 2>/dev/null | sed 's/compaction_generation:\s*//' | tr -d ' \r' || echo "")
+        if [ -n "$GEN" ] && [ "$GEN" -ge 3 ] 2>/dev/null; then
+            INTEGRITY_ISSUES+=("${YELLOW}[WARN] memory-bank/$f compaction_generation=$GEN (degraded — regenerate from canonical sources)${NC}")
+        elif [ -n "$GEN" ] && [ "$GEN" -eq 2 ] 2>/dev/null; then
+            INTEGRITY_ISSUES+=("${YELLOW}[CAUTION] memory-bank/$f compaction_generation=$GEN (recursive abstraction risk)${NC}")
+        fi
+
+        # Canonical-source absence: check lineage entries exist
+        IN_LINEAGE=false
+        while IFS= read -r line; do
+            if echo "$line" | grep -q '^lineage:'; then
+                IN_LINEAGE=true
+                continue
+            fi
+            # Exit lineage block when we hit a non-list line after lineage:
+            if [ "$IN_LINEAGE" = true ] && ! echo "$line" | grep -q '^\s*-\s'; then
+                break
+            fi
+            if [ "$IN_LINEAGE" = true ]; then
+                ancestor=$(echo "$line" | sed 's/^\s*-\s*//' | sed 's/@.*//' | tr -d ' \r')
+                # Skip tag-style entries (contain /)
+                if echo "$ancestor" | grep -q '/'; then continue; fi
+                if [ -n "$ancestor" ] && [ ! -e "$ancestor" ]; then
+                    INTEGRITY_ISSUES+=("${YELLOW}[WARN] memory-bank/$f lineage root missing: $ancestor${NC}")
+                fi
+            fi
+        done < "$p"
+    done
+
+    if [ ${#INTEGRITY_ISSUES[@]} -eq 0 ]; then
+        echo -e "${GREEN}[OK]   Compaction integrity — all files at generation 0-1${NC}"
+    else
+        for issue in "${INTEGRITY_ISSUES[@]}"; do
+            echo -e "$issue"
+        done
+        echo -e "       Run 'mb compact' to regenerate from lower-generation sources"
+    fi
+
     echo ""
 }
 
