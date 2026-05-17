@@ -284,19 +284,24 @@ function Show-Budget {
     $claudeFile = "CLAUDE.md"
     if (Test-Path $claudeFile) {
         $claudeKB = [math]::Round((Get-Item $claudeFile).Length / 1KB, 1)
+        $claudeTokens = [math]::Round($claudeKB * 250)
         $claudeColor = if ($claudeKB -gt 8) { "Yellow" } else { "Green" }
         $claudeStatus = if ($claudeKB -gt 8) { "WARN" } else { "OK" }
-        Write-Host "  CLAUDE.md      $claudeKB KB  [$claudeStatus] (loads every session)" -ForegroundColor $claudeColor
+        Write-Host "  CLAUDE.md      $claudeKB KB  ~$claudeTokens tokens  [$claudeStatus] (loads every session)" -ForegroundColor $claudeColor
     } else {
         Write-Host "  CLAUDE.md      not found" -ForegroundColor Red
     }
     if (Test-Path $MemoryBankPath) {
         $mbBytes = (Get-ChildItem $MemoryBankPath -Recurse -File | Measure-Object -Property Length -Sum).Sum
         $mbKB = [math]::Round($mbBytes / 1KB, 1)
+        $mbTokens = [math]::Round($mbKB * 250)
         $mbColor = if ($mbKB -gt 40) { "Yellow" } else { "Green" }
         $mbStatus = if ($mbKB -gt 40) { "WARN" } else { "OK" }
-        Write-Host "  memory-bank/   $mbKB KB  [$mbStatus] (re-read after every compaction)" -ForegroundColor $mbColor
+        Write-Host "  memory-bank/   $mbKB KB  ~$mbTokens tokens  [$mbStatus] (re-read after every compaction)" -ForegroundColor $mbColor
     }
+    $autocompact = $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+    $autocompactDisplay = if ($autocompact) { "$autocompact%" } else { "not set (~95%)" }
+    Write-Host "  Auto-compact:  $autocompactDisplay  (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)" -ForegroundColor DarkCyan
     Write-Host ""
     Write-Host "  Quota tips:" -ForegroundColor DarkCyan
     Write-Host "    /compact Focus on decisions and file paths   (after planning/debugging)" -ForegroundColor White
@@ -506,7 +511,22 @@ function Show-Doctor {
         Write-Host "       Copy templates/.claude/settings.json to enable" -ForegroundColor DarkGray
     }
 
-    # 5. File sizes
+    # 5. Token Budget drift
+    $globalClaude = Join-Path $env:USERPROFILE ".claude\CLAUDE.md"
+    if ((Test-Path "CLAUDE.md") -and (Test-Path $globalClaude)) {
+        $localContent = Get-Content "CLAUDE.md" -Raw
+        $globalContent = Get-Content $globalClaude -Raw
+        $localHasSentinel = $localContent -match "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
+        $globalHasSentinel = $globalContent -match "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
+        if ($globalHasSentinel -and -not $localHasSentinel) {
+            Write-Host "[WARN] Token Budget section may have drifted from ~/.claude/CLAUDE.md" -ForegroundColor Yellow
+            Write-Host "       Run 'mb init' to refresh or manually copy the Token Budget section" -ForegroundColor DarkGray
+        } elseif ($localHasSentinel) {
+            Write-Host "[OK]   Token Budget section current" -ForegroundColor Green
+        }
+    }
+
+    # 6. File sizes
     $hasOverLimit = $false
     $sizeSpecs = @(
         @{Name="projectbrief.md"; Max=150},
@@ -529,7 +549,7 @@ function Show-Doctor {
         Write-Host "[OK]   File sizes within limits" -ForegroundColor Green
     }
 
-    # 6. Handoff
+    # 7. Handoff
     if (Test-Path "handoff.md") {
         Write-Host "[WARN] handoff.md found — merge into memory-bank/ and delete" -ForegroundColor Yellow
     } else {

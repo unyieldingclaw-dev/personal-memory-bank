@@ -206,13 +206,13 @@ These two tools load memory-bank rules differently — the difference matters fo
 ### Claude Code
 `CLAUDE.md` loads **once at session start** as part of the system prompt. It is NOT re-injected after auto-compaction.
 
-Claude Code auto-compacts at approximately **75% context** — silently, with no hook or notification to the agent. The session continues with a compressed summary; detailed history is lost.
+Claude Code auto-compacts at approximately **50% context** (via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` in settings.json; default without override is ~95%) — silently, with no hook or notification to the agent. The session continues with a compressed summary; detailed history is lost.
 
 ### Implications for Handoff Thresholds
 
 | Tool | Handoff Threshold | Why |
 |------|------------------|-----|
-| Claude Code | **65%** | Fires before 75% auto-compaction |
+| Claude Code | **40%** | Manual compact before 50% auto-compact fires |
 | Cursor | **80%** | Rules re-inject automatically; compaction less critical |
 
 ### Post-Compaction Recovery (Claude Code)
@@ -224,12 +224,12 @@ The `templates/CLAUDE.md` includes a compaction recovery instruction block that 
 
 ## Handoff Protocol
 
-When context fills up (user reports 65% in Claude Code, 80% in Cursor), create a handoff:
+When context fills up (user reports 40% in Claude Code, 80% in Cursor), create a handoff:
 
 ### Trigger
 - User types "Handoff"
-- User reports context >= 65% (Claude Code) or >= 80% (Cursor)
-  - Claude Code auto-compacts at ~75%; 65% fires before that
+- User reports context >= 40% (Claude Code) or >= 80% (Cursor)
+  - Claude Code auto-compacts at ~50%; 40% fires before that
   - Cursor rules re-inject on every response; 80% is safe
 
 ### Agent Actions

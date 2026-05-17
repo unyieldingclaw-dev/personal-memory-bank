@@ -21,7 +21,7 @@ At the start of every conversation, and again after any context compaction, sile
 
 ## Context Compaction Recovery
 
-Claude Code compacts at ~75% — before the 65% handoff threshold. A "context was compacted" summary may appear at the top of the conversation.
+Claude Code compacts at ~50% (via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` in settings.json) — before the 40% handoff threshold. A "context was compacted" summary may appear at the top of the conversation.
 
 **If you observe a compaction summary:** Re-read ALL `memory-bank/` files immediately, summarize recovered context to the user, confirm where to resume if mid-task. **Do not continue from memory alone.**
 
@@ -62,7 +62,7 @@ This is the single highest-leverage habit for improving output quality.
 
 ## Handoff Protocol
 
-When user types "Handoff" or reports context >= 65%:
+When user types "Handoff" or reports context >= 40%:
 
 1. **STOP** all work immediately
 2. **CREATE** `handoff.md` in project root with: accomplishments, files modified, service state, commands to resume, pending tasks, context for next agent
@@ -82,11 +82,15 @@ When starting a new conversation:
 - Switch to Opus (`/model opus`) only for: complex architecture decisions, large multi-file refactors, deep cross-file debugging. Switch back after.
 - Subagents run on Haiku automatically (set in settings.json) — sufficient for file reads, test runs, and exploration.
 
-**Compact at task boundaries, not when forced:**
-- After planning: `/compact Focus on decisions and file paths`
-- After debugging: `/compact Focus on what was tried and what worked`
-- Before switching to unrelated work: `/clear`
-- Do NOT wait for auto-compaction — it fires mid-task at 75% and loses context
+**Compact at task boundaries — auto-compact fires at 50%:**
+- Auto-compaction is set to fire at 50% context (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` in settings.json)
+- Compact manually at natural boundaries before that point:
+  - After planning: `/compact Focus on decisions and file paths`
+  - After debugging: `/compact Focus on what was tried and what worked`
+  - Before switching to unrelated work: `/clear`
+- Manual `/compact` at a natural boundary beats waiting for auto-compact mid-task
+
+**Exception — always write full prose for:** destructive operations (force-push, file deletion, DROP TABLE), security warnings, and multi-step sequences where a misread causes irreversible damage. Token efficiency yields to clarity at these moments.
 
 **Be specific with file references — vague prompts scan broadly:**
 - Good: `Fix the JWT expiry check in src/auth/token.py around line 47`
@@ -96,6 +100,7 @@ When starting a new conversation:
 - `/cost` — check quota before long sessions
 - `/usage` — token breakdown for current session
 - `/model sonnet` — reset to default after Opus work
+- `CLAUDE_CODE_EFFORT_LEVEL` env var — `low`/`medium`/`high`/`xhigh`; set per-project to control reasoning depth (default: `high` for Sonnet, `xhigh` for Opus)
 
 ## Karpathy Coding Principles
 

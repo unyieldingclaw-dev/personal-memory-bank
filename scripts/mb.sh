@@ -441,7 +441,20 @@ show_doctor() {
         echo -e "${YELLOW}[WARN] No .claude/settings.json — safety hooks inactive${NC}"
     fi
 
-    # 5. File sizes
+    # 5. Token Budget drift
+    GLOBAL_CLAUDE="$HOME/.claude/CLAUDE.md"
+    if [ -f "CLAUDE.md" ] && [ -f "$GLOBAL_CLAUDE" ]; then
+        LOCAL_HAS=$(grep -c "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "CLAUDE.md" 2>/dev/null || echo 0)
+        GLOBAL_HAS=$(grep -c "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "$GLOBAL_CLAUDE" 2>/dev/null || echo 0)
+        if [ "$GLOBAL_HAS" -gt 0 ] && [ "$LOCAL_HAS" -eq 0 ]; then
+            echo -e "${YELLOW}[WARN] Token Budget section may have drifted from ~/.claude/CLAUDE.md${NC}"
+            echo -e "       Run 'mb init' to refresh or manually copy the Token Budget section"
+        elif [ "$LOCAL_HAS" -gt 0 ]; then
+            echo -e "${GREEN}[OK]   Token Budget section current${NC}"
+        fi
+    fi
+
+    # 6. File sizes
     OVER_LIMIT=false
     check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb slim'${NC}" && OVER_LIMIT=true; }
     [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   150
@@ -451,7 +464,7 @@ show_doctor() {
     [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       400
     [ "$OVER_LIMIT" = false ] && echo -e "${GREEN}[OK]   File sizes within limits${NC}"
 
-    # 6. Handoff
+    # 7. Handoff
     if [ -f "handoff.md" ]; then
         echo -e "${YELLOW}[WARN] handoff.md found — merge into memory-bank/ and delete${NC}"
     else
@@ -470,10 +483,11 @@ show_budget() {
     CLAUDE_FILE="CLAUDE.md"
     if [ -f "$CLAUDE_FILE" ]; then
         CLAUDE_KB=$(awk 'END {printf "%.1f", NR * 4 / 1024}' "$CLAUDE_FILE")
+        CLAUDE_TOKENS=$(awk "BEGIN {printf \"%d\", $CLAUDE_KB * 250}")
         if awk "BEGIN {exit ($CLAUDE_KB > 8) ? 0 : 1}"; then
-            echo -e "${YELLOW}  CLAUDE.md      ${CLAUDE_KB} KB  [WARN] (loads every session)${NC}"
+            echo -e "${YELLOW}  CLAUDE.md      ${CLAUDE_KB} KB  ~${CLAUDE_TOKENS} tokens  [WARN] (loads every session)${NC}"
         else
-            echo -e "${GREEN}  CLAUDE.md      ${CLAUDE_KB} KB  [OK] (loads every session)${NC}"
+            echo -e "${GREEN}  CLAUDE.md      ${CLAUDE_KB} KB  ~${CLAUDE_TOKENS} tokens  [OK] (loads every session)${NC}"
         fi
     else
         echo -e "${RED}  CLAUDE.md      not found${NC}"
@@ -482,13 +496,17 @@ show_budget() {
     if [ -d "$MEMORY_BANK_PATH" ]; then
         MB_BYTES=$(find "$MEMORY_BANK_PATH" -maxdepth 1 -type f | xargs wc -c 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
         MB_KB=$(awk "BEGIN {printf \"%.1f\", $MB_BYTES / 1024}")
+        MB_TOKENS=$(awk "BEGIN {printf \"%d\", $MB_KB * 250}")
         if awk "BEGIN {exit ($MB_KB > 40) ? 0 : 1}"; then
-            echo -e "${YELLOW}  memory-bank/   ${MB_KB} KB  [WARN] (re-read after every compaction)${NC}"
+            echo -e "${YELLOW}  memory-bank/   ${MB_KB} KB  ~${MB_TOKENS} tokens  [WARN] (re-read after every compaction)${NC}"
         else
-            echo -e "${GREEN}  memory-bank/   ${MB_KB} KB  [OK] (re-read after every compaction)${NC}"
+            echo -e "${GREEN}  memory-bank/   ${MB_KB} KB  ~${MB_TOKENS} tokens  [OK] (re-read after every compaction)${NC}"
         fi
     fi
 
+    AUTOCOMPACT="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-not set (~95%)}"
+    [ -n "$CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" ] && AUTOCOMPACT="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}%"
+    echo -e "${CYAN}  Auto-compact:  ${AUTOCOMPACT}  (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)${NC}"
     echo ""
     echo -e "${CYAN}  Quota tips:${NC}"
     echo "    /compact Focus on decisions and file paths   (after planning/debugging)"
