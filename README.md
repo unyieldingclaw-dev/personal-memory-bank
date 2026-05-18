@@ -1,5 +1,7 @@
 # Personal Memory Bank
 
+![Version](https://img.shields.io/badge/version-1.0.0-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+
 Give your AI coding assistant persistent project memory — so every session starts where the last one left off, with full context about your project, stack, and decisions.
 
 ## The Problem It Solves
@@ -12,7 +14,7 @@ Memory Bank solves this by keeping a small set of structured files in your proje
 
 **1. Clone this repo**
 ```
-git clone https://github.com/your-username/personal-memory-bank
+git clone https://github.com/UnyieldingClaw/personal-memory-bank
 cd personal-memory-bank
 ```
 
@@ -33,7 +35,7 @@ That's it. Start a Claude Code or Cursor session — your AI will have context i
 
 **Mac / Linux:**
 ```bash
-chmod +x scripts/install.sh && ./scripts/install.sh
+chmod +x install.sh && ./install.sh
 ```
 Then in any project: `mb init`
 
@@ -65,6 +67,9 @@ mb validate   Verify required files and frontmatter are present
 mb audit      See freshness — flag stale or overdue files
 mb update     Get a prompt to update memory bank after a session
 mb commit     Commit memory bank changes separately from feature code
+mb query TAG  Find all memory tagged with TAG (e.g. mb query auth)
+mb budget     Check token overhead of CLAUDE.md + memory-bank/
+mb doctor     Full diagnostic (git, templates, hooks, file sizes)
 mb help       Full command list
 ```
 
