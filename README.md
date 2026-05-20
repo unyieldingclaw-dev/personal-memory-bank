@@ -14,7 +14,7 @@ Memory Bank solves this by keeping a small set of structured files in your proje
 
 **1. Clone this repo**
 ```
-git clone https://github.com/UnyieldingClaw/personal-memory-bank
+git clone https://github.com/unyieldingclaw-dev/personal-memory-bank
 cd personal-memory-bank
 ```
 
