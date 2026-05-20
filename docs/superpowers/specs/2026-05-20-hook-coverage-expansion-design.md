@@ -30,7 +30,24 @@ The PreToolUse dangerous-command hook in `templates/.claude/settings.json` curre
 
 **Implementation rule:** Simple substring matching only. No regex engines. `$command.Contains(pattern)` in PowerShell, `case *pattern*` in shell.
 
-**Fails-open:** If the script file is missing or errors, the hook exits 0 (command proceeds). Safety net, not a hard dependency.
+**Centralized tier messages:** Each script defines three message templates at the top. All matching logic uses those variables — no custom text per pattern. This ensures consistent UX and parity between `.ps1` and `.sh`:
+
+```powershell
+$BLOCK_MSG   = "BLOCK: Dangerous command detected ({0}). Refusing."
+$CONFIRM_MSG = "CONFIRM REQUIRED: {0} — run manually if intentional."
+$WARN_MSG    = "WARNING: {0} detected in command. Proceeding."
+```
+
+**Rationale comments:** Each pattern in the scripts has a one-line comment stating WHY it exists. Patterns without rationale become cargo cults; documented rationale prevents governance creep.
+
+**Fails-open:** If the script file is missing or errors, the hook exits 0 (command proceeds). Safety net, not a hard dependency. On failure, scripts must print a loud error before exiting:
+
+```
+[HOOK ERROR] dangerous-commands.ps1 failed unexpectedly.
+Proceeding in fails-open mode.
+```
+
+Silent failure creates false confidence — the error must be visible even though the command is allowed to proceed.
 
 ---
 
@@ -114,7 +131,7 @@ The hook receives the tool input as stdin JSON with a `command` field. Scripts r
 2. **CONFIRM test:** `git filter-branch` → hook exits 1 with `CONFIRM REQUIRED` message
 3. **WARN test:** `cat id_rsa` → hook exits 0 with `WARNING` message, command proceeds
 4. **Pass-through test:** `git status` → no hook output, exits 0, proceeds cleanly
-5. **Missing script test:** rename `.ps1` temporarily → hook exits 0 (fails open), command proceeds
+5. **Missing script test:** rename `.ps1` temporarily → hook exits 0 (fails open), `[HOOK ERROR]` message printed to stderr
 
 ---
 
