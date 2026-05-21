@@ -38,10 +38,12 @@ $blockPatterns = @(
     @{ pattern = "DROP DATABASE";    reason = "SQL database drop" }                         # WHY: destroys entire database
     @{ pattern = "| bash";           reason = "command piped to bash (curl|bash, wget|bash, etc.)" } # WHY: remote code execution vector
     @{ pattern = "| sh";             reason = "command piped to sh" }                       # WHY: remote code execution via sh
+    @{ pattern = "|bash";            reason = "command piped to bash (no-space form)" }     # WHY: curl|bash without spaces is valid shell and evades space-prefixed pattern
+    @{ pattern = "|sh";              reason = "command piped to sh (no-space form)" }       # WHY: wget|sh without spaces is valid shell and evades space-prefixed pattern
 )
 
 foreach ($entry in $blockPatterns) {
-    if ($cmd.Contains($entry.pattern)) {
+    if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
         Write-Host ($BLOCK_MSG -f $entry.reason)
         exit 1
     }
@@ -57,7 +59,7 @@ $confirmPatterns = @(
 )
 
 foreach ($entry in $confirmPatterns) {
-    if ($cmd.Contains($entry.pattern)) {
+    if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
         Write-Host ($CONFIRM_MSG -f $entry.reason)
         exit 1
     }
@@ -72,7 +74,7 @@ $warnPatterns = @(
 )
 
 foreach ($entry in $warnPatterns) {
-    if ($cmd.Contains($entry.pattern)) {
+    if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
         Write-Host ($WARN_MSG -f $entry.reason)
     }
 }
