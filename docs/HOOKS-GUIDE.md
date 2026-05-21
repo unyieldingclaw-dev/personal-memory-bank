@@ -17,12 +17,20 @@ Configured in `.claude/settings.json`:
 
 ### 1. Dangerous-Command Blocker (`PreToolUse`)
 
-Intercepts Bash tool calls before they run. Blocks commands containing:
-`rm -rf` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE`
+Intercepts Bash tool calls before they run using `scripts/dangerous-commands.ps1` (PowerShell) with bash fallback. Enforces 3-tier safety:
 
-If triggered, Claude sees the block message and stops. The command never runs.
+**BLOCK** (11 patterns — command exits non-zero, Claude stops):
+`rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`
 
-**Note:** Requires Node.js or Python 3 to be on PATH. If neither is available, the hook silently passes (fails open). Test with: `claude -p "run: echo test"` and verify no block fires on safe commands.
+**CONFIRM** (5 patterns — surfaces confirmation dialog):
+`git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify`
+
+**WARN** (4 patterns — exits 0, surfaces access alert):
+`id_rsa` · `.pem` · `.env.production` · `credentials.json`
+
+If BLOCK is triggered, Claude sees the block message and stops. The command never runs. CONFIRM and WARN surface the access to Claude so it can decide.
+
+**Note:** No external runtime required (PowerShell on Windows, bash fallback on other platforms). Test with: `claude -p "run: echo test"` and verify no block fires on safe commands.
 
 ### 2. Stop Notification (`Stop`) — removed from template
 
