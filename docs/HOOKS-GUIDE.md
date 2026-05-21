@@ -30,7 +30,7 @@ Intercepts Bash tool calls before they run using `scripts/dangerous-commands.ps1
 
 If BLOCK is triggered, Claude sees the block message and stops. The command never runs. CONFIRM and WARN surface the access to Claude so it can decide.
 
-**Note:** No external runtime required (PowerShell on Windows, bash fallback on other platforms). Test with: `claude -p "run: echo test"` and verify no block fires on safe commands.
+Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). The hook calls `pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true` — it fails open if neither runtime is available.
 
 ### 2. Stop Notification (`Stop`) — removed from template
 
