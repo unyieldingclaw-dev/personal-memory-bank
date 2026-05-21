@@ -57,8 +57,11 @@ block "mkfs"             "filesystem format"                    # WHY: formats/d
 block "dd if="           "disk wipe or dump"                    # WHY: raw disk access, wipes or dumps data
 block "git push --force" "force push (long form)"               # WHY: rewrites remote history irreversibly
 block "git push -f"      "force push (short form)"              # WHY: same as --force, short flag form
+# NOTE: POSIX case is case-sensitive. Adding lowercase variants to match ps1 OrdinalIgnoreCase behavior.
 block "DROP TABLE"       "SQL table drop"                       # WHY: irreversible schema destruction
 block "DROP DATABASE"    "SQL database drop"                    # WHY: destroys entire database
+block "drop table"       "SQL table drop (lowercase)"           # WHY: parity with ps1 OrdinalIgnoreCase — catches lowercase SQL
+block "drop database"    "SQL database drop (lowercase)"        # WHY: parity with ps1 OrdinalIgnoreCase — catches lowercase SQL
 block "| bash"           "command piped to bash (curl|bash, wget|bash, etc.)"  # WHY: remote code execution vector
 block "| sh"             "command piped to sh"                  # WHY: remote code execution via sh
 block "|bash"            "command piped to bash (no-space form)"  # WHY: curl|bash without spaces evades space-prefixed pattern
