@@ -29,15 +29,15 @@ try {
 
 # BLOCK: irreversible or highly destructive — refuse unconditionally
 $blockPatterns = @(
-    @{ pattern = "rm -rf";           reason = "irreversible recursive deletion" }
-    @{ pattern = "mkfs";             reason = "filesystem format" }
-    @{ pattern = "dd if=";           reason = "disk wipe or dump" }
-    @{ pattern = "git push --force"; reason = "force push (long form)" }
-    @{ pattern = "git push -f";      reason = "force push (short form)" }
-    @{ pattern = "DROP TABLE";       reason = "SQL table drop" }
-    @{ pattern = "DROP DATABASE";    reason = "SQL database drop" }
-    @{ pattern = "| bash";           reason = "command piped to bash (curl|bash, wget|bash, etc.)" }
-    @{ pattern = "| sh";             reason = "command piped to sh" }
+    @{ pattern = "rm -rf";           reason = "irreversible recursive deletion" }           # WHY: recursive deletion is irreversible
+    @{ pattern = "mkfs";             reason = "filesystem format" }                          # WHY: formats/destroys entire filesystem
+    @{ pattern = "dd if=";           reason = "disk wipe or dump" }                         # WHY: raw disk access, wipes or dumps data
+    @{ pattern = "git push --force"; reason = "force push (long form)" }                    # WHY: rewrites remote history irreversibly
+    @{ pattern = "git push -f";      reason = "force push (short form)" }                   # WHY: same as --force, short flag form
+    @{ pattern = "DROP TABLE";       reason = "SQL table drop" }                            # WHY: irreversible schema destruction
+    @{ pattern = "DROP DATABASE";    reason = "SQL database drop" }                         # WHY: destroys entire database
+    @{ pattern = "| bash";           reason = "command piped to bash (curl|bash, wget|bash, etc.)" } # WHY: remote code execution vector
+    @{ pattern = "| sh";             reason = "command piped to sh" }                       # WHY: remote code execution via sh
 )
 
 foreach ($entry in $blockPatterns) {
@@ -49,11 +49,11 @@ foreach ($entry in $blockPatterns) {
 
 # CONFIRM: advanced ops with legitimate uses — require explicit manual invocation
 $confirmPatterns = @(
-    @{ pattern = "git filter-branch"; reason = "history rewriting" }
-    @{ pattern = "git update-ref";    reason = "low-level ref manipulation" }
-    @{ pattern = "sudo rm";           reason = "privileged deletion" }
-    @{ pattern = "chmod -R 777";      reason = "world-writable recursive chmod" }
-    @{ pattern = "--no-verify";       reason = "bypasses pre-commit hooks (local governance)" }
+    @{ pattern = "git filter-branch"; reason = "history rewriting" }                        # WHY: rewrites commit history, rarely intentional
+    @{ pattern = "git update-ref";    reason = "low-level ref manipulation" }               # WHY: low-level plumbing, bypasses safety checks
+    @{ pattern = "sudo rm";           reason = "privileged deletion" }                      # WHY: elevated deletion can remove system files
+    @{ pattern = "chmod -R 777";      reason = "world-writable recursive chmod" }           # WHY: makes entire tree world-writable
+    @{ pattern = "--no-verify";       reason = "bypasses pre-commit hooks (local governance)" } # WHY: skips safety hooks on commit
 )
 
 foreach ($entry in $confirmPatterns) {
@@ -65,10 +65,10 @@ foreach ($entry in $confirmPatterns) {
 
 # WARN: credential/secrets access — legitimate workflows exist, surface the access only
 $warnPatterns = @(
-    @{ pattern = "id_rsa";           reason = "SSH private key access" }
-    @{ pattern = ".pem";             reason = "certificate or key file access" }
-    @{ pattern = ".env.production";  reason = "production secrets file" }
-    @{ pattern = "credentials.json"; reason = "credential file access" }
+    @{ pattern = "id_rsa";           reason = "SSH private key access" }                    # WHY: SSH private key — may be intentional (key setup)
+    @{ pattern = ".pem";             reason = "certificate or key file access" }            # WHY: cert/key files — may be intentional (TLS mgmt)
+    @{ pattern = ".env.production";  reason = "production secrets file" }                   # WHY: production secrets — surface access, don't block
+    @{ pattern = "credentials.json"; reason = "credential file access" }                    # WHY: credential file — may be intentional (auth setup)
 )
 
 foreach ($entry in $warnPatterns) {
