@@ -51,3 +51,37 @@ jobs:
           echo ""
           [ "$FAIL" -eq 0 ] && echo "file-size: PASS" || echo "file-size: FAIL"
           exit $FAIL
+
+  forbidden-patterns:
+    name: Forbidden Patterns
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credential grep
+        shell: bash
+        run: |
+          if git grep -P -i '(password|api_key|token|secret)\s*=\s*[A-Za-z0-9]{8,}' \
+            -- ':(exclude).gitleaks.toml' ':(exclude).gitignore'; then
+            echo "FAIL: Literal credential assignment found above"
+            exit 1
+          fi
+          echo "OK: No literal credential assignments found"
+
+      - name: Spec placeholder grep
+        shell: bash
+        run: |
+          FOUND=$(find docs/superpowers/specs -name "*.md" -print0 \
+            | xargs -0 grep -lE '\bTBD\b|\bTODO\b' 2>/dev/null || true)
+          if [ -n "$FOUND" ]; then
+            echo "FAIL: TBD or TODO found in spec files:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "OK: No TBD/TODO in spec files"
+
+      - name: Shellcheck
+        shell: bash
+        run: |
+          find scripts templates/scripts -name "*.sh" -print0 \
+            | xargs -0 shellcheck --severity=error
