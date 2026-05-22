@@ -1,0 +1,8 @@
+# Gitleaks allowlist — add entries here to suppress known false positives.
+# Documentation: https://github.com/gitleaks/gitleaks#configuration
+#
+# Example entry:
+# [[allowlist]]
+# description = "known safe example value in docs"
+# paths = ["docs/superpowers/specs/example.md"]
+# regexes = ["EXAMPLE_KEY_FOR_DOCS"]
