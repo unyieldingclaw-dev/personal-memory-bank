@@ -5,7 +5,7 @@
 
 ## Context
 
-The Personal Memory Bank standard was forked from an enterprise repo in April 2026. It is clean of T-Mobile/enterprise content and has solid coverage of security, workflow, and logging. However, Claude Code released several major features in mid-to-late 2025 (hooks, `.claude/agents/`, skills) that are not yet in the standard. The always-loaded files (CLAUDE.md, AGENTS.md) also have duplication and verbosity that inflates the token budget on every session start. Research on 2,500+ repos and Anthropic's 2025 best-practices guide surface a verification-first pattern and a lean-CLAUDE.md principle not yet reflected.
+The Personal Memory Bank standard was forked from an enterprise repo in April 2026. It is clean of Eric Nolan/enterprise content and has solid coverage of security, workflow, and logging. However, Claude Code released several major features in mid-to-late 2025 (hooks, `.claude/agents/`, skills) that are not yet in the standard. The always-loaded files (CLAUDE.md, AGENTS.md) also have duplication and verbosity that inflates the token budget on every session start. Research on 2,500+ repos and Anthropic's 2025 best-practices guide surface a verification-first pattern and a lean-CLAUDE.md principle not yet reflected.
 
 **Goal:** Full 2025 parity — add missing Claude Code features, slim always-loaded files, update /code-review with AI-era antipatterns, differentiate CLAUDE.md vs AGENTS.md by actual tool purpose.
 

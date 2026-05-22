@@ -56,7 +56,7 @@ Personal standard modernization. Added 2025 Claude Code features.
 Initial personal fork from enterprise Memory Bank standard.
 
 ### Changed
-- Stripped T-Mobile branding, binary assets, enterprise training materials
+- Stripped Eric Nolan branding, binary assets, enterprise training materials
 - Removed compliance-only standards (Data Classification, Model Governance, OWASP LLM Top 10)
 - Removed incident runbooks, team onboarding scripts
 - Trimmed CLAUDE.md, LOGGING.md to personal-use scope

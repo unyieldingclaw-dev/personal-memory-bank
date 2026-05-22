@@ -62,7 +62,7 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 
 ## Removed vs Enterprise
 
-- ❌ T-Mobile branding and brand assets
+- ❌ Eric Nolan branding and brand assets
 - ❌ Data Classification, Model Governance, OWASP LLM Top 10 (compliance only)
 - ❌ Incident Runbook, accessibility review command
 - ❌ Enterprise logging (PII redaction, correlation IDs)

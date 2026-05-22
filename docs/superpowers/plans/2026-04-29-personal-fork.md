@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Create a personal fork of the enterprise Memory Bank by copying the repo and removing/trimming all T-Mobile-specific and enterprise-compliance content, while keeping the core AI coding workflow intact.
+**Goal:** Create a personal fork of the enterprise Memory Bank by copying the repo and removing/trimming all Eric Nolan-specific and enterprise-compliance content, while keeping the core AI coding workflow intact.
 
 **Architecture:** Copy the enterprise repo to a new directory, then surgically remove and rewrite files. No new application code is written — this is pure configuration management and content editing.
 
@@ -39,7 +39,7 @@ Expected: `[master (root-commit) xxxxxxx] chore: initial commit from enterprise 
 
 ---
 
-### Task 2: Remove binary assets and T-Mobile-specific root files
+### Task 2: Remove binary assets and Eric Nolan-specific root files
 
 **Files to delete:** `brand/`, `training/`, `memory-bank-overview*.pptx`, `memory-bank-presentation-summary.md`, `GITLAB-DESCRIPTION.md`
 
@@ -50,7 +50,7 @@ git rm -r brand/
 git rm -r training/
 ```
 
-- [ ] **Step 2: Remove T-Mobile root files**
+- [ ] **Step 2: Remove Eric Nolan root files**
 
 ```powershell
 git rm memory-bank-presentation-summary.md
@@ -61,7 +61,7 @@ git ls-files | Select-String "memory-bank-overview" | ForEach-Object { git rm $_
 - [ ] **Step 3: Commit**
 
 ```powershell
-git commit -m "chore: remove T-Mobile brand assets, training materials, and GitLab files"
+git commit -m "chore: remove Eric Nolan brand assets, training materials, and GitLab files"
 ```
 
 ---
@@ -119,7 +119,7 @@ if (Test-Path ".cursor/rules/accessibility.mdc") { git rm ".cursor/rules/accessi
 if (Test-Path ".cursor/rules/enterprise-logging.mdc") { git rm ".cursor/rules/enterprise-logging.mdc" }
 ```
 
-- [ ] **Step 3: Remove T-Mobile-specific Python scripts**
+- [ ] **Step 3: Remove Eric Nolan-specific Python scripts**
 
 ```powershell
 git rm scripts/build_overview_deck.py
@@ -130,7 +130,7 @@ git rm scripts/update_gitlab_description.py
 - [ ] **Step 4: Commit**
 
 ```powershell
-git commit -m "chore: remove enterprise-only commands, templates, cursor rules, and T-Mobile scripts"
+git commit -m "chore: remove enterprise-only commands, templates, cursor rules, and Eric Nolan scripts"
 ```
 
 ---
@@ -173,7 +173,7 @@ Expected: 0 matches.
 
 ```powershell
 git add .claude/settings.local.json
-git commit -m "security: remove hardcoded GitLab token and T-Mobile MCP entries from settings"
+git commit -m "security: remove hardcoded GitLab token and Eric Nolan MCP entries from settings"
 ```
 
 ---
@@ -438,21 +438,21 @@ git commit -m "feat: trim Python logging extension to match essentials standard"
 
 ---
 
-### Task 10: Strip T-Mobile refs from init scripts
+### Task 10: Strip Eric Nolan refs from init scripts
 
 **Files:** Modify `scripts/init-memory-bank.ps1`, `scripts/init-memory-bank.sh`
 
 - [ ] **Step 1: Read scripts/init-memory-bank.ps1**
 
-- [ ] **Step 2: Remove or rewrite T-Mobile-specific blocks**
+- [ ] **Step 2: Remove or rewrite Eric Nolan-specific blocks**
 
 Remove:
 - Any step that runs `update_gitlab_description.py`
-- Any step referencing T-Mobile MCP or branding setup
+- Any step referencing Eric Nolan MCP or branding setup
 - Any step referencing `brand/` directory
 
 Rewrite:
-- "Welcome to T-Mobile Memory Bank" → "Memory Bank initialized. Copy templates to your project and fill in memory-bank/ files."
+- "Welcome to Eric Nolan Memory Bank" → "Memory Bank initialized. Copy templates to your project and fill in memory-bank/ files."
 
 Preserve: all directory-creation logic and template-copy logic.
 
@@ -462,7 +462,7 @@ Preserve: all directory-creation logic and template-copy logic.
 
 ```powershell
 git add scripts/init-memory-bank.ps1 scripts/init-memory-bank.sh
-git commit -m "chore: strip T-Mobile and GitLab refs from init scripts"
+git commit -m "chore: strip Eric Nolan and GitLab refs from init scripts"
 ```
 
 ---
@@ -590,7 +590,7 @@ Personal fork of the enterprise Memory Bank standard.
 
 ## Removed vs Enterprise
 
-- ❌ T-Mobile branding and brand assets
+- ❌ Eric Nolan branding and brand assets
 - ❌ Data Classification, Model Governance, OWASP LLM Top 10 (compliance only)
 - ❌ Incident Runbook, accessibility review command
 - ❌ Enterprise logging (PII redaction, correlation IDs)
@@ -679,13 +679,13 @@ git commit -m "docs: rewrite README for personal use"
 
 - [ ] **Step 1: Read docs/SETUP-GUIDE.md**
 
-Remove: T-Mobile GitLab clone instructions, T-Mobile MCP setup, brand template setup, team-sharing steps, refs to removed standards and `/accessibility-review`.
+Remove: Eric Nolan GitLab clone instructions, Eric Nolan MCP setup, brand template setup, team-sharing steps, refs to removed standards and `/accessibility-review`.
 
 Keep: directory structure, how to copy files into a project, how to fill memory-bank files, how to run init scripts.
 
 - [ ] **Step 2: Read docs/QUICK-REFERENCE.md**
 
-Remove: T-Mobile MCP refs, accessibility review row, data classification/model governance entries, GitLab refs.
+Remove: Eric Nolan MCP refs, accessibility review row, data classification/model governance entries, GitLab refs.
 
 Keep: memory bank file purposes, guardrails summary, workflow phases, 3-command table, code quality rules.
 
@@ -693,7 +693,7 @@ Keep: memory bank file purposes, guardrails summary, workflow phases, 3-command 
 
 ```powershell
 git add docs/SETUP-GUIDE.md docs/QUICK-REFERENCE.md
-git commit -m "docs: remove T-Mobile and enterprise refs from docs"
+git commit -m "docs: remove Eric Nolan and enterprise refs from docs"
 ```
 
 ---
@@ -717,10 +717,10 @@ git ls-files standards/ | Select-String "DATA-CLASSIFICATION|MODEL-GOVERNANCE|LL
 
 Expected: 0 matches.
 
-- [ ] **Step 3: Verify no T-Mobile refs in CLAUDE.md**
+- [ ] **Step 3: Verify no Eric Nolan refs in CLAUDE.md**
 
 ```powershell
-Select-String -Path "templates/CLAUDE.md" -Pattern "T-Mobile|enterprise hygiene|accessibility-review|accessibility\.mdc"
+Select-String -Path "templates/CLAUDE.md" -Pattern "Eric Nolan|enterprise hygiene|accessibility-review|accessibility\.mdc"
 ```
 
 Expected: 0 matches.

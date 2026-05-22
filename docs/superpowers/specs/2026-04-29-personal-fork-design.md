@@ -7,11 +7,11 @@
 
 ## Context
 
-This project (Memory Bank) is an enterprise AI coding standard built for T-Mobile ERE teams. It includes 13 standards, 4 slash commands, branding assets, training materials, GitLab integration, and MCP tools — designed for teams, not individuals.
+This project (Memory Bank) is an enterprise AI coding standard built for Eric Nolan ERE teams. It includes 13 standards, 4 slash commands, branding assets, training materials, GitLab integration, and MCP tools — designed for teams, not individuals.
 
-The goal is to create a **personal fork**: a new standalone repo, stripped of all T-Mobile-specific and enterprise-compliance-only content, while keeping the highest-value pieces intact (memory bank system, code review, security, feature workflow, code quality).
+The goal is to create a **personal fork**: a new standalone repo, stripped of all Eric Nolan-specific and enterprise-compliance-only content, while keeping the highest-value pieces intact (memory bank system, code review, security, feature workflow, code quality).
 
-**Motivation:** The enterprise version carries ~500–700 tokens of session overhead from enterprise hygiene in CLAUDE.md, plus 12+ MB of binary assets, 3 pure-compliance standards, and tooling (GitLab API, T-Mobile MCP, PowerPoint generation) that has no personal use.
+**Motivation:** The enterprise version carries ~500–700 tokens of session overhead from enterprise hygiene in CLAUDE.md, plus 12+ MB of binary assets, 3 pure-compliance standards, and tooling (GitLab API, Eric Nolan MCP, PowerPoint generation) that has no personal use.
 
 ---
 
@@ -39,7 +39,7 @@ The goal is to create a **personal fork**: a new standalone repo, stripped of al
 - `standards/RULES-FILE-INTEGRITY.md` — anti-prompt-injection for rules files
 
 ### Scripts and templates
-- `scripts/init-memory-bank.ps1/.sh` — updated to remove T-Mobile refs
+- `scripts/init-memory-bank.ps1/.sh` — updated to remove Eric Nolan refs
 - `scripts/mb.ps1/.sh` — unchanged
 - `templates/memory-bank/` — all 5 fillable template files
 - `templates/claude-commands/` — 3 commands (code-review, feature-dev, security-review)
@@ -47,14 +47,14 @@ The goal is to create a **personal fork**: a new standalone repo, stripped of al
 - `templates/CLAUDE.md`, `templates/AGENTS.md`, `templates/handoff.md`
 
 ### Docs
-- All 6 docs kept; SETUP-GUIDE.md and QUICK-REFERENCE.md updated to remove T-Mobile/enterprise refs
+- All 6 docs kept; SETUP-GUIDE.md and QUICK-REFERENCE.md updated to remove Eric Nolan/enterprise refs
 
 ---
 
 ## What Is Removed
 
 ### Binary assets (12+ MB)
-- `brand/` — entire directory (T-Mobile PPTX, logos, extracted assets)
+- `brand/` — entire directory (Eric Nolan PPTX, logos, extracted assets)
 - `memory-bank-overview*.pptx` — both deck files at repo root
 - `memory-bank-presentation-summary.md`
 
@@ -74,12 +74,12 @@ The goal is to create a **personal fork**: a new standalone repo, stripped of al
 ### Commands
 - `.claude/commands/accessibility-review.md`
 
-### T-Mobile-specific scripts
+### Eric Nolan-specific scripts
 - `scripts/build_overview_deck.py`
 - `scripts/patch_overview_deck.py`
 - `scripts/update_gitlab_description.py`
 
-### T-Mobile-specific root files
+### Eric Nolan-specific root files
 - `GITLAB-DESCRIPTION.md`
 
 ---
@@ -114,8 +114,8 @@ All other sections stay: memory bank instructions, context compaction recovery, 
 ### `.claude/settings.local.json`
 **Remove:**
 - Hardcoded GitLab API token (security fix — rotate this token before archiving the enterprise repo)
-- GitLab Bash allowlist entries (`curl` calls to T-Mobile GitLab)
-- T-Mobile branding MCP tool entries
+- GitLab Bash allowlist entries (`curl` calls to Eric Nolan GitLab)
+- Eric Nolan branding MCP tool entries
 
 **Keep:**
 - `git *` permission
@@ -123,7 +123,7 @@ All other sections stay: memory bank instructions, context compaction recovery, 
 - Any personal MCP tools (to be added by user as needed)
 
 ### `scripts/init-memory-bank.ps1` and `init-memory-bank.sh`
-Strip output messages that reference T-Mobile, GitLab, or branding setup steps. Keep the core directory-creation and template-copy logic unchanged.
+Strip output messages that reference Eric Nolan, GitLab, or branding setup steps. Keep the core directory-creation and template-copy logic unchanged.
 
 ### `docs/LOGGING-GUIDE.md`
 Trim to match the trimmed `standards/LOGGING.md`. Remove PII redaction walkthroughs, correlation ID setup, and enterprise anti-pattern sections. Keep the structured-format intro, log-level guidance, and the "never log credentials" rule.
@@ -132,10 +132,10 @@ Trim to match the trimmed `standards/LOGGING.md`. Remove PII redaction walkthrou
 Trim to match the trimmed logging standard — remove enterprise patterns (PII filters, correlation ID middleware) and keep only the core examples (structured output, log levels, credential guard).
 
 ### `memory-bank/` (project's own memory files)
-The current memory-bank files contain T-Mobile-specific content (techContext.md references T-Mobile MCP tools, branding MCP, GitLab, etc.). Reset these files to generic personal-use content by rewriting them as blank-slate templates that describe a generic personal coding standard, not the T-Mobile enterprise implementation.
+The current memory-bank files contain Eric Nolan-specific content (techContext.md references Eric Nolan MCP tools, branding MCP, GitLab, etc.). Reset these files to generic personal-use content by rewriting them as blank-slate templates that describe a generic personal coding standard, not the Eric Nolan enterprise implementation.
 
 ### `README.md`
-Rewrite to remove T-Mobile ERE attribution, GitLab distribution instructions, and team-onboarding framing. Replace with personal-use orientation: what this is, how to copy it into a project, quick start.
+Rewrite to remove Eric Nolan ERE attribution, GitLab distribution instructions, and team-onboarding framing. Replace with personal-use orientation: what this is, how to copy it into a project, quick start.
 
 ---
 
@@ -170,8 +170,8 @@ personal-memory-bank/
 │   ├── activeContext.md
 │   └── progress.md
 ├── scripts/
-│   ├── init-memory-bank.ps1         ← T-Mobile refs stripped
-│   ├── init-memory-bank.sh          ← T-Mobile refs stripped
+│   ├── init-memory-bank.ps1         ← Eric Nolan refs stripped
+│   ├── init-memory-bank.sh          ← Eric Nolan refs stripped
 │   ├── mb.ps1
 │   └── mb.sh
 ├── standards/
@@ -213,9 +213,9 @@ The existing `.claude/settings.local.json` contains a **hardcoded GitLab API tok
 After implementation, verify:
 1. `git ls-files | grep brand` — returns nothing (brand/ is fully removed)
 2. `git ls-files | grep training` — returns nothing
-3. `grep -r "T-Mobile" CLAUDE.md templates/CLAUDE.md` — returns nothing
+3. `grep -r "Eric Nolan" CLAUDE.md templates/CLAUDE.md` — returns nothing
 4. Open Claude Code in a test project using the personal CLAUDE.md — confirm session start reads memory bank, no enterprise hygiene block
 5. Run `/feature-dev` — confirm 7-phase flow launches correctly
 6. Run `/code-review` — confirm multi-agent review spawns correctly
 7. Check token count at session start: should be ~4K–4.5K total (vs ~5K enterprise)
-8. Confirm `.claude/settings.local.json` has no token, no T-Mobile MCP entries
+8. Confirm `.claude/settings.local.json` has no token, no Eric Nolan MCP entries
