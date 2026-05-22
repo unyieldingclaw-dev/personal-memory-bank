@@ -87,8 +87,15 @@ jobs:
       - name: Shellcheck
         shell: bash
         run: |
-          find scripts templates/scripts -name "*.sh" -print0 \
-            | xargs -0 shellcheck --severity=error
+          # Build directory list from those that actually exist
+          SHELL_DIRS=()
+          [ -d scripts ] && SHELL_DIRS+=(scripts)
+          [ -d templates/scripts ] && SHELL_DIRS+=(templates/scripts)
+          if [ "${#SHELL_DIRS[@]}" -gt 0 ]; then
+            find "${SHELL_DIRS[@]}" -name "*.sh" -print0 \
+              | xargs -r -0 shellcheck --severity=error
+          fi
+          echo "OK: Shellcheck passed"
 
   secret-scan:
     name: Secret Scan
