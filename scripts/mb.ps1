@@ -351,6 +351,9 @@ function Invoke-Init {
     # CLAUDE.md
     Copy-IfNew -Src (Join-Path $TemplatesDir "CLAUDE.md") -Dst (Join-Path $Target "CLAUDE.md") -Label "CLAUDE.md"
 
+    # .claude/settings.json
+    Copy-IfNew -Src (Join-Path $TemplatesDir ".claude\settings.json") -Dst (Join-Path $Target ".claude\settings.json") -Label ".claude/settings.json"
+
     # .claude/commands/
     foreach ($f in Get-ChildItem (Join-Path $TemplatesDir "claude-commands") -File) {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"

@@ -297,6 +297,9 @@ invoke_init() {
     # CLAUDE.md
     copy_if_new "$TEMPLATES_DIR/CLAUDE.md" "$TARGET/CLAUDE.md" "CLAUDE.md"
 
+    # .claude/settings.json
+    copy_if_new "$TEMPLATES_DIR/.claude/settings.json" "$TARGET/.claude/settings.json" ".claude/settings.json"
+
     # .claude/commands/
     for f in "$TEMPLATES_DIR/claude-commands"/*; do
         [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/commands/$(basename "$f")" ".claude/commands/$(basename "$f")"
