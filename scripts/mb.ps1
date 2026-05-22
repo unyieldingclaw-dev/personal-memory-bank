@@ -607,8 +607,8 @@ function Show-Doctor {
         $content = Get-Content $p -Raw
         $lastReviewed = if ($content -match '(?m)^last-reviewed:\s*(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { $null }
         $thresholdStr = if ($content -match '(?m)^staleness-threshold:\s*(\d+)d') { $Matches[1] } else { $null }
-        $authority = if ($content -match '(?m)^authority:\s*(\S+)') { $Matches[1] } else { $null }
-        if (-not $lastReviewed -or -not $thresholdStr) { continue }
+        $authority = if ($content -match '(?m)^authority:\s*([a-z]+)') { $Matches[1] } else { $null }
+        if (-not $lastReviewed -or $lastReviewed -eq 'YYYY-MM-DD' -or -not $thresholdStr) { continue }
         if ($authority -eq 'immutable') { continue }
         try {
             $lastDate = [datetime]::ParseExact($lastReviewed, 'yyyy-MM-dd', $null)
