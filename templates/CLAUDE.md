@@ -43,6 +43,33 @@ This system operates on **governed assistance, not autonomous intelligence.** Cl
 
 When layers conflict, the more deterministic layer wins. Advisory rules shape behavior proactively; enforcement layers catch drift when advisory isn't enough.
 
+## Task Contract Protocol
+
+Before starting any multi-file task, propose a task contract and wait for approval:
+
+**When a contract is required:** Any task touching more than one file, or the user's request implies a new feature / refactor / migration. Skip for: single-file edits, typos, config-value changes, changes clearly <20 lines.
+
+**Proposal format:**
+```
+**Task Contract Proposal**
+
+Task: <one-sentence description>
+
+Scope:
+- <file or path> (<operation>)
+- <file or path> (<operation>)
+
+Type "approved" to begin, or tell me what to adjust.
+```
+
+**On "approved":** Write `.claude/contracts/active-task.json` with the schema from `docs/CONTRACTS-GUIDE.md`. Set `expires_at` to 8 hours from now.
+
+**During work:** If the hook warns that a write is outside the declared scope, pause and confirm with the user before proceeding.
+
+**On completion:** Update `status` to `"complete"` in the contract file and note it in the conversation.
+
+**Cancelling:** If the user says "cancel contract" or "stop" mid-task, write `"status": "cancelled"` to the contract file.
+
 ## Security Guardrails
 
 Full enumerated lists in `standards/SECURITY-GUARDRAILS.md`.
