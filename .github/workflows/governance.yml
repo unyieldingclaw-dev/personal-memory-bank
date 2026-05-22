@@ -1,0 +1,53 @@
+name: Governance
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  file-size:
+    name: File Size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check file sizes
+        shell: bash
+        run: |
+          FAIL=0
+
+          echo "=== memory-bank files (warn: 80, fail: 150) ==="
+          while IFS= read -r -d '' file; do
+            lines=$(wc -l < "$file")
+            if [ "$lines" -gt 150 ]; then
+              echo "FAIL: $file ($lines lines -- limit 150)"
+              FAIL=1
+            elif [ "$lines" -gt 80 ]; then
+              echo "WARN: $file ($lines lines -- warn 80)"
+            else
+              echo "OK:   $file ($lines lines)"
+            fi
+          done < <(find memory-bank -name "*.md" -print0 2>/dev/null)
+
+          echo ""
+          echo "=== all other markdown files (warn: 500, fail: 800) ==="
+          while IFS= read -r -d '' file; do
+            lines=$(wc -l < "$file")
+            if [ "$lines" -gt 800 ]; then
+              echo "FAIL: $file ($lines lines -- limit 800)"
+              FAIL=1
+            elif [ "$lines" -gt 500 ]; then
+              echo "WARN: $file ($lines lines -- warn 500)"
+            fi
+          done < <(find . -name "*.md" \
+            -not -path "./memory-bank/*" \
+            -not -path "./.git/*" \
+            -not -path "./.claude/worktrees/*" \
+            -not -path "./docs/superpowers/plans/*" \
+            -print0)
+
+          echo ""
+          [ "$FAIL" -eq 0 ] && echo "file-size: PASS" || echo "file-size: FAIL"
+          exit $FAIL
