@@ -11,7 +11,7 @@ jobs:
     name: File Size
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Check file sizes
         shell: bash
@@ -56,7 +56,7 @@ jobs:
     name: Forbidden Patterns
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Credential grep
         shell: bash
@@ -101,9 +101,12 @@ jobs:
     name: Secret Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      # gitleaks-action v2.3.9 still uses node20; no Node 24 release exists yet.
+      # FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 silences the deprecation warning until upstream ships a fix.
+      - uses: gitleaks/gitleaks-action@v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
