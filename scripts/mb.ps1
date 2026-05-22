@@ -601,6 +601,38 @@ function Show-Doctor {
         Write-Host "       Run 'mb compact' to regenerate from lower-generation sources" -ForegroundColor DarkGray
     }
 
+    # 9. Staleness summary
+    $staleVolatile = 0
+    $staleStable = 0
+    foreach ($f in @("projectbrief.md", "systemPatterns.md", "techContext.md", "activeContext.md", "progress.md")) {
+        $p = "memory-bank/$f"
+        if (-not (Test-Path $p)) { continue }
+        $content = Get-Content $p -Raw
+        $lastReviewed = if ($content -match '(?m)^last-reviewed:\s*(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { $null }
+        $thresholdStr = if ($content -match '(?m)^staleness-threshold:\s*(\d+)d') { $Matches[1] } else { $null }
+        $authority = if ($content -match '(?m)^authority:\s*([a-z]+)') { $Matches[1] } else { $null }
+        if (-not $lastReviewed -or $lastReviewed -eq 'YYYY-MM-DD' -or -not $thresholdStr) { continue }
+        if ($authority -eq 'immutable') { continue }
+        try {
+            $lastDate = [datetime]::ParseExact($lastReviewed, 'yyyy-MM-dd', $null)
+            $daysSince = ([datetime]::Today - $lastDate).Days
+            $thresholdDays = [int]$thresholdStr
+            if ($daysSince -gt $thresholdDays) {
+                if ($authority -eq 'stable') { $staleStable++ } else { $staleVolatile++ }
+            }
+        } catch { continue }
+    }
+    $staleTotal = $staleVolatile + $staleStable
+    if ($staleTotal -eq 0) {
+        Write-Host "[OK]   All memory-bank files within staleness threshold" -ForegroundColor Green
+    } else {
+        $parts = @()
+        if ($staleVolatile -gt 0) { $parts += "$staleVolatile volatile/accumulating" }
+        if ($staleStable -gt 0) { $parts += "$staleStable stable" }
+        $detail = $parts -join ", "
+        Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb audit' for details" -ForegroundColor Yellow
+    }
+
     Write-Host ""
 }
 

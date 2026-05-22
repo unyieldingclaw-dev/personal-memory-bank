@@ -459,7 +459,7 @@ show_doctor() {
 
     # 6. File sizes
     OVER_LIMIT=false
-    check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb slim'${NC}" && OVER_LIMIT=true; }
+    check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb slim'${NC}" && OVER_LIMIT=true || true; }
     [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   150
     [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 300
     [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    400
@@ -517,6 +517,40 @@ show_doctor() {
             echo -e "$issue"
         done
         echo -e "       Run 'mb compact' to regenerate from lower-generation sources"
+    fi
+
+    # 9. Staleness summary
+    STALE_VOLATILE=0
+    STALE_STABLE=0
+    TODAY=$(date +%s)
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        p="memory-bank/$f"
+        [ ! -f "$p" ] && continue
+        last_reviewed=$(grep -m1 '^last-reviewed:' "$p" 2>/dev/null | sed 's/last-reviewed:[[:space:]]*//' | tr -d ' \r')
+        threshold=$(grep -m1 '^staleness-threshold:' "$p" 2>/dev/null | sed 's/staleness-threshold:[[:space:]]*//' | sed 's/d$//' | tr -d ' \r')
+        authority=$(grep -m1 '^authority:' "$p" 2>/dev/null | sed 's/authority:[[:space:]]*//' | tr -d ' \r')
+        [ -z "$last_reviewed" ] || [ "$last_reviewed" = "YYYY-MM-DD" ] && continue
+        [ -z "$threshold" ] && continue
+        [ "$authority" = "immutable" ] && continue
+        REVIEWED_EPOCH=$(date -d "$last_reviewed" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$last_reviewed" +%s 2>/dev/null || echo "0")
+        [ "$REVIEWED_EPOCH" = "0" ] && continue
+        DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
+        if [ "$DAYS_SINCE" -gt "$threshold" ]; then
+            if [ "$authority" = "stable" ]; then
+                STALE_STABLE=$((STALE_STABLE + 1))
+            else
+                STALE_VOLATILE=$((STALE_VOLATILE + 1))
+            fi
+        fi
+    done
+    STALE_TOTAL=$((STALE_VOLATILE + STALE_STABLE))
+    if [ "$STALE_TOTAL" -eq 0 ]; then
+        echo -e "${GREEN}[OK]   All memory-bank files within staleness threshold${NC}"
+    else
+        DETAIL=""
+        [ "$STALE_VOLATILE" -gt 0 ] && DETAIL="${STALE_VOLATILE} volatile/accumulating"
+        [ "$STALE_STABLE" -gt 0 ] && DETAIL="${DETAIL:+$DETAIL, }${STALE_STABLE} stable"
+        echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb audit' for details${NC}"
     fi
 
     echo ""
