@@ -1,0 +1,3 @@
+# Contract files are session artifacts — never commit them.
+# The .example file below is committed as schema documentation.
+*.json

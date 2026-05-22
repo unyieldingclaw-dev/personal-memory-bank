@@ -26,6 +26,9 @@ credentials.json
 # Session handoff notes — ephemeral, consumed by next conversation then deleted
 handoff.md
 
+# Task contract files — session artifacts, never committed
+.claude/contracts/*.json
+
 # Local test files
 test-project/
 temp/
