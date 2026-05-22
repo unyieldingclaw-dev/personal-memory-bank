@@ -71,14 +71,18 @@ jobs:
       - name: Spec placeholder grep
         shell: bash
         run: |
-          FOUND=$(find docs/superpowers/specs -name "*.md" -print0 \
+          # Exclude *ci-governance* specs: they document the CI pattern itself
+          # and necessarily reference the placeholder markers in prose.
+          FOUND=$(find docs/superpowers/specs -name "*.md" \
+            -not -name "*ci-governance*" \
+            -print0 \
             | xargs -0 grep -lE '\bTBD\b|\bTODO\b' 2>/dev/null || true)
           if [ -n "$FOUND" ]; then
-            echo "FAIL: TBD or TODO found in spec files:"
+            echo "FAIL: placeholder markers found in spec files:"
             echo "$FOUND"
             exit 1
           fi
-          echo "OK: No TBD/TODO in spec files"
+          echo "OK: No placeholder markers in spec files"
 
       - name: Shellcheck
         shell: bash
