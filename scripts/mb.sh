@@ -517,7 +517,6 @@ show_doctor() {
     fi
 
     # 9. Staleness summary
-    echo "9. Staleness summary"
     STALE_VOLATILE=0
     STALE_STABLE=0
     TODAY=$(date +%s)
@@ -531,6 +530,7 @@ show_doctor() {
         [ -z "$threshold" ] && continue
         [ "$authority" = "immutable" ] && continue
         REVIEWED_EPOCH=$(date -d "$last_reviewed" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$last_reviewed" +%s 2>/dev/null || echo "0")
+        [ "$REVIEWED_EPOCH" = "0" ] && continue
         DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
         if [ "$DAYS_SINCE" -gt "$threshold" ]; then
             if [ "$authority" = "stable" ]; then
