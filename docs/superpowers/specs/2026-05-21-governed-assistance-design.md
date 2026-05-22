@@ -36,7 +36,7 @@ This system operates on **governed assistance, not autonomous intelligence.** Cl
 **Enforcement is layered — from softest to hardest:**
 - **CLAUDE.md** (this file): advisory — Claude reads this and follows it, but can drift when context-compacted or distracted
 - **Hooks**: deterministic structural enforcement — fires on every tool call, cannot be talked around
-- **Opponent/reviewer**: semantic enforcement — a second agent or human reviewer checks scope and quality
+- **Reviewer / Opponent**: semantic enforcement — a second agent or human reviewer checks scope and quality
 - **CI**: deterministic gate — enforces patterns the hook layer can't (file size, forbidden imports, secret scanning)
 
 When layers conflict, the more deterministic layer wins. Advisory rules shape behavior proactively; enforcement layers catch drift when advisory isn't enough.
@@ -54,7 +54,7 @@ Memory Bank is built on **governed assistance** — the idea that AI is most use
 |-------|------|----------------|
 | `CLAUDE.md` | Advisory | Behavioral norms, workflow patterns, code style |
 | Hooks | Deterministic structural | Per-command enforcement — blocks/confirms/warns on dangerous ops |
-| Reviewer/Opponent | Semantic | Scope drift, spec compliance, code quality checks |
+| Reviewer / Opponent | Semantic | Scope drift, spec compliance, code quality checks |
 | CI | Deterministic gates | Codebase-wide invariants (file size, forbidden patterns, secrets) |
 
 See [`docs/HOOKS-GUIDE.md`](docs/HOOKS-GUIDE.md) for the full enforcement layer architecture.
