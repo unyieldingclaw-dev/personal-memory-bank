@@ -456,7 +456,7 @@ show_doctor() {
 
     # 6. File sizes
     OVER_LIMIT=false
-    check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb slim'${NC}" && OVER_LIMIT=true; }
+    check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb slim'${NC}" && OVER_LIMIT=true || true; }
     [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   150
     [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 300
     [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    400
