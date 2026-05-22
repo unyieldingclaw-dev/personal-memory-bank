@@ -11,6 +11,19 @@ Hooks run deterministically at Claude Code lifecycle points. Unlike `CLAUDE.md` 
 | `Stop` | When Claude pauses for input | Desktop notification |
 | `PreCompact` | Before context compaction | Save state summary |
 
+## Enforcement Layer Architecture
+
+Hooks are one layer in a four-layer enforcement stack. Understanding which layer owns which concern prevents duplication and drift:
+
+| Layer | Kind | Owns | Does NOT own |
+|-------|------|------|-------------|
+| **CLAUDE.md** | Advisory | Behavioral norms, workflow philosophy, code style | Anything requiring guaranteed execution |
+| **Hooks** | Deterministic structural | Per-tool-call pattern enforcement: dangerous commands, credential access | Semantic correctness, business logic review |
+| **Reviewer / Opponent** | Semantic | Spec compliance, scope drift, code quality | Mechanical pattern matching |
+| **CI** | Deterministic gate | Codebase invariants: file size, forbidden imports, secret scanning | Real-time per-command interception |
+
+**Design rule:** Don't duplicate concerns across layers. If a check belongs in CI, adding it to hooks creates two places to update when patterns change. If a check is semantic, adding it to hooks creates false confidence (simple pattern matching misses context). Each layer does its job; the stack as a whole provides defense in depth.
+
 ## Default Hooks in This Standard
 
 Configured in `.claude/settings.json`:

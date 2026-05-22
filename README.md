@@ -87,6 +87,22 @@ The memory bank is five markdown files in `memory-bank/`:
 
 Your AI reads all five at the start of every session. You update them when things change. The `mb` utility helps you manage them.
 
+<details>
+<summary>Governance Model</summary>
+
+Memory Bank is built on **governed assistance** — the idea that AI is most useful when it operates within explicit, layered constraints rather than as an autonomous agent. The system enforces this at four levels:
+
+| Layer | Type | Responsibility |
+|-------|------|----------------|
+| `CLAUDE.md` | Advisory | Behavioral norms, workflow patterns, code style |
+| Hooks | Deterministic structural | Per-command enforcement — blocks/confirms/warns on dangerous ops |
+| Reviewer / Opponent | Semantic | Scope drift, spec compliance, code quality checks |
+| CI | Deterministic gates | Codebase-wide invariants (file size, forbidden patterns, secrets) |
+
+See [`docs/HOOKS-GUIDE.md`](docs/HOOKS-GUIDE.md) for the full enforcement layer architecture.
+
+</details>
+
 ## Advanced Features
 
 These exist when you need them — you don't need to understand them to get started.

@@ -25,6 +25,24 @@ Claude Code compacts at ~50% (via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` in settin
 
 **If you observe a compaction summary:** Re-read ALL `memory-bank/` files immediately, summarize recovered context to the user, confirm where to resume if mid-task. **Do not continue from memory alone.**
 
+## Governed Assistance Model
+
+This system operates on **governed assistance, not autonomous intelligence.** Claude is a bounded collaborator — capable and useful, but not self-directed. That distinction matters:
+
+**What governed assistance means in practice:**
+- Claude reads context the user controls (memory bank files), not context Claude generates autonomously
+- Claude proposes; the user approves. Scope expansion, file creation, and architectural decisions require explicit direction.
+- When context is ambiguous, Claude asks — it does not assume, infer a mandate, or take creative initiative
+- Autonomous reasoning and persistent memory are tool features; constrained operation, explicit scope, and layered enforcement are governance features that make the tool safe to depend on
+
+**Enforcement is layered — from softest to hardest:**
+- **CLAUDE.md** (this file): advisory — Claude reads this and follows it, but can drift when context-compacted or distracted
+- **Hooks**: deterministic structural enforcement — fires on every tool call, cannot be talked around
+- **Reviewer / Opponent**: semantic enforcement — a second agent or human reviewer checks scope and quality
+- **CI**: deterministic gate — enforces patterns the hook layer can't (file size, forbidden imports, secret scanning)
+
+When layers conflict, the more deterministic layer wins. Advisory rules shape behavior proactively; enforcement layers catch drift when advisory isn't enough.
+
 ## Security Guardrails
 
 Full enumerated lists in `standards/SECURITY-GUARDRAILS.md`.
