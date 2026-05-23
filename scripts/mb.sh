@@ -300,6 +300,15 @@ invoke_init() {
     # .claude/settings.json
     copy_if_new "$TEMPLATES_DIR/.claude/settings.json" "$TARGET/.claude/settings.json" ".claude/settings.json"
 
+    # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
+    # NOTE: These are the only portable governance scripts exported by mb init.
+    # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
+    for script in dangerous-commands.sh dangerous-commands.ps1 \
+                  check-contract.sh check-contract.ps1 \
+                  update-reviewed.sh update-reviewed.ps1; do
+        copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
+    done
+
     # .claude/commands/
     for f in "$TEMPLATES_DIR/claude-commands"/*; do
         [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/commands/$(basename "$f")" ".claude/commands/$(basename "$f")"
