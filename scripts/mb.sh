@@ -449,6 +449,33 @@ show_doctor() {
         else
             echo -e "${YELLOW}[WARN] No PostToolUse hook — last-reviewed won't auto-update${NC}"
         fi
+        # Hook script existence: extract full relative paths from "command": lines,
+        # deduplicate by logical name (basename), check any implementation file exists.
+        # Works for both adopted projects (scripts/X) and this repo (templates/scripts/X).
+        SEEN_HOOK_NAMES=""
+        MISSING_HOOKS=()
+        PRESENT_HOOKS=()
+        HOOK_PATHS=$(grep '"command":' ".claude/settings.json" 2>/dev/null \
+            | grep -oE '[A-Za-z][A-Za-z0-9_/-]*\.(sh|ps1)' \
+            | sort -u)
+        for hook_path in $HOOK_PATHS; do
+            base="${hook_path%.*}"
+            name="$(basename "$base")"
+            case " $SEEN_HOOK_NAMES " in *" $name "*) continue ;; esac
+            SEEN_HOOK_NAMES="$SEEN_HOOK_NAMES $name"
+            if compgen -G "${base}.*" > /dev/null 2>&1; then
+                PRESENT_HOOKS+=("$name")
+            else
+                MISSING_HOOKS+=("$name")
+            fi
+        done
+        if [ ${#MISSING_HOOKS[@]} -eq 0 ] && [ ${#PRESENT_HOOKS[@]} -gt 0 ]; then
+            echo -e "${GREEN}[OK]   Hook scripts present ($(IFS=', '; echo "${PRESENT_HOOKS[*]}"))${NC}"
+        elif [ ${#MISSING_HOOKS[@]} -gt 0 ]; then
+            for h in "${MISSING_HOOKS[@]}"; do
+                echo -e "${YELLOW}[WARN] Hook script missing: $h — run 'mb init' to install${NC}"
+            done
+        fi
     else
         echo -e "${YELLOW}[WARN] No .claude/settings.json — safety hooks inactive${NC}"
     fi
