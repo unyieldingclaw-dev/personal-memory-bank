@@ -354,6 +354,13 @@ function Invoke-Init {
     # .claude/settings.json
     Copy-IfNew -Src (Join-Path $TemplatesDir ".claude\settings.json") -Dst (Join-Path $Target ".claude\settings.json") -Label ".claude/settings.json"
 
+    # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
+    # NOTE: These are the only portable governance scripts exported by mb init.
+    # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1")) {
+        Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
+    }
+
     # .claude/commands/
     foreach ($f in Get-ChildItem (Join-Path $TemplatesDir "claude-commands") -File) {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"
