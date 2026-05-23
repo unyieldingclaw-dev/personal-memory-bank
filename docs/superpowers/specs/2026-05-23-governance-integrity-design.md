@@ -78,6 +78,8 @@ templates/
 
 ```bash
 # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
+# NOTE: These are the only portable governance scripts exported by mb init.
+# Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
 for script in dangerous-commands.sh dangerous-commands.ps1 \
               check-contract.sh check-contract.ps1 \
               update-reviewed.sh update-reviewed.ps1; do
@@ -139,13 +141,16 @@ The doctor check normalizes to basenames before checking existence:
 ```bash
 # Extract basenames from "command": lines in .claude/settings.json
 # e.g., "scripts/dangerous-commands.ps1" → "dangerous-commands"
+# Pattern: strip extension — any same-basename file counts as the logical target
 BASENAMES=$(grep '"command":' .claude/settings.json \
-  | grep -oP 'scripts/\K[^.]+(?=\.(sh|ps1))' \
+  | grep -oP 'scripts/\K[^.\s"]+' \
+  | sed 's/\.[^.]*$//' \
   | sort -u)
 
 MISSING=()
 for base in $BASENAMES; do
-    if [ ! -f "scripts/${base}.sh" ] && [ ! -f "scripts/${base}.ps1" ]; then
+    # A logical hook target is present if ANY implementation file (any extension) exists
+    if ! ls "scripts/${base}."* 2>/dev/null | grep -q .; then
         MISSING+=("$base")
     fi
 done
@@ -153,7 +158,11 @@ done
 
 Warn once per missing basename. No per-file output for present scripts — aggregate OK line only.
 
-**Why not check each `.sh` and `.ps1` separately:** Producing warnings for a missing `.ps1` on a Linux-only machine is noise. The governance intent is: can this script fire? If either platform variant exists, it can.
+**Abstraction invariant:** The check is extension-agnostic at the grouping level. A basename with a `.sh`, `.ps1`, or any future `.py`/`.rb` implementation all satisfy the same logical target. The check does not hardcode which extensions are valid — it asks "does any implementation exist?" This keeps the model future-safe without needing to update doctor when new runtimes are added.
+
+**Current enforcement:** For the CI step, `.sh` and `.ps1` are explicitly the two expected implementations (the allowlist is what governs there). Doctor's job is only to verify local presence — not enforce completeness.
+
+**Why not check each `.sh` and `.ps1` separately:** Producing warnings for a missing `.ps1` on a Linux-only machine is noise. The governance intent is: can this script fire? If any platform variant exists, it can.
 
 **Verbose mode (optional, not in this iteration):** If `mb doctor --verbose` is ever added, it could print platform parity info (e.g., `[INFO] scripts/dangerous-commands: .sh present, .ps1 missing`). Not in scope now.
 
