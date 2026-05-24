@@ -134,6 +134,42 @@ except ValueError as e:
 | Don't generate binary/hash content | Expensive and unhelpful |
 | Group related code | Avoid single-function files |
 
+### 7. Dead Code & Cleanup Authority
+
+**Identifying dead code and removing it are separate authority levels.**
+
+| Authority | When allowed | Required evidence |
+|-----------|-------------|-------------------|
+| **Observe** | Always | State why it appears unused and what references were checked |
+| **Remove** | Only with deterministic proof or explicit human confirmation | Proof that no execution path reaches it (static analysis + runtime + all platform branches) |
+
+**The key constraint:** Lack of observed execution is not deterministic proof of non-use.
+
+Code that appears unused during local analysis may be:
+- A shell fallback for an alternate platform or runtime
+- A CI-only branch activated by an env variable
+- A hook script referenced by external config
+- An extension point loaded dynamically by convention
+- A compatibility shim that activates only on certain OS versions
+
+**Default posture for infra, scripting, and governance code:** Observe-only. Shell scripts, platform branches, CI conditions, and hook scripts carry the highest risk of false dead-code detection. Do not remove without a human confirmation that the code path is truly unreachable.
+
+**Observation format:** When flagging suspected dead code, state:
+1. Why it appears unused (what signals suggest it's dead)
+2. What references were checked (grep, call-site analysis, CI config, hook config)
+3. Confidence level and the specific contexts that would need to be verified to be certain
+
+**Example:**
+
+```
+# Suspected dead code: install_legacy_wrapper() — no call sites found via grep,
+# not referenced in mb.sh invoke_* dispatch table.
+# NOT removed: didn't check init-memory-bank.sh wrapper scripts or external CI callers.
+# Recommend: human confirms before deletion.
+```
+
+**What this is not:** This section does not prohibit refactoring or cleanup. It constrains *autonomous deletion of code whose reachability cannot be proven*. Cleanup with human confirmation, cleanup of code the implementer just wrote, and cleanup where the full call graph is known — all fine.
+
 ## Language Extensions
 
 Add language-specific rules in `standards/extensions/<language>.md`.
