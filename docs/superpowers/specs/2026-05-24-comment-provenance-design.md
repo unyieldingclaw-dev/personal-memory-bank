@@ -39,7 +39,7 @@ Insert after the existing `| Document breaking changes | ✅ \`// BREAKING: Chan
 |------|---------|
 | Rationale must trace to observable behavior, documented constraint, or explicit project guidance | ❌ `// Using Set here for significant performance gains` ✅ `// Set prevents duplicate hook registration — settings loader may merge repeated entries on reload` |
 | No speculative performance or optimization claims | ❌ `// Parallelized for performance` ✅ `// Parallelized because the upstream API enforces a 5s per-call timeout; sequential execution exceeds dashboard SLA` |
-| Do not invent historical or architectural intent — if the reason is not derivable from observable behavior, documentation, or explicit project guidance, omit the comment | ❌ `// Legacy compatibility` (unsupported — no linked ticket, no observable constraint) ✅ [omit the comment rather than invent a reason] |
+| Do not document rationale you cannot support with observable behavior, documented constraints, or explicit project guidance — this covers historical intent, optimization claims, and architectural explanations equally | ❌ `// Legacy compatibility` (unsupported — no linked ticket, no observable constraint) ✅ [omit the comment rather than invent a reason] |
 
 ### 1b. Section 2 — AI callout note (insert after the Python good/bad example block)
 
@@ -48,6 +48,11 @@ Insert after the existing `| Document breaking changes | ✅ \`// BREAKING: Chan
 > invented optimization claims, speculative architectural history, and authoritative-sounding
 > fiction. These provenance standards apply regardless of whether a change is authored by
 > a human or an AI system.
+>
+> **Absence of rationale is preferable to speculative rationale.** When the reason is not
+> traceable to observable behavior, documentation, or explicit project guidance, the comment
+> should not exist. Most AI-generated technical debt now comes from plausible explanatory
+> fiction, not missing comments.
 ```
 
 ### 1c. New Section 7 — Dead Code & Cleanup Authority
@@ -118,7 +123,7 @@ These three lines are the behavioral anchor. They must be exactly 3 lines — no
 | `CLAUDE.md` | Add 3-line anchor after existing Code Quality pointer |
 | `templates/CLAUDE.md` | Same 3-line anchor (keeps template in sync) |
 
-**Note on `templates/CLAUDE.md`:** The template is the adoptable surface distributed by `mb init`. It should stay in sync with this repo's `CLAUDE.md`. The 3-line anchor is generic enough to apply to any adopted project.
+**Note on `templates/CLAUDE.md`:** The template is the adoptable surface distributed by `mb init`. It should stay in sync with this repo's `CLAUDE.md`. The 3-line anchor is generic enough to apply to any adopted project. Sync discipline: `templates/CLAUDE.md` should remain structurally minimal — not a forked variant. When this repo's `CLAUDE.md` gains new behavioral anchors that belong to the portable governance substrate, they go into `templates/CLAUDE.md` as well. Repo-specific tooling details (mb CLI usage, workflow phases, etc.) do not.
 
 ---
 
@@ -134,7 +139,14 @@ These three lines are the behavioral anchor. They must be exactly 3 lines — no
 
 ## What This Is Not
 
-- Not a prohibition on WHY comments (the existing culture is healthy — this adds constraints, not replacements)
-- Not an AI-only rule (provenance discipline applies to all authors)
-- Not a commentary ban (cleanup, structural, and annotation comments are unaffected)
-- Not a general refactoring policy (Section 7 is specifically about autonomous deletion of code whose reachability is uncertain)
+- **Not a prohibition on WHY comments.** The existing culture is healthy — this adds provenance constraints, not replacements. Keep commenting on failure modes, integration quirks, and ordering rationale.
+
+- **Not an AI-only rule.** Provenance discipline applies to all authors. Humans also fabricate rationale; AI systems do it more fluently and at higher volume.
+
+- **Not a ban on cleanup.** Duplicate reduction, simplification, dead-code identification, and refactoring are all encouraged — when evidence-bounded (you know what you're removing) and authority-bounded (you own that decision or have confirmation). Section 7 constrains *autonomous deletion of code whose reachability cannot be proven*, not cleanup generally.
+
+- **Not a requirement to explain obvious code.** Section 2 already says "no obvious comments." That rule remains. "Comment the WHY" means comment on non-obvious reasoning — not every line needs a rationale.
+
+- **Not a prohibition on performance work.** The standard bans *unsupported* optimization claims, not optimization itself. "Parallelized because the upstream API enforces a 5s per-call timeout" is fully supported. "Parallelized for performance" is not.
+
+- **Not a general refactoring policy.** Section 7 does not govern human-led cleanup sessions where the developer has read the full codebase. It governs autonomous AI-initiated deletion where the reachability question is open.
