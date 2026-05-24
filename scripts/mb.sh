@@ -470,7 +470,8 @@ show_doctor() {
             fi
         done
         if [ ${#MISSING_HOOKS[@]} -eq 0 ] && [ ${#PRESENT_HOOKS[@]} -gt 0 ]; then
-            echo -e "${GREEN}[OK]   Hook scripts present ($(IFS=', '; echo "${PRESENT_HOOKS[*]}"))${NC}"
+            _joined=$(printf '%s, ' "${PRESENT_HOOKS[@]}"); _joined="${_joined%, }"
+            echo -e "${GREEN}[OK]   Hook scripts present (${_joined})${NC}"
         elif [ ${#MISSING_HOOKS[@]} -gt 0 ]; then
             for h in "${MISSING_HOOKS[@]}"; do
                 echo -e "${YELLOW}[WARN] Hook script missing: $h — run 'mb init' to install${NC}"
