@@ -516,6 +516,34 @@ function Show-Doctor {
             Write-Host "[WARN] No PostToolUse hook — last-reviewed won't auto-update" -ForegroundColor Yellow
             Write-Host "       Copy templates/.claude/settings.json to enable" -ForegroundColor DarkGray
         }
+        # Hook script existence: extract full relative paths from "command": lines,
+        # deduplicate by logical name (basename), check any implementation file exists.
+        # Works for both adopted projects (scripts/X) and this repo (templates/scripts/X).
+        $commandLines = ($settings -split "`n") | Where-Object { $_ -match '"command":' }
+        $hookPaths = $commandLines | ForEach-Object {
+            [regex]::Matches($_, '[A-Za-z][A-Za-z0-9_/-]*\.(sh|ps1)') | ForEach-Object { $_.Value }
+        } | Sort-Object -Unique
+        $seenBases = @{}
+        $missingHooks = @()
+        $presentHooks = @()
+        foreach ($hookPath in $hookPaths) {
+            $base = $hookPath -replace '\.[^.]+$', ''
+            $name = Split-Path -Leaf $base
+            if ($seenBases.ContainsKey($name)) { continue }
+            $seenBases[$name] = $true
+            if (Get-ChildItem "${base}.*" -ErrorAction SilentlyContinue) {
+                $presentHooks += $name
+            } else {
+                $missingHooks += $name
+            }
+        }
+        if ($missingHooks.Count -eq 0 -and $presentHooks.Count -gt 0) {
+            Write-Host "[OK]   Hook scripts present ($($presentHooks -join ', '))" -ForegroundColor Green
+        } elseif ($missingHooks.Count -gt 0) {
+            foreach ($h in $missingHooks) {
+                Write-Host "[WARN] Hook script missing: $h — run 'mb init' to install" -ForegroundColor Yellow
+            }
+        }
     } else {
         Write-Host "[WARN] No .claude/settings.json — safety hooks inactive" -ForegroundColor Yellow
         Write-Host "       Copy templates/.claude/settings.json to enable" -ForegroundColor DarkGray
