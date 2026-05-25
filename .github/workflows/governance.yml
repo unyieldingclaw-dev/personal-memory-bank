@@ -127,7 +127,7 @@ jobs:
             | sed 's/\.[^.]*$//' \
             | sort -u)
           for base in $BASEPATHS; do
-            if compgen -G "templates/${base}.*" > /dev/null 2>&1; then
+            if [ -n "$(compgen -G "templates/${base}.*" 2>/dev/null)" ]; then
               echo "OK:   templates/${base}.* present"
             else
               echo "ERROR: $SETTINGS references $base but the script is missing from templates/:"
