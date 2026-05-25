@@ -18,6 +18,9 @@ Never say "Done!" without evidence that changes work.
 
 ### DO
 - Add WHY comments for non-obvious logic
+- Comment the WHY, not the WHAT
+- Do not invent rationale, optimization claims, or historical intent not supported by observable behavior, documentation, or explicit project guidance
+- Treat dead-code identification as advisory unless non-use can be proven deterministically
 - Document breaking changes
 - Explain trade-offs and constraints
 - Note workarounds and their reasons
