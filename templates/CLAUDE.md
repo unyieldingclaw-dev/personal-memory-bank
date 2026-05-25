@@ -12,7 +12,7 @@ At the start of every conversation, and again after any context compaction, sile
 4. `memory-bank/activeContext.md` - Current focus and next steps
 5. `memory-bank/progress.md` - What's complete and planned
 
-**Rules:** Never ask for info already in Memory Bank. Never violate projectbrief.md. Always follow systemPatterns.md. Update after significant changes. Never write secrets, credentials, PII, or full code dumps to memory-bank/ files.
+**Rules:** Never ask for info already in Memory Bank. Never violate projectbrief.md. Always follow systemPatterns.md. After completing any significant task or multi-file change, update the relevant memory-bank files before continuing to new work. Do not rely on compaction summaries as the primary persistence mechanism for important operational context. Never write secrets, credentials, PII, or full code dumps to memory-bank/ files.
 
 **Authority order (higher tier governs in any conflict):**
 `projectbrief.md` (immutable) > `systemPatterns.md` / `techContext.md` (stable) > `activeContext.md` (volatile) > `progress.md` (accumulating). When files contradict each other, surface the conflict — do not silently reconcile.
