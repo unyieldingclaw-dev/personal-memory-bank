@@ -23,7 +23,10 @@ param(
     [ValidateSet("init", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
-    [string]$Arg = ""
+    [string]$Arg = "",
+    # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
+    # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
+    [switch]$DryRun
 )
 
 # WHY: $PSScriptRoot is the directory containing mb.ps1 (scripts/).
@@ -877,9 +880,10 @@ Do not commit the changes until I confirm.
 }
 
 function Invoke-Upgrade {
-    param([string]$Arg)
-    $dryRun = $false
-    if ($Arg -eq "--dry-run") { $dryRun = $true }
+    # WHY: $DryRun is read from the script-level switch parameter rather than
+    # checking $Arg for "--dry-run". PS7 parses --dry-run as a named parameter
+    # flag, not a positional string; a [switch] is the idiomatic PS7 equivalent.
+    $dryRun = $DryRun.IsPresent
 
     Write-Host ""
     Write-Host "mb upgrade" -ForegroundColor Cyan
@@ -1026,7 +1030,7 @@ switch ($Command) {
     "archive" { Show-Archive }
     "slim"    { Show-Slim }
     "commit"  { Invoke-Commit }
-    "upgrade" { Invoke-Upgrade $Arg }
+    "upgrade" { Invoke-Upgrade }
     "budget"  { Show-Budget }
     "help"    { Show-Help }
 }
