@@ -29,6 +29,9 @@ handoff.md
 # Task contract files — session artifacts, never committed
 .claude/contracts/*.json
 
+# Claude Code session worktrees — managed by the harness, not project files
+.claude/worktrees/
+
 # Local test files
 test-project/
 temp/
