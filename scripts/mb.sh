@@ -57,6 +57,7 @@ show_help() {
     echo "  archive  Show instructions for archiving old content"
     echo "  slim     Check if activeContext.md needs trimming"
     echo "  commit   Stage and commit Memory Bank changes"
+    echo "  upgrade  Propagate current governance templates to this project"
     echo "  budget   Check token budget health (CLAUDE.md + memory-bank/ sizes)"
     echo "  help     Show this help message"
     echo ""
@@ -816,6 +817,144 @@ EOF
     echo ""
 }
 
+invoke_upgrade() {
+    DRY_RUN=false
+    if [ "$ARG" = "--dry-run" ]; then
+        DRY_RUN=true
+    fi
+
+    echo ""
+    echo -e "${CYAN}mb upgrade${NC}"
+    echo -e "${CYAN}==========${NC}"
+    if [ "$DRY_RUN" = true ]; then
+        echo -e "${YELLOW}(dry run — no files will be written)${NC}"
+    fi
+    echo ""
+
+    # WHY: upgrade requires an mb-managed project; memory-bank/ is the sentinel.
+    # Without this gate, upgrade could silently run in unrelated directories.
+    if [ ! -d "memory-bank" ]; then
+        echo -e "${RED}Error: No memory-bank/ directory found. Run 'mb upgrade' from the root of an mb-managed project.${NC}"
+        exit 1
+    fi
+
+    TEMPLATES_DIR="$REPO_ROOT/templates"
+    if [ ! -d "$TEMPLATES_DIR" ]; then
+        echo -e "${RED}Error: Templates not found at $TEMPLATES_DIR${NC}"
+        echo -e "${YELLOW}Set MB_HOME or run from the memory-bank repo.${NC}"
+        exit 1
+    fi
+
+    # WHY: Ownership is hardcoded as explicit arrays — NOT a config file.
+    # Ownership semantics are behavior, not data. A config file would invite
+    # accidental expansion of overwrite scope. Rationale comments are per-group.
+    TEMPLATE_OWNED=(
+        # Cursor governance rules — pure governance substrate, no project customization expected
+        ".cursor/rules/code-quality.mdc"
+        ".cursor/rules/memory-bank.mdc"
+        ".cursor/rules/workflow.mdc"
+        ".cursor/rules/security.mdc"
+        ".cursor/rules/code-review.mdc"
+        ".cursor/rules/rules-file-integrity.mdc"
+        # Claude Code settings — hook wiring, not project-specific
+        ".claude/settings.json"
+        # Hook scripts — deterministic enforcement scripts, no project customization
+        "scripts/dangerous-commands.sh"
+        "scripts/dangerous-commands.ps1"
+        "scripts/check-contract.sh"
+        "scripts/check-contract.ps1"
+        "scripts/update-reviewed.sh"
+        "scripts/update-reviewed.ps1"
+        # Slash commands — governance workflow commands from templates, not project-specific
+        ".claude/commands/code-review.md"
+        ".claude/commands/feature-dev.md"
+        ".claude/commands/security-review.md"
+    )
+
+    ADVISORY_DIFF=(
+        # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
+        "CLAUDE.md"
+        # Agent definitions likely contain project-specific tool lists and instructions
+        ".claude/agents/researcher.md"
+        ".claude/agents/security-reviewer.md"
+    )
+
+    # WHY: Template source paths are NOT a 1:1 mirror of target paths.
+    # .cursor/rules/X lives at templates/cursor/rules/X (no dot prefix) because
+    # the templates directory uses non-hidden layout. .claude/commands/X maps to
+    # templates/claude-commands/X (different directory name). All other targets
+    # resolve directly under $TEMPLATES_DIR.
+    _upgrade_src() {
+        local target="$1"
+        case "$target" in
+            .cursor/rules/*)    echo "$TEMPLATES_DIR/cursor/rules/${target#.cursor/rules/}" ;;
+            .claude/commands/*) echo "$TEMPLATES_DIR/claude-commands/${target#.claude/commands/}" ;;
+            *)                  echo "$TEMPLATES_DIR/$target" ;;
+        esac
+    }
+
+    # Process TEMPLATE_OWNED — overwrite unconditionally if stale
+    for target in "${TEMPLATE_OWNED[@]}"; do
+        src="$(_upgrade_src "$target")"
+        if [ ! -f "$src" ]; then
+            echo -e "${YELLOW}[?] $target (template-owned source missing — skipped)${NC}"
+            continue
+        fi
+        if [ ! -f "$target" ]; then
+            if [ "$DRY_RUN" = true ]; then
+                echo -e "${GREEN}[+?] $target (would add)${NC}"
+            else
+                mkdir -p "$(dirname "$target")"
+                cp "$src" "$target"
+                echo -e "${GREEN}[+] $target (added)${NC}"
+            fi
+        elif cmp -s "$src" "$target"; then
+            echo -e "${GRAY}[=] $target (unchanged)${NC}"
+        else
+            if [ "$DRY_RUN" = true ]; then
+                echo -e "${YELLOW}[~?] $target (would update)${NC}"
+            else
+                cp "$src" "$target"
+                echo -e "${YELLOW}[~] $target (updated)${NC}"
+            fi
+        fi
+    done
+
+    # Process ADVISORY_DIFF — compare and emit advisory diff, never write
+    for target in "${ADVISORY_DIFF[@]}"; do
+        src="$(_upgrade_src "$target")"
+        if [ ! -f "$src" ]; then
+            echo -e "${YELLOW}[?] $target (advisory source missing — cannot compare)${NC}"
+            continue
+        fi
+        if [ ! -f "$target" ]; then
+            echo -e "${GRAY}[=] $target (not present in project — no action needed)${NC}"
+            continue
+        fi
+        if cmp -s "$src" "$target"; then
+            echo -e "${GRAY}[=] $target (matches template)${NC}"
+        else
+            echo -e "${YELLOW}[!] $target (differs from template — review manually)${NC}"
+            if command -v diff >/dev/null 2>&1; then
+                # WHY: diff exits 1 when files differ; || true prevents set -e from aborting.
+                DIFF_OUTPUT=$(diff -u "$src" "$target" 2>/dev/null || true)
+                DIFF_LINES=$(printf '%s' "$DIFF_OUTPUT" | wc -l)
+                if [ "$DIFF_LINES" -le 20 ]; then
+                    printf '%s\n' "$DIFF_OUTPUT" | sed 's/^/    /'
+                else
+                    printf '%s\n' "$DIFF_OUTPUT" | head -n 20 | sed 's/^/    /'
+                    REMAINING=$((DIFF_LINES - 20))
+                    echo "    ... ($REMAINING more lines — compare manually with: diff $src $target)"
+                fi
+            else
+                echo "    (diff not available — compare manually with: diff $src $target)"
+            fi
+        fi
+    done
+
+    echo ""
+}
+
 case "$COMMAND" in
     init)     invoke_init ;;
     validate) show_validate ;;
@@ -828,6 +967,7 @@ case "$COMMAND" in
     archive)  show_archive ;;
     slim)     show_slim ;;
     commit)   invoke_commit ;;
+    upgrade)  invoke_upgrade ;;
     budget)   show_budget ;;
     help)     show_help ;;
     *)

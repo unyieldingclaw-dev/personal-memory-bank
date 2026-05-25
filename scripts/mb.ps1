@@ -20,10 +20,13 @@
 # Default to "help" so running "mb" alone shows usage, not an error.
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "budget", "help")]
+    [ValidateSet("init", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
-    [string]$Arg = ""
+    [string]$Arg = "",
+    # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
+    # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
+    [switch]$DryRun
 )
 
 # WHY: $PSScriptRoot is the directory containing mb.ps1 (scripts/).
@@ -54,6 +57,7 @@ function Show-Help {
     Write-Host "  archive  Show instructions for archiving old content"
     Write-Host "  slim     Check if activeContext.md needs trimming"
     Write-Host "  commit   Stage and commit Memory Bank changes"
+    Write-Host "  upgrade  Propagate current governance templates to this project"
     Write-Host "  budget   Check token budget health (CLAUDE.md + memory-bank/ sizes)"
     Write-Host "  help     Show this help message"
     Write-Host ""
@@ -875,6 +879,144 @@ Do not commit the changes until I confirm.
     Write-Host ""
 }
 
+function Invoke-Upgrade {
+    # WHY: $DryRun is read from the script-level switch parameter rather than
+    # checking $Arg for "--dry-run". PS7 parses --dry-run as a named parameter
+    # flag, not a positional string; a [switch] is the idiomatic PS7 equivalent.
+    $dryRun = $DryRun.IsPresent
+
+    Write-Host ""
+    Write-Host "mb upgrade" -ForegroundColor Cyan
+    Write-Host "==========" -ForegroundColor Cyan
+    if ($dryRun) { Write-Host "(dry run — no files will be written)" -ForegroundColor Yellow }
+    Write-Host ""
+
+    # WHY: upgrade requires an mb-managed project; memory-bank/ is the sentinel.
+    # Without this gate, upgrade could silently run in unrelated directories.
+    if (-not (Test-Path "memory-bank")) {
+        Write-Host "Error: No memory-bank/ directory found. Run 'mb upgrade' from the root of an mb-managed project." -ForegroundColor Red
+        exit 1
+    }
+
+    $TemplatesDir = Join-Path $RepoRoot "templates"
+    if (-not (Test-Path $TemplatesDir)) {
+        Write-Host "Error: Templates not found at $TemplatesDir" -ForegroundColor Red
+        Write-Host "Set MB_HOME or run from the memory-bank repo." -ForegroundColor Yellow
+        exit 1
+    }
+
+    # WHY: Ownership is hardcoded as explicit arrays — NOT a config file.
+    # Ownership semantics are behavior, not data. A config file would invite
+    # accidental expansion of overwrite scope. Rationale comments are per-group.
+    $templateOwned = @(
+        # Cursor governance rules — pure governance substrate, no project customization expected
+        ".cursor/rules/code-quality.mdc"
+        ".cursor/rules/memory-bank.mdc"
+        ".cursor/rules/workflow.mdc"
+        ".cursor/rules/security.mdc"
+        ".cursor/rules/code-review.mdc"
+        ".cursor/rules/rules-file-integrity.mdc"
+        # Claude Code settings — hook wiring, not project-specific
+        ".claude/settings.json"
+        # Hook scripts — deterministic enforcement scripts, no project customization
+        "scripts/dangerous-commands.sh"
+        "scripts/dangerous-commands.ps1"
+        "scripts/check-contract.sh"
+        "scripts/check-contract.ps1"
+        "scripts/update-reviewed.sh"
+        "scripts/update-reviewed.ps1"
+        # Slash commands — governance workflow commands from templates, not project-specific
+        ".claude/commands/code-review.md"
+        ".claude/commands/feature-dev.md"
+        ".claude/commands/security-review.md"
+    )
+
+    $advisoryDiff = @(
+        # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
+        "CLAUDE.md"
+        # Agent definitions likely contain project-specific tool lists and instructions
+        ".claude/agents/researcher.md"
+        ".claude/agents/security-reviewer.md"
+    )
+
+    # WHY: Template source paths are NOT a 1:1 mirror of target paths.
+    # .cursor/rules/X -> templates/cursor/rules/X (no dot prefix)
+    # .claude/commands/X -> templates/claude-commands/X (different directory name)
+    # All other targets resolve directly under $TemplatesDir.
+    function Get-TemplateSrc {
+        param([string]$Target)
+        if ($Target -like ".cursor/rules/*") {
+            return Join-Path $TemplatesDir ("cursor/rules/" + $Target.Substring(".cursor/rules/".Length))
+        } elseif ($Target -like ".claude/commands/*") {
+            return Join-Path $TemplatesDir ("claude-commands/" + $Target.Substring(".claude/commands/".Length))
+        } else {
+            return Join-Path $TemplatesDir $Target
+        }
+    }
+
+    # Process TEMPLATE_OWNED — overwrite unconditionally if stale
+    foreach ($target in $templateOwned) {
+        $src = Get-TemplateSrc -Target $target
+        if (-not (Test-Path $src)) {
+            Write-Host "[?] $target (template-owned source missing — skipped)" -ForegroundColor Yellow
+            continue
+        }
+        if (-not (Test-Path $target)) {
+            if ($dryRun) {
+                Write-Host "[+?] $target (would add)" -ForegroundColor Green
+            } else {
+                $dir = Split-Path -Parent $target
+                if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+                Copy-Item -Path $src -Destination $target -Force
+                Write-Host "[+] $target (added)" -ForegroundColor Green
+            }
+        } elseif ((Get-FileHash $src).Hash -eq (Get-FileHash $target).Hash) {
+            Write-Host "[=] $target (unchanged)" -ForegroundColor DarkGray
+        } else {
+            if ($dryRun) {
+                Write-Host "[~?] $target (would update)" -ForegroundColor Yellow
+            } else {
+                Copy-Item -Path $src -Destination $target -Force
+                Write-Host "[~] $target (updated)" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    # Process ADVISORY_DIFF — compare and emit advisory diff, never write
+    foreach ($target in $advisoryDiff) {
+        $src = Get-TemplateSrc -Target $target
+        if (-not (Test-Path $src)) {
+            Write-Host "[?] $target (advisory source missing — cannot compare)" -ForegroundColor Yellow
+            continue
+        }
+        if (-not (Test-Path $target)) {
+            Write-Host "[=] $target (not present in project — no action needed)" -ForegroundColor DarkGray
+            continue
+        }
+        if ((Get-FileHash $src).Hash -eq (Get-FileHash $target).Hash) {
+            Write-Host "[=] $target (matches template)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "[!] $target (differs from template — review manually)" -ForegroundColor Yellow
+            $diffCmd = Get-Command diff -ErrorAction SilentlyContinue
+            if ($diffCmd) {
+                $diffOutput = & diff -u $src $target 2>$null
+                $lines = if ($diffOutput) { $diffOutput -split "`n" } else { @() }
+                if ($lines.Count -le 20) {
+                    foreach ($line in $lines) { Write-Host "    $line" }
+                } else {
+                    for ($i = 0; $i -lt 20; $i++) { Write-Host "    $($lines[$i])" }
+                    $remaining = $lines.Count - 20
+                    Write-Host "    ... ($remaining more lines — compare manually with: diff $src $target)"
+                }
+            } else {
+                Write-Host "    (diff not available — compare manually with: diff $src $target)"
+            }
+        }
+    }
+
+    Write-Host ""
+}
+
 # Run command
 switch ($Command) {
     "init"    { Invoke-Init }
@@ -888,6 +1030,7 @@ switch ($Command) {
     "archive" { Show-Archive }
     "slim"    { Show-Slim }
     "commit"  { Invoke-Commit }
+    "upgrade" { Invoke-Upgrade }
     "budget"  { Show-Budget }
     "help"    { Show-Help }
 }

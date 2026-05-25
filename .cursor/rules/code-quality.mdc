@@ -4,34 +4,83 @@ alwaysApply: true
 
 # Code Quality Standards
 
-This project follows the Code Quality standard documented in `standards/CODE-QUALITY.md`.
+## Verification (ALWAYS do these)
 
-## Verification
+Before claiming any work is complete:
+1. **Run tests** - Execute the test suite and report results
+2. **Check lint errors** - Run linter and fix any issues
+3. **Verify build** - Ensure the project builds/compiles successfully
+4. **Confirm functionality** - Describe what was tested and how
 
-Before claiming done:
-1. Test scripts work on Windows (PowerShell)
-2. Verify templates are fillable (have placeholders)
-3. Check documentation is complete
+Never say "Done!" without evidence that changes work.
 
-## Documentation Style
+## Comments
 
-- Use tables for structured data
-- Include "why" explanations, not just "how"
-- Provide examples where helpful
-- Keep files scannable (headers, bullets, tables)
+### DO
+- Add WHY comments for non-obvious logic
+- Comment the WHY, not the WHAT
+- Do not invent rationale, optimization claims, or historical intent not supported by observable behavior, documentation, or explicit project guidance
+- Treat dead-code identification as advisory unless non-use can be proven deterministically
+- Document breaking changes
+- Explain trade-offs and constraints
+- Note workarounds and their reasons
 
-## Template Quality
+### DON'T
+- Add obvious comments ("// Import the module", "// Loop through array")
+- Leave commented-out code
+- Explain what code does (code should be self-documenting)
+- Add TODO comments without context
 
-Templates must be:
-- Generic (no project-specific content)
-- Fillable (clear `[placeholder]` markers)
-- Complete (all sections present)
-- Consistent (same structure across files)
+## Structure
 
-## Script Quality
+### File Organization
+- Keep imports at the top of the file
+- No inline imports (importing inside functions)
+- Group related imports together
+- Order: stdlib → third-party → local
 
-Scripts must:
-- Work on target platform without errors
-- Have help text (`-h` or `--help`)
-- Use colored output for clarity
-- Handle existing files gracefully (`-Force` flag)
+### Code Changes
+- Prefer editing existing files over creating new ones
+- Make small, incremental changes
+- Each function should do one thing well
+- Keep files focused - split if >500 lines
+
+## Error Handling
+
+### DO
+- Handle all error cases explicitly
+- Provide meaningful error messages with context
+- Log errors with relevant data for debugging
+- Prefer graceful degradation over crashing
+
+### DON'T
+- Swallow exceptions silently (`except: pass`)
+- Use generic error messages ("An error occurred")
+- Let errors propagate without logging
+- Assume external calls will succeed
+
+## Documentation
+
+### When to Update
+- API/interface changes → Update docs immediately
+- Breaking changes → Document in changelog
+- New features → Add to README if user-facing
+- Configuration changes → Update relevant docs
+
+### Function Signatures
+- Clear parameter names
+- Type annotations where applicable
+- Docstring for non-obvious functions
+- Document exceptions that may be raised
+
+## Quality Checklist
+
+Before completing any task, verify:
+
+- [ ] Tests pass (or explain why not testable)
+- [ ] No lint errors
+- [ ] Build succeeds
+- [ ] No obvious comments added
+- [ ] WHY comments for complex logic
+- [ ] Error cases handled
+- [ ] Documentation updated if needed
