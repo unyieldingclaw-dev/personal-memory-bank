@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -File templates/scripts/update-reviewed.ps1 2>/dev/null || bash templates/scripts/update-reviewed.sh 2>/dev/null || true"
+            "command": "powershell -File scripts/update-reviewed.ps1 2>/dev/null || bash scripts/update-reviewed.sh 2>/dev/null || true"
           }
         ]
       }
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File templates/scripts/dangerous-commands.ps1 2>/dev/null || bash templates/scripts/dangerous-commands.sh 2>/dev/null || true"
+            "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true"
           }
         ]
       },
@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File templates/scripts/check-contract.ps1 2>/dev/null || bash templates/scripts/check-contract.sh 2>/dev/null || true"
+            "command": "pwsh -NonInteractive -File scripts/check-contract.ps1 2>/dev/null || bash scripts/check-contract.sh 2>/dev/null || true"
           }
         ]
       }
