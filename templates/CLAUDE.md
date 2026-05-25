@@ -83,6 +83,9 @@ Full enumerated lists in `standards/SECURITY-GUARDRAILS.md`.
 ## Code Quality
 
 Follow patterns in `standards/CODE-QUALITY.md`. Language-specific extensions in `standards/extensions/`.
+Comment the WHY, not the WHAT.
+Do not invent rationale, optimization claims, or historical intent not supported by observable behavior, documentation, or explicit project guidance.
+Treat dead-code identification as advisory unless non-use can be proven deterministically.
 Accessibility (UI code — HTML/JSX/TSX/Vue/Svelte): apply WCAG 2.1 AA basics. See `standards/ACCESSIBILITY.md`.
 
 ## Logging
