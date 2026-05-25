@@ -54,7 +54,7 @@ function Show-Help {
     Write-Host "  archive  Show instructions for archiving old content"
     Write-Host "  slim     Check if activeContext.md needs trimming"
     Write-Host "  commit   Stage and commit Memory Bank changes"
-    Write-Host "  upgrade  Upgrade memory bank to new schema version"
+    Write-Host "  upgrade  Propagate current governance templates to this project"
     Write-Host "  budget   Check token budget health (CLAUDE.md + memory-bank/ sizes)"
     Write-Host "  help     Show this help message"
     Write-Host ""
