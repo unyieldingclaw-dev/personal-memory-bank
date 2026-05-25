@@ -57,6 +57,7 @@ show_help() {
     echo "  archive  Show instructions for archiving old content"
     echo "  slim     Check if activeContext.md needs trimming"
     echo "  commit   Stage and commit Memory Bank changes"
+    echo "  upgrade  Upgrade memory bank to new schema version"
     echo "  budget   Check token budget health (CLAUDE.md + memory-bank/ sizes)"
     echo "  help     Show this help message"
     echo ""
@@ -828,6 +829,7 @@ case "$COMMAND" in
     archive)  show_archive ;;
     slim)     show_slim ;;
     commit)   invoke_commit ;;
+    upgrade)  invoke_upgrade ;;
     budget)   show_budget ;;
     help)     show_help ;;
     *)
