@@ -351,6 +351,16 @@ function Invoke-Init {
     # CLAUDE.md
     Copy-IfNew -Src (Join-Path $TemplatesDir "CLAUDE.md") -Dst (Join-Path $Target "CLAUDE.md") -Label "CLAUDE.md"
 
+    # .claude/settings.json
+    Copy-IfNew -Src (Join-Path $TemplatesDir ".claude\settings.json") -Dst (Join-Path $Target ".claude\settings.json") -Label ".claude/settings.json"
+
+    # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
+    # NOTE: These are the only portable governance scripts exported by mb init.
+    # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1")) {
+        Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
+    }
+
     # .claude/commands/
     foreach ($f in Get-ChildItem (Join-Path $TemplatesDir "claude-commands") -File) {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"
@@ -506,6 +516,34 @@ function Show-Doctor {
             Write-Host "[WARN] No PostToolUse hook — last-reviewed won't auto-update" -ForegroundColor Yellow
             Write-Host "       Copy templates/.claude/settings.json to enable" -ForegroundColor DarkGray
         }
+        # Hook script existence: extract full relative paths from "command": lines,
+        # deduplicate by logical name (basename), check any implementation file exists.
+        # Works for both adopted projects (scripts/X) and this repo (templates/scripts/X).
+        $commandLines = ($settings -split "`n") | Where-Object { $_ -match '"command":' }
+        $hookPaths = $commandLines | ForEach-Object {
+            [regex]::Matches($_, '[A-Za-z][A-Za-z0-9_/-]*\.(sh|ps1)') | ForEach-Object { $_.Value }
+        } | Sort-Object -Unique
+        $seenBases = @{}
+        $missingHooks = @()
+        $presentHooks = @()
+        foreach ($hookPath in $hookPaths) {
+            $base = $hookPath -replace '\.[^.]+$', ''
+            $name = Split-Path -Leaf $base
+            if ($seenBases.ContainsKey($name)) { continue }
+            $seenBases[$name] = $true
+            if (Get-ChildItem "${base}.*" -ErrorAction SilentlyContinue) {
+                $presentHooks += $name
+            } else {
+                $missingHooks += $name
+            }
+        }
+        if ($missingHooks.Count -eq 0 -and $presentHooks.Count -gt 0) {
+            Write-Host "[OK]   Hook scripts present ($($presentHooks -join ', '))" -ForegroundColor Green
+        } elseif ($missingHooks.Count -gt 0) {
+            foreach ($h in $missingHooks) {
+                Write-Host "[WARN] Hook script missing: $h — run 'mb init' to install" -ForegroundColor Yellow
+            }
+        }
     } else {
         Write-Host "[WARN] No .claude/settings.json — safety hooks inactive" -ForegroundColor Yellow
         Write-Host "       Copy templates/.claude/settings.json to enable" -ForegroundColor DarkGray
@@ -596,6 +634,38 @@ function Show-Doctor {
             Write-Host "[$($issue.Level)] $($issue.Msg)" -ForegroundColor $color
         }
         Write-Host "       Run 'mb compact' to regenerate from lower-generation sources" -ForegroundColor DarkGray
+    }
+
+    # 9. Staleness summary
+    $staleVolatile = 0
+    $staleStable = 0
+    foreach ($f in @("projectbrief.md", "systemPatterns.md", "techContext.md", "activeContext.md", "progress.md")) {
+        $p = "memory-bank/$f"
+        if (-not (Test-Path $p)) { continue }
+        $content = Get-Content $p -Raw
+        $lastReviewed = if ($content -match '(?m)^last-reviewed:\s*(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { $null }
+        $thresholdStr = if ($content -match '(?m)^staleness-threshold:\s*(\d+)d') { $Matches[1] } else { $null }
+        $authority = if ($content -match '(?m)^authority:\s*([a-z]+)') { $Matches[1] } else { $null }
+        if (-not $lastReviewed -or $lastReviewed -eq 'YYYY-MM-DD' -or -not $thresholdStr) { continue }
+        if ($authority -eq 'immutable') { continue }
+        try {
+            $lastDate = [datetime]::ParseExact($lastReviewed, 'yyyy-MM-dd', $null)
+            $daysSince = ([datetime]::Today - $lastDate).Days
+            $thresholdDays = [int]$thresholdStr
+            if ($daysSince -gt $thresholdDays) {
+                if ($authority -eq 'stable') { $staleStable++ } else { $staleVolatile++ }
+            }
+        } catch { continue }
+    }
+    $staleTotal = $staleVolatile + $staleStable
+    if ($staleTotal -eq 0) {
+        Write-Host "[OK]   All memory-bank files within staleness threshold" -ForegroundColor Green
+    } else {
+        $parts = @()
+        if ($staleVolatile -gt 0) { $parts += "$staleVolatile volatile/accumulating" }
+        if ($staleStable -gt 0) { $parts += "$staleStable stable" }
+        $detail = $parts -join ", "
+        Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb audit' for details" -ForegroundColor Yellow
     }
 
     Write-Host ""

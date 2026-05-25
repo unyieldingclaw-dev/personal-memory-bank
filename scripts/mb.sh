@@ -297,6 +297,18 @@ invoke_init() {
     # CLAUDE.md
     copy_if_new "$TEMPLATES_DIR/CLAUDE.md" "$TARGET/CLAUDE.md" "CLAUDE.md"
 
+    # .claude/settings.json
+    copy_if_new "$TEMPLATES_DIR/.claude/settings.json" "$TARGET/.claude/settings.json" ".claude/settings.json"
+
+    # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
+    # NOTE: These are the only portable governance scripts exported by mb init.
+    # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
+    for script in dangerous-commands.sh dangerous-commands.ps1 \
+                  check-contract.sh check-contract.ps1 \
+                  update-reviewed.sh update-reviewed.ps1; do
+        copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
+    done
+
     # .claude/commands/
     for f in "$TEMPLATES_DIR/claude-commands"/*; do
         [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/commands/$(basename "$f")" ".claude/commands/$(basename "$f")"
@@ -437,6 +449,34 @@ show_doctor() {
         else
             echo -e "${YELLOW}[WARN] No PostToolUse hook — last-reviewed won't auto-update${NC}"
         fi
+        # Hook script existence: extract full relative paths from "command": lines,
+        # deduplicate by logical name (basename), check any implementation file exists.
+        # Works for both adopted projects (scripts/X) and this repo (templates/scripts/X).
+        SEEN_HOOK_NAMES=""
+        MISSING_HOOKS=()
+        PRESENT_HOOKS=()
+        HOOK_PATHS=$(grep '"command":' ".claude/settings.json" 2>/dev/null \
+            | grep -oE '[A-Za-z][A-Za-z0-9_/-]*\.(sh|ps1)' \
+            | sort -u)
+        for hook_path in $HOOK_PATHS; do
+            base="${hook_path%.*}"
+            name="$(basename "$base")"
+            case " $SEEN_HOOK_NAMES " in *" $name "*) continue ;; esac
+            SEEN_HOOK_NAMES="$SEEN_HOOK_NAMES $name"
+            if compgen -G "${base}.*" > /dev/null 2>&1; then
+                PRESENT_HOOKS+=("$name")
+            else
+                MISSING_HOOKS+=("$name")
+            fi
+        done
+        if [ ${#MISSING_HOOKS[@]} -eq 0 ] && [ ${#PRESENT_HOOKS[@]} -gt 0 ]; then
+            _joined=$(printf '%s, ' "${PRESENT_HOOKS[@]}"); _joined="${_joined%, }"
+            echo -e "${GREEN}[OK]   Hook scripts present (${_joined})${NC}"
+        elif [ ${#MISSING_HOOKS[@]} -gt 0 ]; then
+            for h in "${MISSING_HOOKS[@]}"; do
+                echo -e "${YELLOW}[WARN] Hook script missing: $h — run 'mb init' to install${NC}"
+            done
+        fi
     else
         echo -e "${YELLOW}[WARN] No .claude/settings.json — safety hooks inactive${NC}"
     fi
@@ -456,7 +496,7 @@ show_doctor() {
 
     # 6. File sizes
     OVER_LIMIT=false
-    check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb slim'${NC}" && OVER_LIMIT=true; }
+    check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb slim'${NC}" && OVER_LIMIT=true || true; }
     [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   150
     [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 300
     [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    400
@@ -514,6 +554,40 @@ show_doctor() {
             echo -e "$issue"
         done
         echo -e "       Run 'mb compact' to regenerate from lower-generation sources"
+    fi
+
+    # 9. Staleness summary
+    STALE_VOLATILE=0
+    STALE_STABLE=0
+    TODAY=$(date +%s)
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        p="memory-bank/$f"
+        [ ! -f "$p" ] && continue
+        last_reviewed=$(grep -m1 '^last-reviewed:' "$p" 2>/dev/null | sed 's/last-reviewed:[[:space:]]*//' | tr -d ' \r')
+        threshold=$(grep -m1 '^staleness-threshold:' "$p" 2>/dev/null | sed 's/staleness-threshold:[[:space:]]*//' | sed 's/d$//' | tr -d ' \r')
+        authority=$(grep -m1 '^authority:' "$p" 2>/dev/null | sed 's/authority:[[:space:]]*//' | tr -d ' \r')
+        [ -z "$last_reviewed" ] || [ "$last_reviewed" = "YYYY-MM-DD" ] && continue
+        [ -z "$threshold" ] && continue
+        [ "$authority" = "immutable" ] && continue
+        REVIEWED_EPOCH=$(date -d "$last_reviewed" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$last_reviewed" +%s 2>/dev/null || echo "0")
+        [ "$REVIEWED_EPOCH" = "0" ] && continue
+        DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
+        if [ "$DAYS_SINCE" -gt "$threshold" ]; then
+            if [ "$authority" = "stable" ]; then
+                STALE_STABLE=$((STALE_STABLE + 1))
+            else
+                STALE_VOLATILE=$((STALE_VOLATILE + 1))
+            fi
+        fi
+    done
+    STALE_TOTAL=$((STALE_VOLATILE + STALE_STABLE))
+    if [ "$STALE_TOTAL" -eq 0 ]; then
+        echo -e "${GREEN}[OK]   All memory-bank files within staleness threshold${NC}"
+    else
+        DETAIL=""
+        [ "$STALE_VOLATILE" -gt 0 ] && DETAIL="${STALE_VOLATILE} volatile/accumulating"
+        [ "$STALE_STABLE" -gt 0 ] && DETAIL="${DETAIL:+$DETAIL, }${STALE_STABLE} stable"
+        echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb audit' for details${NC}"
     fi
 
     echo ""
