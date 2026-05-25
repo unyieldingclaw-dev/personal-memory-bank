@@ -591,6 +591,58 @@ show_doctor() {
         echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb audit' for details${NC}"
     fi
 
+    # Startup context — observability section (not a numbered health check)
+    echo ""
+    echo "  Startup Context"
+    STARTUP_FILES=()
+    [ -f "CLAUDE.md" ] && STARTUP_FILES+=("CLAUDE.md")
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        [ -f "memory-bank/$f" ] && STARTUP_FILES+=("memory-bank/$f")
+    done
+    TOTAL_BYTES=0
+    for f in "${STARTUP_FILES[@]}"; do
+        b=$(wc -c < "$f" 2>/dev/null || echo 0)
+        TOTAL_BYTES=$((TOTAL_BYTES + b))
+    done
+    TOTAL_TOKENS=$((TOTAL_BYTES / 4))
+    printf "  Files loaded:      %d\n" "${#STARTUP_FILES[@]}"
+    printf "  Estimated tokens:  ~%d\n" "$TOTAL_TOKENS"
+    echo "  Largest contributors:"
+    for f in "${STARTUP_FILES[@]}"; do
+        b=$(wc -c < "$f" 2>/dev/null || echo 0)
+        echo "$b $f"
+    done | sort -rn | head -3 | while IFS=' ' read -r bytes file; do
+        tokens=$((bytes / 4))
+        printf "    %-37s ~%d tokens\n" "$file" "$tokens"
+    done
+    COMMIT_30D=$(git log --before="30 days ago" -1 --format="%H" -- "${STARTUP_FILES[@]}" 2>/dev/null)
+    if [ -n "$COMMIT_30D" ]; then
+        TOTAL_30D=0
+        for f in "${STARTUP_FILES[@]}"; do
+            b30=$(git show "${COMMIT_30D}:${f}" 2>/dev/null | wc -c 2>/dev/null || echo 0)
+            TOTAL_30D=$((TOTAL_30D + b30))
+        done
+        if [ "$TOTAL_30D" -gt 0 ]; then
+            GROWTH=$(( (TOTAL_BYTES - TOTAL_30D) * 100 / TOTAL_30D ))
+            if [ "$GROWTH" -gt 20 ]; then
+                echo -e "${YELLOW}  30-day growth:     +${GROWTH}% [WARN] — context expanding faster than 20%/month${NC}"
+            else
+                SIGN=""
+                [ "$GROWTH" -ge 0 ] && SIGN="+"
+                echo -e "${GREEN}  30-day growth:     ${SIGN}${GROWTH}% [OK]${NC}"
+            fi
+        else
+            echo "  30-day growth:     (files added in last 30 days, no baseline)"
+        fi
+    else
+        echo "  30-day growth:     (no git history older than 30 days)"
+    fi
+    if [ "$STALE_TOTAL" -gt 0 ]; then
+        echo -e "${YELLOW}  Stale but loaded:  $STALE_TOTAL file(s) [WARN]${NC}"
+    else
+        echo -e "${GREEN}  Stale but loaded:  none [OK]${NC}"
+    fi
+
     echo ""
 }
 

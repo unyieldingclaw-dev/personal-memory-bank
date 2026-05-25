@@ -672,6 +672,60 @@ function Show-Doctor {
         Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb audit' for details" -ForegroundColor Yellow
     }
 
+    # Startup context — observability section (not a numbered health check)
+    Write-Host ""
+    Write-Host "  Startup Context"
+    $startupFiles = @()
+    if (Test-Path "CLAUDE.md") { $startupFiles += "CLAUDE.md" }
+    foreach ($f in @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")) {
+        $p = "memory-bank/$f"
+        if (Test-Path $p) { $startupFiles += $p }
+    }
+    $totalBytes = 0
+    foreach ($f in $startupFiles) { $totalBytes += (Get-Item $f).Length }
+    $totalTokens = [int]($totalBytes / 4)
+    Write-Host "  Files loaded:      $($startupFiles.Count)"
+    Write-Host "  Estimated tokens:  ~$totalTokens"
+    Write-Host "  Largest contributors:"
+    $startupFiles |
+        Select-Object @{N='File';E={$_}}, @{N='Bytes';E={(Get-Item $_).Length}} |
+        Sort-Object -Property Bytes -Descending |
+        Select-Object -First 3 |
+        ForEach-Object {
+            $tok = [int]($_.Bytes / 4)
+            Write-Host ("    {0,-37} ~{1} tokens" -f $_.File, $tok)
+        }
+    $commit30d = git log --before="30 days ago" -1 --format="%H" -- $startupFiles 2>$null
+    if ($commit30d) {
+        $total30d = 0
+        foreach ($f in $startupFiles) {
+            try {
+                # WHY: git show returns the file content at that commit; byte-counting
+                # the raw string gives an approximation consistent with current-file sizing.
+                $content30d = git show "${commit30d}:${f}" 2>$null
+                if ($content30d) { $total30d += [System.Text.Encoding]::UTF8.GetByteCount($content30d) }
+            } catch {}
+        }
+        if ($total30d -gt 0) {
+            $growth = [int](($totalBytes - $total30d) * 100 / $total30d)
+            if ($growth -gt 20) {
+                Write-Host ("  30-day growth:     +{0}% [WARN] — context expanding faster than 20%/month" -f $growth) -ForegroundColor Yellow
+            } else {
+                $sign = if ($growth -ge 0) { "+" } else { "" }
+                Write-Host ("  30-day growth:     {0}{1}% [OK]" -f $sign, $growth) -ForegroundColor Green
+            }
+        } else {
+            Write-Host "  30-day growth:     (files added in last 30 days, no baseline)"
+        }
+    } else {
+        Write-Host "  30-day growth:     (no git history older than 30 days)"
+    }
+    if ($staleTotal -gt 0) {
+        Write-Host "  Stale but loaded:  $staleTotal file(s) [WARN]" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Stale but loaded:  none [OK]" -ForegroundColor Green
+    }
+
     Write-Host ""
 }
 
