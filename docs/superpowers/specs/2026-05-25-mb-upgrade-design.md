@@ -88,7 +88,7 @@ Each file gets exactly one status line:
 [=] .cursor/rules/code-quality.mdc (unchanged)
 [~] .claude/settings.json (updated)
 [+] scripts/update-reviewed.sh (added)
-[?] scripts/check-contract.ps1 (template source missing — skipped)
+[?] scripts/check-contract.ps1 (template-owned source missing — skipped)
 [!] CLAUDE.md (differs from template — review manually)
 [=] CLAUDE.md (matches template)
 ```
@@ -97,12 +97,12 @@ Status codes:
 - `[=]` — file present and content matches template (no action needed)
 - `[~]` — file present but stale; overwritten with template (TEMPLATE_OWNED only)
 - `[+]` — file absent; created from template (TEMPLATE_OWNED only)
-- `[?]` — template source is missing from the running `mb` installation; skipped with visible warning
+- `[?]` — template-owned source is missing from the running `mb` installation; skipped with visible warning
 - `[!]` — ADVISORY_DIFF file differs from template; no write, diff printed below
 
 No silent skips. Every file in both arrays produces exactly one output line.
 
-**CLAUDE.md advisory diff format:**
+**ADVISORY_DIFF output format:**
 
 ```
 [!] CLAUDE.md (differs from template — review manually)
@@ -112,7 +112,15 @@ No silent skips. Every file in both arrays produces exactly one output line.
     + # Project-specific note added by user
 ```
 
-If `diff` is unavailable, fall back to: `[!] CLAUDE.md (differs from template — compare manually with: diff templates/CLAUDE.md CLAUDE.md)`
+Diff output is capped at **20 lines**. If the diff exceeds this, truncate and append:
+
+```
+    ... (N more lines — compare manually with: diff <template-source> CLAUDE.md)
+```
+
+This prevents large CLAUDE.md divergence from becoming terminal spam. The cap applies per file in ADVISORY_DIFF.
+
+If `diff` is unavailable, fall back to: `[!] CLAUDE.md (differs from template — compare manually with: diff <template-source> CLAUDE.md)`
 
 ---
 
