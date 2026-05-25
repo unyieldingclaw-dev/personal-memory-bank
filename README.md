@@ -69,7 +69,8 @@ mb update     Get a prompt to update memory bank after a session
 mb commit     Commit memory bank changes separately from feature code
 mb query TAG  Find all memory tagged with TAG (e.g. mb query auth)
 mb budget     Check token overhead of CLAUDE.md + memory-bank/
-mb doctor     Full diagnostic (git, templates, hooks, file sizes)
+mb upgrade    Pull latest templates and standards from the memory bank repo
+mb doctor     Full diagnostic — git, templates, hooks, file sizes, startup token cost
 mb help       Full command list
 ```
 
@@ -124,6 +125,29 @@ Your AI is instructed to surface conflicts rather than silently reconcile them.
 Each memory bank file has frontmatter with `staleness-threshold` and `review-cycle`. The PostToolUse hook auto-updates `last-reviewed` whenever you edit a file.
 
 Run `mb audit` to see which files are stale. Run `mb compact` to get an AI prompt that deduplicates and summarizes memory across all files.
+
+`mb doctor` includes a staleness summary — it shows stale file counts by authority tier without running a full audit.
+
+</details>
+
+<details>
+<summary>Startup context visibility</summary>
+
+`mb doctor` prints a Startup Context section at the end of every run:
+
+```
+  Startup Context
+  Files loaded:      6
+  Estimated tokens:  ~4500
+  Largest contributors:
+    CLAUDE.md                             ~2500 tokens
+    memory-bank/systemPatterns.md         ~780 tokens
+    memory-bank/techContext.md            ~420 tokens
+  30-day growth:     +8% [OK]
+  Stale but loaded:  none [OK]
+```
+
+This shows you exactly what token overhead your AI carries at session start, which files are driving it, and whether the context is expanding over time. Use it to decide when files need trimming — before the size becomes a problem.
 
 </details>
 

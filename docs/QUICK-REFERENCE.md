@@ -20,11 +20,17 @@ One-page cheatsheet for daily use.
 
 | Command | What It Does |
 |---------|--------------|
-| `mb update` | Update all Memory Bank files |
-| `mb status` | Show file sizes and health (`mb.ps1` on Windows, `mb.sh` on Mac/Linux) |
-| `mb archive` | Move history to docs/ARCHIVE.md |
-| `mb slim` | Trim activeContext.md |
-| `mb commit` | Commit Memory Bank changes |
+| `mb init` | Scaffold memory-bank/ in the current project |
+| `mb status` | Show file sizes and health |
+| `mb validate` | Verify required files and frontmatter are present |
+| `mb audit` | See freshness — flag stale or overdue files |
+| `mb update` | Get a prompt to update memory bank after a session |
+| `mb commit` | Commit Memory Bank changes separately from feature code |
+| `mb query TAG` | Find all memory tagged with TAG |
+| `mb budget` | Check token overhead of CLAUDE.md + memory-bank/ |
+| `mb compact` | Get an AI prompt to deduplicate and summarize memory |
+| `mb upgrade` | Pull latest templates and standards from the memory bank repo |
+| `mb doctor` | Full diagnostic — git, templates, hooks, file sizes, startup token cost |
 | `Handoff` | Create handoff.md and stop |
 | `/feature-dev` | Run full 7-phase workflow (Claude Code) |
 | `/security-review` | Scan diff for 9 security patterns (Claude Code) |
@@ -34,7 +40,7 @@ One-page cheatsheet for daily use.
 
 ## Handoff Process
 
-**When to handoff:** Context reaches 80%
+**When to handoff:** Context reaches 40%
 
 **What happens:**
 1. Type "Handoff"
@@ -145,7 +151,7 @@ For multi-session work, create `plan.md`:
 | Problem | Solution |
 |---------|----------|
 | AI doesn't know context | Check rule files, restart IDE |
-| Files too large | Run `mb slim`, archive history |
+| Files too large | Run `mb compact`, then `mb status` |
 | Handoff not working | Explicitly: "Read handoff.md" |
 | Wrong patterns | Reference: `@memory-bank/systemPatterns.md` |
 

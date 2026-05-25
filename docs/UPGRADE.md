@@ -41,24 +41,23 @@ mb doctor            # any new health checks failing?
 
 ### 4. Selectively update project files
 
-The upgrade does **not** auto-copy files into your project. You choose what to bring in.
+From inside your project directory, run:
 
-**CLAUDE.md** — if the new version adds important rules, merge them manually:
+```bash
+mb upgrade
+```
+
+This shows a diff of template-owned files (hook scripts, settings.json, Cursor rules) and offers to apply them. Advisory files like `CLAUDE.md` are shown as a diff only — you merge manually.
+
+**CLAUDE.md** — `mb upgrade` shows what changed. Merge manually:
 ```bash
 diff CLAUDE.md /path/to/memory-bank/templates/CLAUDE.md
 ```
 Copy the sections you want. Do not wholesale replace — you may have project-specific additions.
 
-**memory-bank/ files** — these are your content, not ours. The upgrade never modifies them. The only change is the frontmatter schema (see below).
+**memory-bank/ files** — these are your content, not ours. `mb upgrade` never touches them. The only change is the frontmatter schema (see below).
 
-**.claude/settings.json** — if a new hook was added, copy it from `templates/.claude/settings.json`. Check the diff first.
-
-**Cursor rules** — if `.cursor/rules/` files changed, you can re-run:
-```bash
-./scripts/init-memory-bank.sh --force   # Mac/Linux
-.\scripts\init-memory-bank.ps1 -Force   # Windows
-```
-This overwrites cursor rules only. Memory-bank files and CLAUDE.md are skipped when they already exist with `-Force`.
+**.claude/settings.json** and hook scripts — `mb upgrade` copies template-owned files with your confirmation.
 
 ### 5. Add frontmatter to existing memory-bank files (1.0.0+)
 

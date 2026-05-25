@@ -79,24 +79,28 @@ Before submitting:
 ### For Script Changes
 
 ```powershell
-# Windows - Test init script
-.\scripts\init-memory-bank.ps1 -ProjectPath "C:\temp\test-project"
+# Windows - Test mb init in a temp project
+cd C:\temp\test-project
+mb init
 
-# Windows - Test mb utility
-.\scripts\mb.ps1 status
+# Test mb utility commands
+mb status
+mb validate
+mb doctor
 ```
 
 ```bash
-# macOS/Linux - Test init script
-./scripts/init-memory-bank.sh --force /tmp/test-project
+# macOS/Linux - Test mb init in a temp project
+cd /tmp/test-project
+mb init
 
 # Verify templates were copied
-ls -la /tmp/test-project/memory-bank/
+ls -la memory-bank/
 ```
 
 ### For Template Changes
 
-1. Run init script to copy templates to test project
+1. Run `mb init` in a temporary project to copy templates
 2. Verify all placeholders are present
 3. Fill in templates to ensure they're usable
 4. Have AI read templates to verify they work

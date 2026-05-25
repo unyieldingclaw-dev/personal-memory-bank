@@ -10,52 +10,33 @@ A step-by-step guide to implementing the Memory Bank in your project.
 
 ## One-Time Global Setup (Do This First)
 
-Run this once on your machine. It installs rules, plugins, and slash commands that apply to **every project automatically** — no per-project copying needed.
+Run this once on your machine. It installs the `mb` command, global rules, and slash commands that apply to **every project automatically** — no per-project copying needed.
 
-```powershell
-# 1. Global Claude Code rules (apply to all projects)
-Copy-Item .\templates\CLAUDE.md "$env:USERPROFILE\.claude\CLAUDE.md"
-Copy-Item .\templates\AGENTS.md "$env:USERPROFILE\.claude\AGENTS.md"
-
-# 2. Claude Code slash commands
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.claude\commands"
-Copy-Item .\templates\claude-commands\*.md "$env:USERPROFILE\.claude\commands\"
-
-# 3. Global Cursor rules (apply to all projects)
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.cursor\rules"
-Copy-Item .\templates\cursor\rules\*.mdc "$env:USERPROFILE\.cursor\rules\"
-
-# 4. Enable plugins — edit ~/.claude/settings.json and add:
-#    "enabledPlugins": {
-#      "superpowers@claude-plugins-official": true,
-#      "code-simplifier@claude-plugins-official": true,
-#      "context7@claude-plugins-official": true
-#    }
+**Windows:**
+```
+install.bat
 ```
 
-See [Claude Code Plugins](CLAUDE-CODE-PLUGINS.md) for the full plugin setup guide.
+**Mac/Linux:**
+```bash
+chmod +x install.sh && ./install.sh
+```
+
+This copies global `CLAUDE.md`, `AGENTS.md`, Cursor rules, and Claude Code slash commands to the right locations, then registers the `mb` utility on your PATH.
 
 After global setup, the only per-project step is scaffolding the `memory-bank/` directory (below).
 
 ## Quick Start (5 minutes)
 
-### Option 1: Use the Scaffold Script
+### Option 1: Use mb init (Recommended)
 
-**Windows (PowerShell):**
-```powershell
-.\scripts\init-memory-bank.ps1 -ProjectPath "C:\path\to\your\project"
-```
+Navigate to your project directory and run:
 
-**macOS/Linux (Bash):**
 ```bash
-./scripts/init-memory-bank.sh /path/to/your/project
+mb init
 ```
 
-The script will:
-1. Create `memory-bank/` directory with template files
-2. Create `.cursor/rules/` with rule files (if using Cursor)
-3. Create `CLAUDE.md` (if using Claude Code)
-4. Add `.superpowers/` to `.gitignore`
+This creates the `memory-bank/` directory with template files, adds `CLAUDE.md` and `.cursor/rules/` if they don't exist, and wires up the hook scripts.
 
 ### Option 2: Manual Setup
 
@@ -240,7 +221,7 @@ Use quick commands:
 
 ### Ending a Session
 
-1. If context is getting full (approaching 80%), type "Handoff"
+1. If context is getting full (approaching 40%), type "Handoff"
 2. Or type "done" and AI will offer to update Memory Bank
 
 ### Continuing After Handoff
@@ -261,10 +242,10 @@ Use quick commands:
 
 ### Memory Bank Files Too Large
 
-Run `mb slim` or manually:
-1. Move detailed history to `AGENTS.md`
-2. Keep only current state in `activeContext.md`
-3. Archive old versions in `progress.md`
+Run `mb compact` to get an AI prompt that deduplicates and summarizes memory, or manually:
+1. Keep only current state in `activeContext.md`
+2. Archive old completed items in `progress.md`
+3. Run `mb status` to confirm sizes are back in range
 
 ### Handoff Not Working
 
