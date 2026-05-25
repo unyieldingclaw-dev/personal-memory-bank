@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-05-17
+last-reviewed: 2026-05-25
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -59,6 +59,15 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ docs/RECOVERY.md, docs/UPGRADE.md
 - ✅ examples/task-tracker-api (full working example)
 - ✅ VERSION, CHANGELOG.md
+
+### Governance & Observability (May 2026)
+- ✅ Governance integrity: hook scripts in templates, mb doctor Check #4, CI template-integrity job (PR #3)
+- ✅ Code quality provenance: CODE-QUALITY.md sections 2+7, CLAUDE.md anchors, Cursor rule anchor (PR #2)
+- ✅ mb upgrade subcommand: TEMPLATE_OWNED/ADVISORY_DIFF model (PR #4)
+- ✅ mb doctor Check #9: staleness summary (volatile/stable breakdown)
+- ✅ mb doctor Startup Context section: token visibility, growth rate, stale-but-loaded
+- ✅ CLAUDE.md memory update discipline: task-boundary updates, compaction summaries are fallback
+- ✅ .gitignore: .claude/worktrees/ excluded
 
 ## Removed vs Enterprise
 
