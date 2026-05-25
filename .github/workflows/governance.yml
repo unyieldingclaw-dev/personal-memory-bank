@@ -110,3 +110,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+  template-integrity:
+    name: Template Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Validate hook scripts referenced in templates/.claude/settings.json exist in templates/scripts/
+        shell: bash
+        run: |
+          FAIL=0
+          SETTINGS="templates/.claude/settings.json"
+          BASEPATHS=$(grep '"command":' "$SETTINGS" \
+            | grep -oE '[A-Za-z][A-Za-z0-9_/-]*\.(sh|ps1)' \
+            | sed 's/\.[^.]*$//' \
+            | sort -u)
+          for base in $BASEPATHS; do
+            if compgen -G "templates/${base}.*" > /dev/null 2>&1; then
+              echo "OK:   templates/${base}.* present"
+            else
+              echo "ERROR: $SETTINGS references $base but the script is missing from templates/:"
+              printf  "       Expected: templates/%s.sh\n" "$base"
+              printf  "       Expected: templates/%s.ps1\n" "$base"
+              FAIL=1
+            fi
+          done
+          [ "$FAIL" -eq 0 ] && echo "template-integrity: PASS" || echo "template-integrity: FAIL"
+          exit $FAIL
