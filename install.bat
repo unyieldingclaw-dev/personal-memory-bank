@@ -42,7 +42,7 @@ if not exist "%MB_BIN%" mkdir "%MB_BIN%"
   echo   echo [ERROR] MB_HOME not set. Run install.bat again.
   echo   exit /b 1
   echo ^)
-  echo powershell.exe -NoLogo -ExecutionPolicy Bypass -File "%%MB_HOME%%\scripts\mb.ps1" %%*
+  echo pwsh.exe -NoLogo -ExecutionPolicy Bypass -File "%%MB_HOME%%\scripts\mb.ps1" %%*
 ) > "%MB_WRAPPER%"
 echo  [OK] mb command installed to %MB_BIN%
 
