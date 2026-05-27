@@ -47,7 +47,7 @@ When layers conflict, the more deterministic layer wins. Advisory rules shape be
 
 Before starting any multi-file task, propose a task contract and wait for approval:
 
-**When a contract is required:** Any task touching more than one file, or the user's request implies a new feature / refactor / migration. Skip for: single-file edits, typos, config-value changes, changes clearly <20 lines.
+**When a contract is required:** Any task touching 4 or more files, or touching sensitive domains (auth, payments, data deletion, CI changes, schema migrations), or the user's request implies a multi-session refactor or migration. Skip for: single-file edits, typos, config-value changes, changes clearly <20 lines.
 
 **Proposal format:**
 ```
