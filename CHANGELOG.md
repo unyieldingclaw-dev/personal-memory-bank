@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1 — 2026-05-27
+
+### Fixed
+- Stop hook documentation: heading now reads "excluded from install template"; clarified that PMB's own `.claude/settings.json` keeps it deliberately for interactive Windows sessions
+- Contract threshold: raised from "more than one file" to "4 or more files" with sensitive-domain list
+- Compaction/handoff language: corrected numerically backwards sentence about 50%/40% thresholds
+- CI workflow renamed: `governance.yml` → `pmb-health.yml`; internal `name:` updated to "PMB Health"
+
+---
+
 ## 1.0.0 — 2026-05-14
 
 First stable personal release. Crossed from "organized prompt files" into governed operational memory infrastructure.

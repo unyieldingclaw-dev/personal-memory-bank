@@ -591,6 +591,39 @@ show_doctor() {
         echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb audit' for details${NC}"
     fi
 
+    # 10. Placeholder residue
+    PLACEHOLDER_FILES_WARNED=0
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        p="memory-bank/$f"
+        [ ! -f "$p" ] && continue
+        content=$(cat "$p" 2>/dev/null)
+        matched=""
+        occurrences=0
+        _ph_check() {
+            local pat="$1" label="$2"
+            if echo "$content" | grep -qiE "$pat" 2>/dev/null; then
+                cnt=$(echo "$content" | grep -ciE "$pat" 2>/dev/null || echo 1)
+                occurrences=$((occurrences + cnt))
+                matched="${matched:+$matched, }$label"
+            fi
+        }
+        _ph_check '\bTODO\b'        'TODO'
+        _ph_check '\bTBD\b'         'TBD'
+        _ph_check '\bFIXME\b'       'FIXME'
+        _ph_check 'FILL IN'         'FILL IN'
+        _ph_check '\[your '         '[your ...]'
+        _ph_check '\bplaceholder\b' 'placeholder'
+        _ph_check 'lorem ipsum'     'lorem ipsum'
+        _ph_check 'YYYY-MM-DD'      'YYYY-MM-DD'
+        if [ -n "$matched" ]; then
+            echo -e "${YELLOW}[WARN] memory-bank/$f — placeholder text detected (${occurrences} occurrence(s)): ${matched}${NC}"
+            PLACEHOLDER_FILES_WARNED=$((PLACEHOLDER_FILES_WARNED + 1))
+        fi
+    done
+    if [ "$PLACEHOLDER_FILES_WARNED" -eq 0 ]; then
+        echo -e "${GREEN}[OK]   No placeholder text in memory-bank files${NC}"
+    fi
+
     # Startup context — observability section (not a numbered health check)
     echo ""
     echo "  Startup Context"

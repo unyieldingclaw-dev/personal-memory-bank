@@ -672,6 +672,37 @@ function Show-Doctor {
         Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb audit' for details" -ForegroundColor Yellow
     }
 
+    # 10. Placeholder residue
+    $placeholderPatterns = @(
+        @{Re='\bTODO\b';       Label='TODO'},
+        @{Re='\bTBD\b';        Label='TBD'},
+        @{Re='\bFIXME\b';      Label='FIXME'},
+        @{Re='(?i)FILL IN';    Label='FILL IN'},
+        @{Re='(?i)\[your ';    Label='[your ...'},
+        @{Re='(?i)\bplaceholder\b'; Label='placeholder'},
+        @{Re='(?i)lorem ipsum'; Label='lorem ipsum'},
+        @{Re='YYYY-MM-DD';     Label='YYYY-MM-DD'}
+    )
+    $placeholderFilesWarned = 0
+    foreach ($f in @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")) {
+        $p = "memory-bank/$f"
+        if (-not (Test-Path $p)) { continue }
+        $content = Get-Content $p -Raw
+        $matched = @()
+        foreach ($pat in $placeholderPatterns) {
+            if ($content -match $pat.Re) { $matched += $pat.Label }
+        }
+        if ($matched.Count -gt 0) {
+            $hitList = $matched -join ', '
+            $occurrences = ($matched | ForEach-Object { ([regex]::Matches($content, $_)).Count } | Measure-Object -Sum).Sum
+            Write-Host "[WARN] memory-bank/$f — placeholder text detected ($occurrences occurrence(s)): $hitList" -ForegroundColor Yellow
+            $placeholderFilesWarned++
+        }
+    }
+    if ($placeholderFilesWarned -eq 0) {
+        Write-Host "[OK]   No placeholder text in memory-bank files" -ForegroundColor Green
+    }
+
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
     Write-Host "  Startup Context"
