@@ -69,6 +69,12 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ CLAUDE.md memory update discipline: task-boundary updates, compaction summaries are fallback
 - ✅ .gitignore: .claude/worktrees/ excluded
 
+### Consistency Corrections & Tooling (May 2026)
+- ✅ v1.0.1: first formally tagged GitHub release (four consistency corrections from architecture review)
+- ✅ mb doctor Check #10: placeholder residue detection — lexical only (TODO, TBD, FIXME, FILL IN, `[your ...]`, placeholder, lorem ipsum, YYYY-MM-DD)
+- ✅ mb doctor: identity boundary in function header — "observable integrity signals, not semantic correctness"
+- ⏸ Deferred pending operational evidence: handoff CLI, pinned.md, mb update --from-git, mb privacy
+
 ## Removed vs Enterprise
 
 - ❌ Eric Nolan branding and brand assets

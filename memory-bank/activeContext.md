@@ -20,9 +20,16 @@ lineage: []
 
 Architecture review cycle complete (2026-05-25). All planned workstreams merged. Repo is stable. Next decision point is observation-driven: wait for 30-day startup context growth data before making classification or loader decisions.
 
-## What Was Just Completed (2026-05-25)
+## What Was Just Completed (2026-05-27)
 
-**Architecture review response (4 commits on master):**
+**Consistency corrections & v1.0.1 release:**
+- `6a8f320` — four documentation/config fixes: Stop hook docs, contract threshold (1→4 files), compaction language, governance→pmb-health rename
+- `7eba98b` — mb doctor Check #10 (placeholder residue, lexical/deterministic) + CHANGELOG v1.0.1 entry
+- `8d24a99` — mb doctor identity boundary comment in function header
+- v1.0.1 tagged and published as first formal GitHub release
+- Deferred: handoff CLI, pinned.md, mb update --from-git, mb privacy — pending operational evidence
+
+**Architecture review response (2026-05-25, 4 commits on master):**
 - `a62cc7b` — `.claude/worktrees/` added to `.gitignore` (accidental operational artifacts concern from review)
 - PR #2 (`feat/comment-provenance`) — CODE-QUALITY.md sections 2+7, CLAUDE.md 3-line provenance anchor, Cursor rule anchor
 - PR #3 (`feat/governance-integrity`) — hook scripts in templates, mb doctor Check #4 (hook presence), CI template-integrity job
@@ -50,7 +57,8 @@ Architecture review cycle complete (2026-05-25). All planned workstreams merged.
 - `authority` (volatility) and startup-criticality are independent axes — do not merge into one field
 - Detection-first, resist-automation: auto-remediation premature without semantic certainty
 - "Overhead proportionate to certainty" — governing principle for any new governance additions
+- `mb doctor` = observable integrity signals only; not semantic correctness, not workflow compliance
 
 ## Git State
 
-master at `fa03b70`, clean working tree
+master at `8d24a99`, clean working tree, v1.0.1 tagged and pushed
