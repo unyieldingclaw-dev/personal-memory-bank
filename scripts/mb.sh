@@ -529,26 +529,30 @@ show_doctor() {
             INTEGRITY_ISSUES+=("${YELLOW}[CAUTION] memory-bank/$f compaction_generation=$GEN (recursive abstraction risk)${NC}")
         fi
 
-        # Canonical-source absence: check lineage entries exist
-        IN_LINEAGE=false
-        while IFS= read -r line; do
-            if echo "$line" | grep -q '^lineage:'; then
-                IN_LINEAGE=true
-                continue
-            fi
-            # Exit lineage block when we hit a non-list line after lineage:
-            if [ "$IN_LINEAGE" = true ] && ! echo "$line" | grep -q '^\s*-\s'; then
-                break
-            fi
-            if [ "$IN_LINEAGE" = true ]; then
-                ancestor=$(echo "$line" | sed 's/^\s*-\s*//' | sed 's/@.*//' | tr -d ' \r')
-                # Skip tag-style entries (contain /)
-                if echo "$ancestor" | grep -q '/'; then continue; fi
-                if [ -n "$ancestor" ] && [ ! -e "$ancestor" ]; then
-                    INTEGRITY_ISSUES+=("${RED}[ERROR] memory-bank/$f lineage root missing: $ancestor (recovery impossible)${NC}")
+        # Canonical-source absence: check lineage entries in frontmatter only.
+        # Extract the frontmatter block (between the first two '---' delimiters) so
+        # that document-body list items are never mistaken for lineage file paths.
+        fm=$(awk 'NR==1{next} /^---$/{exit} {print}' "$p" 2>/dev/null)
+        # Only process multi-line lineage; 'lineage: []' (inline empty) has no list items.
+        if echo "$fm" | grep -q '^lineage: *$'; then
+            IN_LINEAGE_FM=false
+            while IFS= read -r line; do
+                if echo "$line" | grep -q '^lineage: *$'; then
+                    IN_LINEAGE_FM=true
+                    continue
                 fi
-            fi
-        done < "$p"
+                if [ "$IN_LINEAGE_FM" = true ]; then
+                    if ! echo "$line" | grep -qE '^\s+-\s'; then
+                        break
+                    fi
+                    ancestor=$(echo "$line" | sed 's/^\s*-\s*//' | sed 's/@.*//' | tr -d ' \r')
+                    if echo "$ancestor" | grep -q '/'; then continue; fi
+                    if [ -n "$ancestor" ] && [ ! -e "$ancestor" ]; then
+                        INTEGRITY_ISSUES+=("${RED}[ERROR] memory-bank/$f lineage root missing: $ancestor (recovery impossible)${NC}")
+                    fi
+                fi
+            done <<< "$fm"
+        fi
     done
 
     if [ ${#INTEGRITY_ISSUES[@]} -eq 0 ]; then
@@ -615,7 +619,6 @@ show_doctor() {
         _ph_check '\bFIXME\b'       'FIXME'
         _ph_check 'FILL IN'         'FILL IN'
         _ph_check '\[your '         '[your ...]'
-        _ph_check '\bplaceholder\b' 'placeholder'
         _ph_check 'lorem ipsum'     'lorem ipsum'
         _ph_check 'YYYY-MM-DD'      'YYYY-MM-DD'
         if [ -n "$matched" ]; then

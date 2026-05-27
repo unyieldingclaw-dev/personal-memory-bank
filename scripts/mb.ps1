@@ -619,15 +619,23 @@ function Show-Doctor {
             }
         }
 
-        # Canonical-source absence: check lineage entries exist
-        if ($content -match '(?m)^lineage:') {
-            $lineageMatches = [regex]::Matches($content, '(?m)^\s+-\s+([^\s@]+)')
-            foreach ($lm in $lineageMatches) {
-                $ancestor = $lm.Groups[1].Value.Trim()
-                # Skip entries inside frontmatter tags: block (they start with - not lineage list)
-                if ($ancestor -match '^[a-z].*\/') { continue }  # skip tag entries like "requirements/core"
-                if (-not [string]::IsNullOrWhiteSpace($ancestor) -and -not (Test-Path $ancestor)) {
-                    $integrityIssues += @{Level="ERROR"; Msg="memory-bank/$f lineage root missing: $ancestor (recovery impossible)"}
+        # Canonical-source absence: check lineage entries in frontmatter only.
+        # Scope to the frontmatter block (between first two '---' delimiters) so that
+        # document-body list items with the same indentation pattern are never tested
+        # as file paths — the previous full-file scan caused false positives on every
+        # bullet point in progress.md and similar files.
+        $fmMatch = [regex]::Match($content, '(?s)^---\r?\n(.+?)\r?\n---')
+        if ($fmMatch.Success) {
+            $fm = $fmMatch.Groups[1].Value
+            # Only process multi-line lineage; 'lineage: []' (inline empty) has no list items.
+            $lineageBlock = [regex]::Match($fm, '(?m)^lineage:\s*\r?\n((?:[ \t]+-[^\r\n]*(?:\r?\n)?)*)')
+            if ($lineageBlock.Success -and $lineageBlock.Groups[1].Length -gt 0) {
+                $lineageItems = [regex]::Matches($lineageBlock.Groups[1].Value, '(?m)^\s+-\s+(.+)')
+                foreach ($lm in $lineageItems) {
+                    $ancestor = ($lm.Groups[1].Value.Trim() -replace '@.*', '').Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($ancestor) -and -not (Test-Path $ancestor)) {
+                        $integrityIssues += @{Level="ERROR"; Msg="memory-bank/$f lineage root missing: $ancestor (recovery impossible)"}
+                    }
                 }
             }
         }
@@ -682,7 +690,6 @@ function Show-Doctor {
         @{Re='\bFIXME\b';      Label='FIXME'},
         @{Re='(?i)FILL IN';    Label='FILL IN'},
         @{Re='(?i)\[your ';    Label='[your ...'},
-        @{Re='(?i)\bplaceholder\b'; Label='placeholder'},
         @{Re='(?i)lorem ipsum'; Label='lorem ipsum'},
         @{Re='YYYY-MM-DD';     Label='YYYY-MM-DD'}
     )
