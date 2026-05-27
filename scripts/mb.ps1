@@ -692,12 +692,16 @@ function Show-Doctor {
         if (-not (Test-Path $p)) { continue }
         $content = Get-Content $p -Raw
         $matched = @()
+        $occurrences = 0
         foreach ($pat in $placeholderPatterns) {
-            if ($content -match $pat.Re) { $matched += $pat.Label }
+            $hits = [regex]::Matches($content, $pat.Re)
+            if ($hits.Count -gt 0) {
+                $matched += $pat.Label
+                $occurrences += $hits.Count
+            }
         }
         if ($matched.Count -gt 0) {
             $hitList = $matched -join ', '
-            $occurrences = ($matched | ForEach-Object { ([regex]::Matches($content, $_)).Count } | Measure-Object -Sum).Sum
             Write-Host "[WARN] memory-bank/$f — placeholder text detected ($occurrences occurrence(s)): $hitList" -ForegroundColor Yellow
             $placeholderFilesWarned++
         }
