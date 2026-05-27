@@ -462,6 +462,9 @@ function Show-Validate {
     Write-Host ""
 }
 
+# mb doctor reports mechanically observable integrity signals,
+# not semantic correctness or workflow compliance.
+# Keep checks deterministic, explainable, and low-noise.
 function Show-Doctor {
     Write-Host ""
     Write-Host "Doctor" -ForegroundColor Cyan

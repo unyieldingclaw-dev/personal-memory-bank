@@ -397,6 +397,9 @@ show_validate() {
     echo ""
 }
 
+# mb doctor reports mechanically observable integrity signals,
+# not semantic correctness or workflow compliance.
+# Keep checks deterministic, explainable, and low-noise.
 show_doctor() {
     echo ""
     echo -e "${CYAN}Doctor${NC}"
