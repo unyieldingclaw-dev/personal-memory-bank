@@ -45,9 +45,9 @@ If BLOCK is triggered, Claude sees the block message and stops. The command neve
 
 Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). The hook calls `pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true` — it fails open if neither runtime is available.
 
-### 2. Stop Notification (`Stop`) — removed from template
+### 2. Stop Notification (`Stop`) — excluded from install template
 
-The Stop hook was removed from `templates/.claude/settings.json` because it causes indefinite hangs in `--Remote-Control` mode (Claude in Chrome). In that mode Claude runs headless; the hook fires but no user is present to dismiss the Windows MessageBox, stalling the session permanently. If you need a Stop notification in an interactive-only project, add it to that project's local `.claude/settings.json` manually.
+The Stop hook is excluded from `templates/.claude/settings.json` because it causes indefinite hangs in `--Remote-Control` mode (Claude in Chrome). In that mode Claude runs headless; the hook fires but no user is present to dismiss the Windows MessageBox, stalling the session permanently. PMB's own `.claude/settings.json` keeps this hook as a deliberate choice for interactive Windows sessions; it is excluded from the install template to prevent those hangs in remote/headless environments. If you need a Stop notification in an interactive-only project, add it to that project's local `.claude/settings.json` manually.
 
 ### 3. PostToolUse Lint (`PostToolUse`)
 

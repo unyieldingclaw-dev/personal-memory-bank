@@ -21,7 +21,7 @@ At the start of every conversation, and again after any context compaction, sile
 
 ## Context Compaction Recovery
 
-Claude Code compacts at ~50% (via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` in settings.json) — before the 40% handoff threshold. A "context was compacted" summary may appear at the top of the conversation.
+Claude Code auto-compacts at 50% (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` in settings.json). Compact manually or trigger a handoff at ~40% to stay ahead of mid-task interruption. A "context was compacted" summary may appear at the top of the conversation.
 
 **If you observe a compaction summary:** Re-read ALL `memory-bank/` files immediately, summarize recovered context to the user, confirm where to resume if mid-task. **Do not continue from memory alone.**
 
@@ -47,7 +47,7 @@ When layers conflict, the more deterministic layer wins. Advisory rules shape be
 
 Before starting any multi-file task, propose a task contract and wait for approval:
 
-**When a contract is required:** Any task touching more than one file, or the user's request implies a new feature / refactor / migration. Skip for: single-file edits, typos, config-value changes, changes clearly <20 lines.
+**When a contract is required:** Any task touching 4 or more files, or touching sensitive domains (auth, payments, data deletion, CI changes, schema migrations), or the user's request implies a multi-session refactor or migration. Skip for: single-file edits, typos, config-value changes, changes clearly <20 lines.
 
 **Proposal format:**
 ```
