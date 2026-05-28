@@ -56,6 +56,35 @@ Runs `npm run lint` after every `Write` or `Edit` tool call and streams the last
 **Why `|| true`?**  
 `|| true` ensures the hook always exits 0. This matters for non-Node projects that have no `package.json` or no `lint` script — without it the hook would exit non-zero and Claude would treat every file write as an error. With `|| true` the hook is a best-effort advisory: output when lint is available, silent when it isn't.
 
+### 4. PreCompact Memory Gate (`PreCompact`)
+
+Fires before Claude Code compacts context. Checks whether either of the two volatile memory-bank files (`memory-bank/activeContext.md`, `memory-bank/progress.md`) was modified today **or** `handoff.md` exists in the project root. If neither condition is met, prints an actionable warning so Claude can update state before the compaction window closes.
+
+**Always exits 0** — compaction is never blocked. The gate is advisory: it surfaces the risk so Claude can act, but does not hard-stop the session.
+
+**Detection logic:**
+- Modified today: compares `LastWriteTime` (PowerShell) / `date -r` mtime (sh) to today's date
+- Handoff present: checks for `handoff.md` in the project root
+
+**Fails open:** if neither runtime is available or mtime cannot be determined, the hook exits 0 silently.
+
+Implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and `scripts/pre-compact-check.sh` (POSIX/sh):
+
+```json
+"PreCompact": [
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "command": "pwsh -NonInteractive -File scripts/pre-compact-check.ps1 2>/dev/null || bash scripts/pre-compact-check.sh 2>/dev/null || true"
+      }
+    ]
+  }
+]
+```
+
+Note: `PreCompact` hooks have no `matcher` field — the hook type applies to the compaction event itself, not to a specific tool.
+
 ## Adding Per-Project Hooks
 
 Copy `.claude/settings.json` into your project, then add hooks as needed.
