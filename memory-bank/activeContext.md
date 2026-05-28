@@ -22,6 +22,14 @@ Architecture review cycle complete (2026-05-25). All planned workstreams merged.
 
 ## What Was Just Completed (2026-05-27)
 
+**`/test-audit` command shipped:**
+- Design spec written: `docs/superpowers/specs/2026-05-27-test-audit-design.md`
+- `templates/claude-commands/test-audit.md` — canonical template distributed via `mb init`
+- `.claude/commands/test-audit.md` — installed copy for PMB dogfooding
+- Inline diagnostic command (no subagents, read-only), matches `security-review` lightweight pattern
+- 6-step scan: scope → framework detection → source-to-test mapping → empty-file check → config check → CI check
+- Severity model: [HIGH] missing tests, [MEDIUM] empty test file / CI no test step, [LOW] no framework / no config / no CI
+
 **Consistency corrections & v1.0.1 release:**
 - `6a8f320` — four documentation/config fixes: Stop hook docs, contract threshold (1→4 files), compaction language, governance→pmb-health rename
 - `7eba98b` — mb doctor Check #10 (placeholder residue, lexical/deterministic) + CHANGELOG v1.0.1 entry

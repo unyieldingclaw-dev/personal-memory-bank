@@ -30,6 +30,7 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ 7-phase Workflow standard
 - ✅ Supply Chain, MCP Security, Rules-File Integrity (reference)
 - ✅ /code-review, /feature-dev, /security-review commands
+- ✅ /test-audit command (diagnostic, inline, read-only; 6-step coverage scan)
 - ✅ Cursor rules (5 rules + code-review rule)
 
 ### Lifecycle Management (May 2026)
