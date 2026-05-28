@@ -21,7 +21,7 @@ At the start of every conversation, and again after any context compaction, sile
 
 ## Context Compaction Recovery
 
-Claude Code auto-compacts at 50% (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` in settings.json). Compact manually or trigger a handoff at ~40% to stay ahead of mid-task interruption. A "context was compacted" summary may appear at the top of the conversation.
+Claude Code auto-compacts at 40% (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` in settings.json). The `PreCompact` hook fires first — it warns if neither the memory bank nor a handoff has been captured this session, so there is time to act before context is lost. Compact manually or trigger a handoff before that point. A "context was compacted" summary may appear at the top of the conversation.
 
 **If you observe a compaction summary:** Re-read ALL `memory-bank/` files immediately, summarize recovered context to the user, confirm where to resume if mid-task. **Do not continue from memory alone.**
 
@@ -130,8 +130,8 @@ When starting a new conversation:
 - Switch to Opus (`/model opus`) only for: complex architecture decisions, large multi-file refactors, deep cross-file debugging. Switch back after.
 - Subagents run on Haiku automatically (set in settings.json) — sufficient for file reads, test runs, and exploration.
 
-**Compact at task boundaries — auto-compact fires at 50%:**
-- Auto-compaction is set to fire at 50% context (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` in settings.json)
+**Compact at task boundaries — auto-compact fires at 40%:**
+- Auto-compaction is set to fire at 40% context (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` in settings.json); the `PreCompact` hook warns first if memory bank is stale
 - Compact manually at natural boundaries before that point:
   - After planning: `/compact Focus on decisions and file paths`
   - After debugging: `/compact Focus on what was tried and what worked`
