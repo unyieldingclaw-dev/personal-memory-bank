@@ -224,6 +224,34 @@ When Claude Code approaches its context limit, type `Handoff`. The AI creates `h
 
 </details>
 
+<details>
+<summary>Pre-push git hook (optional)</summary>
+
+`scripts/pre-push-check.ps1` (Windows/pwsh) and `scripts/pre-push-check.sh` (POSIX/bash) are optional git hooks that run before every `git push`. They block on errors and warn on advisory issues:
+
+- Unresolved merge conflicts or conflict markers in staged files
+- Uncommitted changes in the working tree
+- Missing `.gitattributes`
+- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs)
+- Files over 500 KB
+- `mb validate` result (if `mb` is in PATH)
+
+To install, copy or symlink the appropriate script into your `.git/hooks/` directory:
+
+```bash
+# Linux / macOS
+cp scripts/pre-push-check.sh .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+
+# Windows (PowerShell wrapper)
+Copy-Item scripts\pre-push-check.ps1 .git\hooks\pre-push.ps1
+'#!/bin/sh' + "`npwsh -NonInteractive -File .git/hooks/pre-push.ps1`" | Set-Content .git\hooks\pre-push
+```
+
+The hooks fail open — if they error unexpectedly, the push is allowed through.
+
+</details>
+
 ## Troubleshooting
 
 **`mb init` says templates not found**
