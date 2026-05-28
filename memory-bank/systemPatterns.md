@@ -30,7 +30,7 @@ Persistent context across AI sessions. Read at session start, updated after sign
 Brainstorm → Spec → Plan → Implement → Simplify → Security Review → Commit
 
 ### Handoff Protocol
-At 65% context: stop, write handoff.md, start new chat.
+At 40% context (or user types "Handoff"): stop, write handoff.md, start new chat.
 
 ## Coding Principles
 
