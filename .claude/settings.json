@@ -1,5 +1,10 @@
 {
   "model": "sonnet",
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "context7@claude-plugins-official": true
+  },
   "env": {
     "MAX_THINKING_TOKENS": "10000",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
