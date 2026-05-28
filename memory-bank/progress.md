@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-05-25
+last-reviewed: 2026-05-28
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -44,7 +44,8 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ Worktree guard in mb commit
 
 ### Token Budget (May 2026)
-- ✅ CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50 in settings.json
+- ✅ CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40 in settings.json (lowered from 50)
+- ✅ PreCompact hook: memory gate warns before compaction if memory bank stale and no handoff.md
 - ✅ mb budget: KB + token estimates
 - ✅ mb doctor: CLAUDE.md drift detection
 - ✅ Auto-clarity exception documented
@@ -76,6 +77,7 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ mb doctor Check #10: template residue detection — lexical patterns only
 - ✅ mb doctor: identity boundary in function header — "observable integrity signals, not semantic correctness"
 - ✅ v1.0.2: /test-audit command + /health-check (PMB-only); COMMANDS-REFERENCE.md; mb upgrade includes test-audit; README badge fixed
+- ✅ PreCompact memory gate: pre-compact-check.ps1/.sh + settings.json hook + HOOKS-GUIDE.md documentation (2026-05-28)
 - ⏸ Deferred pending operational evidence: handoff CLI, pinned.md, mb update --from-git, mb privacy
 
 ## Removed vs Enterprise

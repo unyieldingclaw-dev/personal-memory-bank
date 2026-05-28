@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-05-25
+last-reviewed: 2026-05-28
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -20,9 +20,17 @@ lineage: []
 
 Architecture review cycle complete (2026-05-25). All planned workstreams merged. Repo is stable. Next decision point is observation-driven: wait for 30-day startup context growth data before making classification or loader decisions.
 
-## What Was Just Completed (2026-05-27, post-v1.0.1)
+## What Was Just Completed (2026-05-28)
 
-**`/test-audit` command shipped + v1.0.2 documentation pass:**
+**PreCompact memory gate shipped:**
+- `scripts/pre-compact-check.ps1` + `.sh` — fires before compaction; warns if neither memory bank nor handoff captured today; always exits 0
+- `templates/scripts/pre-compact-check.ps1` + `.sh` — distributed via `mb init`
+- `.claude/settings.json` — `PreCompact` hook wired; `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowered 50 → 40
+- `templates/.claude/settings.json` — same changes for new-project distribution
+- `CLAUDE.md` + `templates/CLAUDE.md` — threshold references updated 50% → 40%; PreCompact hook mentioned
+- `docs/HOOKS-GUIDE.md` — "### 4. PreCompact Memory Gate" section added
+
+**`/test-audit` command shipped + v1.0.2 documentation pass (2026-05-27):**
 - Design spec written: `docs/superpowers/specs/2026-05-27-test-audit-design.md`
 - `templates/claude-commands/test-audit.md` — canonical template distributed via `mb init`
 - `.claude/commands/test-audit.md` — installed copy for PMB dogfooding
@@ -71,4 +79,4 @@ Architecture review cycle complete (2026-05-25). All planned workstreams merged.
 
 ## Git State
 
-v1.0.2 documentation pass in progress — changes staged for commit
+master branch, clean. Last commit: PreCompact memory gate feature complete (08d855e).
