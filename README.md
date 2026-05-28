@@ -1,14 +1,23 @@
 # Personal Memory Bank
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.0.2-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
 
-Give your AI coding assistant persistent project memory — so every session starts where the last one left off, with full context about your project, stack, and decisions.
+Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (10+ commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
 
 ## The Problem It Solves
 
 Every AI coding session starts blank. You re-explain your stack, re-describe your patterns, re-establish constraints. That overhead compounds across weeks and months.
 
 Memory Bank solves this by keeping a small set of structured files in your project that your AI reads automatically at the start of every session.
+
+## Features at a Glance
+
+| Area | What you get |
+|------|-------------|
+| Memory system | 5-file structured context, authority hierarchy, freshness tracking, provenance frontmatter |
+| `mb` CLI | init, status, validate, audit, query, compact, budget, upgrade, doctor, commit (10 commands) |
+| Slash commands | `/test-audit`, `/code-review`, `/security-review`, `/feature-dev`, `/health-check` |
+| Governance | Pre/PostToolUse hooks, CI pipeline, task contracts, subagents |
 
 ## Install (Windows)
 
@@ -74,6 +83,35 @@ mb doctor     Full diagnostic — git, templates, hooks, file sizes, startup tok
 mb help       Full command list
 ```
 
+## Slash Commands
+
+Four commands are distributed to every new project via `mb init`. One additional command (`/health-check`) is installed in the PMB repo itself for self-diagnostics.
+
+### Testing Suite
+
+Two complementary tools that together cover the full test quality picture:
+
+**`/test-audit`** — *Coverage gap diagnostic.* Scans changed files (or full project with `--all`), auto-detects your framework (Jest, Vitest, pytest, Go, RSpec, Rust), maps each source file to its expected test file, and flags:
+
+- Missing test files `[HIGH]`
+- Test files with no assertions `[MEDIUM]`
+- CI configurations missing a test step `[MEDIUM]`
+- Missing framework config `[LOW]`
+
+**`/code-review`** — *5-agent orchestrated review.* Spawns three isolated review subagents (Security, Performance, Style & Standards) with uncorrelated context windows so findings don't bias each other. A fourth **Opponent subagent** then audits all findings — challenging false positives, downgrading over-called severities, and surfacing anything the first three missed. Finally, the main agent runs a **test coverage pass** that evaluates missing tests, edge cases, and generates stubs for uncovered public functions.
+
+Together: `/test-audit` tells you *what's missing*. `/code-review` tells you *whether what exists is good*.
+
+### All Commands
+
+| Command | What it does |
+|---------|-------------|
+| `/test-audit` | Coverage gap diagnostic — framework detection, source-to-test mapping, CI check |
+| `/code-review` | 5-agent orchestrated review — security, performance, style, and test coverage |
+| `/security-review` | Scans current diff for 9 security patterns (secrets, injection, auth, crypto, etc.) |
+| `/feature-dev` | Runs the full 7-phase feature development workflow (brainstorm → spec → plan → implement → review → commit) |
+| `/health-check` | PMB-only: runs `mb doctor` + `mb validate` + `mb audit` and prints a labeled summary |
+
 ## How It Works
 
 The memory bank is five markdown files in `memory-bank/`:
@@ -89,7 +127,7 @@ The memory bank is five markdown files in `memory-bank/`:
 Your AI reads all five at the start of every session. You update them when things change. The `mb` utility helps you manage them.
 
 <details>
-<summary>Governance Model</summary>
+<summary>Governance model</summary>
 
 Memory Bank is built on **governed assistance** — the idea that AI is most useful when it operates within explicit, layered constraints rather than as an autonomous agent. The system enforces this at four levels:
 
@@ -131,6 +169,13 @@ Run `mb audit` to see which files are stale. Run `mb compact` to get an AI promp
 </details>
 
 <details>
+<summary>Provenance frontmatter</summary>
+
+Each memory bank file carries `compaction_generation`, `source_type`, `confidence`, and `lineage` fields in its frontmatter. `mb doctor` Check #8 warns when compaction depth reaches gen ≥ 2 and errors when no canonical-source file exists. This lets you tell the difference between a file written by a human and one that has been summarized multiple times by an AI.
+
+</details>
+
+<details>
 <summary>Startup context visibility</summary>
 
 `mb doctor` prints a Startup Context section at the end of every run:
@@ -166,13 +211,9 @@ Memory bank lives in the main worktree only. `mb commit` detects and refuses mut
 </details>
 
 <details>
-<summary>AI commands (Claude Code)</summary>
+<summary>CI / governance pipeline</summary>
 
-Three slash commands are installed in `.claude/commands/`:
-
-- `/code-review` — multi-agent review (security, performance, style, test coverage)
-- `/feature-dev` — full 7-phase feature development workflow
-- `/security-review` — scan current diff for 9 security patterns
+A `pmb-health` CI job runs on every PR: secret scanning (gitleaks), template integrity check (hooks match templates), memory bank file size limits, and CLAUDE.md drift detection. The same checks `mb doctor` runs locally are enforced in CI so drift is caught before merge.
 
 </details>
 
