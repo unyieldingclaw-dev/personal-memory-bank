@@ -20,15 +20,17 @@ lineage: []
 
 Architecture review cycle complete (2026-05-25). All planned workstreams merged. Repo is stable. Next decision point is observation-driven: wait for 30-day startup context growth data before making classification or loader decisions.
 
-## What Was Just Completed (2026-05-27)
+## What Was Just Completed (2026-05-27, post-v1.0.1)
 
-**`/test-audit` command shipped:**
+**`/test-audit` command shipped + v1.0.2 documentation pass:**
 - Design spec written: `docs/superpowers/specs/2026-05-27-test-audit-design.md`
 - `templates/claude-commands/test-audit.md` — canonical template distributed via `mb init`
 - `.claude/commands/test-audit.md` — installed copy for PMB dogfooding
+- `.claude/commands/health-check.md` — PMB-only full health check (mb doctor + mb validate + mb audit)
 - Inline diagnostic command (no subagents, read-only), matches `security-review` lightweight pattern
 - 6-step scan: scope → framework detection → source-to-test mapping → empty-file check → config check → CI check
 - Severity model: [HIGH] missing tests, [MEDIUM] empty test file / CI no test step, [LOW] no framework / no config / no CI
+- v1.0.2: README badge corrected, CHANGELOG entry, COMMANDS-REFERENCE.md created, mb upgrade now includes test-audit.md
 
 **Consistency corrections & v1.0.1 release:**
 - `6a8f320` — four documentation/config fixes: Stop hook docs, contract threshold (1→4 files), compaction language, governance→pmb-health rename
@@ -69,4 +71,4 @@ Architecture review cycle complete (2026-05-25). All planned workstreams merged.
 
 ## Git State
 
-master at `8d24a99`, clean working tree, v1.0.1 tagged and pushed
+v1.0.2 documentation pass in progress — changes staged for commit

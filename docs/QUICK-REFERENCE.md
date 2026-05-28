@@ -35,6 +35,8 @@ One-page cheatsheet for daily use.
 | `/feature-dev` | Run full 7-phase workflow (Claude Code) |
 | `/security-review` | Scan diff for 9 security patterns (Claude Code) |
 | `/code-review` | Multi-agent deep review: 3 parallel role subagents (security, performance, style) + test coverage review (generates missing tests) + opponent auditor compare (Claude Code / Cursor) |
+| `/test-audit` | Audit test coverage for changed files or full project; reports missing tests, empty test files, framework config, CI test step (Claude Code) |
+| `/health-check` | Full PMB health check — runs mb doctor + mb validate + mb audit and prints summary (PMB repo only) |
 
 ---
 

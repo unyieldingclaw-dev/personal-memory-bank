@@ -1028,6 +1028,7 @@ function Invoke-Upgrade {
         ".claude/commands/code-review.md"
         ".claude/commands/feature-dev.md"
         ".claude/commands/security-review.md"
+        ".claude/commands/test-audit.md"
     )
 
     $advisoryDiff = @(

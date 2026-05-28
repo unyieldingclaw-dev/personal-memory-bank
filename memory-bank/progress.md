@@ -29,8 +29,9 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ Logging standard (essentials)
 - ✅ 7-phase Workflow standard
 - ✅ Supply Chain, MCP Security, Rules-File Integrity (reference)
-- ✅ /code-review, /feature-dev, /security-review commands
-- ✅ /test-audit command (diagnostic, inline, read-only; 6-step coverage scan)
+- ✅ /code-review, /feature-dev, /security-review, /test-audit commands (all distributed via mb init)
+- ✅ /health-check command (PMB-only self-diagnostic)
+- ✅ docs/COMMANDS-REFERENCE.md — full reference for all mb + slash commands
 - ✅ Cursor rules (5 rules + code-review rule)
 
 ### Lifecycle Management (May 2026)
@@ -74,6 +75,7 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ v1.0.1: first formally tagged GitHub release (four consistency corrections from architecture review)
 - ✅ mb doctor Check #10: template residue detection — lexical patterns only
 - ✅ mb doctor: identity boundary in function header — "observable integrity signals, not semantic correctness"
+- ✅ v1.0.2: /test-audit command + /health-check (PMB-only); COMMANDS-REFERENCE.md; mb upgrade includes test-audit; README badge fixed
 - ⏸ Deferred pending operational evidence: handoff CLI, pinned.md, mb update --from-git, mb privacy
 
 ## Removed vs Enterprise
