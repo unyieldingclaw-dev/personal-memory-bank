@@ -80,7 +80,6 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ PreCompact memory gate: pre-compact-check.ps1/.sh + settings.json hook + HOOKS-GUIDE.md documentation (2026-05-28)
 - ✅ Pre-push hook: pre-push-check.ps1/.sh (7 checks) + templates/hooks/pre-push shim + mb init/upgrade/doctor wiring (2026-05-29)
 - ✅ mb install-hooks: retrofit subcommand for existing projects; dry-run support (2026-05-29)
-- ⏸ Deferred pending operational evidence: handoff CLI, pinned.md, mb update --from-git, mb privacy
 
 ## Removed vs Enterprise
 
@@ -90,6 +89,13 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ❌ Enterprise logging (PII redaction, correlation IDs)
 - ❌ Team onboarding scripts and training materials
 
-## Next Major Gap
+## Backlog
 
-**Semantic identity** — the system detects file-level degeneration but not concept-level drift. Duplicate concepts, contradictions, and stale supersession currently require human judgment. Detection-first approach: add heuristics before any auto-remediation.
+**Semantic identity** — file-level health is covered; concept-level drift is not. Trigger: memory bank stable and aging (3–6 months), manual contradictions noticed. Detection-first; no auto-remediation.
+- ⏸ Duplicate concept detection — same decision in two files drifting apart over compaction cycles
+- ⏸ Supersession rot — old decision still looks authoritative after a newer one replaced it
+- ⏸ Cross-file contradiction detection — authority hierarchy violations (e.g. activeContext vs projectbrief)
+- ⏸ Claim extraction via `mb query` extension — surface semantically near-duplicate content; bounded scope, no new command needed
+
+**Deferred pending operational evidence:**
+- ⏸ handoff CLI, pinned.md, mb update --from-git, mb privacy
