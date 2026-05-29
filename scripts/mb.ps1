@@ -409,6 +409,14 @@ function Invoke-Init {
         $Created += ".gitignore"
     }
 
+    # Write .pmb-version — records which PMB version initialized this project
+    $versionFile = Join-Path $RepoRoot "VERSION"
+    if (Test-Path $versionFile) {
+        $localVersion = (Get-Content $versionFile -Raw).Trim()
+        Set-Content -Path (Join-Path $Target ".pmb-version") -Value $localVersion -NoNewline
+        $Created += ".pmb-version"
+    }
+
     foreach ($item in $Created) { Write-Host "  [+] $item" -ForegroundColor Green }
     foreach ($item in $Skipped) { Write-Host "  [=] $item (kept existing)" -ForegroundColor DarkGray }
 
@@ -1131,6 +1139,25 @@ function Invoke-Upgrade {
         exit 1
     }
 
+    # Remote version check — soft warning, never blocks upgrade
+    $versionFile = Join-Path $RepoRoot "VERSION"
+    if (Test-Path $versionFile) {
+        $localVersion = (Get-Content $versionFile -Raw).Trim()
+        try {
+            $response = Invoke-WebRequest `
+                -Uri "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/master/VERSION" `
+                -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
+            $remoteVersion = $response.Content.Trim()
+            if ($remoteVersion -ne $localVersion) {
+                Write-Host "[WARN] PMB $localVersion installed locally, $remoteVersion available" -ForegroundColor Yellow
+                Write-Host "       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank" -ForegroundColor Yellow
+                Write-Host ""
+            }
+        } catch {
+            Write-Host "[INFO] Remote version check skipped (unreachable)" -ForegroundColor DarkGray
+        }
+    }
+
     # WHY: Ownership is hardcoded as explicit arrays — NOT a config file.
     # Ownership semantics are behavior, not data. A config file would invite
     # accidental expansion of overwrite scope. Rationale comments are per-group.
@@ -1298,6 +1325,15 @@ function Invoke-Upgrade {
                 Write-Host "    (diff not available — compare manually with: diff $src $dst)"
             }
         }
+    }
+
+
+    # Write .pmb-version — records which PMB version this project was last upgraded with
+    $versionFile = Join-Path $RepoRoot "VERSION"
+    if ((Test-Path $versionFile) -and (-not $dryRun)) {
+        $localVersion = (Get-Content $versionFile -Raw).Trim()
+        Set-Content -Path ".pmb-version" -Value $localVersion -NoNewline
+        Write-Host "[✓] .pmb-version updated to $localVersion" -ForegroundColor Green
     }
 
     Write-Host ""
