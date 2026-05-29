@@ -171,13 +171,13 @@ show_archive() {
     echo ""
     echo -e "${YELLOW}To archive old content from activeContext.md:${NC}"
     echo ""
-    echo "1. Move detailed session history to docs/ARCHIVE.md"
+    echo "1. Move detailed session history to docs/archive/ (see docs/archive/README.md for naming)"
     echo "2. Keep only current state in activeContext.md"
     echo "3. Completed 'Next Steps' should move to progress.md"
     echo ""
     echo -e "${YELLOW}Tell the AI:${NC}"
     echo ""
-    echo '  "Archive old content from activeContext.md to docs/ARCHIVE.md"'
+    echo '  "Archive old content from activeContext.md to docs/archive/"'
     echo ""
 }
 
@@ -206,7 +206,7 @@ show_slim() {
         echo ""
         echo -e "${YELLOW}To slim the file, tell the AI:${NC}"
         echo ""
-        echo '  "Trim activeContext.md to essentials - move history to docs/ARCHIVE.md"'
+        echo '  "Trim activeContext.md to essentials - move history to docs/archive/"'
     else
         echo -e "${RED}Error: activeContext.md not found${NC}"
     fi
