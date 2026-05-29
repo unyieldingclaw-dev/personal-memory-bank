@@ -78,6 +78,8 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ mb doctor: identity boundary in function header — "observable integrity signals, not semantic correctness"
 - ✅ v1.0.2: /test-audit command + /health-check (PMB-only); COMMANDS-REFERENCE.md; mb upgrade includes test-audit; README badge fixed
 - ✅ PreCompact memory gate: pre-compact-check.ps1/.sh + settings.json hook + HOOKS-GUIDE.md documentation (2026-05-28)
+- ✅ Pre-push hook: pre-push-check.ps1/.sh (7 checks) + templates/hooks/pre-push shim + mb init/upgrade/doctor wiring (2026-05-29)
+- ✅ mb install-hooks: retrofit subcommand for existing projects; dry-run support (2026-05-29)
 - ⏸ Deferred pending operational evidence: handoff CLI, pinned.md, mb update --from-git, mb privacy
 
 ## Removed vs Enterprise

@@ -20,7 +20,23 @@ lineage: []
 
 Architecture review cycle complete (2026-05-25). All planned workstreams merged. Repo is stable. Next decision point is observation-driven: wait for 30-day startup context growth data before making classification or loader decisions.
 
-## What Was Just Completed (2026-05-28)
+## What Was Just Completed (2026-05-29)
+
+**`mb install-hooks` subcommand shipped:**
+- `scripts/mb.ps1` — new `install-hooks` command; targeted retrofit for projects that already ran `mb init` before the pre-push hook was added
+- Copies `scripts/pre-push-check.ps1` + `.sh` from templates if missing; installs `.git/hooks/pre-push`; reports `[+]`/`[=]` per item; supports `--dry-run`
+- Distinct from `mb init` (which uses Copy-IfNew and skips existing files)
+
+**Pre-push hook shipped (2026-05-28/29):**
+- `scripts/pre-push-check.ps1` + `.sh` — 7 checks: merge conflicts, conflict markers, dirty tree (warn), missing .gitattributes (warn), secrets scan (blocks on AWS/API/PAT patterns), large files >500 KB (warn), `mb validate` (warn)
+- `templates/scripts/pre-push-check.ps1` + `.sh` — distributed via `mb init`
+- `templates/hooks/pre-push` — bash shim detecting pwsh/powershell/bash at runtime; cross-platform
+- `mb init` — wired to install `.git/hooks/pre-push` and copy pre-push scripts
+- `mb upgrade` — pre-push scripts added to TEMPLATE_OWNED list
+- `mb doctor` — Check #11: `.git/hooks/pre-push` presence
+- `README.md` — "Pre-push git hook (optional)" collapsible section in Advanced Features
+
+## What Was Completed (2026-05-28)
 
 **PreCompact memory gate shipped:**
 - `scripts/pre-compact-check.ps1` + `.sh` — fires before compaction; warns if neither memory bank nor handoff captured today; always exits 0
@@ -79,4 +95,4 @@ Architecture review cycle complete (2026-05-25). All planned workstreams merged.
 
 ## Git State
 
-master branch, clean. Last commit: PreCompact memory gate feature complete (08d855e).
+master branch, clean. Last commit: `cb0ca02` — mb install-hooks subcommand.
