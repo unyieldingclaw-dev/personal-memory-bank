@@ -4,8 +4,6 @@ allowed-tools:
   - Bash(git diff *)
   - Bash(git log *)
   - Bash(git status *)
-  - Bash(grep -r *)
-  - Bash(find * -type f *)
   - Read
 ---
 
@@ -60,7 +58,7 @@ Spawn one subagent per required domain from the standard, plus any conditional d
 
 For each subagent, provide:
 - The diff/file being reviewed
-- Its assigned domain name and the field value scales from the standard
+- Pass the full text of the Severity, Blocking, and Confidence field definitions from `standards/CODE-REVIEW.md` verbatim in each subagent prompt — do not paraphrase
 - Instruction to populate all required finding fields: Domain, Severity, Location, Evidence, Impact, Recommendation, Blocking, Confidence
 - Instruction to return structured findings only — no remediation
 
