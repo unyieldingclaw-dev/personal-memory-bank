@@ -660,6 +660,35 @@ show_doctor() {
         echo -e "${GREEN}[OK]   No placeholder text in memory-bank files${NC}"
     fi
 
+    # 11. Required standards files
+    REQUIRED_STANDARDS=("CODE-REVIEW.md" "WORKFLOW.md" "SECURITY-GUARDRAILS.md" "CODE-QUALITY.md")
+    MISSING_STANDARDS=()
+    for s in "${REQUIRED_STANDARDS[@]}"; do
+        [ ! -f "standards/$s" ] && MISSING_STANDARDS+=("standards/$s")
+    done
+    if [ ${#MISSING_STANDARDS[@]} -eq 0 ]; then
+        echo -e "${GREEN}[OK]   Required standards files present${NC}"
+    else
+        for s in "${MISSING_STANDARDS[@]}"; do
+            echo -e "${YELLOW}[WARN] $s not found — run mb upgrade to install${NC}"
+        done
+    fi
+
+    # 12. PMB version tracking
+    if [ -f "$REPO_ROOT/VERSION" ]; then
+        LOCAL_VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
+        if [ ! -f ".pmb-version" ]; then
+            echo -e "${YELLOW}[WARN] No .pmb-version found — run mb upgrade to initialize version tracking${NC}"
+        else
+            PROJECT_VERSION=$(tr -d '[:space:]' < ".pmb-version")
+            if [ "$PROJECT_VERSION" = "$LOCAL_VERSION" ]; then
+                echo -e "${GREEN}[OK]   PMB version: $LOCAL_VERSION${NC}"
+            else
+                echo -e "${YELLOW}[WARN] Project on PMB $PROJECT_VERSION, local PMB is $LOCAL_VERSION — run mb upgrade${NC}"
+            fi
+        fi
+    fi
+
     # Startup context — observability section (not a numbered health check)
     echo ""
     echo "  Startup Context"
