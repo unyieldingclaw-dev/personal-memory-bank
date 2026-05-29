@@ -10,7 +10,7 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 
 | Command | What It Does | Output / Side Effect |
 |---------|--------------|----------------------|
-| `mb init` | Scaffold memory-bank/ in the current project | Creates 5 memory-bank files, `CLAUDE.md`, `.claude/settings.json`, hook scripts, and slash commands. Skips files that already exist. |
+| `mb init` | Scaffold memory-bank/ in the current project | Creates 5 memory-bank files, `CLAUDE.md`, `.claude/settings.json`, hook scripts, slash commands, and 12 `standards/` files. Writes `.pmb-version`. Skips files that already exist. |
 | `mb status` | Show file sizes vs. limits | Table: lines vs. target/max per file. Red = over limit, yellow = consider trimming, green = OK. |
 | `mb validate` | Check required files and frontmatter | Pass/fail for each file; flags missing `authority:` or `last-reviewed:` fields. |
 | `mb audit` | Freshness audit | Table: days since last review vs. `staleness-threshold`; flags stale (red) and overdue (yellow) files. |
@@ -20,9 +20,10 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 | `mb archive` | Print archiving instructions | Instructions for moving stale content from `activeContext.md` to `docs/archive/`. |
 | `mb slim` | Check if activeContext.md needs trimming | Reports current/target/max line count; prints the prompt to trim if needed. |
 | `mb commit` | Stage and commit memory-bank/ changes | Runs `git add memory-bank/` + `git commit`; checks for subworktree and refuses if detected. |
-| `mb upgrade` | Propagate latest governance templates | Overwrites template-owned files (hook scripts, slash commands, `.claude/settings.json`, Cursor rules); shows advisory diff for `CLAUDE.md`. Run `mb upgrade --dry-run` to preview. |
+| `mb upgrade` | Propagate latest governance templates | Overwrites template-owned files (hook scripts, slash commands, `.claude/settings.json`, Cursor rules); shows advisory diff for `CLAUDE.md`; creates missing `standards/` files (`ADVISORY_CREATE`) and shows diff if customized; writes `.pmb-version`; soft remote version check. Run `mb upgrade --dry-run` to preview. |
+| `mb install-hooks` | Retrofit pre-push hook into an existing project | Copies `pre-push-check.ps1`/`.sh` from templates if missing; installs `.git/hooks/pre-push`; reports `[+]`/`[=]` per item. Run `mb install-hooks --dry-run` to preview. Use for projects initialized before v1.0.3. |
 | `mb budget` | Token budget health | Shows KB + estimated tokens for `CLAUDE.md` and `memory-bank/`; reports auto-compact setting. |
-| `mb doctor` | Full 10-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. |
+| `mb doctor` | Full 12-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. |
 | `mb help` | Show command list | Prints all commands with one-line descriptions and examples. |
 
 ---
@@ -129,7 +130,7 @@ These are built into Claude Code and don't require the memory bank system.
 
 ## `mb doctor` Checks
 
-`mb doctor` runs 10 deterministic health checks and prints a startup context observability section.
+`mb doctor` runs 12 deterministic health checks and prints a startup context observability section.
 
 | # | Check | Pass Condition | What to Do on Failure |
 |---|-------|---------------|----------------------|
@@ -144,6 +145,8 @@ These are built into Claude Code and don't require the memory bank system.
 | 8 | Compaction integrity | No file at `compaction_generation` ≥ 2; all `lineage:` ancestors exist on disk | Run `mb compact` to regenerate from canonical sources |
 | 9 | Staleness summary | No `memory-bank/` files past their `staleness-threshold` | Run `mb audit` for details; update stale files |
 | 10 | Placeholder residue | No `TODO`/`TBD`/`FIXME`/`FILL IN`/`[your ...`/`lorem ipsum`/`YYYY-MM-DD` in memory-bank files | Fill in placeholder content left from `mb init` |
+| 11 | Required standards files | `standards/CODE-REVIEW.md`, `WORKFLOW.md`, `SECURITY-GUARDRAILS.md`, `CODE-QUALITY.md` all present | Run `mb upgrade` to install missing files |
+| 12 | PMB version tracking | `.pmb-version` exists and matches local PMB version | Run `mb upgrade` to write or sync `.pmb-version` |
 | — | Startup context | (observability, not a health check) — reports files loaded, estimated tokens, largest contributors, 30-day growth, stale-but-loaded count | Use to decide when files need trimming |
 
 ---

@@ -80,6 +80,11 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ PreCompact memory gate: pre-compact-check.ps1/.sh + settings.json hook + HOOKS-GUIDE.md documentation (2026-05-28)
 - ✅ Pre-push hook: pre-push-check.ps1/.sh (7 checks) + templates/hooks/pre-push shim + mb init/upgrade/doctor wiring (2026-05-29)
 - ✅ mb install-hooks: retrofit subcommand for existing projects; dry-run support (2026-05-29)
+- ✅ Standards distribution: templates/standards/ (12 files) + mb init loop + mb upgrade ADVISORY_CREATE category (2026-05-29)
+- ✅ .pmb-version tracking: written by mb init and mb upgrade; mb doctor check 12 (2026-05-29)
+- ✅ Remote version check in mb upgrade: soft non-blocking curl/Invoke-WebRequest; skips offline (2026-05-29)
+- ✅ mb doctor checks 11 (required standards) and 12 (.pmb-version) in bash + PowerShell (2026-05-29)
+- ✅ v1.0.3: VERSION, CHANGELOG, README, COMMANDS-REFERENCE all updated (2026-05-29)
 
 ## Removed vs Enterprise
 

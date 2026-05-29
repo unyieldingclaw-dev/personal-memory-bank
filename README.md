@@ -1,6 +1,6 @@
 # Personal Memory Bank
 
-![Version](https://img.shields.io/badge/version-1.0.2-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.0.3-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
 
 Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (10+ commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
 
@@ -15,7 +15,7 @@ Memory Bank solves this by keeping a small set of structured files in your proje
 | Area | What you get |
 |------|-------------|
 | Memory system | 5-file structured context, authority hierarchy, freshness tracking, provenance frontmatter |
-| `mb` CLI | init, status, validate, audit, query, compact, budget, upgrade, doctor, commit (10 commands) |
+| `mb` CLI | init, status, validate, audit, query, compact, budget, upgrade, doctor, commit, install-hooks (15 commands) |
 | Slash commands | `/test-audit`, `/code-review`, `/security-review`, `/feature-dev`, `/health-check` |
 | Governance | Pre/PostToolUse hooks, CI pipeline, task contracts, subagents |
 
@@ -78,8 +78,9 @@ mb update     Get a prompt to update memory bank after a session
 mb commit     Commit memory bank changes separately from feature code
 mb query TAG  Find all memory tagged with TAG (e.g. mb query auth)
 mb budget     Check token overhead of CLAUDE.md + memory-bank/
-mb upgrade    Pull latest templates and standards from the memory bank repo
-mb doctor     Full diagnostic — git, templates, hooks, file sizes, startup token cost
+mb upgrade    Pull latest templates and standards from the memory bank repo; creates missing standards/ files; checks remote for newer PMB version
+mb install-hooks  Retrofit existing projects with the pre-push git hook (for projects initialized before 1.0.3)
+mb doctor     Full diagnostic — git, templates, hooks, file sizes, standards presence, version tracking, startup token cost
 mb help       Full command list
 ```
 
@@ -221,6 +222,17 @@ A `pmb-health` CI job runs on every PR: secret scanning (gitleaks), template int
 <summary>Context handoff protocol</summary>
 
 When Claude Code approaches its context limit, type `Handoff`. The AI creates `handoff.md` with a full summary of in-progress work. Start a new session — the AI reads `handoff.md`, merges it into memory bank, and continues from exactly where you left off.
+
+</details>
+
+<details>
+<summary>Standards distribution and version tracking</summary>
+
+`mb init` copies 12 governance standards files (`standards/`) into every new project so slash commands can reference them at runtime. `mb upgrade` checks for missing standards files and creates them; if a file has been customized it shows an advisory diff instead of overwriting.
+
+Each project gets a `.pmb-version` file recording which PMB version initialized or last upgraded it. `mb upgrade` checks the remote for a newer version and warns if one is available (non-blocking — works offline).
+
+`mb doctor` checks 11 and 12 warn on missing required standards files and version drift.
 
 </details>
 
