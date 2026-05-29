@@ -188,13 +188,13 @@ function Show-Archive {
     Write-Host ""
     Write-Host "To archive old content from activeContext.md:" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "1. Move detailed session history to docs/ARCHIVE.md"
+    Write-Host "1. Move detailed session history to docs/archive/ (see docs/archive/README.md for naming)"
     Write-Host "2. Keep only current state in activeContext.md"
     Write-Host "3. Completed 'Next Steps' should move to progress.md"
     Write-Host ""
     Write-Host "Tell the AI:" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host '  "Archive old content from activeContext.md to docs/ARCHIVE.md"' -ForegroundColor White
+    Write-Host '  "Archive old content from activeContext.md to docs/archive/"' -ForegroundColor White
     Write-Host ""
 }
 
@@ -223,7 +223,7 @@ function Show-Slim {
         Write-Host ""
         Write-Host "To slim the file, tell the AI:" -ForegroundColor Yellow
         Write-Host ""
-        Write-Host '  "Trim activeContext.md to essentials - move history to docs/ARCHIVE.md"' -ForegroundColor White
+        Write-Host '  "Trim activeContext.md to essentials - move history to docs/archive/"' -ForegroundColor White
     } else {
         Write-Host "Error: activeContext.md not found" -ForegroundColor Red
     }
