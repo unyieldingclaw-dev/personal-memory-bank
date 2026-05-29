@@ -1,5 +1,5 @@
 ---
-description: Deep code review covering security, performance, style, and test coverage. Spawns separate subagents for each domain so findings don't bias each other. Works on git diff or a specific file/folder.
+description: Deep code review covering security, correctness, maintainability, testing, and architecture drift. Spawns separate subagents per domain so findings don't bias each other. Works on git diff or a specific file/folder.
 allowed-tools:
   - Bash(git diff *)
   - Bash(git log *)
@@ -9,128 +9,117 @@ allowed-tools:
   - Read
 ---
 
-# Deep Code Review
+# Code Review
 
-You are a senior engineer orchestrating a thorough code review. Follow every step below in order. Do not skip any section.
+You are a senior engineer orchestrating a thorough code review. Follow every step below in order. Do not skip any section. The review contract (domains, severity levels, finding schema, report sections, opposition review requirements, and failure criteria) is defined in `standards/CODE-REVIEW.md` — read it at Step 1 and apply it throughout.
 
-## Step 1 — Determine Scope
+## Step 1 — Load Review Contract
+
+Read `standards/CODE-REVIEW.md` in full. This file defines:
+- Required and conditional domains
+- Severity levels and field value scales
+- Required finding fields
+- Required report sections
+- Opposition review requirements
+- Failure criteria
+- Remediation policy
+
+Do not proceed until you have read the standard. All subsequent steps must conform to it.
+
+## Step 2 — Determine Scope
 
 If the user specified a file or folder path, review that target. Otherwise run:
-  git diff HEAD
-  git status
+
+```
+git diff HEAD
+git status
+```
 
 If the diff is empty, let the user know and stop.
 
-## Step 2 — Gather Context
+## Step 3 — Gather Context
 
-Run: git log --oneline -10
-For each changed file run: git log --oneline -5 -- <filename>
+```
+git log --oneline -10
+```
+
+For each changed file run:
+```
+git log --oneline -5 -- <filename>
+```
+
 Use this to understand why the code exists and whether the change is consistent with past decisions.
 
-## Step 3 — Spawn Independent Review Subagents
+Determine which conditional domains apply:
+- Performance: does the diff touch tight loops, database queries, or I/O paths?
+- Accessibility: does the diff touch HTML/JSX/TSX/Vue/Svelte files?
 
-Spawn three separate subagents with fresh, uncorrelated context windows. Each subagent sees only the code and its own lens — not the other subagents' findings. This prevents a security finding from biasing how performance is read, and vice versa.
+## Step 4 — Spawn Independent Domain Subagents
 
-### Subagent A — Security Only
+Spawn one subagent per required domain from the standard, plus any conditional domains that apply. Each subagent sees only the code and its own domain lens — not other subagents' findings.
 
-Review the diff for:
-- Hardcoded secrets, API keys, tokens, or passwords
-- Unvalidated or unsanitized user input
-- SQL injection or NoSQL injection risks
-- Broken authentication or missing authorization checks
-- Exposed internal error messages or stack traces
-- Insecure use of cryptography (weak algorithms, hardcoded IVs/salts)
-- Any use of eval(), exec(), shell=True, or equivalent dangerous calls
-- Sensitive data logged or returned in API responses
+For each subagent, provide:
+- The diff/file being reviewed
+- Its assigned domain name and the field value scales from the standard
+- Instruction to populate all required finding fields: Domain, Severity, Location, Evidence, Impact, Recommendation, Blocking, Confidence
+- Instruction to return structured findings only — no remediation
 
-Rate each finding: [CRITICAL], [HIGH], [MEDIUM], or [LOW]
-Return findings as a structured list with severity, description, and file:line.
+Domains to spawn (always): Security, Correctness, Maintainability, Testing, Architecture Drift
+Domains to spawn (if applicable): Performance, Accessibility
 
-### Subagent B — Performance Only
+## Step 5 — Opposition Review
 
-Review the diff for:
-- N+1 query patterns or repeated database calls in loops
-- Unbounded loops or recursion without depth limits
-- Large payloads loaded entirely into memory
-- Blocking I/O in async code paths
-- Redundant computation that could be cached or memoized
-- Missing pagination on collection endpoints
+Spawn one final subagent as the opposition reviewer. Give it all domain findings. It must answer all four questions from the standard's Opposition Review section:
+1. Is any Critical/High finding overstated? Provide counter-evidence.
+2. What was not reviewed that could matter?
+3. Which findings might be false positives in this codebase's context?
+4. What cross-domain risk did no single domain agent catch?
 
-Rate each finding: [HIGH], [MEDIUM], or [LOW]
-Return findings as a structured list with severity, description, and file:line.
+A general statement that none apply is a failure — all four must be explicitly answered.
 
-### Subagent C — Style & Standards Only
+## Step 6 — Assemble Report
 
-Review the diff for:
-- Functions longer than 50 lines
-- Deeply nested logic that could be flattened
-- Ambiguous variable or function names
-- Missing comments on non-obvious logic
-- Dead code, commented-out blocks, or debug statements left in
-- Magic numbers or strings that should be named constants
-- Copy-paste duplication that should be abstracted
+Produce the report using the required sections from the standard:
 
-Rate each finding: [MEDIUM] or [LOW]
-Return findings as a structured list with severity, description, and file:line.
+**Scope:** [git diff HEAD or filename]
+**Files reviewed:** N
 
-## Step 4 — Test Coverage Review
+**Domain Coverage:**
+| Domain | Status |
+|---|---|
+| Security | Reviewed |
+| Correctness | Reviewed |
+| Maintainability | Reviewed |
+| Testing | Reviewed |
+| Architecture Drift | Reviewed |
+| Performance | Reviewed / Skipped (not applicable) |
+| Accessibility | Reviewed / Skipped (not applicable) |
 
-(Run in the main agent, after subagents complete.)
+**Findings:**
+| Domain | Severity | Location | Evidence | Impact | Recommendation | Blocking | Confidence |
+|---|---|---|---|---|---|---|---|
+| ... | ... | ... | ... | ... | ... | true/false | High/Med/Low |
 
-Evaluate:
-- Are there tests for the changed/new code?
-- Do tests cover happy path, edge cases, and error paths?
-- Are any new public functions or endpoints left untested?
-- Do tests assert meaningful outcomes?
-- Are mocks/stubs used appropriately?
+**Testing Gaps:**
+List any missing tests identified by the Testing domain subagent.
 
-List any missing tests explicitly. If tests are missing, generate them now — one test file per changed module, covering: happy path, edge cases, and all error paths.
+**Opposition Review:**
+[Answers to all four opposition review questions]
 
-## Step 5 — Opponent Check
+**Verdict:** Approve / Request Changes / Needs Discussion
 
-Spawn one final subagent as an auditor. Give it the findings from Subagents A, B, and C. Its job:
-- Challenge any finding it thinks is a false positive
-- Surface anything all three subagents missed
-- Confirm or downgrade severity ratings
+One paragraph summary of the most important confirmed findings.
 
-Return its verdict as a short list: confirmed findings, challenged findings (with reason), and any new findings.
+---
 
-## Step 6 — Summary Report
-
-Collect all outputs and produce this report:
-
-### 🔍 Code Review Summary
-**Scope reviewed:** <git diff HEAD> or <filename>
-**Files changed:** N
-
-#### 🔐 Security
-| Severity | Finding | File:Line | Auditor verdict |
-|----------|---------|-----------|-----------------|
-| ...      | ...     | ...       | ✓ confirmed / ↓ downgraded / ✗ false positive |
-
-#### ⚡ Performance
-| Severity | Finding | File:Line | Auditor verdict |
-|----------|---------|-----------|-----------------|
-| ...      | ...     | ...       | ... |
-
-#### 🎨 Style & Standards
-| Severity | Finding | File:Line | Auditor verdict |
-|----------|---------|-----------|-----------------|
-| ...      | ...     | ...       | ... |
-
-#### 🧪 Test Coverage
-- [ ] Missing test: <what should be tested>
-(List generated test files if tests were written in Step 4.)
-
-#### ✅ Overall Verdict
-Approve / Request Changes / Needs Discussion
-
-One paragraph summary of the most important things to address before merging, based only on confirmed findings.
+Do NOT edit files, generate tests, or apply fixes during this review. If the user wants remediation after seeing findings, they will ask explicitly.
 
 ---
 
 ## Usage
 
+```
 /code-review                     # reviews current git diff
 /code-review src/auth/login.py   # reviews a specific file
 /code-review src/api/            # reviews a whole folder
+```
