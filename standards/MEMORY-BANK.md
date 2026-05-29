@@ -89,7 +89,7 @@ the user to resolve it before changing a higher-tier decision.
 | 1 | IMMUTABLE | projectbrief.md | Never negotiated; overrides all other files |
 | 2 | STABLE | systemPatterns.md, techContext.md | Change requires deliberate decision + user confirm |
 | 3 | VOLATILE | activeContext.md | Session state; evict stale content weekly |
-| 4 | ACCUMULATING | progress.md | Archive to `docs/archive/` partitioned by category |
+| 4 | ACCUMULATING | progress.md | Archive to flat `docs/archive/` with date-prefixed filenames |
 
 **Conflict resolution:** `projectbrief.md` > `systemPatterns.md` / `techContext.md` >
 `activeContext.md` > `progress.md`. Agents must not silently reconcile contradictions —
@@ -165,29 +165,29 @@ Content should leave Memory Bank files on objective criteria, not agent judgment
 
 | File | Condition | Action |
 |------|-----------|--------|
-| activeContext.md | Entry > 14 days old and not an active blocker | Move to `docs/archive/context/YYYY-MM-<topic>.md` |
+| activeContext.md | Entry > 14 days old and not an active blocker | Move to `docs/archive/context-YYYY-MM-<topic>.md` |
 | activeContext.md | "Next Steps" item completed | Move to `progress.md` immediately |
 | activeContext.md | Issue marked resolved | Delete — do not archive |
-| progress.md | Work completed > 6 months ago | Move to `docs/archive/progress/YYYY-MM-<topic>.md` |
-| progress.md | Bug fixed > 3 months ago | Move to `docs/archive/progress/YYYY-MM-<topic>.md` |
+| progress.md | Work completed > 6 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
+| progress.md | Bug fixed > 3 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
 
 Run `mb audit` to surface files that are stale or due for review.
 
 ## Archive Structure
 
-Archival is partitioned by category to remain searchable. A monolithic `docs/archive/`
-becomes a retrieval dead-zone as it grows; partitioned directories stay queryable.
+Archival uses a flat `docs/archive/` directory. See `docs/archive/README.md` for naming
+conventions. Files are named with a date prefix and short topic label so the flat listing
+stays scannable. Add subdirectories only when the flat listing grows past ~50 files.
 
 ```
 docs/archive/
-  context/     YYYY-MM-<topic>.md   (evicted from activeContext.md)
-  progress/    YYYY-MM-<topic>.md   (evicted from progress.md)
-  decisions/   YYYY-MM-<topic>.md   (evicted from systemPatterns.md — rare)
+  handoff-YYYY-MM-DD.md        (handoff files)
+  snapshot-YYYY-MM-DD.md       (memory snapshots)
+  context-YYYY-MM-topic.md     (evicted from activeContext.md)
+  progress-YYYY-MM-topic.md    (evicted from progress.md)
 ```
 
-When archiving, create a new file in the appropriate subdirectory named with the current
-month and a short topic label (e.g., `2026-05-auth-refactor.md`). Never append to an
-existing archive file — keep each file focused on one topic or time period.
+Never append to an existing archive file — one topic or time period per file.
 
 ## What Must Never Appear in Memory Bank Files
 
