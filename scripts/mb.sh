@@ -306,9 +306,25 @@ invoke_init() {
     # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
     for script in dangerous-commands.sh dangerous-commands.ps1 \
                   check-contract.sh check-contract.ps1 \
-                  update-reviewed.sh update-reviewed.ps1; do
+                  update-reviewed.sh update-reviewed.ps1 \
+                  pre-push-check.sh pre-push-check.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
+
+    # .git/hooks/pre-push — install as executable git hook
+    if [ -d "$TARGET/.git" ]; then
+        HOOK_SRC="$TEMPLATES_DIR/hooks/pre-push"
+        HOOK_DST="$TARGET/.git/hooks/pre-push"
+        if [ -f "$HOOK_SRC" ]; then
+            if [ ! -f "$HOOK_DST" ]; then
+                cp "$HOOK_SRC" "$HOOK_DST"
+                chmod +x "$HOOK_DST"
+                CREATED+=(".git/hooks/pre-push")
+            else
+                SKIPPED+=(".git/hooks/pre-push")
+            fi
+        fi
+    fi
 
     # .claude/commands/
     for f in "$TEMPLATES_DIR/claude-commands"/*; do

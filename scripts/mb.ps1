@@ -361,8 +361,26 @@ function Invoke-Init {
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
     # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
-    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1")) {
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1")) {
         Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
+    }
+
+    # .git/hooks/pre-push — install as executable git hook
+    $gitDir = Join-Path $Target ".git"
+    if (Test-Path $gitDir) {
+        $hookSrc = Join-Path $TemplatesDir "hooks\pre-push"
+        $hookDst = Join-Path $gitDir "hooks\pre-push"
+        if (Test-Path $hookSrc) {
+            if (-not (Test-Path $hookDst)) {
+                Copy-Item -Path $hookSrc -Destination $hookDst -Force
+                # WHY: git hooks must be executable on Unix; on Windows Git for Windows respects
+                # the executable bit via core.fileMode. Set it so the hook works cross-platform.
+                if ($IsLinux -or $IsMacOS) { chmod +x $hookDst 2>/dev/null }
+                $Created += ".git/hooks/pre-push"
+            } else {
+                $Skipped += ".git/hooks/pre-push"
+            }
+        }
     }
 
     # .claude/commands/
@@ -550,6 +568,14 @@ function Show-Doctor {
             foreach ($h in $missingHooks) {
                 Write-Host "[WARN] Hook script missing: $h — run 'mb init' to install" -ForegroundColor Yellow
             }
+        }
+        # Pre-push git hook
+        $prePushHook = ".git/hooks/pre-push"
+        if (Test-Path $prePushHook) {
+            Write-Host "[OK]   .git/hooks/pre-push installed" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] .git/hooks/pre-push not installed — git push runs without pre-push checks" -ForegroundColor Yellow
+            Write-Host "       Run 'mb init' to install, or copy templates/hooks/pre-push to .git/hooks/pre-push" -ForegroundColor DarkGray
         }
     } else {
         Write-Host "[WARN] No .claude/settings.json — safety hooks inactive" -ForegroundColor Yellow
@@ -1024,6 +1050,8 @@ function Invoke-Upgrade {
         "scripts/check-contract.ps1"
         "scripts/update-reviewed.sh"
         "scripts/update-reviewed.ps1"
+        "scripts/pre-push-check.sh"
+        "scripts/pre-push-check.ps1"
         # Slash commands — governance workflow commands from templates, not project-specific
         ".claude/commands/code-review.md"
         ".claude/commands/feature-dev.md"
