@@ -993,6 +993,24 @@ invoke_upgrade() {
         ".claude/agents/security-reviewer.md"
     )
 
+    # WHY: ADVISORY_CREATE — files that must exist for commands to work at runtime.
+    # Create if missing (unlike ADVISORY_DIFF which skips missing files), but show
+    # a diff rather than silently overwriting if the file has been customized.
+    ADVISORY_CREATE=(
+        "standards/CODE-REVIEW.md"
+        "standards/WORKFLOW.md"
+        "standards/SECURITY-GUARDRAILS.md"
+        "standards/CODE-QUALITY.md"
+        "standards/ACCESSIBILITY.md"
+        "standards/AGENTIC-SAFETY.md"
+        "standards/LOGGING.md"
+        "standards/MCP-SECURITY.md"
+        "standards/MEMORY-BANK.md"
+        "standards/RULES-FILE-INTEGRITY.md"
+        "standards/SECRETS.md"
+        "standards/SUPPLY-CHAIN.md"
+    )
+
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X lives at templates/cursor/rules/X (no dot prefix) because
     # the templates directory uses non-hidden layout. .claude/commands/X maps to
@@ -1051,6 +1069,41 @@ invoke_upgrade() {
             echo -e "${YELLOW}[!] $target (differs from template — review manually)${NC}"
             if command -v diff >/dev/null 2>&1; then
                 # WHY: diff exits 1 when files differ; || true prevents set -e from aborting.
+                DIFF_OUTPUT=$(diff -u "$src" "$target" 2>/dev/null || true)
+                DIFF_LINES=$(printf '%s' "$DIFF_OUTPUT" | wc -l)
+                if [ "$DIFF_LINES" -le 20 ]; then
+                    printf '%s\n' "$DIFF_OUTPUT" | sed 's/^/    /'
+                else
+                    printf '%s\n' "$DIFF_OUTPUT" | head -n 20 | sed 's/^/    /'
+                    REMAINING=$((DIFF_LINES - 20))
+                    echo "    ... ($REMAINING more lines — compare manually with: diff $src $target)"
+                fi
+            else
+                echo "    (diff not available — compare manually with: diff $src $target)"
+            fi
+        fi
+    done
+
+    # Process ADVISORY_CREATE — create if missing, show advisory diff if exists
+    for target in "${ADVISORY_CREATE[@]}"; do
+        src="$(_upgrade_src "$target")"
+        if [ ! -f "$src" ]; then
+            echo -e "${YELLOW}[?] $target (template source missing — skipped)${NC}"
+            continue
+        fi
+        if [ ! -f "$target" ]; then
+            if [ "$DRY_RUN" = true ]; then
+                echo -e "${GREEN}[+?] $target (would add — missing in project)${NC}"
+            else
+                mkdir -p "$(dirname "$target")"
+                cp "$src" "$target"
+                echo -e "${GREEN}[+] $target (added — was missing)${NC}"
+            fi
+        elif cmp -s "$src" "$target"; then
+            echo -e "${GRAY}[=] $target (matches template)${NC}"
+        else
+            echo -e "${YELLOW}[!] $target (differs from template — review manually)${NC}"
+            if command -v diff >/dev/null 2>&1; then
                 DIFF_OUTPUT=$(diff -u "$src" "$target" 2>/dev/null || true)
                 DIFF_LINES=$(printf '%s' "$DIFF_OUTPUT" | wc -l)
                 if [ "$DIFF_LINES" -le 20 ]; then
