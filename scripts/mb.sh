@@ -349,6 +349,13 @@ invoke_init() {
         CREATED+=(".gitignore")
     fi
 
+    # Write .pmb-version — records which PMB version initialized this project
+    if [ -f "$REPO_ROOT/VERSION" ]; then
+        LOCAL_VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
+        printf '%s\n' "$LOCAL_VERSION" > "$TARGET/.pmb-version"
+        CREATED+=(".pmb-version")
+    fi
+
     for item in "${CREATED[@]}"; do echo -e "  ${GREEN}[+] $item${NC}"; done
     for item in "${SKIPPED[@]}"; do echo -e "  ${GRAY}[=] $item (kept existing)${NC}"; done
 
@@ -959,6 +966,23 @@ invoke_upgrade() {
         exit 1
     fi
 
+    # Remote version check — soft warning, never blocks upgrade
+    if [ -f "$REPO_ROOT/VERSION" ]; then
+        LOCAL_VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
+        if command -v curl >/dev/null 2>&1; then
+            REMOTE_VERSION=$(curl -sf --max-time 3 \
+                "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/master/VERSION" \
+                2>/dev/null | tr -d '[:space:]' || true)
+            if [ -n "$REMOTE_VERSION" ] && [ "$REMOTE_VERSION" != "$LOCAL_VERSION" ]; then
+                echo -e "${YELLOW}[WARN] PMB $LOCAL_VERSION installed locally, $REMOTE_VERSION available${NC}"
+                echo -e "${YELLOW}       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank${NC}"
+                echo ""
+            elif [ -z "$REMOTE_VERSION" ]; then
+                echo -e "${GRAY}[INFO] Remote version check skipped (unreachable)${NC}"
+            fi
+        fi
+    fi
+
     # WHY: Ownership is hardcoded as explicit arrays — NOT a config file.
     # Ownership semantics are behavior, not data. A config file would invite
     # accidental expansion of overwrite scope. Rationale comments are per-group.
@@ -1118,6 +1142,14 @@ invoke_upgrade() {
             fi
         fi
     done
+
+
+    # Write .pmb-version — records which PMB version this project was last upgraded with
+    if [ -f "$REPO_ROOT/VERSION" ] && [ "$DRY_RUN" = false ]; then
+        LOCAL_VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
+        printf '%s\n' "$LOCAL_VERSION" > ".pmb-version"
+        echo -e "${GREEN}[✓] .pmb-version updated to $LOCAL_VERSION${NC}"
+    fi
 
     echo ""
 }
