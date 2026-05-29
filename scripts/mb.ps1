@@ -852,6 +852,36 @@ function Show-Doctor {
         Write-Host "[OK]   No placeholder text in memory-bank files" -ForegroundColor Green
     }
 
+    # 11. Required standards files
+    $requiredStandards = @("CODE-REVIEW.md", "WORKFLOW.md", "SECURITY-GUARDRAILS.md", "CODE-QUALITY.md")
+    $missingStandards = @()
+    foreach ($s in $requiredStandards) {
+        if (-not (Test-Path "standards\$s")) { $missingStandards += "standards/$s" }
+    }
+    if ($missingStandards.Count -eq 0) {
+        Write-Host "[OK]   Required standards files present" -ForegroundColor Green
+    } else {
+        foreach ($s in $missingStandards) {
+            Write-Host "[WARN] $s not found — run mb upgrade to install" -ForegroundColor Yellow
+        }
+    }
+
+    # 12. PMB version tracking
+    $versionFile = Join-Path $RepoRoot "VERSION"
+    if (Test-Path $versionFile) {
+        $localVersion = (Get-Content $versionFile -Raw).Trim()
+        if (-not (Test-Path ".pmb-version")) {
+            Write-Host "[WARN] No .pmb-version found — run mb upgrade to initialize version tracking" -ForegroundColor Yellow
+        } else {
+            $projectVersion = (Get-Content ".pmb-version" -Raw).Trim()
+            if ($projectVersion -eq $localVersion) {
+                Write-Host "[OK]   PMB version: $localVersion" -ForegroundColor Green
+            } else {
+                Write-Host "[WARN] Project on PMB $projectVersion, local PMB is $localVersion — run mb upgrade" -ForegroundColor Yellow
+            }
+        }
+    }
+
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
     Write-Host "  Startup Context"
