@@ -1168,6 +1168,24 @@ function Invoke-Upgrade {
         ".claude/agents/security-reviewer.md"
     )
 
+    # WHY: $advisoryCreate — files that must exist for commands to work at runtime.
+    # Create if missing (unlike $advisoryDiff which skips missing files), but show
+    # a diff rather than silently overwriting if the file has been customized.
+    $advisoryCreate = @(
+        "standards/CODE-REVIEW.md"
+        "standards/WORKFLOW.md"
+        "standards/SECURITY-GUARDRAILS.md"
+        "standards/CODE-QUALITY.md"
+        "standards/ACCESSIBILITY.md"
+        "standards/AGENTIC-SAFETY.md"
+        "standards/LOGGING.md"
+        "standards/MCP-SECURITY.md"
+        "standards/MEMORY-BANK.md"
+        "standards/RULES-FILE-INTEGRITY.md"
+        "standards/SECRETS.md"
+        "standards/SUPPLY-CHAIN.md"
+    )
+
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X -> templates/cursor/rules/X (no dot prefix)
     # .claude/commands/X -> templates/claude-commands/X (different directory name)
@@ -1239,6 +1257,45 @@ function Invoke-Upgrade {
                 }
             } else {
                 Write-Host "    (diff not available — compare manually with: diff $src $target)"
+            }
+        }
+    }
+
+
+    # Process $advisoryCreate — create if missing, show advisory diff if exists
+    foreach ($target in $advisoryCreate) {
+        $src = Get-TemplateSrc -Target $target
+        if (-not (Test-Path $src)) {
+            Write-Host "[?] $target (template source missing — skipped)" -ForegroundColor Yellow
+            continue
+        }
+        $dst = $target -replace '/', '\'
+        if (-not (Test-Path $dst)) {
+            if ($dryRun) {
+                Write-Host "[+?] $target (would add — missing in project)" -ForegroundColor Green
+            } else {
+                $dir = Split-Path -Parent $dst
+                if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+                Copy-Item -Path $src -Destination $dst -Force
+                Write-Host "[+] $target (added — was missing)" -ForegroundColor Green
+            }
+        } elseif ((Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash) {
+            Write-Host "[=] $target (matches template)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "[!] $target (differs from template — review manually)" -ForegroundColor Yellow
+            $diffCmd = Get-Command diff -ErrorAction SilentlyContinue
+            if ($diffCmd) {
+                $diffOutput = & diff -u $src $dst 2>$null
+                $lines = if ($diffOutput) { $diffOutput -split "`n" } else { @() }
+                if ($lines.Count -le 20) {
+                    foreach ($line in $lines) { Write-Host "    $line" }
+                } else {
+                    for ($i = 0; $i -lt 20; $i++) { Write-Host "    $($lines[$i])" }
+                    $remaining = $lines.Count - 20
+                    Write-Host "    ... ($remaining more lines — compare manually with: diff $src $dst)"
+                }
+            } else {
+                Write-Host "    (diff not available — compare manually with: diff $src $dst)"
             }
         }
     }
