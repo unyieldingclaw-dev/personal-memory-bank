@@ -1082,7 +1082,7 @@ Then compact the memory bank:
   - Identify and remove duplicate decisions (keep the most recent / authoritative copy)
   - Flag and surface any contradictions between files for my review
   - Remove entries from activeContext.md that are already captured in progress.md
-  - Remove progress.md entries for work completed more than 6 months ago (archive them to docs/archive/progress/)
+  - Remove progress.md entries for work completed more than 6 months ago (archive them to docs/archive/ using filename progress-YYYY-MM-<topic>.md)
   - Condense verbose descriptions to their essential decision + rationale
   - Preserve all unique architectural decisions, constraints, and active work
 
