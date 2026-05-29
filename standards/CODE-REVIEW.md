@@ -8,7 +8,7 @@ This standard does not mandate agent topology, model, or phase count.
 - Correctness
 - Maintainability
 - Testing
-- Architecture Drift
+- Architecture Drift — changes that contradict patterns in systemPatterns.md or introduce abstractions not established elsewhere in the project.
 
 ## Conditional Domains
 - Performance — activate for runtime-sensitive changes (tight loops, DB queries, I/O paths)
@@ -19,6 +19,10 @@ Critical → High → Medium → Low → Info
 
 ## Required Finding Fields
 Domain, Severity, Location, Evidence, Impact, Recommendation, Blocking, Confidence
+
+Field value scales: Severity uses `Critical | High | Medium | Low | Info`. Blocking uses `true | false`. Confidence uses `High | Medium | Low`.
+
+Blocking semantics: should this finding block merge until resolved? Critical findings are always `Blocking: true`. High findings default to `Blocking: true` unless the reviewer has specific evidence that risk is contained. Medium/Low/Info are `Blocking: false` by default.
 
 ## Required Report Sections
 Scope, Files reviewed, Domain coverage, Findings, Testing gaps, Opposition review, Verdict
