@@ -331,6 +331,13 @@ invoke_init() {
         [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/commands/$(basename "$f")" ".claude/commands/$(basename "$f")"
     done
 
+    # standards/ files — governance contracts referenced at runtime by commands
+    if [ -d "$TEMPLATES_DIR/standards" ]; then
+        for f in "$TEMPLATES_DIR/standards"/*; do
+            [ -f "$f" ] && copy_if_new "$f" "$TARGET/standards/$(basename "$f")" "standards/$(basename "$f")"
+        done
+    fi
+
     # .gitignore
     if [ -f "$TARGET/.gitignore" ]; then
         if ! grep -q "handoff\.md" "$TARGET/.gitignore"; then
