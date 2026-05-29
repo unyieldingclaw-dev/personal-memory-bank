@@ -389,6 +389,14 @@ function Invoke-Init {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"
     }
 
+    # standards/ files — governance contracts referenced at runtime by commands
+    $standardsTemplate = Join-Path $TemplatesDir "standards"
+    if (Test-Path $standardsTemplate) {
+        foreach ($f in Get-ChildItem $standardsTemplate -File) {
+            Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target "standards\$($f.Name)") -Label "standards/$($f.Name)"
+        }
+    }
+
     # .gitignore
     $gitignore = Join-Path $Target ".gitignore"
     if (Test-Path $gitignore) {
