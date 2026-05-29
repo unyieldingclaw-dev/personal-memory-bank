@@ -20,7 +20,7 @@
 # Default to "help" so running "mb" alone shows usage, not an error.
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "help")]
+    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
     [string]$Arg = "",
@@ -46,20 +46,21 @@ function Show-Help {
     Write-Host "Usage: mb <command>" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Commands:"
-    Write-Host "  init     Initialize Memory Bank in the current project"
-    Write-Host "  validate Check that required files and frontmatter are present"
-    Write-Host "  doctor   Full health check (git, hooks, file sizes, staleness)"
-    Write-Host "  status   Show file sizes, timestamps, and health check"
-    Write-Host "  audit    Freshness audit — flag stale or overdue files"
-    Write-Host "  query    Search memory-bank by tag or section header"
-    Write-Host "  compact  Print AI prompt to compact (deduplicate + summarize) memory"
-    Write-Host "  update   Reminder to update Memory Bank (manual action)"
-    Write-Host "  archive  Show instructions for archiving old content"
-    Write-Host "  slim     Check if activeContext.md needs trimming"
-    Write-Host "  commit   Stage and commit Memory Bank changes"
-    Write-Host "  upgrade  Propagate current governance templates to this project"
-    Write-Host "  budget   Check token budget health (CLAUDE.md + memory-bank/ sizes)"
-    Write-Host "  help     Show this help message"
+    Write-Host "  init          Initialize Memory Bank in the current project"
+    Write-Host "  install-hooks Install pre-push git hook into .git/hooks/ (retrofit for existing projects)"
+    Write-Host "  validate      Check that required files and frontmatter are present"
+    Write-Host "  doctor        Full health check (git, hooks, file sizes, staleness)"
+    Write-Host "  status        Show file sizes, timestamps, and health check"
+    Write-Host "  audit         Freshness audit — flag stale or overdue files"
+    Write-Host "  query         Search memory-bank by tag or section header"
+    Write-Host "  compact       Print AI prompt to compact (deduplicate + summarize) memory"
+    Write-Host "  update        Reminder to update Memory Bank (manual action)"
+    Write-Host "  archive       Show instructions for archiving old content"
+    Write-Host "  slim          Check if activeContext.md needs trimming"
+    Write-Host "  commit        Stage and commit Memory Bank changes"
+    Write-Host "  upgrade       Propagate current governance templates to this project"
+    Write-Host "  budget        Check token budget health (CLAUDE.md + memory-bank/ sizes)"
+    Write-Host "  help          Show this help message"
     Write-Host ""
     Write-Host "Examples:"
     Write-Host "  mb audit              Check freshness of all memory-bank files"
@@ -414,6 +415,98 @@ function Invoke-Init {
     Write-Host "  Edit memory-bank/projectbrief.md  -- what does this project do?"
     Write-Host "  Edit memory-bank/techContext.md   -- what is your stack?"
     Write-Host "  Run: mb status"
+    Write-Host ""
+}
+
+function Invoke-InstallHooks {
+    # WHY: Separate from mb init so users who already initialized can retrofit the pre-push hook
+    # without re-running init (which would skip everything as already present). mb init handles
+    # new projects; install-hooks handles the retrofit case.
+    Write-Host ""
+    Write-Host "Install Git Hooks" -ForegroundColor Cyan
+    Write-Host "=================" -ForegroundColor Cyan
+    Write-Host ""
+
+    $gitDir = Join-Path $PWD.Path ".git"
+    if (-not (Test-Path $gitDir)) {
+        Write-Host "[ERROR] No .git directory found. Run this from the root of a git repository." -ForegroundColor Red
+        return
+    }
+
+    $TemplatesDir = Join-Path $RepoRoot "templates"
+    if (-not (Test-Path $TemplatesDir)) {
+        Write-Host "[ERROR] Templates not found at $TemplatesDir" -ForegroundColor Red
+        Write-Host "Run install.bat from the memory-bank repo, or set MB_HOME." -ForegroundColor Yellow
+        return
+    }
+
+    $Target = $PWD.Path
+    $Installed = @()
+    $Skipped   = @()
+
+    # Ensure scripts/ exists and pre-push check scripts are present
+    $scriptsDir = Join-Path $Target "scripts"
+    if (-not (Test-Path $scriptsDir)) {
+        if (-not $DryRun) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
+    }
+    foreach ($scriptName in @("pre-push-check.ps1", "pre-push-check.sh")) {
+        $src = Join-Path $TemplatesDir "scripts\$scriptName"
+        $dst = Join-Path $scriptsDir $scriptName
+        if (-not (Test-Path $src)) {
+            Write-Host "[WARN] Template source missing: $src" -ForegroundColor Yellow
+            continue
+        }
+        if (Test-Path $dst) {
+            Write-Host "  [=] scripts/$scriptName (already present)" -ForegroundColor DarkGray
+            $Skipped += "scripts/$scriptName"
+        } else {
+            if ($DryRun) {
+                Write-Host "  [+] scripts/$scriptName (would create)" -ForegroundColor Green
+            } else {
+                Copy-Item -Path $src -Destination $dst -Force
+                Write-Host "  [+] scripts/$scriptName" -ForegroundColor Green
+            }
+            $Installed += "scripts/$scriptName"
+        }
+    }
+
+    # Install .git/hooks/pre-push
+    $hookSrc  = Join-Path $TemplatesDir "hooks\pre-push"
+    $hooksDir = Join-Path $gitDir "hooks"
+    $hookDst  = Join-Path $hooksDir "pre-push"
+
+    if (-not (Test-Path $hookSrc)) {
+        Write-Host "[ERROR] Hook template not found: $hookSrc" -ForegroundColor Red
+        return
+    }
+    if (-not (Test-Path $hooksDir) -and -not $DryRun) {
+        New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
+    }
+
+    if (Test-Path $hookDst) {
+        Write-Host "  [=] .git/hooks/pre-push (already installed)" -ForegroundColor DarkGray
+        Write-Host "      To reinstall: delete .git/hooks/pre-push and re-run mb install-hooks" -ForegroundColor DarkGray
+        $Skipped += ".git/hooks/pre-push"
+    } else {
+        if ($DryRun) {
+            Write-Host "  [+] .git/hooks/pre-push (would install)" -ForegroundColor Green
+        } else {
+            Copy-Item -Path $hookSrc -Destination $hookDst -Force
+            # WHY: git hooks must be executable on Unix; Windows Git for Windows checks the bit too.
+            if ($IsLinux -or $IsMacOS) { chmod +x $hookDst 2>/dev/null }
+            Write-Host "  [+] .git/hooks/pre-push" -ForegroundColor Green
+        }
+        $Installed += ".git/hooks/pre-push"
+    }
+
+    Write-Host ""
+    if ($DryRun) {
+        Write-Host "Dry run — no files written." -ForegroundColor Yellow
+    } elseif ($Installed.Count -gt 0) {
+        Write-Host "Done. The pre-push check will run automatically on every 'git push'." -ForegroundColor Green
+    } else {
+        Write-Host "Hooks already in place — nothing changed." -ForegroundColor DarkGray
+    }
     Write-Host ""
 }
 
@@ -1147,18 +1240,19 @@ function Invoke-Upgrade {
 
 # Run command
 switch ($Command) {
-    "init"    { Invoke-Init }
-    "validate"{ Show-Validate }
-    "doctor"  { Show-Doctor }
-    "status"  { Show-Status }
-    "audit"   { Show-Audit }
-    "query"   { Show-Query -Keyword $Arg }
-    "compact" { Show-Compact }
-    "update"  { Show-Update }
-    "archive" { Show-Archive }
-    "slim"    { Show-Slim }
-    "commit"  { Invoke-Commit }
-    "upgrade" { Invoke-Upgrade }
-    "budget"  { Show-Budget }
-    "help"    { Show-Help }
+    "init"          { Invoke-Init }
+    "install-hooks" { Invoke-InstallHooks }
+    "validate"      { Show-Validate }
+    "doctor"        { Show-Doctor }
+    "status"        { Show-Status }
+    "audit"         { Show-Audit }
+    "query"         { Show-Query -Keyword $Arg }
+    "compact"       { Show-Compact }
+    "update"        { Show-Update }
+    "archive"       { Show-Archive }
+    "slim"          { Show-Slim }
+    "commit"        { Invoke-Commit }
+    "upgrade"       { Invoke-Upgrade }
+    "budget"        { Show-Budget }
+    "help"          { Show-Help }
 }
