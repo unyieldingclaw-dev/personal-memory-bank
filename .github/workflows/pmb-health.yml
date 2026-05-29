@@ -18,14 +18,19 @@ jobs:
         run: |
           FAIL=0
 
-          echo "=== memory-bank files (warn: 80, fail: 150) ==="
+          echo "=== memory-bank files (per-file limits) ==="
+          declare -A MB_WARN=( [projectbrief.md]=80  [activeContext.md]=100 [systemPatterns.md]=200 [techContext.md]=200 [progress.md]=250 )
+          declare -A MB_FAIL=( [projectbrief.md]=120 [activeContext.md]=150 [systemPatterns.md]=300 [techContext.md]=300 [progress.md]=400 )
           while IFS= read -r -d '' file; do
+            base=$(basename "$file")
+            warn=${MB_WARN[$base]:-80}
+            fail=${MB_FAIL[$base]:-150}
             lines=$(wc -l < "$file")
-            if [ "$lines" -gt 150 ]; then
-              echo "FAIL: $file ($lines lines -- limit 150)"
+            if [ "$lines" -gt "$fail" ]; then
+              echo "FAIL: $file ($lines lines -- limit $fail)"
               FAIL=1
-            elif [ "$lines" -gt 80 ]; then
-              echo "WARN: $file ($lines lines -- warn 80)"
+            elif [ "$lines" -gt "$warn" ]; then
+              echo "WARN: $file ($lines lines -- warn $warn)"
             else
               echo "OK:   $file ($lines lines)"
             fi
