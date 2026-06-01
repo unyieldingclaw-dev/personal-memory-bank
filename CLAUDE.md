@@ -150,6 +150,8 @@ When starting a new conversation:
 - `/model sonnet` — reset to default after Opus work
 - `CLAUDE_CODE_EFFORT_LEVEL` env var — `low`/`medium`/`high`/`xhigh`; set per-project to control reasoning depth (default: `high` for Sonnet, `xhigh` for Opus)
 
+See `standards/PERFORMANCE-BUDGET.md` for explicit limits on standards count, memory entries, and agent delegation depth.
+
 ## Karpathy Coding Principles
 
 1. **Think Before Coding** — Surface tradeoffs, state assumptions explicitly, push back when a simpler approach exists. Stop and ask before implementing anything unclear.
