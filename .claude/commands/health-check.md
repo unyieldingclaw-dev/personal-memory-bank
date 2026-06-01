@@ -1,5 +1,5 @@
 ---
-description: Full PMB health check — mb doctor (9 checks), staleness audit, and structure validation on this repo's own memory bank. Reports a summary with pass/warn/fail for each area.
+description: Full PMB health check — mb doctor (14 checks), staleness audit, structure validation, and security fixture verification on this repo's own memory bank. Reports a summary with pass/warn/fail for each area.
 allowed-tools:
   - Bash(mb doctor)
   - Bash(mb validate)
@@ -40,8 +40,19 @@ Run `git status --short` and `git log --oneline -5`. Note any uncommitted change
 
 **Output header:** `### Git Status`
 
-## 5. Summary
+## 5. Security Fixture Check
 
-Print a short paragraph summarizing all four areas. Use ✅ for clean, ⚠️ for warnings, ❌ for failures. Example:
+Run `/security-review` against the `fixtures/security/` directory. For each fixture subdirectory, note whether the expected rule ID appears in the findings.
 
-> ✅ mb doctor: all 9 checks OK. ✅ mb validate: structure valid. ⚠️ mb audit: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date.
+**Output header:** `### Security Fixtures`
+
+For each subdirectory in `fixtures/security/`, report:
+- `SEC-00X` — ✅ caught / ❌ missed
+
+If `fixtures/security/` does not exist, skip this step and note it in the summary.
+
+## 6. Summary
+
+Print a short paragraph summarizing all five areas. Use ✅ for clean, ⚠️ for warnings, ❌ for failures. Example:
+
+> ✅ mb doctor: all 14 checks OK. ✅ mb validate: structure valid. ⚠️ mb audit: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date. ✅ Security fixtures: 9/9 rules caught.
