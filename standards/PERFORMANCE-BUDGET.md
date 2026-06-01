@@ -44,7 +44,7 @@ Keep delegation depth to 1.
 ## mb doctor Integration
 
 `mb doctor` Check 14 counts `.md` files in `standards/` and warns if > 20.
-Current count after v1.0.4: 14 (well within budget).
+The current count is shown at runtime — run `mb doctor` to see it.
 
 ## What to Do When Limits Are Reached
 

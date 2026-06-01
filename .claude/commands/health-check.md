@@ -14,7 +14,7 @@ Run the following checks in order and print a labeled result for each. At the en
 
 ## 1. Doctor
 
-Run `mb doctor` from this repo's root. This runs all 9 health checks including structure, frontmatter, compaction integrity, and staleness summary.
+Run `mb doctor` from this repo's root. This runs all 14 health checks including structure, frontmatter, compaction integrity, and staleness summary.
 
 **Output header:** `### mb doctor`
 

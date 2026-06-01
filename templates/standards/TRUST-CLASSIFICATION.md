@@ -50,7 +50,7 @@ No runtime enforcement. Trust level is informational context for security findin
 Include trust level when reporting prompt-injection or rules-file-integrity findings:
 
 ```
-[HIGH] Rule: SEC-003
+[CRITICAL] Rule: SEC-003
 Evidence: `query = "SELECT * FROM users WHERE id = " + user_id`
 Confidence: High
 File: api.py:42

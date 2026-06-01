@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.4 — 2026-05-31
+## 1.0.4 — 2026-05-31
 
 ### Added
 - `standards/SECURITY-RULES.md` — rule registry (SEC-001–009) for structured security findings
