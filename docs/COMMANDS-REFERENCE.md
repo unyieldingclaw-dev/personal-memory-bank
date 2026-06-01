@@ -130,7 +130,7 @@ These are built into Claude Code and don't require the memory bank system.
 
 ## `mb doctor` Checks
 
-`mb doctor` runs 12 deterministic health checks and prints a startup context observability section.
+`mb doctor` runs 14 deterministic health checks and prints a startup context observability section.
 
 | # | Check | Pass Condition | What to Do on Failure |
 |---|-------|---------------|----------------------|
@@ -147,6 +147,8 @@ These are built into Claude Code and don't require the memory bank system.
 | 10 | Placeholder residue | No `TODO`/`TBD`/`FIXME`/`FILL IN`/`[your ...`/`lorem ipsum`/`YYYY-MM-DD` in memory-bank files | Fill in placeholder content left from `mb init` |
 | 11 | Required standards files | `standards/CODE-REVIEW.md`, `WORKFLOW.md`, `SECURITY-GUARDRAILS.md`, `CODE-QUALITY.md` all present | Run `mb upgrade` to install missing files |
 | 12 | PMB version tracking | `.pmb-version` exists and matches local PMB version | Run `mb upgrade` to write or sync `.pmb-version` |
+| 13 | Security fixtures | `fixtures/security/` exists with all 9 rule subdirectories | Create fixtures manually or re-clone PMB repo |
+| 14 | Standards count | `standards/` contains ≤ 20 `.md` files | Review standards for overlap; see `PERFORMANCE-BUDGET.md` |
 | — | Startup context | (observability, not a health check) — reports files loaded, estimated tokens, largest contributors, 30-day growth, stale-but-loaded count | Use to decide when files need trimming |
 
 ---
