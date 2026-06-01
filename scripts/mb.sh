@@ -689,6 +689,38 @@ show_doctor() {
         fi
     fi
 
+    # 13. Security regression fixtures
+    FIXTURES_DIR="$REPO_ROOT/fixtures/security"
+    EXPECTED_FIXTURES=(
+        "SEC-001-hardcoded-secret" "SEC-002-command-injection" "SEC-003-sql-injection"
+        "SEC-004-unvalidated-input" "SEC-005-missing-auth" "SEC-006-insecure-deserialization"
+        "SEC-007-xss" "SEC-008-exposed-errors" "SEC-009-unsafe-eval"
+    )
+    if [ ! -d "$FIXTURES_DIR" ]; then
+        echo -e "${YELLOW}[WARN] fixtures/security/ not found — security regression fixtures missing${NC}"
+    else
+        MISSING_FIXTURES=()
+        for fx in "${EXPECTED_FIXTURES[@]}"; do
+            [ ! -d "$FIXTURES_DIR/$fx" ] && MISSING_FIXTURES+=("$fx")
+        done
+        if [ ${#MISSING_FIXTURES[@]} -gt 0 ]; then
+            echo -e "${YELLOW}[WARN] fixtures/security/ missing: ${MISSING_FIXTURES[*]}${NC}"
+        else
+            echo -e "${GREEN}[OK]   Security regression fixtures present (9/9)${NC}"
+        fi
+    fi
+
+    # 14. Standards count (performance budget)
+    STANDARDS_DIR="$REPO_ROOT/standards"
+    if [ -d "$STANDARDS_DIR" ]; then
+        STD_COUNT=$(find "$STANDARDS_DIR" -maxdepth 1 -name "*.md" ! -name "_*" -type f | wc -l | tr -d ' ')
+        if [ "$STD_COUNT" -gt 20 ]; then
+            echo -e "${YELLOW}[WARN] $STD_COUNT standards files — budget is <= 20 (see standards/PERFORMANCE-BUDGET.md)${NC}"
+        else
+            echo -e "${GREEN}[OK]   Standards count: $STD_COUNT (budget: <= 20)${NC}"
+        fi
+    fi
+
     # Startup context — observability section (not a numbered health check)
     echo ""
     echo "  Startup Context"

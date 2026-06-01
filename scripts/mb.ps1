@@ -882,6 +882,36 @@ function Show-Doctor {
         }
     }
 
+    # 13. Security regression fixtures
+    $fixturesDir = Join-Path $RepoRoot "fixtures\security"
+    $expectedFixtures = @(
+        "SEC-001-hardcoded-secret","SEC-002-command-injection","SEC-003-sql-injection",
+        "SEC-004-unvalidated-input","SEC-005-missing-auth","SEC-006-insecure-deserialization",
+        "SEC-007-xss","SEC-008-exposed-errors","SEC-009-unsafe-eval"
+    )
+    if (-not (Test-Path $fixturesDir)) {
+        Write-Host "[WARN] fixtures/security/ not found — security regression fixtures missing" -ForegroundColor Yellow
+    } else {
+        $missingFixtures = $expectedFixtures | Where-Object { -not (Test-Path (Join-Path $fixturesDir $_)) }
+        if ($missingFixtures.Count -gt 0) {
+            Write-Host "[WARN] fixtures/security/ missing: $($missingFixtures -join ', ')" -ForegroundColor Yellow
+        } else {
+            Write-Host "[OK]   Security regression fixtures present (9/9)" -ForegroundColor Green
+        }
+    }
+
+    # 14. Standards count (performance budget)
+    $standardsDir = Join-Path $RepoRoot "standards"
+    if (Test-Path $standardsDir) {
+        $stdCount = (Get-ChildItem -Path $standardsDir -Filter "*.md" -File |
+            Where-Object { $_.Name -notlike "_*" }).Count
+        if ($stdCount -gt 20) {
+            Write-Host "[WARN] $stdCount standards files — budget is <= 20 (see standards/PERFORMANCE-BUDGET.md)" -ForegroundColor Yellow
+        } else {
+            Write-Host "[OK]   Standards count: $stdCount (budget: <= 20)" -ForegroundColor Green
+        }
+    }
+
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
     Write-Host "  Startup Context"
