@@ -72,7 +72,7 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ CLAUDE.md memory update discipline: task-boundary updates, compaction summaries are fallback
 - ✅ .gitignore: .claude/worktrees/ excluded
 
-### Consistency Corrections & Tooling (May 2026)
+### Consistency Corrections & Tooling (May–June 2026)
 - ✅ v1.0.1: first formally tagged GitHub release (four consistency corrections from architecture review)
 - ✅ mb doctor Check #10: template residue detection — lexical patterns only
 - ✅ mb doctor: identity boundary in function header — "observable integrity signals, not semantic correctness"
@@ -85,6 +85,18 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ Remote version check in mb upgrade: soft non-blocking curl/Invoke-WebRequest; skips offline (2026-05-29)
 - ✅ mb doctor checks 11 (required standards) and 12 (.pmb-version) in bash + PowerShell (2026-05-29)
 - ✅ v1.0.3: VERSION, CHANGELOG, README, COMMANDS-REFERENCE all updated (2026-05-29)
+
+### Security & Performance Improvements — v1.0.4 (2026-06-01)
+- ✅ `standards/SECURITY-RULES.md` — rule registry SEC-001–009; distributed via mb init/upgrade (ADVISORY_CREATE)
+- ✅ `standards/TRUST-CLASSIFICATION.md` — TRUSTED/SEMI_TRUSTED/UNTRUSTED reference; pointers in AGENTIC-SAFETY + SECURITY-GUARDRAILS
+- ✅ `standards/PERFORMANCE-BUDGET.md` — explicit limits for standards count, memory entries, agent delegation depth
+- ✅ `fixtures/security/` — 9 known-bad code samples for security regression testing (PMB dogfooding only)
+- ✅ Structured finding format: Rule ID + Evidence + Confidence + Fix in security-review command and agent
+- ✅ Trust level note in security-reviewer agent (prompt-injection/rules-file-integrity findings)
+- ✅ mb doctor Check 13 (fixtures structure) and Check 14 (standards count ≤20) — now 14 checks total
+- ✅ /health-check step 5: security fixture verification (caught/missed per rule ID)
+- ✅ Pre-push hook: fixtures/ and docs/ excluded from secret scan (known-bad code + docs quoting it)
+- ✅ All 3 new standards in templates/standards/ for distribution
 
 ## Removed vs Enterprise
 
