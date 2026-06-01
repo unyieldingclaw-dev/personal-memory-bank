@@ -70,7 +70,9 @@ if ($LASTEXITCODE -eq 0 -and $remote -notmatch 'fatal') {
         @{ label = "Generic password assignment"; pattern = 'password\s*=\s*["\x27][^"\x27\s]{8,}' }
         @{ label = "Generic secret assignment";  pattern = 'secret\s*=\s*["\x27][^"\x27\s]{8,}' }
     )
-    $pushDiff = git diff "$remote..HEAD" 2>&1 | Where-Object { $_ -match '^\+[^+]' }
+    # WHY: fixtures/security/ intentionally contains vulnerable code for regression testing;
+    # exclude it from secret scanning to prevent false positives on known-bad fixtures.
+    $pushDiff = git diff "$remote..HEAD" -- ':!fixtures/security' 2>&1 | Where-Object { $_ -match '^\+[^+]' }
     foreach ($entry in $secretPatterns) {
         $hits = $pushDiff | Where-Object { $_ -match $entry.pattern }
         if ($hits) {
