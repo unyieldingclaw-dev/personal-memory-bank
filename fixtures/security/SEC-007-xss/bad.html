@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <!-- Bad: user input injected into HTML without escaping (SEC-007) -->
+  <script>
+    var username = "<?= $_GET['name'] ?>";
+    document.write("Hello, " + username);
+  </script>
+
+  <div id="content"></div>
+  <script>
+    // Bad: hash fragment written directly to DOM
+    document.getElementById("content").innerHTML = location.hash.substring(1);
+  </script>
+
+  <!-- Bad: search term reflected without encoding -->
+  <p>Results for: <?= $_GET['q'] ?></p>
+</body>
+</html>
