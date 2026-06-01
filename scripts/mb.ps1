@@ -1271,6 +1271,9 @@ function Invoke-Upgrade {
         "standards/RULES-FILE-INTEGRITY.md"
         "standards/SECRETS.md"
         "standards/SUPPLY-CHAIN.md"
+        "standards/SECURITY-RULES.md"
+        "standards/TRUST-CLASSIFICATION.md"
+        "standards/PERFORMANCE-BUDGET.md"
     )
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
