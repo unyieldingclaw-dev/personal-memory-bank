@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.0.4 — 2026-05-31
+
+### Added
+- `standards/SECURITY-RULES.md` — rule registry (SEC-001–009) for structured security findings
+- `standards/TRUST-CLASSIFICATION.md` — TRUSTED/SEMI_TRUSTED/UNTRUSTED source classification reference
+- `standards/PERFORMANCE-BUDGET.md` — explicit limits for standards count, memory entries, agent delegation depth
+- `fixtures/security/` — 9 known-bad code samples for security regression testing (SEC-001–009)
+- `mb doctor` Check 13: verifies `fixtures/security/` structure (9 subdirectories)
+- `mb doctor` Check 14: counts `standards/*.md` files; warns if > 20
+- `/health-check` step 5: runs `/security-review` against security fixtures, reports caught/missed per rule ID
+- Structured finding format for `/security-review` command and security-reviewer agent: Rule ID, Evidence, Confidence, Fix
+- Trust level note in security-reviewer agent for prompt-injection and rules-file-integrity findings
+- All 3 new standards distributed via `mb init` and `mb upgrade` (ADVISORY_CREATE)
+
+---
+
 ## 1.0.3 — 2026-05-29
 
 ### Added
