@@ -55,11 +55,12 @@ fi
 # Check 5: Possible secrets in commits being pushed (block)
 REMOTE=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>&1 || true)
 if [[ "$REMOTE" != *"fatal"* ]] && [ -n "$REMOTE" ]; then
-    # WHY: fixtures/security/ intentionally contains vulnerable code for regression testing.
-    # Post-filter the diff to exclude added lines from known-bad fixture files.
+    # WHY: fixtures/ and docs/ are excluded from secret scanning:
+    # fixtures/security/ intentionally contains vulnerable code for regression testing;
+    # docs/ (specs, plans) may quote fixture content as documentation examples.
     PUSH_DIFF=$(git diff "${REMOTE}..HEAD" 2>&1 | awk '
-        /^\+\+\+ b\// { in_fixture = ($0 ~ /^\+\+\+ b\/fixtures\/security\//) }
-        /^\+[^+]/ && !in_fixture { print }
+        /^\+\+\+ b\// { in_excl = ($0 ~ /^\+\+\+ b\/(fixtures|docs)\//) }
+        /^\+[^+]/ && !in_excl { print }
     ' || true)
 
     check_secret() {
