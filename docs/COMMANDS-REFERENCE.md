@@ -11,7 +11,7 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 | Command | What It Does | Output / Side Effect |
 |---------|--------------|----------------------|
 | `mb init` | Scaffold memory-bank/ in the current project | Creates 5 memory-bank files, `CLAUDE.md`, `.claude/settings.json`, hook scripts, slash commands, and 12 `standards/` files. Writes `.pmb-version`. Skips files that already exist. |
-| `mb status` | Show file sizes vs. limits | Table: lines vs. target/max per file. Red = over limit, yellow = consider trimming, green = OK. |
+| `mb status` | Quick state check | 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present. Green ✓ per signal; ⚠ items surface in an Attention section with remediation hint. |
 | `mb validate` | Check required files and frontmatter | Pass/fail for each file; flags missing `authority:` or `last-reviewed:` fields. |
 | `mb audit` | Freshness audit | Table: days since last review vs. `staleness-threshold`; flags stale (red) and overdue (yellow) files. |
 | `mb query <TAG>` | Search memory-bank by tag or section header | Lists files with matching tags or `##` headings. Supports partial hierarchical match (`mb query auth` matches `auth/session`). |
@@ -30,7 +30,7 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 
 ## Slash Commands (Claude Code)
 
-Installed in `.claude/commands/` and invoked with `/command-name` in Claude Code. Four commands are distributed to every project via `mb init`; one is PMB-only.
+Installed in `.claude/commands/` and invoked with `/command-name` in Claude Code. Five commands are distributed to every project via `mb init`; one is PMB-only.
 
 ### `/code-review`
 
@@ -98,6 +98,16 @@ Audit test coverage for changed files or the full project.
 | `[LOW]` | No test framework detected |
 | `[LOW]` | Framework detected but no config file found |
 | `[LOW]` | No CI configuration in project |
+
+**Distributed via `mb init`:** Yes
+
+---
+
+### `/pmb-status`
+
+Fast state check — the `git status` equivalent for PMB. Runs `mb status` and presents the result. Use at session start, after pulling changes, or before beginning work.
+
+Answers "can I work?" with 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present. Attention items include a one-line remediation hint. No deep validation — that belongs in `/health-check`.
 
 **Distributed via `mb init`:** Yes
 

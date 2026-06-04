@@ -50,7 +50,7 @@ function Show-Help {
     Write-Host "  install-hooks Install pre-push git hook into .git/hooks/ (retrofit for existing projects)"
     Write-Host "  validate      Check that required files and frontmatter are present"
     Write-Host "  doctor        Full health check (git, hooks, file sizes, staleness)"
-    Write-Host "  status        Show file sizes, timestamps, and health check"
+    Write-Host "  status        Quick state check — initialized, memory, context, standards, tasks"
     Write-Host "  audit         Freshness audit — flag stale or overdue files"
     Write-Host "  query         Search memory-bank by tag or section header"
     Write-Host "  compact       Print AI prompt to compact (deduplicate + summarize) memory"
@@ -69,91 +69,104 @@ function Show-Help {
     Write-Host ""
 }
 
-# WHY: Status command provides at-a-glance health check to prevent Memory Bank bloat.
-# Files that grow too large slow down AI context loading and make them hard to scan.
-# We enforce size limits to keep the system performant and maintainable.
-# WHY: Files are declared explicitly in an ordered array rather than globbed from disk
-# because display order is part of the UX (projectbrief first, progress last matches how
-# a reader would onboard) and each file carries its own Target/Max metadata that globbing
-# cannot supply. A missing file should also show as "MISSING" rather than silently vanish
-# from the report -- only an explicit list can detect that.
+# WHY: Status is the "git status" of PMB — a fast, always-safe state check that
+# answers "can I work?" with 5 deterministic signals. It only checks universally-present
+# structure; deep validation (consistency, broken references, drift) belongs in mb doctor.
 function Show-Status {
     Write-Host ""
-    Write-Host "Memory Bank Status" -ForegroundColor Cyan
-    Write-Host "==================" -ForegroundColor Cyan
+    Write-Host "PMB Status" -ForegroundColor Cyan
+    Write-Host "==========" -ForegroundColor Cyan
     Write-Host ""
-    
-    if (-not (Test-Path $MemoryBankPath)) {
-        Write-Host "Error: memory-bank/ directory not found" -ForegroundColor Red
-        Write-Host "Run init-memory-bank.ps1 to set up Memory Bank" -ForegroundColor Yellow
-        return
-    }
-    
-    # WHY: These size targets are based on AI token limits and human readability.
-    # Target = comfortable size, Max = absolute limit before requiring action.
-    # activeContext.md is capped hardest (100/150) because it represents only in-flight
-    # state -- if it grows past that, stale context is leaking in and should be archived.
-    # progress.md and techContext.md get the most headroom (250/400) because they
-    # legitimately accumulate history (completed work, dependency lists).
-    # systemPatterns.md sits in the middle (180/300) -- patterns grow as the architecture
-    # matures, but each pattern should be terse. projectbrief.md stays smallest (80/150)
-    # because non-negotiable requirements should be crisp, not prose.
-    $files = @(
-        @{Name="projectbrief.md"; Target=80; Max=150},
-        @{Name="systemPatterns.md"; Target=180; Max=300},
-        @{Name="techContext.md"; Target=250; Max=400},
-        @{Name="activeContext.md"; Target=100; Max=150},
-        @{Name="progress.md"; Target=250; Max=400}
-    )
-    
-    Write-Host "File                    Lines   Target   Max     Status" -ForegroundColor Yellow
-    Write-Host "----                    -----   ------   ---     ------"
-    
-    $hasIssues = $false
-    
-    foreach ($file in $files) {
-        $path = Join-Path $MemoryBankPath $file.Name
-        if (Test-Path $path) {
-            $lines = (Get-Content $path | Measure-Object -Line).Lines
 
-            if ($lines -gt $file.Max) {
-                $status = "OVER LIMIT"
-                $color = "Red"
-                $hasIssues = $true
-            } elseif ($lines -gt $file.Target) {
-                $status = "Consider trimming"
-                $color = "Yellow"
-            } else {
-                $status = "OK"
-                $color = "Green"
-            }
-            
-            $name = $file.Name.PadRight(22)
-            $linesStr = $lines.ToString().PadLeft(5)
-            $targetStr = $file.Target.ToString().PadLeft(6)
-            $maxStr = $file.Max.ToString().PadLeft(5)
-            
-            Write-Host "$name $linesStr   $targetStr   $maxStr     " -NoNewline
-            Write-Host $status -ForegroundColor $color
+    $attentionItems = [System.Collections.Generic.List[string]]::new()
+
+    # Signal 1: Initialized
+    if (Test-Path $MemoryBankPath) {
+        Write-Host "  " -NoNewline; Write-Host "✓" -ForegroundColor Green -NoNewline; Write-Host " Initialized"
+    } else {
+        Write-Host "  " -NoNewline; Write-Host "✗" -ForegroundColor Red -NoNewline; Write-Host " Initialized"
+        $attentionItems.Add("PMB not initialized — run 'mb init' to set up memory-bank/")
+    }
+
+    # Signal 2: Core Memory Present
+    $requiredFiles = @("projectbrief.md", "systemPatterns.md", "techContext.md", "activeContext.md", "progress.md")
+    $missingFiles = $requiredFiles | Where-Object { -not (Test-Path (Join-Path $MemoryBankPath $_)) }
+    if (-not $missingFiles) {
+        Write-Host "  " -NoNewline; Write-Host "✓" -ForegroundColor Green -NoNewline; Write-Host " Core Memory Present"
+    } else {
+        Write-Host "  " -NoNewline; Write-Host "✗" -ForegroundColor Red -NoNewline; Write-Host " Core Memory Present"
+        $attentionItems.Add("Core Memory incomplete — missing: $($missingFiles -join ', ')")
+    }
+
+    # Signal 3: Active Context Current (reads staleness-threshold from frontmatter)
+    $activeCtxPath = Join-Path $MemoryBankPath "activeContext.md"
+    if (Test-Path $activeCtxPath) {
+        $content = Get-Content $activeCtxPath -Raw
+        $lastReviewed = ($content | Select-String -Pattern 'last-reviewed:\s*(\S+)').Matches.Groups[1].Value
+        $staleMatch = ($content | Select-String -Pattern 'staleness-threshold:\s*(\d+)d?').Matches.Groups[1].Value
+        $staleDays = if ($staleMatch) { [int]$staleMatch } else { 7 }
+
+        if (-not $lastReviewed -or $lastReviewed -eq 'YYYY-MM-DD') {
+            Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " Active Context (no review date)"
+            $attentionItems.Add("Active Context has no last-reviewed date")
         } else {
-            Write-Host "$($file.Name.PadRight(22))   -       -       -     " -NoNewline
-            Write-Host "MISSING" -ForegroundColor Red
-            $hasIssues = $true
+            try {
+                $reviewedDate = [datetime]::ParseExact($lastReviewed, 'yyyy-MM-dd', $null)
+                $daysSince = ([datetime]::Today - $reviewedDate).Days
+                if ($daysSince -gt $staleDays) {
+                    Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " Active Context ($daysSince days)"
+                    $attentionItems.Add("Active Context stale (${daysSince}d, threshold ${staleDays}d) — run 'mb audit'")
+                } else {
+                    Write-Host "  " -NoNewline; Write-Host "✓" -ForegroundColor Green -NoNewline; Write-Host " Active Context Current"
+                }
+            } catch {
+                Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " Active Context (unreadable date)"
+                $attentionItems.Add("Active Context last-reviewed date could not be parsed: '$lastReviewed'")
+            }
+        }
+    } else {
+        Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " Active Context (missing)"
+        $attentionItems.Add("activeContext.md missing — required for PMB operation")
+    }
+
+    # Signal 4: Standards Available
+    $requiredStandards = @("CODE-QUALITY.md", "WORKFLOW.md", "SECURITY-GUARDRAILS.md", "CODE-REVIEW.md")
+    if (-not (Test-Path "standards")) {
+        Write-Host "  " -NoNewline; Write-Host "✗" -ForegroundColor Red -NoNewline; Write-Host " Standards Available"
+        $attentionItems.Add("standards/ directory missing — run 'mb upgrade' to restore")
+    } else {
+        $missingStandards = $requiredStandards | Where-Object { -not (Test-Path (Join-Path "standards" $_)) }
+        if (-not $missingStandards) {
+            Write-Host "  " -NoNewline; Write-Host "✓" -ForegroundColor Green -NoNewline; Write-Host " Standards Available"
+        } else {
+            Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " Standards Available ($($missingStandards.Count) missing)"
+            $attentionItems.Add("Standards incomplete — missing: $($missingStandards -join ', ')")
         }
     }
-    
-    Write-Host ""
-    
-    # Check for handoff.md
-    if (Test-Path "handoff.md") {
-        Write-Host "Note: handoff.md exists - merge into Memory Bank and delete" -ForegroundColor Yellow
-    }
-    
-    # Summary
-    if ($hasIssues) {
-        Write-Host "Issues detected. Run 'mb slim' or 'mb archive' to fix." -ForegroundColor Yellow
+
+    # Signal 5: Tasks Present
+    $contractsDir = ".claude/contracts"
+    $hasContracts = (Test-Path $contractsDir) -and (Get-ChildItem -Path $contractsDir -Filter "*.json" -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($hasContracts) {
+        Write-Host "  " -NoNewline; Write-Host "✓" -ForegroundColor Green -NoNewline; Write-Host " Tasks Present"
     } else {
-        Write-Host "All files healthy." -ForegroundColor Green
+        Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " No Active Tasks"
+        $attentionItems.Add("No task contract found — create one before starting multi-file work")
+    }
+
+    Write-Host ""
+
+    # Attention section
+    if ($attentionItems.Count -gt 0) {
+        Write-Host "Attention" -ForegroundColor Yellow
+        foreach ($item in $attentionItems) {
+            Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " $item"
+        }
+        Write-Host ""
+        $label = if ($attentionItems.Count -eq 1) { "1 Attention Item" } else { "$($attentionItems.Count) Attention Items" }
+        Write-Host $label -ForegroundColor Yellow
+    } else {
+        Write-Host "0 Issues" -ForegroundColor Green
     }
     Write-Host ""
 }
@@ -1245,6 +1258,7 @@ function Invoke-Upgrade {
         ".claude/commands/feature-dev.md"
         ".claude/commands/security-review.md"
         ".claude/commands/test-audit.md"
+        ".claude/commands/pmb-status.md"
     )
 
     $advisoryDiff = @(

@@ -49,7 +49,7 @@ show_help() {
     echo "  init     Initialize Memory Bank in the current project"
     echo "  validate Check that required files and frontmatter are present"
     echo "  doctor   Full health check (git, hooks, file sizes, staleness)"
-    echo "  status   Show file sizes, timestamps, and health check"
+    echo "  status   Quick state check — initialized, memory, context, standards, tasks"
     echo "  audit    Freshness audit — flag stale or overdue files"
     echo "  query    Search memory-bank by tag or section header"
     echo "  compact  Print AI prompt to compact (deduplicate + summarize) memory"
@@ -68,75 +68,108 @@ show_help() {
     echo ""
 }
 
-# WHY: Files are declared in an explicit ordered array rather than globbed from
-# disk because display order is part of the UX (projectbrief first, progress last
-# matches how a reader would onboard) and each file carries its own Target/Max
-# metadata that globbing cannot supply. A missing file shows as MISSING rather
-# than silently vanishing from the report — only an explicit list can detect that.
+# WHY: Status is the "git status" of PMB — a fast, always-safe state check that
+# answers "can I work?" with 5 deterministic signals. It only checks universally-present
+# structure; deep validation (consistency, broken references, drift) belongs in mb doctor.
 show_status() {
     echo ""
-    echo -e "${CYAN}Memory Bank Status${NC}"
-    echo -e "${CYAN}==================${NC}"
+    echo -e "${CYAN}PMB Status${NC}"
+    echo -e "${CYAN}==========${NC}"
     echo ""
 
-    if [ ! -d "$MEMORY_BANK_PATH" ]; then
-        echo -e "${RED}Error: memory-bank/ directory not found${NC}"
-        echo -e "${YELLOW}Run init-memory-bank.sh to set up Memory Bank${NC}"
-        return
-    fi
+    ATTENTION_ITEMS=()
 
-    # WHY: activeContext.md is capped hardest (100/150) because it represents only
-    # in-flight state. progress.md and techContext.md get more headroom (250/400)
-    # because they legitimately accumulate history. projectbrief.md stays smallest
-    # (80/150) because non-negotiable requirements should be crisp, not prose.
-    declare -a FILES=("projectbrief.md:80:150" "systemPatterns.md:180:300" "techContext.md:250:400" "activeContext.md:100:150" "progress.md:250:400")
-
-    printf "%-22s %5s   %6s   %5s     %s\n" "File" "Lines" "Target" "Max" "Status"
-    printf "%-22s %5s   %6s   %5s     %s\n" "----" "-----" "------" "---" "------"
-
-    HAS_ISSUES=false
-
-    for entry in "${FILES[@]}"; do
-        NAME="${entry%%:*}"
-        rest="${entry#*:}"
-        TARGET="${rest%%:*}"
-        MAX="${rest#*:}"
-        PATH_="$MEMORY_BANK_PATH/$NAME"
-
-        if [ -f "$PATH_" ]; then
-            LINES=$(wc -l < "$PATH_")
-
-            if [ "$LINES" -gt "$MAX" ]; then
-                STATUS="OVER LIMIT"
-                COLOR=$RED
-                HAS_ISSUES=true
-            elif [ "$LINES" -gt "$TARGET" ]; then
-                STATUS="Consider trimming"
-                COLOR=$YELLOW
-            else
-                STATUS="OK"
-                COLOR=$GREEN
-            fi
-
-            printf "%-22s %5d   %6d   %5d     " "$NAME" "$LINES" "$TARGET" "$MAX"
-            echo -e "${COLOR}${STATUS}${NC}"
-        else
-            printf "%-22s %5s   %6s   %5s     " "$NAME" "-" "-" "-"
-            echo -e "${RED}MISSING${NC}"
-            HAS_ISSUES=true
-        fi
-    done
-
-    echo ""
-
-    if [ -f "handoff.md" ]; then
-        echo -e "${YELLOW}Note: handoff.md exists - merge into Memory Bank and delete${NC}"
-    fi
-
-    if [ "$HAS_ISSUES" = true ]; then
-        echo -e "${YELLOW}Issues detected. Run 'mb slim' or 'mb archive' to fix.${NC}"
+    # Signal 1: Initialized
+    if [ -d "$MEMORY_BANK_PATH" ]; then
+        echo -e "  ${GREEN}✓${NC} Initialized"
     else
-        echo -e "${GREEN}All files healthy.${NC}"
+        echo -e "  ${RED}✗${NC} Initialized"
+        ATTENTION_ITEMS+=("PMB not initialized — run 'mb init' to set up memory-bank/")
+    fi
+
+    # Signal 2: Core Memory Present
+    declare -a REQUIRED_FILES=("projectbrief.md" "systemPatterns.md" "techContext.md" "activeContext.md" "progress.md")
+    MISSING_FILES=()
+    for f in "${REQUIRED_FILES[@]}"; do
+        [ ! -f "$MEMORY_BANK_PATH/$f" ] && MISSING_FILES+=("$f")
+    done
+    if [ "${#MISSING_FILES[@]}" -eq 0 ]; then
+        echo -e "  ${GREEN}✓${NC} Core Memory Present"
+    else
+        echo -e "  ${RED}✗${NC} Core Memory Present"
+        ATTENTION_ITEMS+=("Core Memory incomplete — missing: ${MISSING_FILES[*]}")
+    fi
+
+    # Signal 3: Active Context Current (reads staleness-threshold from frontmatter)
+    ACTIVE_CTX="$MEMORY_BANK_PATH/activeContext.md"
+    if [ -f "$ACTIVE_CTX" ]; then
+        LAST_REVIEWED=$(grep -m1 'last-reviewed:' "$ACTIVE_CTX" 2>/dev/null | sed 's/last-reviewed:[[:space:]]*//' | tr -d ' \r' || true)
+        STALE_DAYS=$(grep -m1 'staleness-threshold:' "$ACTIVE_CTX" 2>/dev/null | sed 's/staleness-threshold:[[:space:]]*//' | sed 's/d//' | tr -d ' \r')
+        [ -z "$STALE_DAYS" ] && STALE_DAYS=7
+
+        if [ -z "$LAST_REVIEWED" ] || [ "$LAST_REVIEWED" = "YYYY-MM-DD" ]; then
+            echo -e "  ${YELLOW}⚠${NC} Active Context (no review date)"
+            ATTENTION_ITEMS+=("Active Context has no last-reviewed date")
+        else
+            TODAY=$(date +%s)
+            REVIEWED_EPOCH=$(date -d "$LAST_REVIEWED" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$LAST_REVIEWED" +%s 2>/dev/null || echo "0")
+            DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
+            if [ "$DAYS_SINCE" -gt "$STALE_DAYS" ]; then
+                echo -e "  ${YELLOW}⚠${NC} Active Context ($DAYS_SINCE days)"
+                ATTENTION_ITEMS+=("Active Context stale (${DAYS_SINCE}d, threshold ${STALE_DAYS}d) — run 'mb audit'")
+            else
+                echo -e "  ${GREEN}✓${NC} Active Context Current"
+            fi
+        fi
+    else
+        echo -e "  ${YELLOW}⚠${NC} Active Context (missing)"
+        ATTENTION_ITEMS+=("activeContext.md missing — required for PMB operation")
+    fi
+
+    # Signal 4: Standards Available
+    declare -a REQUIRED_STANDARDS=("CODE-QUALITY.md" "WORKFLOW.md" "SECURITY-GUARDRAILS.md" "CODE-REVIEW.md")
+    MISSING_STANDARDS=()
+    if [ ! -d "standards" ]; then
+        echo -e "  ${RED}✗${NC} Standards Available"
+        ATTENTION_ITEMS+=("standards/ directory missing — run 'mb upgrade' to restore")
+    else
+        for s in "${REQUIRED_STANDARDS[@]}"; do
+            [ ! -f "standards/$s" ] && MISSING_STANDARDS+=("$s")
+        done
+        if [ "${#MISSING_STANDARDS[@]}" -eq 0 ]; then
+            echo -e "  ${GREEN}✓${NC} Standards Available"
+        else
+            echo -e "  ${YELLOW}⚠${NC} Standards Available (${#MISSING_STANDARDS[@]} missing)"
+            ATTENTION_ITEMS+=("Standards incomplete — missing: ${MISSING_STANDARDS[*]}")
+        fi
+    fi
+
+    # Signal 5: Tasks Present
+    CONTRACTS_DIR=".claude/contracts"
+    if [ -d "$CONTRACTS_DIR" ] && ls "$CONTRACTS_DIR"/*.json 2>/dev/null | head -1 > /dev/null; then
+        echo -e "  ${GREEN}✓${NC} Tasks Present"
+    else
+        echo -e "  ${YELLOW}⚠${NC} No Active Tasks"
+        ATTENTION_ITEMS+=("No task contract found — create one before starting multi-file work")
+    fi
+
+    echo ""
+
+    # Attention section
+    ATTENTION_COUNT="${#ATTENTION_ITEMS[@]}"
+    if [ "$ATTENTION_COUNT" -gt 0 ]; then
+        echo -e "${YELLOW}Attention${NC}"
+        for item in "${ATTENTION_ITEMS[@]}"; do
+            echo -e "  ${YELLOW}⚠${NC} $item"
+        done
+        echo ""
+        if [ "$ATTENTION_COUNT" -eq 1 ]; then
+            echo -e "${YELLOW}1 Attention Item${NC}"
+        else
+            echo -e "${YELLOW}${ATTENTION_COUNT} Attention Items${NC}"
+        fi
+    else
+        echo -e "${GREEN}0 Issues${NC}"
     fi
     echo ""
 }
@@ -1068,6 +1101,7 @@ invoke_upgrade() {
         ".claude/commands/code-review.md"
         ".claude/commands/feature-dev.md"
         ".claude/commands/security-review.md"
+        ".claude/commands/pmb-status.md"
     )
 
     ADVISORY_DIFF=(

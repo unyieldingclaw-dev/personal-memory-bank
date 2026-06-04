@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.5 — 2026-06-03
+
+### Added
+- **`/pmb-status` slash command** — fast state check (the `git status` of PMB); answers "can I work?" with 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present; surfaces attention items with one-line remediation hints; no deep validation (that belongs in `/health-check`); distributed via `mb init` and `mb upgrade`
+- **`templates/claude-commands/pmb-status.md`** — distribution template for `/pmb-status`
+
+### Changed
+- **`mb status`** — replaced file-size table with the same 5-signal state check that backs `/pmb-status`; now answers "can I work?" rather than "are files within size limits?" (size budget info remains available via `mb doctor`)
+
+---
+
 ## 1.0.4 — 2026-05-31
 
 ### Added
