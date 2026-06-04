@@ -101,11 +101,16 @@ show_status() {
     fi
 
     # Signal 3: Active Context Current (reads staleness-threshold from frontmatter)
+    # WHY: Mirror of Show-Status Signal 3 in mb.ps1 — keep both in sync when changing logic.
     ACTIVE_CTX="$MEMORY_BANK_PATH/activeContext.md"
     if [ -f "$ACTIVE_CTX" ]; then
         LAST_REVIEWED=$(grep -m1 'last-reviewed:' "$ACTIVE_CTX" 2>/dev/null | sed 's/last-reviewed:[[:space:]]*//' | tr -d ' \r' || true)
-        STALE_DAYS=$(grep -m1 'staleness-threshold:' "$ACTIVE_CTX" 2>/dev/null | sed 's/staleness-threshold:[[:space:]]*//' | sed 's/d//' | tr -d ' \r')
-        [ -z "$STALE_DAYS" ] && STALE_DAYS=7
+        # WHY: sed 's/d$//' strips only a trailing 'd' suffix (e.g. "14d" → "14").
+        # Using 's/d//' without the anchor would corrupt any value containing 'd' mid-string.
+        STALE_DAYS=$(grep -m1 'staleness-threshold:' "$ACTIVE_CTX" 2>/dev/null | sed 's/staleness-threshold:[[:space:]]*//' | sed 's/d$//' | tr -d ' \r')
+        # WHY: Guard arithmetic — a malformed frontmatter value (non-numeric after strip)
+        # would cause '[ "$DAYS_SINCE" -gt "$STALE_DAYS" ]' to throw "integer expression expected".
+        [[ "$STALE_DAYS" =~ ^[0-9]+$ ]] || STALE_DAYS=7
 
         if [ -z "$LAST_REVIEWED" ] || [ "$LAST_REVIEWED" = "YYYY-MM-DD" ]; then
             echo -e "  ${YELLOW}⚠${NC} Active Context (no review date)"
@@ -113,12 +118,20 @@ show_status() {
         else
             TODAY=$(date +%s)
             REVIEWED_EPOCH=$(date -d "$LAST_REVIEWED" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$LAST_REVIEWED" +%s 2>/dev/null || echo "0")
-            DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
-            if [ "$DAYS_SINCE" -gt "$STALE_DAYS" ]; then
-                echo -e "  ${YELLOW}⚠${NC} Active Context ($DAYS_SINCE days)"
-                ATTENTION_ITEMS+=("Active Context stale (${DAYS_SINCE}d, threshold ${STALE_DAYS}d) — run 'mb audit'")
+            # WHY: epoch=0 means both date variants failed to parse the value. Computing
+            # (today - epoch 0) yields ~19,000 days and always triggers a false stale warning.
+            # Treat it as an unreadable date instead, mirroring the PS catch{} path.
+            if [ "$REVIEWED_EPOCH" = "0" ]; then
+                echo -e "  ${YELLOW}⚠${NC} Active Context (unreadable date)"
+                ATTENTION_ITEMS+=("Active Context last-reviewed date could not be parsed: '$LAST_REVIEWED'")
             else
-                echo -e "  ${GREEN}✓${NC} Active Context Current"
+                DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
+                if [ "$DAYS_SINCE" -gt "$STALE_DAYS" ]; then
+                    echo -e "  ${YELLOW}⚠${NC} Active Context ($DAYS_SINCE days)"
+                    ATTENTION_ITEMS+=("Active Context stale (${DAYS_SINCE}d, threshold ${STALE_DAYS}d) — run 'mb audit'")
+                else
+                    echo -e "  ${GREEN}✓${NC} Active Context Current"
+                fi
             fi
         fi
     else
@@ -145,8 +158,11 @@ show_status() {
     fi
 
     # Signal 5: Tasks Present
+    # WHY: compgen -G is a bash builtin glob check — zero subprocesses, portable, and
+    # short-circuits immediately on first match. ls+head forks two processes and expands
+    # the full glob before head terminates the pipe.
     CONTRACTS_DIR=".claude/contracts"
-    if [ -d "$CONTRACTS_DIR" ] && ls "$CONTRACTS_DIR"/*.json 2>/dev/null | head -1 > /dev/null; then
+    if [ -d "$CONTRACTS_DIR" ] && compgen -G "$CONTRACTS_DIR/*.json" > /dev/null 2>&1; then
         echo -e "  ${GREEN}✓${NC} Tasks Present"
     else
         echo -e "  ${YELLOW}⚠${NC} No Active Tasks"

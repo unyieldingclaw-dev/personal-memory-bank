@@ -99,10 +99,12 @@ function Show-Status {
     }
 
     # Signal 3: Active Context Current (reads staleness-threshold from frontmatter)
+    # WHY: Mirror of show_status Signal 3 in mb.sh — keep both in sync when changing logic.
     $activeCtxPath = Join-Path $MemoryBankPath "activeContext.md"
     if (Test-Path $activeCtxPath) {
         $content = Get-Content $activeCtxPath -Raw
         $lastReviewed = ($content | Select-String -Pattern 'last-reviewed:\s*(\S+)').Matches.Groups[1].Value
+        # WHY: (\d+)d? captures only the numeric portion — safe against values like "14days" or typos.
         $staleMatch = ($content | Select-String -Pattern 'staleness-threshold:\s*(\d+)d?').Matches.Groups[1].Value
         $staleDays = if ($staleMatch) { [int]$staleMatch } else { 7 }
 
@@ -111,6 +113,8 @@ function Show-Status {
             $attentionItems.Add("Active Context has no last-reviewed date")
         } else {
             try {
+                # WHY: ParseExact throws on any format other than yyyy-MM-dd. The catch surfaces
+                # a user-readable warning rather than letting a malformed date silently pass through.
                 $reviewedDate = [datetime]::ParseExact($lastReviewed, 'yyyy-MM-dd', $null)
                 $daysSince = ([datetime]::Today - $reviewedDate).Days
                 if ($daysSince -gt $staleDays) {
