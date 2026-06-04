@@ -21,7 +21,7 @@ One-page cheatsheet for daily use.
 | Command | What It Does |
 |---------|--------------|
 | `mb init` | Scaffold memory-bank/ in the current project |
-| `mb status` | Show file sizes and health |
+| `mb status` | Quick state check — initialized, memory fresh, standards loaded, tasks tracked |
 | `mb validate` | Verify required files and frontmatter are present |
 | `mb audit` | See freshness — flag stale or overdue files |
 | `mb update` | Get a prompt to update memory bank after a session |
@@ -32,6 +32,7 @@ One-page cheatsheet for daily use.
 | `mb upgrade` | Pull latest templates and standards from the memory bank repo |
 | `mb doctor` | Full diagnostic — git, templates, hooks, file sizes, startup token cost |
 | `Handoff` | Create handoff.md and stop |
+| `/pmb-status` | Quick state check — the `git status` of PMB; run at session start or before beginning work |
 | `/feature-dev` | Run full 7-phase workflow (Claude Code) |
 | `/security-review` | Scan diff for 9 security patterns (Claude Code) |
 | `/code-review` | Multi-agent deep review: 3 parallel role subagents (security, performance, style) + test coverage review (generates missing tests) + opponent auditor compare (Claude Code / Cursor) |
@@ -153,7 +154,7 @@ For multi-session work, create `plan.md`:
 | Problem | Solution |
 |---------|----------|
 | AI doesn't know context | Check rule files, restart IDE |
-| Files too large | Run `mb compact`, then `mb status` |
+| Files too large | Run `mb compact` to deduplicate; run `mb doctor` to verify sizes |
 | Handoff not working | Explicitly: "Read handoff.md" |
 | Wrong patterns | Reference: `@memory-bank/systemPatterns.md` |
 

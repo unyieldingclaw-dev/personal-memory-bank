@@ -9,7 +9,7 @@ What to do when something breaks. Start with `mb doctor` — it diagnoses most i
 ```
 mb doctor     ← run this first, always
 mb validate   ← check files and frontmatter specifically
-mb status     ← check file sizes
+mb status     ← quick state check (initialized, memory, context, standards, tasks)
 ```
 
 ---
@@ -29,7 +29,7 @@ mb validate
 
 2. **memory-bank/ files are empty or placeholder** — open each file and confirm you've replaced the template text with real project content. A file full of `[Fill in your...]` brackets does nothing.
 
-3. **Context was compacted mid-session** — Claude Code compacts at ~75% context and CLAUDE.md doesn't reload. Tell the AI: *"Re-read all memory-bank/ files to restore context."* Then run `mb status` and consider a `/compact` before your next session.
+3. **Context was compacted mid-session** — Claude Code compacts at ~75% context and CLAUDE.md doesn't reload. Tell the AI: *"Re-read all memory-bank/ files to restore context."* Then run `/pmb-status` and consider a `/compact` before your next session.
 
 4. **Cursor: rule not applying** — open `.cursor/rules/memory-bank.mdc` and verify `alwaysApply: true` is in the frontmatter. Restart Cursor.
 

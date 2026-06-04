@@ -216,7 +216,7 @@ The `.cursor/rules/*.mdc` files are automatically loaded. Verify by:
 ### During Development
 
 Use quick commands:
-- `mb status` - Check Memory Bank health
+- `mb status` - Quick state check (initialized, memory fresh, standards loaded, tasks tracked)
 - `mb update` - Update files after changes
 
 ### Ending a Session
@@ -245,7 +245,7 @@ Use quick commands:
 Run `mb compact` to get an AI prompt that deduplicates and summarizes memory, or manually:
 1. Keep only current state in `activeContext.md`
 2. Archive old completed items in `progress.md`
-3. Run `mb status` to confirm sizes are back in range
+3. Run `mb doctor` to confirm sizes are back in range
 
 ### Handoff Not Working
 

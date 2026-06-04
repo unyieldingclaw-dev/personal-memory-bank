@@ -71,7 +71,7 @@ to confirm the memory bank is healthy before you start.
 ## Day-to-Day Commands
 
 ```
-mb status     Check file sizes and health
+mb status     Quick state check — initialized, memory fresh, standards loaded, tasks tracked
 mb validate   Verify required files and frontmatter are present
 mb audit      See freshness — flag stale or overdue files
 mb update     Get a prompt to update memory bank after a session
@@ -86,7 +86,7 @@ mb help       Full command list
 
 ## Slash Commands
 
-Four commands are distributed to every new project via `mb init`. One additional command (`/health-check`) is installed in the PMB repo itself for self-diagnostics.
+Five commands are distributed to every new project via `mb init`. One additional command (`/health-check`) is installed in the PMB repo itself for self-diagnostics.
 
 ### Testing Suite
 
@@ -107,6 +107,7 @@ Together: `/test-audit` tells you *what's missing*. `/code-review` tells you *wh
 
 | Command | What it does |
 |---------|-------------|
+| `/pmb-status` | Quick state check — the `git status` of PMB; run at session start or before beginning work |
 | `/test-audit` | Coverage gap diagnostic — framework detection, source-to-test mapping, CI check |
 | `/code-review` | 5-agent orchestrated review — security, performance, style, and test coverage |
 | `/security-review` | Scans current diff for 9 security patterns (secrets, injection, auth, crypto, etc.) |
@@ -273,7 +274,7 @@ Run `install.bat` again from the memory-bank repo directory.
 Check that `CLAUDE.md` is in your project root. For Cursor, verify `.cursor/rules/memory-bank.mdc` exists. Restart the IDE.
 
 **Memory bank is getting large**
-Run `mb status` to see which file is over its target. Run `mb compact` to get an AI prompt that rewrites and deduplicates memory.
+Run `mb doctor` to see which file is over its target. Run `mb compact` to get an AI prompt that rewrites and deduplicates memory.
 
 **Something looks corrupted**
 Run `mb doctor` for a full diagnostic.
