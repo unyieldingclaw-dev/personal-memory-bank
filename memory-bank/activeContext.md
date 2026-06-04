@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-01
+last-reviewed: 2026-06-03
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -18,38 +18,36 @@ lineage: []
 
 ## Current Focus
 
-v1.0.4 shipped (2026-06-01). Security & performance improvements complete. Repo is stable. Next decision point is observation-driven: wait for 30-day startup context growth data (~June 4) before making classification or loader decisions.
+v1.0.5 shipped (2026-06-03). `/pmb-status` + `mb status` redesign complete. Repo is stable. Next decision point is observation-driven: wait for 30-day startup context growth data (~June 4) before making classification or loader decisions.
 
-## What Was Just Completed (2026-06-01)
+## What Was Just Completed (2026-06-03)
+
+**`/pmb-status` + `mb status` redesign — v1.0.5:**
+- `mb status` reworked: replaced file-size table with 5-signal state check (Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present)
+- `/pmb-status` slash command: thin wrapper over `mb status` — no logic duplication; CLI owns behavior, slash command owns UX
+- Distributed via `mb init` and `mb upgrade` (same tier as other governance commands)
+- Design principle: `git status` / `git fsck` distinction — status = state, health-check = validation
+- Code review fixes (all confirmed findings addressed):
+  - `sed 's/d$//'` — trailing anchor prevents corrupting mid-string 'd' values [HIGH]
+  - `$STALE_DAYS` numeric guard prevents integer expression error on malformed frontmatter [HIGH]
+  - `REVIEWED_EPOCH=0` treated as parse failure (not ~19,000 false stale days) [MEDIUM]
+  - `compgen -G` replaces `ls|head` glob check (zero subprocesses, portable) [MEDIUM]
+  - WHY comments added to try/catch and cross-file sync notes [LOW]
+- All docs updated: README, QUICK-REFERENCE, RECOVERY, SETUP-GUIDE, COMMANDS-REFERENCE, CHANGELOG
+
+## What Was Completed (2026-06-01)
 
 **Security & Performance Improvements — v1.0.4:**
-- `standards/SECURITY-RULES.md` — rule registry SEC-001–009 (CRITICAL/HIGH/MEDIUM); distributed via mb init/upgrade (ADVISORY_CREATE)
-- `standards/TRUST-CLASSIFICATION.md` — TRUSTED/SEMI_TRUSTED/UNTRUSTED source classification reference; pointers wired into AGENTIC-SAFETY.md and SECURITY-GUARDRAILS.md
-- `standards/PERFORMANCE-BUDGET.md` — explicit limits: ≤20 standards, ≤50 memory entries, ≤1 agent delegation, changed-files-first scan scope
-- `fixtures/security/` — 9 known-bad code samples (SEC-001–009) for security regression testing; PMB dogfooding only, not distributed
-- Structured finding format in `/security-review` command and security-reviewer agent: Rule ID, Evidence snippet, Confidence, Fix
-- Trust level note in security-reviewer agent for prompt-injection/rules-file-integrity findings
-- `mb doctor` Check 13: verifies fixtures/security/ structure (9 subdirectories); Check 14: standards count warns if >20
-- `/health-check` updated: step 5 runs `/security-review` against fixtures, reports caught/missed per rule ID
-- `docs/COMMANDS-REFERENCE.md` updated: checks 13+14 added, count updated to 14
-- All 3 new standards distributed via mb init (glob loop) and mb upgrade (ADVISORY_CREATE)
-- **Fix:** Pre-push secret scan now excludes `fixtures/` and `docs/` (known-bad test fixtures + docs quoting them)
-- Design spec: `docs/superpowers/specs/2026-05-31-security-performance-improvements-design.md`
-
-## What Was Completed (2026-05-29)
-
-**v1.0.3 — Standards distribution, version tracking, pre-push hook, install-hooks:**
-- `mb install-hooks` subcommand (retrofit for existing projects; dry-run support)
-- Pre-push hook: 7 checks (conflicts, markers, dirty tree, .gitattributes, secrets scan, large files, mb validate)
-- Standards distribution: templates/standards/ (12 files) + mb init glob loop + mb upgrade ADVISORY_CREATE
-- `.pmb-version` tracking: written by mb init/upgrade; mb doctor Check 12
-- Remote version check in mb upgrade (soft, non-blocking)
-- mb doctor Checks 11 (required standards) and 12 (.pmb-version)
+- `standards/SECURITY-RULES.md` — rule registry SEC-001–009; distributed via mb init/upgrade (ADVISORY_CREATE)
+- `standards/TRUST-CLASSIFICATION.md` — TRUSTED/SEMI_TRUSTED/UNTRUSTED reference; pointers in AGENTIC-SAFETY + SECURITY-GUARDRAILS
+- `standards/PERFORMANCE-BUDGET.md` — explicit limits: ≤20 standards, ≤50 memory entries, ≤1 agent delegation
+- `fixtures/security/` — 9 known-bad code samples for security regression testing (PMB dogfooding only)
+- `mb doctor` Checks 13+14; `/health-check` step 5; pre-push scan excludes fixtures/ and docs/
 
 ## Next Steps
 
 1. **Wait for 30-day growth data** (~June 4) — startup context section will show real growth % once repo crosses 30-day window; use that data to decide whether classification is needed
-2. **Architecture review items on hold** — boring mode (`mb init --minimal`), explicit non-goals doc, `/core` vs `/integrations` separation; none are urgent, revisit if adoption friction surfaces
+2. **Architecture review items on hold** — boring mode (`mb init --minimal`), explicit non-goals doc, `/core` vs `/integrations` separation; revisit if adoption friction surfaces
 3. **Semantic identity** (progress.md backlog) — concept-level drift detection; detection-first, no auto-remediation; not yet, complexity budget is spent
 
 ## Architecture Constraints to Remember
@@ -61,7 +59,8 @@ v1.0.4 shipped (2026-06-01). Security & performance improvements complete. Repo 
 - "Overhead proportionate to certainty" — governing principle for any new governance additions
 - `mb doctor` = observable integrity signals only; not semantic correctness, not workflow compliance
 - `fixtures/` and `docs/` are excluded from pre-push secret scanning (intentionally bad code + docs quoting it)
+- `mb status` = state ("can I work?"); `mb doctor`/`/health-check` = validation ("is it correct?")
 
 ## Git State
 
-master branch, clean. Last commit: `c837e3d` — pre-push scan exclusion fix. v1.0.4 tagged and pushed.
+master branch, clean. Last commit: `cb82358` — code review hardening fixes. v1.0.5 shipped.

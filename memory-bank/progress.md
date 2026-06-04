@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-05-28
+last-reviewed: 2026-06-03
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -29,7 +29,7 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ Logging standard (essentials)
 - ✅ 7-phase Workflow standard
 - ✅ Supply Chain, MCP Security, Rules-File Integrity (reference)
-- ✅ /code-review, /feature-dev, /security-review, /test-audit commands (all distributed via mb init)
+- ✅ /pmb-status, /code-review, /feature-dev, /security-review, /test-audit commands (all distributed via mb init)
 - ✅ /health-check command (PMB-only self-diagnostic)
 - ✅ docs/COMMANDS-REFERENCE.md — full reference for all mb + slash commands
 - ✅ Cursor rules (5 rules + code-review rule)
@@ -85,6 +85,13 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ Remote version check in mb upgrade: soft non-blocking curl/Invoke-WebRequest; skips offline (2026-05-29)
 - ✅ mb doctor checks 11 (required standards) and 12 (.pmb-version) in bash + PowerShell (2026-05-29)
 - ✅ v1.0.3: VERSION, CHANGELOG, README, COMMANDS-REFERENCE all updated (2026-05-29)
+
+### `/pmb-status` + `mb status` Redesign — v1.0.5 (2026-06-03)
+- ✅ `mb status` reworked: 5-signal state check replacing file-size table (Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present)
+- ✅ `/pmb-status` slash command: thin wrapper over `mb status`; CLI owns logic, no duplication
+- ✅ Distributed via `mb init` and `mb upgrade`; `templates/claude-commands/pmb-status.md` added
+- ✅ Code review hardening: `sed 's/d$//'` trailing anchor, `$STALE_DAYS` numeric guard, `REVIEWED_EPOCH=0` parse-failure path, `compgen -G` replacing `ls|head`
+- ✅ All docs updated: README, QUICK-REFERENCE, RECOVERY, SETUP-GUIDE, COMMANDS-REFERENCE, CHANGELOG
 
 ### Security & Performance Improvements — v1.0.4 (2026-06-01)
 - ✅ `standards/SECURITY-RULES.md` — rule registry SEC-001–009; distributed via mb init/upgrade (ADVISORY_CREATE)
