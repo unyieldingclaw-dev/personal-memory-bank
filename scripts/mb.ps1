@@ -20,7 +20,7 @@
 # Default to "help" so running "mb" alone shows usage, not an error.
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "help")]
+    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
     [string]$Arg = "",
@@ -220,7 +220,7 @@ function Show-Slim {
     Write-Host "Slim activeContext.md" -ForegroundColor Cyan
     Write-Host "=====================" -ForegroundColor Cyan
     Write-Host ""
-    
+
     $path = Join-Path $MemoryBankPath "activeContext.md"
     if (Test-Path $path) {
         $lines = (Get-Content $path | Measure-Object -Line).Lines
@@ -228,7 +228,7 @@ function Show-Slim {
         Write-Host "Target: 50-100 lines"
         Write-Host "Maximum: 150 lines"
         Write-Host ""
-        
+
         if ($lines -gt 150) {
             Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
         } elseif ($lines -gt 100) {
@@ -236,7 +236,7 @@ function Show-Slim {
         } else {
             Write-Host "File is within target range" -ForegroundColor Green
         }
-        
+
         Write-Host ""
         Write-Host "To slim the file, tell the AI:" -ForegroundColor Yellow
         Write-Host ""
@@ -244,6 +244,62 @@ function Show-Slim {
     } else {
         Write-Host "Error: activeContext.md not found" -ForegroundColor Red
     }
+    Write-Host ""
+}
+
+function Show-Clean {
+    Write-Host ""
+    Write-Host "Memory Bank Maintenance" -ForegroundColor Cyan
+    Write-Host "=======================" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Slim check
+    Write-Host "--- Slim Check ---" -ForegroundColor Yellow
+    $path = Join-Path $MemoryBankPath "activeContext.md"
+    if (Test-Path $path) {
+        $lines = (Get-Content $path | Measure-Object -Line).Lines
+        Write-Host "activeContext.md: $lines lines (target: 50-100, max: 150)"
+        if ($lines -gt 150) {
+            Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
+        } elseif ($lines -gt 100) {
+            Write-Host "RECOMMENDED: Consider trimming" -ForegroundColor Yellow
+        } else {
+            Write-Host "OK: File is within target range" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "Warning: activeContext.md not found" -ForegroundColor Yellow
+    }
+    Write-Host ""
+
+    # Unified maintenance prompt
+    Write-Host "--- Maintenance Prompt ---" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Paste this prompt to the AI to perform a full memory bank cleanup:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "---" -ForegroundColor DarkGray
+    Write-Host @"
+Perform a full memory bank maintenance pass:
+
+1. Archive old content from activeContext.md:
+   - Move detailed session history to docs/archive/ (naming: context-YYYY-MM-<topic>.md)
+   - Keep only current state and active next steps
+
+2. Compact the memory bank (run after archiving):
+   - Remove duplicate decisions (keep most recent/authoritative)
+   - Surface contradictions for review — do not resolve them
+   - Remove activeContext.md entries already captured in progress.md
+   - Archive progress.md entries for work completed >6 months ago
+   - Condense verbose descriptions to decision + rationale
+
+3. Update all memory-bank files with any session progress:
+   - activeContext.md (current focus, next steps)
+   - progress.md (completed items)
+   - techContext.md (if dependencies changed)
+   - systemPatterns.md (if new patterns established)
+
+Show a summary of what changed before committing.
+"@ -ForegroundColor White
+    Write-Host "---" -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -1436,5 +1492,6 @@ switch ($Command) {
     "commit"        { Invoke-Commit }
     "upgrade"       { Invoke-Upgrade }
     "budget"        { Show-Budget }
+    "clean"         { Show-Clean }
     "help"          { Show-Help }
 }
