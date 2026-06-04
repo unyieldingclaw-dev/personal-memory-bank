@@ -38,12 +38,12 @@ Multi-agent deep code review.
 
 | Step | What Runs |
 |------|-----------|
-| 1 | Determine scope (git diff or explicit path) |
-| 2 | Gather context (git log per file) |
-| 3 | Three parallel subagents: Security · Performance · Style — each runs in an isolated context so findings don't bias each other |
-| 4 | Test coverage review: maps source files to test files; generates stubs for missing ones |
-| 5 | Opponent auditor: confirms high-confidence findings, downgrades false positives |
-| 6 | Summary report with auditor verdict column |
+| 1 | Load review contract from `standards/CODE-REVIEW.md` |
+| 2 | Determine scope (git diff or explicit path) |
+| 3 | Gather context (`git log` per file); determine which conditional domains apply |
+| 4 | Five required domain subagents — **Security · Correctness · Maintainability · Testing · Architecture Drift** — each in an isolated context. Conditional subagents added when applicable: **Performance** (tight loops, DB queries, I/O paths) and **Accessibility** (HTML/JSX/TSX/Vue/Svelte files) |
+| 5 | Opposition review subagent: must explicitly answer four questions — overstated Critical/High findings, gaps not reviewed, false positives, cross-domain risks. A general "none apply" answer is a failure. |
+| 6 | Report assembled with two finding sections: **Supported Findings** (VERIFIED + INFERRED) and **Predicted Risks** (SPECULATIVE only; omitted if empty). Finding schema uses `Basis: VERIFIED \| INFERRED \| SPECULATIVE` (replaced `Confidence`). No test stubs generated — remediation requires explicit user request. |
 
 **Distributed via `mb init`:** Yes
 
