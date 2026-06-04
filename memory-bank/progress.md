@@ -86,6 +86,14 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ mb doctor checks 11 (required standards) and 12 (.pmb-version) in bash + PowerShell (2026-05-29)
 - ✅ v1.0.3: VERSION, CHANGELOG, README, COMMANDS-REFERENCE all updated (2026-05-29)
 
+### Code Review Standard — v1.0.6 (2026-06-03)
+- ✅ `Confidence: High|Medium|Low` replaced by `Basis: VERIFIED|INFERRED|SPECULATIVE` in `standards/CODE-REVIEW.md`, `templates/standards/CODE-REVIEW.md`, both `code-review.md` command files
+- ✅ Evidence requirements explicit per-basis: file:line required; SPECULATIVE must cite observed trigger + explicit uncertainty statement
+- ✅ Blocking constraint: `Blocking: true` requires `Severity >= High AND Basis != SPECULATIVE`
+- ✅ Report sections: `## Supported Findings` (VERIFIED+INFERRED, with [VERIFIED]/[INFERRED] prefix) + `## Predicted Risks` (SPECULATIVE, omit if empty)
+- ✅ Three new Failure Criteria added (file:line, evidence materially supports claim, SPECULATIVE/Blocking)
+- ✅ Compatibility Note documents breaking `Confidence` → `Basis` rename
+
 ### `/pmb-status` + `mb status` Redesign — v1.0.5 (2026-06-03)
 - ✅ `mb status` reworked: 5-signal state check replacing file-size table (Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present)
 - ✅ `/pmb-status` slash command: thin wrapper over `mb status`; CLI owns logic, no duplication

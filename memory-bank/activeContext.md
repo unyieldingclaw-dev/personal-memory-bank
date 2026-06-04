@@ -18,9 +18,17 @@ lineage: []
 
 ## Current Focus
 
-v1.0.5 shipped (2026-06-03). `/pmb-status` + `mb status` redesign complete. Repo is stable. Next decision point is observation-driven: wait for 30-day startup context growth data (~June 4) before making classification or loader decisions.
+v1.0.6 shipped (2026-06-03). Code review standard strengthened: `Confidence` replaced by `Basis` (VERIFIED/INFERRED/SPECULATIVE), evidence requirements made explicit per-basis, blocking semantics tightened, report split into Supported Findings + Predicted Risks. Repo is stable. Next decision point is still observation-driven: wait for 30-day startup context growth data (~June 4) before making classification or loader decisions.
 
 ## What Was Just Completed (2026-06-03)
+
+**Code Review Standard — v1.0.6:**
+- `Confidence: High|Medium|Low` replaced by `Basis: VERIFIED|INFERRED|SPECULATIVE` across 4 files (standards/CODE-REVIEW.md, templates/standards/CODE-REVIEW.md, both code-review command files)
+- Evidence requirements tightened per-basis: file:line required on all findings; SPECULATIVE must cite observed trigger + explicit uncertainty
+- Blocking constraint tightened: `Blocking: true` requires `Severity >= High AND Basis != SPECULATIVE`
+- Report format: single Findings table → `## Supported Findings` (VERIFIED+INFERRED) + `## Predicted Risks` (SPECULATIVE, omit if empty)
+- Three new Failure Criteria: missing file:line, evidence not materially supporting claim, SPECULATIVE marked blocking
+- Breaking change: `Confidence` field removed; documented in Compatibility Note
 
 **`/pmb-status` + `mb status` redesign — v1.0.5:**
 - `mb status` reworked: replaced file-size table with 5-signal state check (Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present)
@@ -63,4 +71,4 @@ v1.0.5 shipped (2026-06-03). `/pmb-status` + `mb status` redesign complete. Repo
 
 ## Git State
 
-master branch, clean. Last commit: `cb82358` — code review hardening fixes. v1.0.5 shipped.
+master branch, clean. Last commit: `10afad8` — code review Basis/evidence standard. v1.0.6 shipped.
