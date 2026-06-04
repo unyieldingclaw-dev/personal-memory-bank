@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.6 — 2026-06-03
+
+### Changed
+- **`standards/CODE-REVIEW.md`** — replaced `Confidence: High|Medium|Low` with `Basis: VERIFIED|INFERRED|SPECULATIVE`; added Basis Classification and Evidence Requirements sections with per-basis evidence rules; tightened blocking semantics (`Blocking: true` requires `Severity >= High AND Basis != SPECULATIVE`); updated Required Report Sections to `Supported Findings` + `Predicted Risks`; added three new Failure Criteria (missing `file:line`, evidence not materially supporting claim, SPECULATIVE marked blocking); added Compatibility Note
+- **`templates/standards/CODE-REVIEW.md`** — mirrors `standards/CODE-REVIEW.md` (distribution template)
+- **`.claude/commands/code-review.md`** — Step 4 updated to reference `Basis` field definitions; Step 6 report template split into `## Supported Findings` (VERIFIED/INFERRED) and `## Predicted Risks` (SPECULATIVE, omitted if empty)
+- **`templates/claude-commands/code-review.md`** — mirrors `.claude/commands/code-review.md`
+
+**Breaking change:** `Confidence` field removed from the code review finding schema. Consumers parsing review output must update to `Basis`.
+
+*(Note: VERSION 1.0.5 was not bumped at the time of that release; version counter corrected here.)*
+
+---
+
 ## 1.0.5 — 2026-06-03
 
 ### Added

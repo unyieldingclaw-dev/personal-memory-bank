@@ -58,8 +58,8 @@ Spawn one subagent per required domain from the standard, plus any conditional d
 
 For each subagent, provide:
 - The diff/file being reviewed
-- Pass the full text of the Severity, Blocking, and Confidence field definitions from `standards/CODE-REVIEW.md` verbatim in each subagent prompt — do not paraphrase
-- Instruction to populate all required finding fields: Domain, Severity, Location, Evidence, Impact, Recommendation, Blocking, Confidence
+- Pass the full text of the Severity, Blocking, and Basis field definitions from `standards/CODE-REVIEW.md` verbatim in each subagent prompt — do not paraphrase
+- Instruction to populate all required finding fields: Domain, Severity, Location, Evidence, Basis, Impact, Recommendation, Blocking
 - Instruction to return structured findings only — no remediation
 
 Domains to spawn (always): Security, Correctness, Maintainability, Testing, Architecture Drift
@@ -93,10 +93,21 @@ Produce the report using the required sections from the standard:
 | Performance | Reviewed / Skipped (not applicable) |
 | Accessibility | Reviewed / Skipped (not applicable) |
 
-**Findings:**
-| Domain | Severity | Location | Evidence | Impact | Recommendation | Blocking | Confidence |
+## Supported Findings
+
+*(VERIFIED and INFERRED findings. Omit rows that belong in Predicted Risks.)*
+
+| Domain | Severity | Location | Evidence | Basis | Impact | Recommendation | Blocking |
 |---|---|---|---|---|---|---|---|
-| ... | ... | ... | ... | ... | ... | true/false | High/Med/Low |
+| ... | ... | ... | ... | [VERIFIED] | ... | ... | true/false |
+
+## Predicted Risks
+
+*(SPECULATIVE findings only. Omit this entire section if none exist.)*
+
+| Domain | Severity | Location | Evidence | Basis | Impact | Recommendation | Blocking |
+|---|---|---|---|---|---|---|---|
+| ... | ... | ... | ... | [SPECULATIVE] | ... | ... | false |
 
 **Testing Gaps:**
 List any missing tests identified by the Testing domain subagent.
