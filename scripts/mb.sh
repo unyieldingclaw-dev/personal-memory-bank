@@ -47,24 +47,18 @@ show_help() {
     echo ""
     echo "Commands:"
     echo "  init     Initialize Memory Bank in the current project"
-    echo "  validate Check that required files and frontmatter are present"
-    echo "  doctor   Full health check (git, hooks, file sizes, staleness)"
     echo "  status   Quick state check — initialized, memory, context, standards, tasks"
-    echo "  audit    Freshness audit — flag stale or overdue files"
+    echo "  doctor   Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
     echo "  query    Search memory-bank by tag or section header"
-    echo "  compact  Print AI prompt to compact (deduplicate + summarize) memory"
-    echo "  update   Reminder to update Memory Bank (manual action)"
-    echo "  archive  Show instructions for archiving old content"
-    echo "  slim     Check if activeContext.md needs trimming"
+    echo "  clean    Memory bank maintenance: slim check + unified cleanup prompt"
     echo "  commit   Stage and commit Memory Bank changes"
     echo "  upgrade  Propagate current governance templates to this project"
-    echo "  budget   Check token budget health (CLAUDE.md + memory-bank/ sizes)"
     echo "  help     Show this help message"
     echo ""
     echo "Examples:"
-    echo "  mb audit              Check freshness of all memory-bank files"
+    echo "  mb doctor             Full diagnostic across all health areas"
     echo "  mb query auth         Find files tagged auth/* or sections mentioning auth"
-    echo "  mb compact            Get AI prompt to compact memory"
+    echo "  mb clean              Get maintenance prompt for memory bank cleanup"
     echo ""
 }
 
@@ -259,6 +253,62 @@ show_slim() {
     else
         echo -e "${RED}Error: activeContext.md not found${NC}"
     fi
+    echo ""
+}
+
+show_clean() {
+    echo ""
+    echo -e "${CYAN}Memory Bank Maintenance${NC}"
+    echo -e "${CYAN}=======================${NC}"
+    echo ""
+
+    # Slim check
+    echo -e "${YELLOW}--- Slim Check ---${NC}"
+    SLIM_PATH="$MEMORY_BANK_PATH/activeContext.md"
+    if [ -f "$SLIM_PATH" ]; then
+        LINES=$(wc -l < "$SLIM_PATH" | tr -d ' ')
+        echo "activeContext.md: $LINES lines (target: 50-100, max: 150)"
+        if [ "$LINES" -gt 150 ]; then
+            echo -e "${RED}ACTION NEEDED: File is over limit!${NC}"
+        elif [ "$LINES" -gt 100 ]; then
+            echo -e "${YELLOW}RECOMMENDED: Consider trimming${NC}"
+        else
+            echo -e "${GREEN}OK: File is within target range${NC}"
+        fi
+    else
+        echo -e "${YELLOW}Warning: activeContext.md not found${NC}"
+    fi
+    echo ""
+
+    # Unified maintenance prompt
+    echo -e "${YELLOW}--- Maintenance Prompt ---${NC}"
+    echo ""
+    echo -e "${YELLOW}Paste this prompt to the AI to perform a full memory bank cleanup:${NC}"
+    echo ""
+    echo "---"
+    cat << 'EOF'
+Perform a full memory bank maintenance pass:
+
+1. Archive old content from activeContext.md:
+   - Move detailed session history to docs/archive/ (naming: context-YYYY-MM-<topic>.md)
+   - Keep only current state and active next steps
+
+2. Compact the memory bank (run after archiving):
+   - Remove duplicate decisions (keep most recent/authoritative)
+   - Surface contradictions for review — do not resolve them
+   - Remove activeContext.md entries already captured in progress.md
+   - Archive progress.md entries for work completed >6 months ago
+   - Condense verbose descriptions to decision + rationale
+
+3. Update all memory-bank files with any session progress:
+   - activeContext.md (current focus, next steps)
+   - progress.md (completed items)
+   - techContext.md (if dependencies changed)
+   - systemPatterns.md (if new patterns established)
+
+Show a summary of what changed before committing.
+EOF
+    echo "---"
     echo ""
 }
 
@@ -1279,6 +1329,7 @@ case "$COMMAND" in
     update)   show_update ;;
     archive)  show_archive ;;
     slim)     show_slim ;;
+    clean)    show_clean ;;
     commit)   invoke_commit ;;
     upgrade)  invoke_upgrade ;;
     budget)   show_budget ;;
