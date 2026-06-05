@@ -1391,6 +1391,15 @@ function Invoke-Upgrade {
         }
     }
 
+    # Absorbed from install-hooks: wire .git/hooks/ after templates are current
+    if (-not $DryRun) {
+        Write-Host ""
+        Write-Host "Installing git hooks..." -ForegroundColor Cyan
+        Invoke-InstallHooks
+    } else {
+        Write-Host "[~?] .git/hooks/pre-push (would run install-hooks)" -ForegroundColor Yellow
+    }
+
     # Process ADVISORY_DIFF — compare and emit advisory diff, never write
     foreach ($target in $advisoryDiff) {
         $src = Get-TemplateSrc -Target $target
