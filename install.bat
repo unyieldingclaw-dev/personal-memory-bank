@@ -56,12 +56,32 @@ powershell.exe -NoLogo -ExecutionPolicy Bypass -Command ^
   "  Write-Host ' [OK] mb already in PATH'" ^
   "}"
 
+:: 5. Initialize first project via folder picker
 echo.
-echo  Open a new terminal window, then in any project:
+echo  Global install complete.
+echo  Let's set up your first project now.
 echo.
-echo      mb init
-echo      mb status
+
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command ^
+  "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; ^
+   $f = New-Object System.Windows.Forms.FolderBrowserDialog; ^
+   $f.Description = 'Select your first project folder to initialize with PMB'; ^
+   $f.ShowNewFolderButton = $true; ^
+   if ($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"`) do set "TARGET_PATH=%%i"
+
+if "!TARGET_PATH!"=="" (
+    echo  No folder selected.
+    echo  For future projects, double-click mb-new-project.bat in this folder.
+    echo.
+    pause
+    exit /b 0
+)
+
+echo  Initializing PMB in: !TARGET_PATH!
 echo.
-echo  Done.
+pwsh.exe -NoLogo -ExecutionPolicy Bypass -File "%MB_REPO%\scripts\mb.ps1" init "!TARGET_PATH!"
+echo.
+echo  Done. Open Claude Code in !TARGET_PATH! to start your first session.
+echo  For future projects, double-click mb-new-project.bat in this folder.
 echo.
 pause
