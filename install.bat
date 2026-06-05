@@ -66,7 +66,7 @@ for /f "usebackq delims=" %%i in (`pwsh -NoLogo -ExecutionPolicy Bypass -File "%
 
 if "!TARGET_PATH!"=="" (
     echo  No folder selected.
-    echo  For future projects, double-click mb-new-project.bat in this folder.
+    echo  For future projects, double-click mb-new-project.bat in %MB_REPO%
     echo.
     pause
     exit /b 0
@@ -84,6 +84,6 @@ if errorlevel 1 (
 )
 echo.
 echo  Done. Open Claude Code in !TARGET_PATH! to start your first session.
-echo  For future projects, double-click mb-new-project.bat in this folder.
+echo  For future projects, double-click mb-new-project.bat in %MB_REPO%
 echo.
 pause
