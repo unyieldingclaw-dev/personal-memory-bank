@@ -47,25 +47,18 @@ function Show-Help {
     Write-Host ""
     Write-Host "Commands:"
     Write-Host "  init          Initialize Memory Bank in the current project"
-    Write-Host "  install-hooks Install pre-push git hook into .git/hooks/ (retrofit for existing projects)"
-    Write-Host "  validate      Check that required files and frontmatter are present"
-    Write-Host "  doctor        Full health check (git, hooks, file sizes, staleness)"
+    Write-Host "  doctor        Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
     Write-Host "  status        Quick state check — initialized, memory, context, standards, tasks"
-    Write-Host "  audit         Freshness audit — flag stale or overdue files"
     Write-Host "  query         Search memory-bank by tag or section header"
-    Write-Host "  compact       Print AI prompt to compact (deduplicate + summarize) memory"
-    Write-Host "  update        Reminder to update Memory Bank (manual action)"
-    Write-Host "  archive       Show instructions for archiving old content"
-    Write-Host "  slim          Check if activeContext.md needs trimming"
+    Write-Host "  clean         Memory bank maintenance: slim check + unified cleanup prompt"
     Write-Host "  commit        Stage and commit Memory Bank changes"
     Write-Host "  upgrade       Propagate current governance templates to this project"
-    Write-Host "  budget        Check token budget health (CLAUDE.md + memory-bank/ sizes)"
     Write-Host "  help          Show this help message"
     Write-Host ""
     Write-Host "Examples:"
-    Write-Host "  mb audit              Check freshness of all memory-bank files"
+    Write-Host "  mb doctor             Full diagnostic across all health areas"
     Write-Host "  mb query auth         Find files tagged auth/* or sections mentioning auth"
-    Write-Host "  mb compact            Get AI prompt to compact memory"
+    Write-Host "  mb clean              Get maintenance prompt for memory bank cleanup"
     Write-Host ""
 }
 
@@ -1484,19 +1477,20 @@ function Invoke-Upgrade {
 # Run command
 switch ($Command) {
     "init"          { Invoke-Init }
-    "install-hooks" { Invoke-InstallHooks }
-    "validate"      { Show-Validate }
     "doctor"        { Show-Doctor }
     "status"        { Show-Status }
-    "audit"         { Show-Audit }
     "query"         { Show-Query -Keyword $Arg }
-    "compact"       { Show-Compact }
-    "update"        { Show-Update }
-    "archive"       { Show-Archive }
-    "slim"          { Show-Slim }
+    "clean"         { Show-Clean }
     "commit"        { Invoke-Commit }
     "upgrade"       { Invoke-Upgrade }
-    "budget"        { Show-Budget }
-    "clean"         { Show-Clean }
     "help"          { Show-Help }
+    # Deprecated — redirect to replacement commands
+    "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow }
+    "validate"      { Write-Host "mb validate has been integrated into mb doctor. Run: mb doctor" -ForegroundColor Yellow }
+    "audit"         { Write-Host "mb audit has been integrated into mb doctor. Run: mb doctor" -ForegroundColor Yellow }
+    "budget"        { Write-Host "mb budget has been integrated into mb doctor. Run: mb doctor" -ForegroundColor Yellow }
+    "compact"       { Write-Host "mb compact has been consolidated into mb clean. Run: mb clean" -ForegroundColor Yellow }
+    "update"        { Write-Host "mb update has been consolidated into mb clean. Run: mb clean" -ForegroundColor Yellow }
+    "archive"       { Write-Host "mb archive has been consolidated into mb clean. Run: mb clean" -ForegroundColor Yellow }
+    "slim"          { Write-Host "mb slim has been consolidated into mb clean. Run: mb clean" -ForegroundColor Yellow }
 }
