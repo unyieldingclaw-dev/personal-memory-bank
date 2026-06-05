@@ -873,6 +873,13 @@ show_doctor() {
     fi
 
     echo ""
+
+    echo ""
+    show_audit
+
+    show_validate
+
+    show_budget
 }
 
 show_budget() {
