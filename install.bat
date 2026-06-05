@@ -75,6 +75,13 @@ if "!TARGET_PATH!"=="" (
 echo  Initializing PMB in: !TARGET_PATH!
 echo.
 pwsh.exe -NoLogo -ExecutionPolicy Bypass -File "%MB_REPO%\scripts\mb.ps1" init "!TARGET_PATH!"
+if errorlevel 1 (
+    echo.
+    echo  [ERROR] PMB initialization failed. Check the output above.
+    echo.
+    pause
+    exit /b 1
+)
 echo.
 echo  Done. Open Claude Code in !TARGET_PATH! to start your first session.
 echo  For future projects, double-click mb-new-project.bat in this folder.
