@@ -46,7 +46,7 @@ show_help() {
     echo -e "${YELLOW}Usage: mb <command>${NC}"
     echo ""
     echo "Commands:"
-    echo "  init     Initialize Memory Bank in the current project"
+    echo "  init     Initialize Memory Bank in current project (or: mb init <path>)"
     echo "  status   Quick state check — initialized, memory, context, standards, tasks"
     echo "  doctor   Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
     echo "  query    Search memory-bank by tag or section header"
@@ -374,7 +374,15 @@ invoke_init() {
         return
     fi
 
-    TARGET="$(pwd)"
+    if [ -n "$ARG" ]; then
+        if [ ! -d "$ARG" ]; then
+            echo -e "${RED}[ERROR] Path not found: $ARG${NC}"
+            return 1
+        fi
+        TARGET="$(cd "$ARG" && pwd)"
+    else
+        TARGET="$(pwd)"
+    fi
     CREATED=()
     SKIPPED=()
 
@@ -1327,20 +1335,22 @@ invoke_upgrade() {
 
 case "$COMMAND" in
     init)     invoke_init ;;
-    validate) show_validate ;;
     doctor)   show_doctor ;;
     status)   show_status ;;
-    audit)    show_audit ;;
     query)    show_query "$ARG" ;;
-    compact)  show_compact ;;
-    update)   show_update ;;
-    archive)  show_archive ;;
-    slim)     show_slim ;;
     clean)    show_clean ;;
     commit)   invoke_commit ;;
     upgrade)  invoke_upgrade ;;
-    budget)   show_budget ;;
     help)     show_help ;;
+    # Deprecated — redirect to replacement commands
+    install-hooks) echo -e "${YELLOW}mb install-hooks is now part of mb upgrade. Run: mb upgrade${NC}" ;;
+    validate)      echo -e "${YELLOW}mb validate has been integrated into mb doctor. Run: mb doctor${NC}" ;;
+    audit)         echo -e "${YELLOW}mb audit has been integrated into mb doctor. Run: mb doctor${NC}" ;;
+    budget)        echo -e "${YELLOW}mb budget has been integrated into mb doctor. Run: mb doctor${NC}" ;;
+    compact)       echo -e "${YELLOW}mb compact has been consolidated into mb clean. Run: mb clean${NC}" ;;
+    update)        echo -e "${YELLOW}mb update has been consolidated into mb clean. Run: mb clean${NC}" ;;
+    archive)       echo -e "${YELLOW}mb archive has been consolidated into mb clean. Run: mb clean${NC}" ;;
+    slim)          echo -e "${YELLOW}mb slim has been consolidated into mb clean. Run: mb clean${NC}" ;;
     *)
         echo -e "${RED}Unknown command: $COMMAND${NC}"
         show_help

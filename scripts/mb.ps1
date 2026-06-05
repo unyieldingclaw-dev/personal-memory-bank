@@ -46,7 +46,7 @@ function Show-Help {
     Write-Host "Usage: mb <command>" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Commands:"
-    Write-Host "  init          Initialize Memory Bank in the current project"
+    Write-Host "  init          Initialize Memory Bank in current project (or: mb init <path>)"
     Write-Host "  doctor        Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
     Write-Host "  status        Quick state check — initialized, memory, context, standards, tasks"
     Write-Host "  query         Search memory-bank by tag or section header"
@@ -398,7 +398,16 @@ function Invoke-Init {
         return
     }
 
-    $Target = $PWD.Path
+    if ($Arg) {
+        $resolved = (Resolve-Path $Arg -ErrorAction SilentlyContinue)?.Path
+        if (-not $resolved) {
+            Write-Host "[ERROR] Path not found: $Arg" -ForegroundColor Red
+            return
+        }
+        $Target = $resolved
+    } else {
+        $Target = $PWD.Path
+    }
     $Created = @()
     $Skipped = @()
 
