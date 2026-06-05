@@ -1040,6 +1040,14 @@ function Show-Doctor {
     }
 
     Write-Host ""
+    Write-Host "=== Lifecycle Audit ===" -ForegroundColor Cyan
+    Show-Audit
+
+    Write-Host "=== Structural Validation ===" -ForegroundColor Cyan
+    Show-Validate
+
+    Write-Host "=== Budget Estimate ===" -ForegroundColor Cyan
+    Show-Budget
 }
 
 function Show-Audit {
