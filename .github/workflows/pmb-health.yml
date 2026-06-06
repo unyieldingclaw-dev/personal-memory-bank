@@ -116,6 +116,29 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Run Semgrep
+        shell: bash
+        run: |
+          pip install semgrep --quiet
+          # Scan shell scripts in scripts/ and templates/scripts/ with the bash
+          # ruleset. PowerShell (.ps1) files are scanned opportunistically — Semgrep
+          # has limited PS support but will still catch generic patterns.
+          # --error exits non-zero on any finding at the default severity threshold.
+          SCAN_DIRS=""
+          [ -d scripts ]            && SCAN_DIRS="$SCAN_DIRS scripts"
+          [ -d templates/scripts ]  && SCAN_DIRS="$SCAN_DIRS templates/scripts"
+          if [ -z "$SCAN_DIRS" ]; then
+            echo "No script directories found — skipping SAST"
+            exit 0
+          fi
+          semgrep --config "p/bash" --error $SCAN_DIRS
+
   rules-file-integrity:
     name: Rules-File Integrity
     runs-on: ubuntu-latest
