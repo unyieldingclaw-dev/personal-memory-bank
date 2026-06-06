@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.7 — 2026-06-06
+
+### Added
+- **G1 — PowerShell tool hook** — `dangerous-commands.ps1` now intercepts both the Bash and PowerShell Claude Code tools; 8 PowerShell-native BLOCK patterns added: `Remove-Item -Recurse -Force`, `Remove-Item -Force -Recurse`, `Format-Volume`, `| Invoke-Expression`, `|Invoke-Expression`, `| iex`, `|iex`; both `.claude/settings.json` and `templates/.claude/settings.json` updated
+- **G2 — Hook failure alerting** — all 4 hook scripts (`dangerous-commands`, `check-contract`, `pre-compact-check`, `update-reviewed`) append a timestamped entry to `.pmb-hook-errors.log` on unexpected error; `mb doctor` Check 16 reports log presence and recent entries as WARN; `mb init` adds `.pmb-hook-errors.log` to `.gitignore` for new projects
+- **G3 — Contract scope hard-block mode** — `PMB_CONTRACT_HARD_BLOCK=1` env var promotes contract scope warnings to hard blocks (exit 2) in both `check-contract.ps1` and `check-contract.sh`; documented in `standards/SECURITY-GUARDRAILS.md` with `env` block example
+- **G4 — First-push secret scan** — `pre-push-check.ps1` / `.sh` now falls back to `git log --not --remotes -p` when no upstream tracking ref exists, scanning all commits not yet on any remote; large-files check (Check 6) also fixed for the no-upstream case; replaces the previous `[SKIP]` behavior
+- **G5 — Rules-file integrity CI** — new `rules-file-integrity` job in `pmb-health.yml`: three steps — invisible Unicode characters (U+200B/C/D/FEFF/202E/00AD/2066-2069), hidden HTML comments (`<!--`), LLM bypass phrases in `CLAUDE.md` / `templates/CLAUDE.md`
+- **G6 — SAST CI** — new `sast` job in `pmb-health.yml`: Semgrep CLI with `p/bash` ruleset scanning `scripts/` and `templates/scripts/`; exits non-zero on any finding
+- **`mb doctor` Check 15** — startup context size ceiling: WARN if `CLAUDE.md` + `memory-bank/` total exceeds 15 KB, ERROR if over 25 KB
+- **`mb doctor` Check 16** — hook error log: WARN with entry count and last 3 lines if `.pmb-hook-errors.log` exists and is non-empty
+- **`install.bat`** — GUI folder picker to init first project at install time; `mb-new-project.bat` launcher; `pick-folder.ps1` helper
+
+### Changed
+- **mb commands redesigned (8 primary commands)** — `mb doctor` now absorbs `audit`, `validate`, and `budget`; `mb clean` added (absorbs `compact`, `update`, `archive`, `slim`); `mb upgrade` absorbs `install-hooks`; deprecated commands still work as redirects; `mb help` updated to show 8 primary commands
+- **`.pmb-version`** initialized in the PMB repo itself (was missing)
+
+---
+
 ## 1.0.6 — 2026-06-03
 
 ### Changed

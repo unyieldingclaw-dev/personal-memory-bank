@@ -161,6 +161,28 @@ AI: "Implementing authentication.
      [proceeds] Done. Review before committing."
 ```
 
+## Contract Scope Hard-Block Mode
+
+By default, the `check-contract` hook WARNs when a write targets a file outside the active task contract but does not block it (exit 0). For stricter enforcement, set:
+
+```
+PMB_CONTRACT_HARD_BLOCK=1
+```
+
+When this environment variable is set, any out-of-scope write is **blocked** (hook exits 2). Claude Code interprets a non-zero exit from a PreToolUse hook as a hard block — the write tool call is cancelled and the message is shown to the user.
+
+**How to enable:** Add `PMB_CONTRACT_HARD_BLOCK=1` to the `env` block in `.claude/settings.json`:
+
+```json
+"env": {
+  "PMB_CONTRACT_HARD_BLOCK": "1"
+}
+```
+
+**When to use:** In sessions where scope discipline is critical (large refactors, security changes, migrations). Disable for exploratory sessions where scope naturally evolves.
+
+**Note:** Hard-block requires an active contract. Without an active contract the hook exits silently regardless of this setting.
+
 ## Customization
 
 Adjust tier thresholds to match environment:

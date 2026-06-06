@@ -21,16 +21,12 @@ One-page cheatsheet for daily use.
 | Command | What It Does |
 |---------|--------------|
 | `mb init` | Scaffold memory-bank/ in the current project |
-| `mb status` | Quick state check — initialized, memory fresh, standards loaded, tasks tracked |
-| `mb validate` | Verify required files and frontmatter are present |
-| `mb audit` | See freshness — flag stale or overdue files |
-| `mb update` | Get a prompt to update memory bank after a session |
-| `mb commit` | Commit Memory Bank changes separately from feature code |
+| `mb status` | Quick state check — initialized, memory, context, standards, tasks |
+| `mb doctor` | Full 16-point diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors |
 | `mb query TAG` | Find all memory tagged with TAG |
-| `mb budget` | Check token overhead of CLAUDE.md + memory-bank/ |
-| `mb compact` | Get an AI prompt to deduplicate and summarize memory |
-| `mb upgrade` | Pull latest templates and standards from the memory bank repo |
-| `mb doctor` | Full diagnostic — git, templates, hooks, file sizes, startup token cost |
+| `mb clean` | Memory bank maintenance — slim check + guided cleanup prompt |
+| `mb commit` | Commit Memory Bank changes separately from feature code |
+| `mb upgrade` | Pull latest templates, standards, and hooks from the memory bank repo |
 | `Handoff` | Create handoff.md and stop |
 | `/pmb-status` | Quick state check — the `git status` of PMB; run at session start or before beginning work |
 | `/feature-dev` | Run full 7-phase workflow (Claude Code) |

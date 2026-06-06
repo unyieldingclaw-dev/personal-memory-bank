@@ -12,19 +12,23 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 |---------|--------------|----------------------|
 | `mb init` | Scaffold memory-bank/ in the current project | Creates 5 memory-bank files, `CLAUDE.md`, `.claude/settings.json`, hook scripts, slash commands, and 12 `standards/` files. Writes `.pmb-version`. Skips files that already exist. |
 | `mb status` | Quick state check | 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present. Green ✓ per signal; ⚠ items surface in an Attention section with remediation hint. |
-| `mb validate` | Check required files and frontmatter | Pass/fail for each file; flags missing `authority:` or `last-reviewed:` fields. |
-| `mb audit` | Freshness audit | Table: days since last review vs. `staleness-threshold`; flags stale (red) and overdue (yellow) files. |
+| `mb status` | Quick state check | 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present. |
+| `mb doctor` | Full 16-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. Absorbs `validate`, `audit`, and `budget` checks. |
 | `mb query <TAG>` | Search memory-bank by tag or section header | Lists files with matching tags or `##` headings. Supports partial hierarchical match (`mb query auth` matches `auth/session`). |
-| `mb compact` | Print AI prompt for memory compaction | Copy-paste prompt to give the AI; guides deduplication, contradiction surfacing, and summarization. |
-| `mb update` | Print session-end update reminder | Copy-paste prompt to tell the AI to update memory-bank files after a work session. |
-| `mb archive` | Print archiving instructions | Instructions for moving stale content from `activeContext.md` to `docs/archive/`. |
-| `mb slim` | Check if activeContext.md needs trimming | Reports current/target/max line count; prints the prompt to trim if needed. |
+| `mb clean` | Memory bank maintenance | Slim check for `activeContext.md`; prints guided cleanup prompt (archive + compact + update). Absorbs `compact`, `update`, `archive`, `slim`. |
 | `mb commit` | Stage and commit memory-bank/ changes | Runs `git add memory-bank/` + `git commit`; checks for subworktree and refuses if detected. |
-| `mb upgrade` | Propagate latest governance templates | Overwrites template-owned files (hook scripts, slash commands, `.claude/settings.json`, Cursor rules); shows advisory diff for `CLAUDE.md`; creates missing `standards/` files (`ADVISORY_CREATE`) and shows diff if customized; writes `.pmb-version`; soft remote version check. Run `mb upgrade --dry-run` to preview. |
-| `mb install-hooks` | Retrofit pre-push hook into an existing project | Copies `pre-push-check.ps1`/`.sh` from templates if missing; installs `.git/hooks/pre-push`; reports `[+]`/`[=]` per item. Run `mb install-hooks --dry-run` to preview. Use for projects initialized before v1.0.3. |
-| `mb budget` | Token budget health | Shows KB + estimated tokens for `CLAUDE.md` and `memory-bank/`; reports auto-compact setting. |
-| `mb doctor` | Full 12-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. |
-| `mb help` | Show command list | Prints all commands with one-line descriptions and examples. |
+| `mb upgrade` | Propagate latest governance templates | Overwrites template-owned files (hook scripts, slash commands, `.claude/settings.json`, Cursor rules); shows advisory diff for `CLAUDE.md`; creates missing `standards/` files; installs pre-push hook; writes `.pmb-version`; soft remote version check. Run `mb upgrade --dry-run` to preview. Absorbs `install-hooks`. |
+| `mb help` | Show command list | Prints all 8 primary commands with one-line descriptions and examples. |
+
+**Deprecated commands** (still work as redirects, not shown in `mb help`):
+
+| Deprecated | Routes to |
+|-----------|-----------|
+| `mb validate` | `mb doctor` |
+| `mb audit` | `mb doctor` |
+| `mb budget` | `mb doctor` |
+| `mb compact` / `mb update` / `mb archive` / `mb slim` | `mb clean` |
+| `mb install-hooks` | `mb upgrade` |
 
 ---
 
@@ -140,7 +144,7 @@ These are built into Claude Code and don't require the memory bank system.
 
 ## `mb doctor` Checks
 
-`mb doctor` runs 14 deterministic health checks and prints a startup context observability section.
+`mb doctor` runs 16 deterministic health checks and prints a startup context observability section.
 
 | # | Check | Pass Condition | What to Do on Failure |
 |---|-------|---------------|----------------------|
@@ -159,6 +163,8 @@ These are built into Claude Code and don't require the memory bank system.
 | 12 | PMB version tracking | `.pmb-version` exists and matches local PMB version | Run `mb upgrade` to write or sync `.pmb-version` |
 | 13 | Security fixtures | `fixtures/security/` exists with all 9 rule subdirectories | Create fixtures manually or re-clone PMB repo |
 | 14 | Standards count | `standards/` contains ≤ 20 `.md` files | Review standards for overlap; see `PERFORMANCE-BUDGET.md` |
+| 15 | Startup context ceiling | `CLAUDE.md` + `memory-bank/` total ≤ 25 KB (WARN >15 KB, ERROR >25 KB) | Slim `CLAUDE.md` or archive old `progress.md` entries |
+| 16 | Hook error log | `.pmb-hook-errors.log` absent or empty | Review log for root cause; delete file when resolved |
 | — | Startup context | (observability, not a health check) — reports files loaded, estimated tokens, largest contributors, 30-day growth, stale-but-loaded count | Use to decide when files need trimming |
 
 ---

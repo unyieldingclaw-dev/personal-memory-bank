@@ -28,12 +28,13 @@ Hooks are one layer in a four-layer enforcement stack. Understanding which layer
 
 Configured in `.claude/settings.json`:
 
-### 1. Dangerous-Command Blocker (`PreToolUse`)
+### 1. Dangerous-Command Blocker (`PreToolUse` — Bash + PowerShell tools)
 
-Intercepts Bash tool calls before they run using `scripts/dangerous-commands.ps1` (PowerShell) with bash fallback. Enforces 3-tier safety:
+Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
 
-**BLOCK** (11 patterns — command exits non-zero, Claude stops):
-`rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`
+**BLOCK** (19 patterns — command exits non-zero, Claude stops):\
+*Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
+*PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
 
 **CONFIRM** (5 patterns — surfaces confirmation dialog):
 `git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify`
@@ -43,20 +44,40 @@ Intercepts Bash tool calls before they run using `scripts/dangerous-commands.ps1
 
 If BLOCK is triggered, Claude sees the block message and stops. The command never runs. CONFIRM and WARN surface the access to Claude so it can decide.
 
-Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). The hook calls `pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true` — it fails open if neither runtime is available.
+Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). Configured in `.claude/settings.json` with two matchers — one for `Bash` (with sh fallback) and one for `PowerShell` (PS-only):
+
+```json
+{ "matcher": "Bash",       "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
+{ "matcher": "PowerShell", "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true" }
+```
+
+**Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
 ### 2. Stop Notification (`Stop`) — excluded from install template
 
 The Stop hook is excluded from `templates/.claude/settings.json` because it causes indefinite hangs in `--Remote-Control` mode (Claude in Chrome). In that mode Claude runs headless; the hook fires but no user is present to dismiss the Windows MessageBox, stalling the session permanently. PMB's own `.claude/settings.json` keeps this hook as a deliberate choice for interactive Windows sessions; it is excluded from the install template to prevent those hangs in remote/headless environments. If you need a Stop notification in an interactive-only project, add it to that project's local `.claude/settings.json` manually.
 
-### 3. PostToolUse Lint (`PostToolUse`)
+### 3. Contract Scope Check (`PreToolUse` — Write + Edit tools)
 
-Runs `npm run lint` after every `Write` or `Edit` tool call and streams the last 10 lines of output back to Claude, so lint errors appear immediately without a separate step.
+Checks whether a file being written is within the scope declared in the active task contract (`.claude/contracts/active-task.json`). Implemented in `scripts/check-contract.ps1` and `scripts/check-contract.sh`.
 
-**Why `|| true`?**  
-`|| true` ensures the hook always exits 0. This matters for non-Node projects that have no `package.json` or no `lint` script — without it the hook would exit non-zero and Claude would treat every file write as an error. With `|| true` the hook is a best-effort advisory: output when lint is available, silent when it isn't.
+- **No contract / inactive contract:** exits 0 silently.
+- **Out-of-scope write (default):** prints a warning and exits 0. Claude sees it and should pause.
+- **Out-of-scope write (hard-block mode):** exits 2 (blocked) when `PMB_CONTRACT_HARD_BLOCK=1` is set in the `env` block of `.claude/settings.json`.
 
-### 4. PreCompact Memory Gate (`PreCompact`)
+Set `PMB_CONTRACT_HARD_BLOCK=1` for sessions where scope discipline is critical. See `standards/SECURITY-GUARDRAILS.md` for the full env-block example.
+
+**Hook error logging (G2):** unexpected errors are logged to `.pmb-hook-errors.log` via a `trap {}` wrapper.
+
+### 4. Auto-Reviewed Update (`PostToolUse` — Write + Edit tools)
+
+Fires after every `Write` or `Edit` tool call. Reads the edited file path from the tool input JSON (via `$input | Out-String`), checks whether it is inside `memory-bank/`, and updates the `last-reviewed:` frontmatter line to today's date if present.
+
+**Why silent failure?** The hook must never block agent work. If the update fails (e.g. file not found, malformed frontmatter), the agent continues and the user can run `mb audit` to find stale files. Implemented in `scripts/update-reviewed.ps1` and `scripts/update-reviewed.sh`.
+
+**Hook error logging (G2):** unexpected errors are logged to `.pmb-hook-errors.log`.
+
+### 5. PreCompact Memory Gate (`PreCompact`)
 
 Fires before Claude Code compacts context. Checks whether either of the two volatile memory-bank files (`memory-bank/activeContext.md`, `memory-bank/progress.md`) was modified today **or** `handoff.md` exists in the project root. If neither condition is met, prints an actionable warning so Claude can update state before the compaction window closes.
 

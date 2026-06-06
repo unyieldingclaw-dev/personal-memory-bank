@@ -1,8 +1,8 @@
 # Personal Memory Bank
 
-![Version](https://img.shields.io/badge/version-1.0.3-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.0.7-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
 
-Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (10+ commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
+Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (8 commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
 
 ## The Problem It Solves
 
@@ -15,7 +15,7 @@ Memory Bank solves this by keeping a small set of structured files in your proje
 | Area | What you get |
 |------|-------------|
 | Memory system | 5-file structured context, authority hierarchy, freshness tracking, provenance frontmatter |
-| `mb` CLI | init, status, validate, audit, query, compact, budget, upgrade, doctor, commit, install-hooks (15 commands) |
+| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, help (8 primary commands) |
 | Slash commands | `/test-audit`, `/code-review`, `/security-review`, `/feature-dev`, `/health-check` |
 | Governance | Pre/PostToolUse hooks, CI pipeline, task contracts, subagents |
 
@@ -71,18 +71,16 @@ to confirm the memory bank is healthy before you start.
 ## Day-to-Day Commands
 
 ```
-mb status     Quick state check — initialized, memory fresh, standards loaded, tasks tracked
-mb validate   Verify required files and frontmatter are present
-mb audit      See freshness — flag stale or overdue files
-mb update     Get a prompt to update memory bank after a session
-mb commit     Commit memory bank changes separately from feature code
+mb status     Quick state check — initialized, memory, context, standards, tasks
+mb doctor     Full 16-point diagnostic — git, templates, hooks, file sizes, version, startup context ceiling, hook errors
 mb query TAG  Find all memory tagged with TAG (e.g. mb query auth)
-mb budget     Check token overhead of CLAUDE.md + memory-bank/
-mb upgrade    Pull latest templates and standards from the memory bank repo; creates missing standards/ files; checks remote for newer PMB version
-mb install-hooks  Retrofit existing projects with the pre-push git hook (for projects initialized before 1.0.3)
-mb doctor     Full diagnostic — git, templates, hooks, file sizes, standards presence, version tracking, startup token cost
+mb clean      Memory bank maintenance — slim check + guided cleanup prompt
+mb commit     Commit memory bank changes separately from feature code
+mb upgrade    Propagate latest governance templates to this project; checks remote for newer PMB version
 mb help       Full command list
 ```
+
+> Deprecated commands (`validate`, `audit`, `budget`, `compact`, `update`, `archive`, `slim`, `install-hooks`) still work as redirects to their absorbing command. They are not shown in `mb help` but will not error.
 
 ## Slash Commands
 
@@ -166,7 +164,7 @@ Each memory bank file has frontmatter with `staleness-threshold` and `review-cyc
 
 Run `mb audit` to see which files are stale. Run `mb compact` to get an AI prompt that deduplicates and summarizes memory across all files.
 
-`mb doctor` includes a staleness summary — it shows stale file counts by authority tier without running a full audit.
+`mb doctor` includes a staleness summary and a startup context size ceiling check (WARN >15 KB, ERROR >25 KB).
 
 </details>
 
@@ -215,7 +213,18 @@ Memory bank lives in the main worktree only. `mb commit` detects and refuses mut
 <details>
 <summary>CI / governance pipeline</summary>
 
-A `pmb-health` CI job runs on every PR: secret scanning (gitleaks), template integrity check (hooks match templates), memory bank file size limits, and CLAUDE.md drift detection. The same checks `mb doctor` runs locally are enforced in CI so drift is caught before merge.
+The `pmb-health` CI workflow runs on every push and PR with six jobs:
+
+| Job | What it checks |
+|-----|---------------|
+| `file-size` | memory-bank/ per-file line limits; all other .md files (warn: 500, fail: 800) |
+| `forbidden-patterns` | credential grep; spec placeholder markers; shellcheck on .sh scripts |
+| `secret-scan` | gitleaks on the full commit history |
+| `template-integrity` | every hook script referenced in `templates/.claude/settings.json` exists in `templates/scripts/` |
+| `rules-file-integrity` | invisible Unicode chars, hidden HTML comments, LLM bypass phrases in `CLAUDE.md` and `standards/` |
+| `sast` | Semgrep `p/bash` scan of `scripts/` and `templates/scripts/` |
+
+The same checks `mb doctor` runs locally are enforced in CI so drift is caught before merge.
 
 </details>
 
@@ -245,7 +254,7 @@ Each project gets a `.pmb-version` file recording which PMB version initialized 
 - Unresolved merge conflicts or conflict markers in staged files
 - Uncommitted changes in the working tree
 - Missing `.gitattributes`
-- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs)
+- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs) — **now scans first pushes** using `git log --not --remotes` when no upstream tracking ref exists
 - Files over 500 KB
 - `mb validate` result (if `mb` is in PATH)
 
