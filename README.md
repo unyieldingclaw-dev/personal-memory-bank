@@ -97,7 +97,7 @@ Two complementary tools that together cover the full test quality picture:
 - CI configurations missing a test step `[MEDIUM]`
 - Missing framework config `[LOW]`
 
-**`/code-review`** — *5-agent orchestrated review.* Spawns three isolated review subagents (Security, Performance, Style & Standards) with uncorrelated context windows so findings don't bias each other. A fourth **Opponent subagent** then audits all findings — challenging false positives, downgrading over-called severities, and surfacing anything the first three missed. Finally, the main agent runs a **test coverage pass** that evaluates missing tests, edge cases, and generates stubs for uncovered public functions.
+**`/code-review`** — *6–8 subagent orchestrated review.* Always spawns five isolated domain subagents (Security, Correctness, Maintainability, Testing, Architecture Drift), each seeing only the diff and its own domain lens so findings don't bias each other. Two conditional domains add on when applicable: Performance (if the diff touches tight loops, database queries, or I/O) and Accessibility (if it touches HTML/JSX/TSX/Vue/Svelte). A final **Opposition subagent** receives all domain findings and must explicitly answer four structured questions — overstatements, coverage gaps, false positives, and cross-domain risks; "none apply" is explicitly a failure. The command does not edit files, generate tests, or apply fixes.
 
 Together: `/test-audit` tells you *what's missing*. `/code-review` tells you *whether what exists is good*.
 
@@ -107,7 +107,7 @@ Together: `/test-audit` tells you *what's missing*. `/code-review` tells you *wh
 |---------|-------------|
 | `/pmb-status` | Quick state check — the `git status` of PMB; run at session start or before beginning work |
 | `/test-audit` | Coverage gap diagnostic — framework detection, source-to-test mapping, CI check |
-| `/code-review` | 5-agent orchestrated review — security, performance, style, and test coverage |
+| `/code-review` | 6–8 subagent review — 5 always-on domains (Security, Correctness, Maintainability, Testing, Architecture Drift) + up to 2 conditional (Performance, Accessibility) + Opposition audit |
 | `/security-review` | Scans current diff for 9 security patterns (secrets, injection, auth, crypto, etc.) |
 | `/feature-dev` | Runs the full 7-phase feature development workflow (brainstorm → spec → plan → implement → review → commit) |
 | `/health-check` | PMB-only: runs `mb doctor` (20 checks) and prints a labeled summary |

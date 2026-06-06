@@ -108,12 +108,13 @@ expected test file, and flags:
 - CI configurations missing a test step `[MEDIUM]`
 - Missing framework config `[LOW]`
 
-**`/code-review`** — *5-agent orchestrated review.* Spawns three isolated review subagents
-(Security, Performance, Style & Standards) with uncorrelated context windows so findings don't
-bias each other. A fourth **Opponent subagent** then audits all findings — challenging false
-positives, downgrading over-called severities, and surfacing anything the first three missed.
-Finally, the main agent runs a **test coverage pass** that evaluates missing tests, edge cases,
-and generates stubs for uncovered public functions.
+**`/code-review`** — *6–8 subagent orchestrated review.* Always spawns five isolated domain
+subagents (Security, Correctness, Maintainability, Testing, Architecture Drift) with uncorrelated
+context windows so findings don't bias each other. Two conditional domains add on when applicable:
+Performance (tight loops/DB/IO) and Accessibility (HTML/JSX/TSX/Vue/Svelte). A final **Opposition
+subagent** receives all domain findings and must explicitly answer four structured questions —
+overstatements, coverage gaps, false positives, and cross-domain risks; "none apply" is explicitly
+a failure. The command does not edit files, generate tests, or apply fixes.
 
 Together: `/test-audit` tells you *what's missing*. `/code-review` tells you *whether what exists is good*.
 
