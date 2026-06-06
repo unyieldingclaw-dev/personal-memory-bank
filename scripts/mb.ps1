@@ -20,7 +20,7 @@
 # Default to "help" so running "mb" alone shows usage, not an error.
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "help")]
+    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
     [string]$Arg = "",
@@ -51,9 +51,10 @@ function Show-Help {
     Write-Host "  status        Quick state check — initialized, memory, context, standards, tasks"
     Write-Host "  query         Search memory-bank by tag or section header"
     Write-Host "  clean         Memory bank maintenance: slim check + unified cleanup prompt"
-    Write-Host "  commit        Stage and commit Memory Bank changes"
-    Write-Host "  upgrade       Propagate current governance templates to this project"
-    Write-Host "  help          Show this help message"
+    Write-Host "  commit           Stage and commit Memory Bank changes"
+    Write-Host "  upgrade          Propagate current governance templates to this project"
+    Write-Host "  verify-integrity Check and refresh memory-bank file integrity checksums"
+    Write-Host "  help             Show this help message"
     Write-Host ""
     Write-Host "Examples:"
     Write-Host "  mb doctor             Full diagnostic across all health areas"
@@ -437,7 +438,7 @@ function Invoke-Init {
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
     # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
-    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1")) {
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1")) {
         Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
     }
 
@@ -478,6 +479,8 @@ function Invoke-Init {
     $gitignoreAdded = @()
     if ($gitignoreContent -notmatch "handoff\.md") { $gitignoreAdded += "handoff.md" }
     if ($gitignoreContent -notmatch "\.pmb-hook-errors\.log") { $gitignoreAdded += ".pmb-hook-errors.log" }
+    if ($gitignoreContent -notmatch "\.pmb-checksums") { $gitignoreAdded += ".pmb-checksums" }
+    if ($gitignoreContent -notmatch "\.pmb-delegation-depth") { $gitignoreAdded += ".pmb-delegation-depth" }
     if ($gitignoreAdded.Count -gt 0) {
         if (-not (Test-Path $gitignore)) {
             Set-Content -Path $gitignore -Value "# Memory Bank"
@@ -542,7 +545,7 @@ function Invoke-InstallHooks {
     if (-not (Test-Path $scriptsDir)) {
         if (-not $DryRun) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
     }
-    foreach ($scriptName in @("pre-push-check.ps1", "pre-push-check.sh")) {
+    foreach ($scriptName in @("pre-push-check.ps1", "pre-push-check.sh", "delegation-depth-check.ps1", "delegation-depth-check.sh")) {
         $src = Join-Path $TemplatesDir "scripts\$scriptName"
         $dst = Join-Path $scriptsDir $scriptName
         if (-not (Test-Path $src)) {
@@ -797,7 +800,7 @@ function Show-Doctor {
         if (Test-Path $p) {
             $lines = (Get-Content $p).Count
             if ($lines -gt $s.Max) {
-                Write-Host "[WARN] memory-bank/$($s.Name) is $lines lines (max $($s.Max)) — run 'mb slim'" -ForegroundColor Yellow
+                Write-Host "[WARN] memory-bank/$($s.Name) is $lines lines (max $($s.Max)) — run 'mb clean'" -ForegroundColor Yellow
                 $hasOverLimit = $true
             }
         }
@@ -1024,6 +1027,138 @@ function Show-Doctor {
         Write-Host "[OK]   No hook errors logged" -ForegroundColor Green
     }
 
+    # 17. Semantic drift signals — scan volatile files for transition/removal language
+    $driftPatterns = @(
+        '(?i)no longer\b', '(?i)migrat(?:ed|ing)\s+(?:from|away)', '(?i)replac(?:ed|ing)\s+\S+\s+(?:with|by)\b',
+        '(?i)deprecat(?:ed|ing)\b', '(?i)switch(?:ed|ing)\s+(?:from|away\s+from)\b',
+        '(?i)moving\s+away\s+from\b', '(?i)transitioning\s+(?:away\s+)?from\b', '(?i)dropp(?:ed|ing)\b'
+    )
+    $driftVolatileFiles = @('memory-bank/activeContext.md', 'memory-bank/progress.md')
+    $driftSignals = @()
+    foreach ($df in $driftVolatileFiles) {
+        if (-not (Test-Path $df)) { continue }
+        $lines = Get-Content $df
+        $inFm = $false; $fmCount = 0
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            if ($line -eq '---') { $fmCount++; $inFm = ($fmCount -eq 1); if ($fmCount -ge 2) { $inFm = $false }; continue }
+            if ($inFm -or $line -match '^#{1,6}' -or [string]::IsNullOrWhiteSpace($line)) { continue }
+            foreach ($pat in $driftPatterns) {
+                if ($line -match $pat) { $driftSignals += "$df`:$($i+1): $($line.Trim())"; break }
+            }
+        }
+    }
+    if ($driftSignals.Count -eq 0) {
+        Write-Host "[OK]   No semantic drift signals in volatile files" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Semantic drift signals — verify systemPatterns.md/projectbrief.md are consistent:" -ForegroundColor Yellow
+        foreach ($sig in $driftSignals | Select-Object -First 5) { Write-Host "       $sig" -ForegroundColor DarkGray }
+        if ($driftSignals.Count -gt 5) { Write-Host "       ... ($($driftSignals.Count - 5) more)" -ForegroundColor DarkGray }
+    }
+
+    # 18. Old stable-authority decisions — flag authority:stable files not reviewed in 180+ days
+    $oldStableFindings = @()
+    foreach ($f in @('memory-bank/systemPatterns.md', 'memory-bank/techContext.md', 'memory-bank/projectbrief.md')) {
+        if (-not (Test-Path $f)) { continue }
+        $content = Get-Content $f -Raw
+        $authority = if ($content -match '(?m)^authority:\s*(\S+)') { $Matches[1] } else { '' }
+        if ($authority -notin @('stable', 'immutable')) { continue }
+        $lastReviewed = if ($content -match '(?m)^last-reviewed:\s*(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { '' }
+        if (-not $lastReviewed -or $lastReviewed -eq 'YYYY-MM-DD') { continue }
+        try {
+            $days = ([datetime]::Today - [datetime]::ParseExact($lastReviewed, 'yyyy-MM-dd', $null)).Days
+            if ($days -gt 180) { $oldStableFindings += @{File=$f; Days=$days; Auth=$authority} }
+        } catch {}
+    }
+    if ($oldStableFindings.Count -eq 0) {
+        Write-Host "[OK]   All stable-authority decisions reviewed within 180 days" -ForegroundColor Green
+    } else {
+        foreach ($item in $oldStableFindings) {
+            Write-Host "[WARN] $($item.File) (authority:$($item.Auth)) not reviewed in $($item.Days) days — verify decisions still accurate" -ForegroundColor Yellow
+            Write-Host "       Update last-reviewed if correct, or revise decisions that have drifted." -ForegroundColor DarkGray
+        }
+    }
+
+    # 19. Cross-file contradiction — authority hierarchy violations + same-heading negation conflicts
+    $crossFileIssues = @()
+    $expectedAuth = @{
+        'memory-bank/projectbrief.md'  = 'immutable'
+        'memory-bank/systemPatterns.md'= 'stable'
+        'memory-bank/techContext.md'   = 'stable'
+        'memory-bank/activeContext.md' = 'volatile'
+        'memory-bank/progress.md'      = 'accumulating'
+    }
+    foreach ($f in $expectedAuth.Keys) {
+        if (-not (Test-Path $f)) { continue }
+        $content = Get-Content $f -Raw
+        $actual = if ($content -match '(?m)^authority:\s*(\S+)') { $Matches[1] } else { '' }
+        if ($actual -and $actual -ne $expectedAuth[$f]) {
+            $crossFileIssues += "authority conflict: $f declares authority:$actual (expected $($expectedAuth[$f]))"
+        }
+    }
+    # Collect ## headings+content from stable files; check for negation in volatile files under same heading
+    $stableHeadingSections = @{}
+    foreach ($sf in @('memory-bank/systemPatterns.md', 'memory-bank/techContext.md')) {
+        if (-not (Test-Path $sf)) { continue }
+        $lines = Get-Content $sf; $curr = ''
+        foreach ($line in $lines) {
+            if ($line -match '^##\s+(.+)') { $curr = $Matches[1].Trim() }
+            elseif ($curr) { $stableHeadingSections[$curr] = $true }
+        }
+    }
+    $negKwPattern = '(?i)(no longer|deprecated|replaced|removed|dropped|migrating away)'
+    foreach ($vf in @('memory-bank/activeContext.md', 'memory-bank/progress.md')) {
+        if (-not (Test-Path $vf)) { continue }
+        $lines = Get-Content $vf; $curr = ''
+        $fname = [System.IO.Path]::GetFileName($vf)
+        foreach ($line in $lines) {
+            if ($line -match '^##\s+(.+)') { $curr = $Matches[1].Trim() }
+            elseif ($curr -and $stableHeadingSections.ContainsKey($curr) -and $line -match $negKwPattern) {
+                $crossFileIssues += "heading '## $curr' in $fname`: '$($line.Trim())' — may contradict stable definition"
+            }
+        }
+    }
+    if ($crossFileIssues.Count -eq 0) {
+        Write-Host "[OK]   No cross-file authority violations or heading contradictions" -ForegroundColor Green
+    } else {
+        foreach ($iss in $crossFileIssues) { Write-Host "[WARN] $iss" -ForegroundColor Yellow }
+        Write-Host "       Review whether these represent intentional transitions or actual conflicts." -ForegroundColor DarkGray
+    }
+
+    # 20. Integrity checksums — verify memory-bank files match .pmb-checksums
+    $checksumFile = '.pmb-checksums'
+    $currentHashes = @{}
+    foreach ($f in @('projectbrief.md','systemPatterns.md','techContext.md','activeContext.md','progress.md')) {
+        $p = "memory-bank/$f"
+        if (Test-Path $p) { $currentHashes[$f] = (Get-FileHash $p -Algorithm SHA256).Hash }
+    }
+    if (Test-Path $checksumFile) {
+        $storedLines = Get-Content $checksumFile | Where-Object { $_ -notmatch '^#' -and $_ -match '=' }
+        $checksumIssues = @()
+        foreach ($storedLine in $storedLines) {
+            $parts = $storedLine -split '=', 2
+            if ($parts.Count -ne 2) { continue }
+            $fname = $parts[0].Trim(); $storedHash = $parts[1].Trim()
+            if ($currentHashes.ContainsKey($fname) -and $currentHashes[$fname] -ne $storedHash) {
+                $checksumIssues += "memory-bank/$fname (hash mismatch — modified outside mb tools)"
+            }
+        }
+        if ($checksumIssues.Count -eq 0) {
+            Write-Host "[OK]   Integrity checksums verified — no external modifications detected" -ForegroundColor Green
+        } else {
+            foreach ($iss in $checksumIssues) { Write-Host "[ERROR] $iss" -ForegroundColor Red }
+            Write-Host "       External edits are permitted — run 'mb doctor' again to refresh checksums after review." -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Host "[OK]   Integrity checksums — baseline established on this run" -ForegroundColor Green
+    }
+    # Always refresh checksums at end of doctor
+    try {
+        $csLines = @("# PMB Checksums — last verified by mb doctor $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+        foreach ($fname in $currentHashes.Keys | Sort-Object) { $csLines += "$fname=$($currentHashes[$fname])" }
+        Set-Content -Path $checksumFile -Value $csLines -ErrorAction Stop
+    } catch { Write-Host "[WARN] Could not write .pmb-checksums: $_" -ForegroundColor Yellow }
+
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
     Write-Host "  Startup Context"
@@ -1151,9 +1286,9 @@ function Show-Audit {
 
     if ($totalKB -gt 60 -and $staleCount -ge 2) {
         Write-Host ""
-        Write-Host "Compaction recommended: run 'mb compact' to get a cleanup prompt." -ForegroundColor Yellow
+        Write-Host "Compaction recommended: run 'mb clean' to get a cleanup prompt." -ForegroundColor Yellow
     } elseif ($staleCount -gt 0) {
-        Write-Host "Run 'mb archive' or evict stale entries per MEMORY-BANK.md criteria." -ForegroundColor Yellow
+        Write-Host "Run 'mb clean' to get a maintenance prompt, or evict stale entries per MEMORY-BANK.md." -ForegroundColor Yellow
     } else {
         Write-Host "All files current." -ForegroundColor Green
     }
@@ -1351,6 +1486,8 @@ function Invoke-Upgrade {
         "scripts/update-reviewed.ps1"
         "scripts/pre-push-check.sh"
         "scripts/pre-push-check.ps1"
+        "scripts/delegation-depth-check.sh"
+        "scripts/delegation-depth-check.ps1"
         # Slash commands — governance workflow commands from templates, not project-specific
         ".claude/commands/code-review.md"
         ".claude/commands/feature-dev.md"
@@ -1523,23 +1660,67 @@ function Invoke-Upgrade {
     Write-Host ""
 }
 
+function Invoke-VerifyIntegrity {
+    Write-Host ""
+    Write-Host "Integrity Verification" -ForegroundColor Cyan
+    Write-Host "======================" -ForegroundColor Cyan
+    Write-Host ""
+    $checksumFile = '.pmb-checksums'
+    $currentHashes = @{}
+    foreach ($f in @('projectbrief.md','systemPatterns.md','techContext.md','activeContext.md','progress.md')) {
+        $p = "memory-bank/$f"
+        if (Test-Path $p) { $currentHashes[$f] = (Get-FileHash $p -Algorithm SHA256).Hash }
+    }
+    if (Test-Path $checksumFile) {
+        $storedLines = Get-Content $checksumFile | Where-Object { $_ -notmatch '^#' -and $_ -match '=' }
+        $mismatches = @()
+        foreach ($storedLine in $storedLines) {
+            $parts = $storedLine -split '=', 2
+            if ($parts.Count -ne 2) { continue }
+            $fname = $parts[0].Trim(); $storedHash = $parts[1].Trim()
+            if ($currentHashes.ContainsKey($fname)) {
+                if ($currentHashes[$fname] -ne $storedHash) {
+                    Write-Host "[WARN] memory-bank/$fname — hash mismatch (modified outside mb tools)" -ForegroundColor Yellow
+                    $mismatches += $fname
+                } else {
+                    Write-Host "[OK]   memory-bank/$fname" -ForegroundColor Green
+                }
+            }
+        }
+        if ($mismatches.Count -gt 0) {
+            Write-Host ""
+            Write-Host "$($mismatches.Count) file(s) modified externally. Review changes; checksums refreshed." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[INFO] No baseline found — establishing checksums now." -ForegroundColor Cyan
+    }
+    try {
+        $csLines = @("# PMB Checksums — last verified by mb verify-integrity $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+        foreach ($fname in $currentHashes.Keys | Sort-Object) { $csLines += "$fname=$($currentHashes[$fname])" }
+        Set-Content -Path $checksumFile -Value $csLines -ErrorAction Stop
+        Write-Host "[OK]   Checksums refreshed." -ForegroundColor Green
+    } catch { Write-Host "[ERROR] Could not write .pmb-checksums: $_" -ForegroundColor Red }
+    Write-Host ""
+}
+
 # Run command
 switch ($Command) {
-    "init"          { Invoke-Init }
-    "doctor"        { Show-Doctor }
-    "status"        { Show-Status }
-    "query"         { Show-Query -Keyword $Arg }
-    "clean"         { Show-Clean }
-    "commit"        { Invoke-Commit }
-    "upgrade"       { Invoke-Upgrade }
-    "help"          { Show-Help }
-    # Deprecated — redirect to replacement commands
+    "init"             { Invoke-Init }
+    "doctor"           { Show-Doctor }
+    "status"           { Show-Status }
+    "query"            { Show-Query -Keyword $Arg }
+    "clean"            { Show-Clean }
+    "commit"           { Invoke-Commit }
+    "upgrade"          { Invoke-Upgrade }
+    "verify-integrity" { Invoke-VerifyIntegrity }
+    "help"             { Show-Help }
+    # Deprecated aliases — kept for backward compatibility, not shown in help
     "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow }
-    "validate"      { Write-Host "mb validate has been integrated into mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "audit"         { Write-Host "mb audit has been integrated into mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "budget"        { Write-Host "mb budget has been integrated into mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "compact"       { Write-Host "mb compact has been consolidated into mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "update"        { Write-Host "mb update has been consolidated into mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "archive"       { Write-Host "mb archive has been consolidated into mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "slim"          { Write-Host "mb slim has been consolidated into mb clean. Run: mb clean" -ForegroundColor Yellow }
+    "validate"      { Write-Host "mb validate is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
+    "audit"         { Write-Host "mb audit is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
+    "budget"        { Write-Host "mb budget is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
+    "compact"       { Write-Host "mb compact is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
+    "update"        { Write-Host "mb update is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
+    "archive"       { Write-Host "mb archive is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
+    "slim"          { Write-Host "mb slim is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
 }

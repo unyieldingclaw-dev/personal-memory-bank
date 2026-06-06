@@ -26,6 +26,11 @@ credentials.json
 # Session handoff notes — ephemeral, consumed by next conversation then deleted
 handoff.md
 
+# PMB runtime state files — local-only, not version-controlled
+.pmb-checksums
+.pmb-delegation-depth
+.pmb-hook-errors.log
+
 # Task contract files — session artifacts, never committed
 .claude/contracts/*.json
 

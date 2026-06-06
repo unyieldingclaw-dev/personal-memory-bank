@@ -36,4 +36,4 @@ lineage: []
 
 ## Distribution
 
-Run `scripts/init-memory-bank.ps1` (Windows) or `scripts/init-memory-bank.sh` (Mac/Linux).
+Run `mb init` (from any project directory) or `scripts/init-memory-bank.ps1`/`.sh` for bare-install.

@@ -1,8 +1,8 @@
 # Personal Memory Bank
 
-![Version](https://img.shields.io/badge/version-1.0.7-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.0.8-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
 
-Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (8 commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
+Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (9 commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
 
 ## The Problem It Solves
 
@@ -72,7 +72,7 @@ to confirm the memory bank is healthy before you start.
 
 ```
 mb status     Quick state check — initialized, memory, context, standards, tasks
-mb doctor     Full 16-point diagnostic — git, templates, hooks, file sizes, version, startup context ceiling, hook errors
+mb doctor     Full 20-point diagnostic — git, templates, hooks, file sizes, version, drift detection, checksums, context ceiling
 mb query TAG  Find all memory tagged with TAG (e.g. mb query auth)
 mb clean      Memory bank maintenance — slim check + guided cleanup prompt
 mb commit     Commit memory bank changes separately from feature code
@@ -110,7 +110,7 @@ Together: `/test-audit` tells you *what's missing*. `/code-review` tells you *wh
 | `/code-review` | 5-agent orchestrated review — security, performance, style, and test coverage |
 | `/security-review` | Scans current diff for 9 security patterns (secrets, injection, auth, crypto, etc.) |
 | `/feature-dev` | Runs the full 7-phase feature development workflow (brainstorm → spec → plan → implement → review → commit) |
-| `/health-check` | PMB-only: runs `mb doctor` + `mb validate` + `mb audit` and prints a labeled summary |
+| `/health-check` | PMB-only: runs `mb doctor` (20 checks) and prints a labeled summary |
 
 ## How It Works
 
@@ -162,9 +162,9 @@ Your AI is instructed to surface conflicts rather than silently reconcile them.
 
 Each memory bank file has frontmatter with `staleness-threshold` and `review-cycle`. The PostToolUse hook auto-updates `last-reviewed` whenever you edit a file.
 
-Run `mb audit` to see which files are stale. Run `mb compact` to get an AI prompt that deduplicates and summarizes memory across all files.
+Run `mb doctor` to see which files are stale (check 9 covers staleness). Run `mb clean` to get an AI prompt that deduplicates and summarizes memory across all files.
 
-`mb doctor` includes a staleness summary and a startup context size ceiling check (WARN >15 KB, ERROR >25 KB).
+`mb doctor` includes a staleness summary, startup context size ceiling (WARN >15 KB, ERROR >25 KB), semantic drift detection (check 17), and SHA-256 integrity checksums (check 20).
 
 </details>
 
@@ -283,7 +283,7 @@ Run `install.bat` again from the memory-bank repo directory.
 Check that `CLAUDE.md` is in your project root. For Cursor, verify `.cursor/rules/memory-bank.mdc` exists. Restart the IDE.
 
 **Memory bank is getting large**
-Run `mb doctor` to see which file is over its target. Run `mb compact` to get an AI prompt that rewrites and deduplicates memory.
+Run `mb doctor` to see which file is over its target. Run `mb clean` to get an AI prompt that rewrites and deduplicates memory.
 
 **Something looks corrupted**
 Run `mb doctor` for a full diagnostic.

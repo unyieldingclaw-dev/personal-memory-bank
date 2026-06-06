@@ -21,7 +21,7 @@ At the start of every conversation, and again after any context compaction, sile
 
 ## Context Compaction Recovery
 
-Claude Code auto-compacts at 40% (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` in settings.json). The `PreCompact` hook fires first — it warns if neither the memory bank nor a handoff has been captured this session, so there is time to act before context is lost. Compact manually or trigger a handoff before that point. A "context was compacted" summary may appear at the top of the conversation.
+Claude Code auto-compacts at 40% (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` in settings.json). The `PreCompact` hook fires first and **blocks** compaction unless: `activeContext.md` has ≥3 substantive content lines AND `progress.md` has an entry dated today. A `handoff.md` bypasses the gate. Compact manually or trigger a handoff before auto-compact fires. A "context was compacted" summary may appear at the top of the conversation.
 
 **If you observe a compaction summary:** Re-read ALL `memory-bank/` files immediately, summarize recovered context to the user, confirm where to resume if mid-task. **Do not continue from memory alone.**
 

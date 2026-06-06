@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-03
+last-reviewed: 2026-06-06
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -18,11 +18,17 @@ lineage: []
 
 ## Current Focus
 
-v1.0.6 shipped (2026-06-03). Guardrails batch (G1–G6) shipped (2026-06-06) — see progress.md. Repo is stable. Context size is at ~27 KB (above the 25 KB ceiling; CLAUDE.md is 10.3 KB). Next session should either slim CLAUDE.md or archive old progress.md entries.
+v1.0.8 shipped (2026-06-06). Command consolidation review + 5 new features implemented:
+- **mb doctor** now has 20 checks (added 15–16 to mb.sh parity, added 17–20 new checks)
+- **Check 17**: Semantic drift signals in volatile files
+- **Check 18**: Old stable-authority decisions (>180 days)
+- **Check 19**: Cross-file authority/heading contradictions
+- **Check 20 + `mb verify-integrity`**: SHA-256 integrity checksums for memory-bank files (`.pmb-checksums`)
+- **Compaction quality gate**: pre-compact-check now BLOCKS (exit 2) unless activeContext.md has ≥3 substantive lines AND progress.md has a today-dated entry
+- **Agent delegation depth**: `delegation-depth-check.ps1/.sh` + PreToolUse hook on Agent tool; WARN when depth >1
+- **AGENTIC-SAFETY.md**: new "Agent Delegation Depth Enforcement" section
 
-**Command consolidation shipped (remote, ~2026-06-03):** `mb doctor` now absorbs audit/validate/budget; `mb clean` added; `mb install-hooks` absorbed into `mb upgrade`. Deprecated aliases kept in ValidateSet. VERSION still at 1.0.6 — bump to 1.0.7 pending docs/CHANGELOG update.
-
-**Natural language triggers for mb commands:** Gap identified — no mb subcommands have natural-language triggers in CLAUDE.md. Fix still pending: add MB Commands Protocol to `templates/CLAUDE.md`, `CLAUDE.md`, and Cursor rules.
+**Context size**: still ~28 KB (above 25 KB ceiling). Need to archive old progress.md entries next session.
 
 ## What Was Just Completed (2026-06-03)
 

@@ -10,15 +10,15 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 
 | Command | What It Does | Output / Side Effect |
 |---------|--------------|----------------------|
-| `mb init` | Scaffold memory-bank/ in the current project | Creates 5 memory-bank files, `CLAUDE.md`, `.claude/settings.json`, hook scripts, slash commands, and 12 `standards/` files. Writes `.pmb-version`. Skips files that already exist. |
+| `mb init` | Scaffold memory-bank/ in the current project | Creates 5 memory-bank files, `CLAUDE.md`, `.claude/settings.json`, hook scripts, slash commands, and `standards/` files. Writes `.pmb-version`. Skips files that already exist. |
 | `mb status` | Quick state check | 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present. Green ✓ per signal; ⚠ items surface in an Attention section with remediation hint. |
-| `mb status` | Quick state check | 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present. |
-| `mb doctor` | Full 16-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. Absorbs `validate`, `audit`, and `budget` checks. |
+| `mb doctor` | Full 20-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. Absorbs `validate`, `audit`, and `budget` checks. Writes `.pmb-checksums` on each run. |
 | `mb query <TAG>` | Search memory-bank by tag or section header | Lists files with matching tags or `##` headings. Supports partial hierarchical match (`mb query auth` matches `auth/session`). |
 | `mb clean` | Memory bank maintenance | Slim check for `activeContext.md`; prints guided cleanup prompt (archive + compact + update). Absorbs `compact`, `update`, `archive`, `slim`. |
 | `mb commit` | Stage and commit memory-bank/ changes | Runs `git add memory-bank/` + `git commit`; checks for subworktree and refuses if detected. |
 | `mb upgrade` | Propagate latest governance templates | Overwrites template-owned files (hook scripts, slash commands, `.claude/settings.json`, Cursor rules); shows advisory diff for `CLAUDE.md`; creates missing `standards/` files; installs pre-push hook; writes `.pmb-version`; soft remote version check. Run `mb upgrade --dry-run` to preview. Absorbs `install-hooks`. |
-| `mb help` | Show command list | Prints all 8 primary commands with one-line descriptions and examples. |
+| `mb verify-integrity` | Check and refresh file checksums | Compares current SHA-256 hashes of memory-bank/ files against `.pmb-checksums`. Reports any external modifications as WARN. Always refreshes checksums. |
+| `mb help` | Show command list | Prints all primary commands with one-line descriptions and examples. |
 
 **Deprecated commands** (still work as redirects, not shown in `mb help`):
 
@@ -144,7 +144,7 @@ These are built into Claude Code and don't require the memory bank system.
 
 ## `mb doctor` Checks
 
-`mb doctor` runs 16 deterministic health checks and prints a startup context observability section.
+`mb doctor` runs 20 deterministic health checks and prints a startup context observability section. On every run it writes `.pmb-checksums` to establish or refresh the integrity baseline.
 
 | # | Check | Pass Condition | What to Do on Failure |
 |---|-------|---------------|----------------------|
@@ -154,10 +154,10 @@ These are built into Claude Code and don't require the memory bank system.
 | 3 | Required files | All 5 `memory-bank/` files + `CLAUDE.md` present | Run `mb init` |
 | 4 | Hooks | `PostToolUse` hook in `.claude/settings.json`; hook scripts exist on disk | Run `mb init` or copy from `templates/.claude/settings.json` |
 | 5 | CLAUDE.md drift | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` present in `CLAUDE.md` | Run `mb init` or copy Token Budget section from global `~/.claude/CLAUDE.md` |
-| 6 | File sizes | No `memory-bank/` file exceeds its Max line limit | Run `mb slim` or `mb archive` |
+| 6 | File sizes | No `memory-bank/` file exceeds its Max line limit | Run `mb clean` |
 | 7 | Handoff | No `handoff.md` in project root | Merge `handoff.md` into memory-bank and delete it |
-| 8 | Compaction integrity | No file at `compaction_generation` ≥ 2; all `lineage:` ancestors exist on disk | Run `mb compact` to regenerate from canonical sources |
-| 9 | Staleness summary | No `memory-bank/` files past their `staleness-threshold` | Run `mb audit` for details; update stale files |
+| 8 | Compaction integrity | No file at `compaction_generation` ≥ 2; all `lineage:` ancestors exist on disk | Run `mb clean` (compaction prompt) to regenerate from canonical sources |
+| 9 | Staleness summary | No `memory-bank/` files past their `staleness-threshold` | Update stale files; run `mb doctor` for full freshness audit |
 | 10 | Placeholder residue | No `TODO`/`TBD`/`FIXME`/`FILL IN`/`[your ...`/`lorem ipsum`/`YYYY-MM-DD` in memory-bank files | Fill in placeholder content left from `mb init` |
 | 11 | Required standards files | `standards/CODE-REVIEW.md`, `WORKFLOW.md`, `SECURITY-GUARDRAILS.md`, `CODE-QUALITY.md` all present | Run `mb upgrade` to install missing files |
 | 12 | PMB version tracking | `.pmb-version` exists and matches local PMB version | Run `mb upgrade` to write or sync `.pmb-version` |
@@ -165,6 +165,10 @@ These are built into Claude Code and don't require the memory bank system.
 | 14 | Standards count | `standards/` contains ≤ 20 `.md` files | Review standards for overlap; see `PERFORMANCE-BUDGET.md` |
 | 15 | Startup context ceiling | `CLAUDE.md` + `memory-bank/` total ≤ 25 KB (WARN >15 KB, ERROR >25 KB) | Slim `CLAUDE.md` or archive old `progress.md` entries |
 | 16 | Hook error log | `.pmb-hook-errors.log` absent or empty | Review log for root cause; delete file when resolved |
+| 17 | Semantic drift signals | No transition/removal language in volatile files (`activeContext.md`, `progress.md`) that may contradict stable files | Review flagged lines against `systemPatterns.md`/`projectbrief.md`; update stable files if decisions changed |
+| 18 | Old stable decisions | All `authority:stable` files reviewed within 180 days | Review decisions and update `last-reviewed` date, or revise if drifted |
+| 19 | Cross-file contradictions | No `authority:` mismatches from expected hierarchy; no negation language under shared `##` headings | Resolve authority conflicts; clarify intentional transitions vs. real contradictions |
+| 20 | Integrity checksums | All memory-bank file SHA-256 hashes match `.pmb-checksums` baseline | Review external edits; checksums refresh automatically on each `mb doctor` run |
 | — | Startup context | (observability, not a health check) — reports files loaded, estimated tokens, largest contributors, 30-day growth, stale-but-loaded count | Use to decide when files need trimming |
 
 ---

@@ -51,9 +51,10 @@ show_help() {
     echo "  doctor   Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
     echo "  query    Search memory-bank by tag or section header"
     echo "  clean    Memory bank maintenance: slim check + unified cleanup prompt"
-    echo "  commit   Stage and commit Memory Bank changes"
-    echo "  upgrade  Propagate current governance templates to this project"
-    echo "  help     Show this help message"
+    echo "  commit            Stage and commit Memory Bank changes"
+    echo "  upgrade           Propagate current governance templates to this project"
+    echo "  verify-integrity  Check and refresh memory-bank file integrity checksums"
+    echo "  help              Show this help message"
     echo ""
     echo "Examples:"
     echo "  mb doctor             Full diagnostic across all health areas"
@@ -414,7 +415,8 @@ invoke_init() {
     for script in dangerous-commands.sh dangerous-commands.ps1 \
                   check-contract.sh check-contract.ps1 \
                   update-reviewed.sh update-reviewed.ps1 \
-                  pre-push-check.sh pre-push-check.ps1; do
+                  pre-push-check.sh pre-push-check.ps1 \
+                  delegation-depth-check.sh delegation-depth-check.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
 
@@ -446,14 +448,18 @@ invoke_init() {
     fi
 
     # .gitignore
-    if [ -f "$TARGET/.gitignore" ]; then
-        if ! grep -q "handoff\.md" "$TARGET/.gitignore"; then
-            printf "\n# Memory Bank\nhandoff.md\n" >> "$TARGET/.gitignore"
-            CREATED+=(".gitignore (added handoff.md)")
-        fi
-    else
-        printf "# Memory Bank\nhandoff.md\n" > "$TARGET/.gitignore"
-        CREATED+=(".gitignore")
+    GITIGNORE="$TARGET/.gitignore"
+    GITIGNORE_CONTENT=$(cat "$GITIGNORE" 2>/dev/null || echo "")
+    GITIGNORE_ADDS=()
+    echo "$GITIGNORE_CONTENT" | grep -q "handoff\.md" || GITIGNORE_ADDS+=("handoff.md")
+    echo "$GITIGNORE_CONTENT" | grep -q "\.pmb-hook-errors\.log" || GITIGNORE_ADDS+=(".pmb-hook-errors.log")
+    echo "$GITIGNORE_CONTENT" | grep -q "\.pmb-checksums" || GITIGNORE_ADDS+=(".pmb-checksums")
+    echo "$GITIGNORE_CONTENT" | grep -q "\.pmb-delegation-depth" || GITIGNORE_ADDS+=(".pmb-delegation-depth")
+    if [ "${#GITIGNORE_ADDS[@]}" -gt 0 ]; then
+        if [ ! -f "$GITIGNORE" ]; then printf "# Memory Bank\n" > "$GITIGNORE"; fi
+        printf "\n# Memory Bank\n" >> "$GITIGNORE"
+        for entry in "${GITIGNORE_ADDS[@]}"; do printf "%s\n" "$entry" >> "$GITIGNORE"; done
+        CREATED+=(".gitignore (${GITIGNORE_ADDS[*]})")
     fi
 
     # Write .pmb-version — records which PMB version initialized this project
@@ -637,7 +643,7 @@ show_doctor() {
 
     # 6. File sizes
     OVER_LIMIT=false
-    check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb slim'${NC}" && OVER_LIMIT=true || true; }
+    check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb clean'${NC}" && OVER_LIMIT=true || true; }
     [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   150
     [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 300
     [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    400
@@ -828,6 +834,175 @@ show_doctor() {
         fi
     fi
 
+    # 15. Startup context size ceiling — WARN >15 KB, ERROR >25 KB
+    CEILING_BYTES=0
+    [ -f "CLAUDE.md" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "CLAUDE.md" 2>/dev/null || echo 0)))
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        [ -f "memory-bank/$f" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "memory-bank/$f" 2>/dev/null || echo 0)))
+    done
+    CEILING_KB=$(awk "BEGIN {printf \"%.1f\", $CEILING_BYTES / 1024}")
+    if [ "$CEILING_BYTES" -gt 25600 ]; then
+        echo -e "${RED}[ERROR] Startup context ${CEILING_KB} KB exceeds 25 KB limit — compact memory-bank/ immediately${NC}"
+    elif [ "$CEILING_BYTES" -gt 15360 ]; then
+        echo -e "${YELLOW}[WARN] Startup context ${CEILING_KB} KB exceeds 15 KB — consider slimming memory-bank/${NC}"
+    else
+        echo -e "${GREEN}[OK]   Startup context: ${CEILING_KB} KB (warn: 15 KB, fail: 25 KB)${NC}"
+    fi
+
+    # 16. Hook error log — check for recent hook failures
+    HOOK_ERROR_LOG=".pmb-hook-errors.log"
+    if [ -f "$HOOK_ERROR_LOG" ]; then
+        ERROR_COUNT=$(wc -l < "$HOOK_ERROR_LOG" 2>/dev/null | tr -d ' ' || echo 0)
+        if [ "$ERROR_COUNT" -gt 0 ]; then
+            NOUN="entries"; [ "$ERROR_COUNT" -eq 1 ] && NOUN="entry"
+            echo -e "${YELLOW}[WARN] Hook error log has $ERROR_COUNT $NOUN — hooks failed unexpectedly${NC}"
+            tail -3 "$HOOK_ERROR_LOG" 2>/dev/null | while IFS= read -r line; do echo "       $line"; done
+            echo "       File: $HOOK_ERROR_LOG (gitignored — delete when resolved)"
+        else
+            echo -e "${GREEN}[OK]   No hook errors logged${NC}"
+        fi
+    else
+        echo -e "${GREEN}[OK]   No hook errors logged${NC}"
+    fi
+
+    # 17. Semantic drift signals — scan volatile files for transition/removal language
+    DRIFT_SIGNALS=()
+    for df in memory-bank/activeContext.md memory-bank/progress.md; do
+        [ ! -f "$df" ] && continue
+        IN_FM=0; FM_COUNT=0; LINE_NO=0
+        while IFS= read -r line; do
+            LINE_NO=$((LINE_NO + 1))
+            if [ "$line" = "---" ]; then
+                FM_COUNT=$((FM_COUNT + 1))
+                [ "$FM_COUNT" -eq 1 ] && IN_FM=1 || IN_FM=0
+                continue
+            fi
+            [ "$IN_FM" -eq 1 ] && continue
+            case "$line" in \#*|'') continue ;; esac
+            if echo "$line" | grep -qiE '(no longer|migrat(ed|ing) (from|away)|replac(ed|ing) .{2,25} (with|by)|deprecat(ed|ing)|switch(ed|ing) (from|away from)|moving away from|transitioning (away )?from|dropp(ed|ing))'; then
+                DRIFT_SIGNALS+=("$df:$LINE_NO: $(echo "$line" | sed 's/^[[:space:]]*//' | head -c 120)")
+            fi
+        done < "$df"
+    done
+    if [ "${#DRIFT_SIGNALS[@]}" -eq 0 ]; then
+        echo -e "${GREEN}[OK]   No semantic drift signals in volatile files${NC}"
+    else
+        echo -e "${YELLOW}[WARN] Semantic drift signals — verify systemPatterns.md/projectbrief.md are consistent:${NC}"
+        count=0
+        for sig in "${DRIFT_SIGNALS[@]}"; do
+            [ "$count" -ge 5 ] && break
+            echo "       $sig"
+            count=$((count + 1))
+        done
+        remaining=$((${#DRIFT_SIGNALS[@]} - 5))
+        [ "$remaining" -gt 0 ] && echo "       ... ($remaining more)"
+    fi
+
+    # 18. Old stable-authority decisions — flag authority:stable files not reviewed in 180+ days
+    OLD_STABLE_FOUND=false
+    for f in memory-bank/systemPatterns.md memory-bank/techContext.md memory-bank/projectbrief.md; do
+        [ ! -f "$f" ] && continue
+        authority=$(grep -m1 '^authority:' "$f" 2>/dev/null | sed 's/authority:[[:space:]]*//' | tr -d ' \r')
+        case "$authority" in stable|immutable) ;; *) continue ;; esac
+        last_rev=$(grep -m1 '^last-reviewed:' "$f" 2>/dev/null | sed 's/last-reviewed:[[:space:]]*//' | tr -d ' \r')
+        [ -z "$last_rev" ] || [ "$last_rev" = "YYYY-MM-DD" ] && continue
+        rev_epoch=$(date -d "$last_rev" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$last_rev" +%s 2>/dev/null || echo 0)
+        [ "$rev_epoch" = "0" ] && continue
+        days=$(( ($(date +%s) - rev_epoch) / 86400 ))
+        if [ "$days" -gt 180 ]; then
+            echo -e "${YELLOW}[WARN] $f (authority:$authority) not reviewed in $days days — verify decisions still accurate${NC}"
+            echo "       Update last-reviewed if correct, or revise decisions that have drifted."
+            OLD_STABLE_FOUND=true
+        fi
+    done
+    [ "$OLD_STABLE_FOUND" = false ] && echo -e "${GREEN}[OK]   All stable-authority decisions reviewed within 180 days${NC}"
+
+    # 19. Cross-file contradiction — authority hierarchy violations + same-heading negation conflicts
+    CROSS_ISSUES=()
+    # 19a. Authority hierarchy violations
+    _check_auth() {
+        local f="$1" expected="$2"
+        [ ! -f "$f" ] && return
+        actual=$(grep -m1 '^authority:' "$f" 2>/dev/null | sed 's/authority:[[:space:]]*//' | tr -d ' \r')
+        [ -z "$actual" ] && return
+        [ "$actual" != "$expected" ] && CROSS_ISSUES+=("authority conflict: $f declares authority:$actual (expected $expected)")
+    }
+    _check_auth "memory-bank/projectbrief.md"   "immutable"
+    _check_auth "memory-bank/systemPatterns.md" "stable"
+    _check_auth "memory-bank/techContext.md"    "stable"
+    _check_auth "memory-bank/activeContext.md"  "volatile"
+    _check_auth "memory-bank/progress.md"       "accumulating"
+    # 19b. Same ## heading in stable file + negation in volatile file
+    for vf in memory-bank/activeContext.md memory-bank/progress.md; do
+        [ ! -f "$vf" ] && continue
+        vfname=$(basename "$vf")
+        curr_heading=""
+        while IFS= read -r line; do
+            case "$line" in
+                '## '*)
+                    curr_heading="${line#'## '}"
+                    ;;
+                *)
+                    if [ -n "$curr_heading" ] && echo "$line" | grep -qiE '(no longer|deprecated|replaced|removed|dropped|migrating away)'; then
+                        # Check if this heading exists in a stable file
+                        for sf in memory-bank/systemPatterns.md memory-bank/techContext.md; do
+                            [ ! -f "$sf" ] && continue
+                            if grep -q "^## $curr_heading" "$sf" 2>/dev/null; then
+                                short_line=$(echo "$line" | sed 's/^[[:space:]]*//' | head -c 100)
+                                CROSS_ISSUES+=("heading '## $curr_heading' in $vfname: '$short_line' — may contradict stable definition")
+                                break
+                            fi
+                        done
+                    fi
+                    ;;
+            esac
+        done < "$vf"
+    done
+    if [ "${#CROSS_ISSUES[@]}" -eq 0 ]; then
+        echo -e "${GREEN}[OK]   No cross-file authority violations or heading contradictions${NC}"
+    else
+        for iss in "${CROSS_ISSUES[@]}"; do
+            echo -e "${YELLOW}[WARN] $iss${NC}"
+        done
+        echo "       Review whether these represent intentional transitions or actual conflicts."
+    fi
+
+    # 20. Integrity checksums — verify memory-bank files match .pmb-checksums
+    CHECKSUM_FILE=".pmb-checksums"
+    CURRENT_HASHES=""
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        p="memory-bank/$f"
+        [ ! -f "$p" ] && continue
+        hash=$(sha256sum "$p" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$p" 2>/dev/null | awk '{print $1}' || echo "")
+        [ -n "$hash" ] && CURRENT_HASHES="$CURRENT_HASHES$f=$hash\n"
+    done
+    if [ -f "$CHECKSUM_FILE" ]; then
+        CHECKSUM_ISSUES=()
+        while IFS='=' read -r fname stored_hash; do
+            [[ "$fname" =~ ^# ]] && continue
+            [ -z "$fname" ] || [ -z "$stored_hash" ] && continue
+            current_hash=$(echo -e "$CURRENT_HASHES" | grep "^${fname}=" | cut -d'=' -f2-)
+            if [ -n "$current_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
+                CHECKSUM_ISSUES+=("memory-bank/$fname (hash mismatch — modified outside mb tools)")
+            fi
+        done < "$CHECKSUM_FILE"
+        if [ "${#CHECKSUM_ISSUES[@]}" -eq 0 ]; then
+            echo -e "${GREEN}[OK]   Integrity checksums verified — no external modifications detected${NC}"
+        else
+            for iss in "${CHECKSUM_ISSUES[@]}"; do
+                echo -e "${RED}[ERROR] $iss${NC}"
+            done
+            echo "       External edits are permitted — run 'mb doctor' again to refresh checksums after review."
+        fi
+    else
+        echo -e "${GREEN}[OK]   Integrity checksums — baseline established on this run${NC}"
+    fi
+    # Always refresh checksums at end of doctor
+    {
+        echo "# PMB Checksums — last verified by mb doctor $(date '+%Y-%m-%d %H:%M:%S')"
+        echo -e "$CURRENT_HASHES" | grep -v '^$'
+    } > "$CHECKSUM_FILE" 2>/dev/null || true
+
     # Startup context — observability section (not a numbered health check)
     echo ""
     echo "  Startup Context"
@@ -1002,9 +1177,9 @@ show_audit() {
     fi
 
     if [ "$TOTAL_KB" -gt 60 ] && [ "$STALE_COUNT" -ge 2 ]; then
-        echo -e "${YELLOW}Compaction recommended: run 'mb compact' to get a cleanup prompt.${NC}"
+        echo -e "${YELLOW}Compaction recommended: run 'mb clean' to get a cleanup prompt.${NC}"
     elif [ "$STALE_COUNT" -gt 0 ]; then
-        echo -e "${YELLOW}Run 'mb archive' or evict stale entries per MEMORY-BANK.md criteria.${NC}"
+        echo -e "${YELLOW}Run 'mb clean' to get a maintenance prompt, or evict stale entries per MEMORY-BANK.md.${NC}"
     else
         echo -e "${GREEN}All files current.${NC}"
     fi
@@ -1178,6 +1353,8 @@ invoke_upgrade() {
         "scripts/check-contract.ps1"
         "scripts/update-reviewed.sh"
         "scripts/update-reviewed.ps1"
+        "scripts/delegation-depth-check.sh"
+        "scripts/delegation-depth-check.ps1"
         # Slash commands — governance workflow commands from templates, not project-specific
         ".claude/commands/code-review.md"
         ".claude/commands/feature-dev.md"
@@ -1333,24 +1510,65 @@ invoke_upgrade() {
     echo ""
 }
 
+invoke_verify_integrity() {
+    echo ""
+    echo -e "${CYAN}Integrity Verification${NC}"
+    echo -e "${CYAN}======================${NC}"
+    echo ""
+    CHECKSUM_FILE=".pmb-checksums"
+    CURRENT_HASHES=""
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        p="memory-bank/$f"
+        [ ! -f "$p" ] && continue
+        hash=$(sha256sum "$p" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$p" 2>/dev/null | awk '{print $1}' || echo "")
+        [ -n "$hash" ] && CURRENT_HASHES="$CURRENT_HASHES$f=$hash\n"
+    done
+    if [ -f "$CHECKSUM_FILE" ]; then
+        MISMATCHES=()
+        while IFS='=' read -r fname stored_hash; do
+            [[ "$fname" =~ ^# ]] && continue
+            [ -z "$fname" ] || [ -z "$stored_hash" ] && continue
+            current_hash=$(echo -e "$CURRENT_HASHES" | grep "^${fname}=" | cut -d'=' -f2-)
+            if [ -n "$current_hash" ] && [ "$current_hash" != "$stored_hash" ]; then
+                echo -e "${YELLOW}[WARN] memory-bank/$fname — hash mismatch (modified outside mb tools)${NC}"
+                MISMATCHES+=("$fname")
+            else
+                echo -e "${GREEN}[OK]   memory-bank/$fname${NC}"
+            fi
+        done < "$CHECKSUM_FILE"
+        if [ "${#MISMATCHES[@]}" -gt 0 ]; then
+            echo ""
+            echo -e "${YELLOW}${#MISMATCHES[@]} file(s) modified externally. Review changes; checksums refreshed.${NC}"
+        fi
+    else
+        echo -e "${CYAN}[INFO] No baseline found — establishing checksums now.${NC}"
+    fi
+    {
+        echo "# PMB Checksums — last verified by mb verify-integrity $(date '+%Y-%m-%d %H:%M:%S')"
+        echo -e "$CURRENT_HASHES" | grep -v '^$'
+    } > "$CHECKSUM_FILE" 2>/dev/null && echo -e "${GREEN}[OK]   Checksums refreshed.${NC}" || echo -e "${RED}[ERROR] Could not write .pmb-checksums${NC}"
+    echo ""
+}
+
 case "$COMMAND" in
-    init)     invoke_init ;;
-    doctor)   show_doctor ;;
-    status)   show_status ;;
-    query)    show_query "$ARG" ;;
-    clean)    show_clean ;;
-    commit)   invoke_commit ;;
-    upgrade)  invoke_upgrade ;;
-    help)     show_help ;;
-    # Deprecated — redirect to replacement commands
+    init)              invoke_init ;;
+    doctor)            show_doctor ;;
+    status)            show_status ;;
+    query)             show_query "$ARG" ;;
+    clean)             show_clean ;;
+    commit)            invoke_commit ;;
+    upgrade)           invoke_upgrade ;;
+    verify-integrity)  invoke_verify_integrity ;;
+    help)              show_help ;;
+    # Deprecated aliases — kept for backward compatibility, not shown in help
     install-hooks) echo -e "${YELLOW}mb install-hooks is now part of mb upgrade. Run: mb upgrade${NC}" ;;
-    validate)      echo -e "${YELLOW}mb validate has been integrated into mb doctor. Run: mb doctor${NC}" ;;
-    audit)         echo -e "${YELLOW}mb audit has been integrated into mb doctor. Run: mb doctor${NC}" ;;
-    budget)        echo -e "${YELLOW}mb budget has been integrated into mb doctor. Run: mb doctor${NC}" ;;
-    compact)       echo -e "${YELLOW}mb compact has been consolidated into mb clean. Run: mb clean${NC}" ;;
-    update)        echo -e "${YELLOW}mb update has been consolidated into mb clean. Run: mb clean${NC}" ;;
-    archive)       echo -e "${YELLOW}mb archive has been consolidated into mb clean. Run: mb clean${NC}" ;;
-    slim)          echo -e "${YELLOW}mb slim has been consolidated into mb clean. Run: mb clean${NC}" ;;
+    validate)      echo -e "${YELLOW}mb validate is now part of mb doctor. Run: mb doctor${NC}" ;;
+    audit)         echo -e "${YELLOW}mb audit is now part of mb doctor. Run: mb doctor${NC}" ;;
+    budget)        echo -e "${YELLOW}mb budget is now part of mb doctor. Run: mb doctor${NC}" ;;
+    compact)       echo -e "${YELLOW}mb compact is now part of mb clean. Run: mb clean${NC}" ;;
+    update)        echo -e "${YELLOW}mb update is now part of mb clean. Run: mb clean${NC}" ;;
+    archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}" ;;
+    slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}" ;;
     *)
         echo -e "${RED}Unknown command: $COMMAND${NC}"
         show_help

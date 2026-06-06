@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.8 — 2026-06-06
+
+### Added
+- **Command consolidation finalized** — `mb verify-integrity` added as an explicit command; all 8 deprecated aliases updated to clearer redirect messages; `mb clean` output references corrected from `mb slim`/`mb archive`/`mb compact`
+- **`mb doctor` Check 17 — Semantic drift detection** — scans `activeContext.md` and `progress.md` for transition/removal language (`deprecated`, `migrated from`, `replaced by`, `no longer`, `switching from`, etc.) and surfaces matching lines for human review against stable files; heuristic, low-noise (skips frontmatter, headings, blank lines)
+- **`mb doctor` Check 18 — Old stable decisions** — flags `authority:stable` or `authority:immutable` files whose `last-reviewed` date is >180 days ago; prompts review to confirm decisions are still accurate
+- **`mb doctor` Check 19 — Cross-file contradiction detection** — verifies authority hierarchy is consistent with PMB conventions (`projectbrief.md=immutable`, `systemPatterns.md/techContext.md=stable`, `activeContext.md=volatile`, `progress.md=accumulating`); also checks for negation language under shared `##` headings across stable vs. volatile files
+- **`mb doctor` Check 20 + `mb verify-integrity` — Integrity checksums** — computes SHA-256 of all 5 memory-bank files; stores in `.pmb-checksums` (gitignored); on next run, compares against baseline and reports [ERROR] for any file modified outside mb tooling; `mb verify-integrity` runs this check standalone
+- **Compaction quality gate** — `pre-compact-check.ps1`/`.sh` now BLOCK compaction (exit 2) unless: (1) `activeContext.md` has ≥3 substantive content lines and (2) `progress.md` has an entry dated today; `handoff.md` bypasses the gate; errors remain fails-open (exit 0)
+- **Agent delegation depth enforcement** — new `scripts/delegation-depth-check.ps1`/`.sh`; wired as `PreToolUse` hook on the `Agent` tool in `.claude/settings.json`; emits WARN when delegation depth exceeds budget (≤1 per `PERFORMANCE-BUDGET.md`); state stored in `.pmb-delegation-depth` (gitignored), resets after 2h inactivity
+- **`mb doctor` checks 15–16 added to `mb.sh`** — previously only in PowerShell; bash script now has parity on startup context ceiling and hook error log checks
+- **`.gitignore` entries** — `.pmb-checksums`, `.pmb-delegation-depth`, and `.pmb-hook-errors.log` added to project root `.gitignore`; `mb init` now adds all three to new project `.gitignore`
+- **`standards/AGENTIC-SAFETY.md`** — new "Agent Delegation Depth Enforcement" section documenting the hook behavior, threat model, budget limit, and how to disable
+
+### Changed
+- `mb init` allowlist expanded: `delegation-depth-check.ps1`/`.sh` added to exported hook scripts
+- `mb upgrade` `TEMPLATE_OWNED` expanded: `delegation-depth-check.ps1`/`.sh` now overwritten on upgrade
+- `docs/COMMANDS-REFERENCE.md` — updated to 20-check doctor table; `mb verify-integrity` added to command table
+- All deprecated alias redirect messages changed from past-tense to present-tense ("has been integrated" → "is now part of")
+
+---
+
 ## 1.0.7 — 2026-06-06
 
 ### Added

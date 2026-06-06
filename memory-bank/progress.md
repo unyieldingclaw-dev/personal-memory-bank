@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-06-03
+last-reviewed: 2026-06-06
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -85,6 +85,21 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ Remote version check in mb upgrade: soft non-blocking curl/Invoke-WebRequest; skips offline (2026-05-29)
 - ✅ mb doctor checks 11 (required standards) and 12 (.pmb-version) in bash + PowerShell (2026-05-29)
 - ✅ v1.0.3: VERSION, CHANGELOG, README, COMMANDS-REFERENCE all updated (2026-05-29)
+
+### Command Consolidation + Semantic Intelligence — v1.0.8 (2026-06-06)
+- ✅ **Command surface finalized** — 8 active commands (init, status, doctor, query, clean, commit, upgrade, verify-integrity); deprecated aliases clarified; `mb clean` references fixed throughout
+- ✅ **mb.sh parity** — checks 15 (startup context ceiling) and 16 (hook error log) added to mb.sh (were PowerShell-only)
+- ✅ **Check 17 — Semantic drift detection** — heuristic scan of volatile files for transition/removal keywords; flags lines for human review against stable files
+- ✅ **Check 18 — Old stable decisions** — flags authority:stable files not reviewed in >180 days
+- ✅ **Check 19 — Cross-file contradiction** — detects authority hierarchy violations and negation language under shared `##` headings
+- ✅ **Check 20 + mb verify-integrity** — SHA-256 checksums for all 5 memory-bank files; stored in `.pmb-checksums` (gitignored); reports external modifications as ERROR; refreshed on every mb doctor run
+- ✅ **Compaction quality gate** — pre-compact-check.ps1/.sh now exits 2 (blocks) unless: activeContext.md has ≥3 substantive lines AND progress.md has today's date; handoff.md bypasses
+- ✅ **Agent delegation depth** — delegation-depth-check.ps1/.sh; PreToolUse hook on Agent tool in settings.json; WARN when depth >1; session temp file `.pmb-delegation-depth` (gitignored, resets 2h)
+- ✅ **standards/AGENTIC-SAFETY.md** — "Agent Delegation Depth Enforcement" section added
+- ✅ **Templating** — pre-compact-check, delegation-depth-check scripts mirrored to templates/scripts/; settings.json and AGENTIC-SAFETY.md mirrored to templates/
+- ✅ **mb init/upgrade** — delegation-depth-check scripts added to init allowlist and upgrade TEMPLATE_OWNED
+- ✅ **docs/COMMANDS-REFERENCE.md** — updated to 20-check table; verify-integrity command added
+- ✅ **CHANGELOG.md + VERSION** — bumped to v1.0.8
 
 ### Guardrails Batch — G1–G6 (2026-06-06)
 - ✅ **G1** — dangerous-commands hook extended to PowerShell tool; 8 PS-native BLOCK patterns added (Remove-Item -Recurse -Force, Format-Volume, pipe-to-iex/Invoke-Expression); both settings.json files updated
