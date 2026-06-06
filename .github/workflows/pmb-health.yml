@@ -116,6 +116,80 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+  rules-file-integrity:
+    name: Rules-File Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Invisible Unicode characters
+        shell: bash
+        run: |
+          # Scan CLAUDE.md and standards/ for invisible Unicode chars that could
+          # smuggle hidden instructions: zero-width space (U+200B), zero-width
+          # non-joiner/joiner (U+200C/D), BOM (U+FEFF), RTL override (U+202E),
+          # soft hyphen (U+00AD), directional isolates (U+2066-2069).
+          FAIL=0
+          FILES=$(find standards CLAUDE.md templates/CLAUDE.md -name "*.md" -o -name "CLAUDE.md" 2>/dev/null | sort -u)
+          while IFS= read -r file; do
+            [ -f "$file" ] || continue
+            # grep -P matches literal bytes for the Unicode code points
+            if LC_ALL=C grep -Pn '[\x{200B}\x{200C}\x{200D}\x{FEFF}\x{202E}\x{00AD}\x{2066}-\x{2069}]' "$file" 2>/dev/null; then
+              echo "FAIL: $file — invisible Unicode character(s) found above"
+              FAIL=1
+            fi
+          done <<< "$FILES"
+          [ "$FAIL" -eq 0 ] && echo "OK: No invisible Unicode characters found"
+          exit $FAIL
+
+      - name: Hidden HTML comments in Markdown
+        shell: bash
+        run: |
+          # HTML comments (<!-- -->) render invisibly in Markdown but are visible
+          # to LLMs, making them a smuggling vector for hidden instructions.
+          FAIL=0
+          FILES=$(find standards CLAUDE.md templates/CLAUDE.md -name "*.md" -o -name "CLAUDE.md" 2>/dev/null | sort -u)
+          while IFS= read -r file; do
+            [ -f "$file" ] || continue
+            if grep -Pn '<!--' "$file"; then
+              echo "FAIL: $file — HTML comment found above (hidden from rendered view, visible to LLMs)"
+              FAIL=1
+            fi
+          done <<< "$FILES"
+          [ "$FAIL" -eq 0 ] && echo "OK: No hidden HTML comments found"
+          exit $FAIL
+
+      - name: LLM bypass phrases
+        shell: bash
+        run: |
+          # Scan CLAUDE.md and templates/CLAUDE.md for known prompt-injection bypass
+          # phrases. Security docs (RULES-FILE-INTEGRITY.md, AGENTIC-SAFETY.md,
+          # SECURITY-GUARDRAILS.md) are excluded — they legitimately document these
+          # patterns as examples.
+          FAIL=0
+          BYPASS_PATTERNS=(
+            'ignore (all )?(previous|above) instructions'
+            'ignore (all )?instructions'
+            'disregard (your )?(previous )?instructions'
+            'forget (your )?(previous )?instructions'
+            'new (system )?instructions?:'
+            'you are now a'
+            'from now on (you are|act as)'
+            'system prompt override'
+            'jailbreak'
+          )
+          for file in CLAUDE.md templates/CLAUDE.md; do
+            [ -f "$file" ] || continue
+            for pattern in "${BYPASS_PATTERNS[@]}"; do
+              if grep -Pin "$pattern" "$file"; then
+                echo "FAIL: $file — bypass phrase matched: $pattern"
+                FAIL=1
+              fi
+            done
+          done
+          [ "$FAIL" -eq 0 ] && echo "OK: No bypass phrases found in CLAUDE.md files"
+          exit $FAIL
+
   template-integrity:
     name: Template Integrity
     runs-on: ubuntu-latest
