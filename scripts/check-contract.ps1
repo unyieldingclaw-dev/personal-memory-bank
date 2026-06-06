@@ -6,6 +6,14 @@ param()
 
 $ContractFile = ".claude/contracts/active-task.json"
 
+# WHY: Outer try/catch logs unexpected errors to .pmb-hook-errors.log so mb doctor
+# can surface them. The inner logic below uses narrow catches for expected failure
+# modes; this wrapper catches anything that slips through.
+trap {
+    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] check-contract.ps1: $_" -ErrorAction SilentlyContinue } catch {}
+    exit 0
+}
+
 # --- Contract existence check ---
 if (-not (Test-Path $ContractFile)) {
     exit 0

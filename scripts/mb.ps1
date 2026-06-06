@@ -474,14 +474,16 @@ function Invoke-Init {
 
     # .gitignore
     $gitignore = Join-Path $Target ".gitignore"
-    if (Test-Path $gitignore) {
-        if ((Get-Content $gitignore -Raw) -notmatch "handoff\.md") {
-            Add-Content -Path $gitignore -Value "`n# Memory Bank`nhandoff.md"
-            $Created += ".gitignore (added handoff.md)"
+    $gitignoreContent = if (Test-Path $gitignore) { Get-Content $gitignore -Raw } else { "" }
+    $gitignoreAdded = @()
+    if ($gitignoreContent -notmatch "handoff\.md") { $gitignoreAdded += "handoff.md" }
+    if ($gitignoreContent -notmatch "\.pmb-hook-errors\.log") { $gitignoreAdded += ".pmb-hook-errors.log" }
+    if ($gitignoreAdded.Count -gt 0) {
+        if (-not (Test-Path $gitignore)) {
+            Set-Content -Path $gitignore -Value "# Memory Bank"
         }
-    } else {
-        Set-Content -Path $gitignore -Value "# Memory Bank`nhandoff.md"
-        $Created += ".gitignore"
+        Add-Content -Path $gitignore -Value "`n# Memory Bank`n$($gitignoreAdded -join "`n")"
+        $Created += ".gitignore ($($gitignoreAdded -join ', '))"
     }
 
     # Write .pmb-version — records which PMB version initialized this project
@@ -1002,6 +1004,24 @@ function Show-Doctor {
         Write-Host "[WARN] Startup context ${ceilingKB} KB exceeds 15 KB — consider slimming memory-bank/" -ForegroundColor Yellow
     } else {
         Write-Host "[OK]   Startup context: ${ceilingKB} KB (warn: 15 KB, fail: 25 KB)" -ForegroundColor Green
+    }
+
+    # 16. Hook error log — check for recent hook failures
+    $hookErrorLog = ".pmb-hook-errors.log"
+    if (Test-Path $hookErrorLog) {
+        $errorLines = Get-Content $hookErrorLog -ErrorAction SilentlyContinue
+        $errorCount = if ($errorLines) { @($errorLines).Count } else { 0 }
+        if ($errorCount -gt 0) {
+            $noun = if ($errorCount -eq 1) { "entry" } else { "entries" }
+            Write-Host "[WARN] Hook error log has $errorCount $noun — hooks failed unexpectedly" -ForegroundColor Yellow
+            $recent = @($errorLines) | Select-Object -Last 3
+            foreach ($line in $recent) { Write-Host "       $line" -ForegroundColor DarkGray }
+            Write-Host "       File: $hookErrorLog (gitignored — delete when resolved)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "[OK]   No hook errors logged" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "[OK]   No hook errors logged" -ForegroundColor Green
     }
 
     # Startup context — observability section (not a numbered health check)

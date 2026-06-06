@@ -33,5 +33,6 @@ try {
     exit 0
 } catch {
     Write-Host "[HOOK ERROR] pre-compact-check.ps1 failed unexpectedly. Proceeding in fails-open mode."
+    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] pre-compact-check.ps1: $_" -ErrorAction SilentlyContinue } catch {}
     exit 0
 }
