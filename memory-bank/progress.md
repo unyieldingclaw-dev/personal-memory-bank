@@ -86,6 +86,15 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ mb doctor checks 11 (required standards) and 12 (.pmb-version) in bash + PowerShell (2026-05-29)
 - ✅ v1.0.3: VERSION, CHANGELOG, README, COMMANDS-REFERENCE all updated (2026-05-29)
 
+### Guardrails Batch — G1–G6 (2026-06-06)
+- ✅ **G1** — dangerous-commands hook extended to PowerShell tool; 8 PS-native BLOCK patterns added (Remove-Item -Recurse -Force, Format-Volume, pipe-to-iex/Invoke-Expression); both settings.json files updated
+- ✅ **G2** — hook failure alerting: all 4 hook scripts (dangerous-commands, check-contract, pre-compact-check, update-reviewed) log errors to `.pmb-hook-errors.log`; mb doctor Check 16 reports log presence; mb init now adds `.pmb-hook-errors.log` to .gitignore
+- ✅ **G3** — `PMB_CONTRACT_HARD_BLOCK=1` env var promotes contract scope warnings to blocks (exit 2); documented in `standards/SECURITY-GUARDRAILS.md`; both .ps1 and .sh scripts updated
+- ✅ **G4** — pre-push secret scan fixed for first push: when no upstream tracking ref, `git log --not --remotes -p` scans all commits not on any remote; Check 6 (large files) fixed in parallel; all 4 pre-push-check files updated
+- ✅ **G5** — `rules-file-integrity` CI job added to pmb-health.yml: invisible Unicode, HTML comments, LLM bypass phrases in CLAUDE.md/standards/
+- ✅ **G6** — `sast` CI job added to pmb-health.yml: Semgrep `p/bash` ruleset scanning scripts/ and templates/scripts/
+- ✅ **Housekeeping** — merged two handoff.md files; added `.pmb-version`; mb doctor Check 15 (startup context size ceiling: WARN >15 KB, ERROR >25 KB)
+
 ### Code Review Standard — v1.0.6 (2026-06-03)
 - ✅ `Confidence: High|Medium|Low` replaced by `Basis: VERIFIED|INFERRED|SPECULATIVE` in `standards/CODE-REVIEW.md`, `templates/standards/CODE-REVIEW.md`, both `code-review.md` command files
 - ✅ Evidence requirements explicit per-basis: file:line required; SPECULATIVE must cite observed trigger + explicit uncertainty statement

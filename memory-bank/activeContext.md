@@ -18,7 +18,7 @@ lineage: []
 
 ## Current Focus
 
-v1.0.6 shipped (2026-06-03). Guardrails batch (G1–G6) shipped (2026-06-06): PowerShell tool hook, hook failure alerting, contract hard-block mode, first-push secret scan fix, rules-file integrity CI, and SAST CI. Repo is stable.
+v1.0.6 shipped (2026-06-03). Guardrails batch (G1–G6) shipped (2026-06-06) — see progress.md. Repo is stable. Context size is at ~27 KB (above the 25 KB ceiling; CLAUDE.md is 10.3 KB). Next session should either slim CLAUDE.md or archive old progress.md entries.
 
 **Command consolidation shipped (remote, ~2026-06-03):** `mb doctor` now absorbs audit/validate/budget; `mb clean` added; `mb install-hooks` absorbed into `mb upgrade`. Deprecated aliases kept in ValidateSet. VERSION still at 1.0.6 — bump to 1.0.7 pending docs/CHANGELOG update.
 
