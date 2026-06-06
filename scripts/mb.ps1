@@ -987,17 +987,28 @@ function Show-Doctor {
         }
     }
 
+    # 15. Startup context size ceiling — WARN >15 KB, ERROR >25 KB
+    $ceilingFiles = @()
+    if (Test-Path "CLAUDE.md") { $ceilingFiles += "CLAUDE.md" }
+    foreach ($f in @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")) {
+        $p = "memory-bank/$f"
+        if (Test-Path $p) { $ceilingFiles += $p }
+    }
+    $ceilingBytes = ($ceilingFiles | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum
+    $ceilingKB = [math]::Round($ceilingBytes / 1KB, 1)
+    if ($ceilingBytes -gt 25600) {
+        Write-Host "[ERROR] Startup context ${ceilingKB} KB exceeds 25 KB limit — compact memory-bank/ immediately" -ForegroundColor Red
+    } elseif ($ceilingBytes -gt 15360) {
+        Write-Host "[WARN] Startup context ${ceilingKB} KB exceeds 15 KB — consider slimming memory-bank/" -ForegroundColor Yellow
+    } else {
+        Write-Host "[OK]   Startup context: ${ceilingKB} KB (warn: 15 KB, fail: 25 KB)" -ForegroundColor Green
+    }
+
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
     Write-Host "  Startup Context"
-    $startupFiles = @()
-    if (Test-Path "CLAUDE.md") { $startupFiles += "CLAUDE.md" }
-    foreach ($f in @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")) {
-        $p = "memory-bank/$f"
-        if (Test-Path $p) { $startupFiles += $p }
-    }
-    $totalBytes = 0
-    foreach ($f in $startupFiles) { $totalBytes += (Get-Item $f).Length }
+    $startupFiles = $ceilingFiles
+    $totalBytes = $ceilingBytes
     $totalTokens = [int]($totalBytes / 4)
     Write-Host "  Files loaded:      $($startupFiles.Count)"
     Write-Host "  Estimated tokens:  ~$totalTokens"

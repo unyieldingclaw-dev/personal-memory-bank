@@ -18,7 +18,18 @@ lineage: []
 
 ## Current Focus
 
-v1.0.6 shipped (2026-06-03). Code review standard strengthened: `Confidence` replaced by `Basis` (VERIFIED/INFERRED/SPECULATIVE), evidence requirements made explicit per-basis, blocking semantics tightened, report split into Supported Findings + Predicted Risks. Repo is stable. Next decision point is still observation-driven: wait for 30-day startup context growth data (~June 4) before making classification or loader decisions.
+v1.0.6 shipped (2026-06-03). Guardrails batch (G1–G6) shipped (2026-06-06): PowerShell tool hook, hook failure alerting, contract hard-block mode, first-push secret scan fix, rules-file integrity CI, and SAST CI. Repo is stable.
+
+Two pending workstreams from the 2026-06-03 session — not yet designed or implemented:
+
+**Command consolidation (15 → 8 commands):**
+Final command set: `mb init`, `mb status`, `mb doctor`, `mb query`, `mb clean`, `mb commit`, `mb upgrade`, `mb help`
+Absorptions: `mb audit` + `mb validate` + `mb budget` → `mb doctor`; `mb compact` + `mb update` + `mb archive` + `mb slim` → `mb clean`; `mb install-hooks` → `mb upgrade`
+Key decision: Option B for `mb upgrade` (run directly, report results, no dry-run preview)
+
+**Natural language triggers for mb commands:**
+Root cause identified: zero mb subcommands have natural-language triggers in CLAUDE.md.
+Fix: add MB Commands Protocol section to `templates/CLAUDE.md`, `CLAUDE.md`, and Cursor rules. Same pattern as Handoff Protocol. Plan file: `C:\Users\Mizzo\.claude\plans\based-on-the-polished-piglet.md`
 
 ## What Was Just Completed (2026-06-03)
 
