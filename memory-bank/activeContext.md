@@ -20,16 +20,9 @@ lineage: []
 
 v1.0.6 shipped (2026-06-03). Guardrails batch (G1–G6) shipped (2026-06-06): PowerShell tool hook, hook failure alerting, contract hard-block mode, first-push secret scan fix, rules-file integrity CI, and SAST CI. Repo is stable.
 
-Two pending workstreams from the 2026-06-03 session — not yet designed or implemented:
+**Command consolidation shipped (remote, ~2026-06-03):** `mb doctor` now absorbs audit/validate/budget; `mb clean` added; `mb install-hooks` absorbed into `mb upgrade`. Deprecated aliases kept in ValidateSet. VERSION still at 1.0.6 — bump to 1.0.7 pending docs/CHANGELOG update.
 
-**Command consolidation (15 → 8 commands):**
-Final command set: `mb init`, `mb status`, `mb doctor`, `mb query`, `mb clean`, `mb commit`, `mb upgrade`, `mb help`
-Absorptions: `mb audit` + `mb validate` + `mb budget` → `mb doctor`; `mb compact` + `mb update` + `mb archive` + `mb slim` → `mb clean`; `mb install-hooks` → `mb upgrade`
-Key decision: Option B for `mb upgrade` (run directly, report results, no dry-run preview)
-
-**Natural language triggers for mb commands:**
-Root cause identified: zero mb subcommands have natural-language triggers in CLAUDE.md.
-Fix: add MB Commands Protocol section to `templates/CLAUDE.md`, `CLAUDE.md`, and Cursor rules. Same pattern as Handoff Protocol. Plan file: `C:\Users\Mizzo\.claude\plans\based-on-the-polished-piglet.md`
+**Natural language triggers for mb commands:** Gap identified — no mb subcommands have natural-language triggers in CLAUDE.md. Fix still pending: add MB Commands Protocol to `templates/CLAUDE.md`, `CLAUDE.md`, and Cursor rules.
 
 ## What Was Just Completed (2026-06-03)
 
