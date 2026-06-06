@@ -116,6 +116,12 @@ if [ "$IN_SCOPE" -eq 0 ]; then
   echo "⚠️  CONTRACT SCOPE: Writing to '$TARGET_FILE' is outside the active contract."
   echo "    Task: $TASK"
   echo "    Declared scope: $SCOPE_SUMMARY"
+  # WHY: PMB_CONTRACT_HARD_BLOCK=1 promotes scope warnings to blocks (exit 2).
+  # Default is warn-only (exit 0); hard-block is opt-in for strict enforcement.
+  if [ "${PMB_CONTRACT_HARD_BLOCK:-}" = "1" ]; then
+    echo "    Hard-block active (PMB_CONTRACT_HARD_BLOCK=1) — write blocked."
+    exit 2
+  fi
   echo "    Pause and confirm with user before proceeding."
 fi
 
