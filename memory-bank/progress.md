@@ -131,3 +131,7 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 
 **Deferred pending operational evidence:**
 - ⏸ handoff CLI, pinned.md, mb update --from-git, mb privacy
+
+## Satellite Projects
+
+- **ai-code-review-agent** (2026-06-04) — standalone GitHub Actions CI reviewer; repo `unyieldingclaw-dev/ai-code-review-agent` (private). LLM reviewer + verifier agents, finding cap, GITHUB_STEP_SUMMARY. Status: built and pushed, pending calibration PR validation.
