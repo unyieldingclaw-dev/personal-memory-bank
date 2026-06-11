@@ -16,7 +16,7 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 | `mb query <TAG>` | Search memory-bank by tag or section header | Lists files with matching tags or `##` headings. Supports partial hierarchical match (`mb query auth` matches `auth/session`). |
 | `mb clean` | Memory bank maintenance | Slim check for `activeContext.md`; prints guided cleanup prompt (archive + compact + update). Absorbs `compact`, `update`, `archive`, `slim`. |
 | `mb commit` | Stage and commit memory-bank/ changes | Runs `git add memory-bank/` + `git commit`; checks for subworktree and refuses if detected. |
-| `mb upgrade` | Propagate latest governance templates | Overwrites template-owned files (hook scripts, slash commands, `.claude/settings.json`, Cursor rules); shows advisory diff for `CLAUDE.md`; creates missing `standards/` files; installs pre-push hook; writes `.pmb-version`; soft remote version check. Run `mb upgrade --dry-run` to preview. Absorbs `install-hooks`. |
+| `mb upgrade` / `mb update` | Propagate latest governance templates | Overwrites template-owned files (hook scripts, slash commands, `.claude/settings.json`, Cursor rules); shows advisory diff for `CLAUDE.md`; creates missing `standards/` files; installs pre-push hook; writes `.pmb-version`; soft remote version check. Run `mb upgrade --dry-run` to preview. Absorbs `install-hooks`. (`mb update` is an alias — both run the same upgrade logic.) |
 | `mb verify-integrity` | Check and refresh file checksums | Compares current SHA-256 hashes of memory-bank/ files against `.pmb-checksums`. Reports any external modifications as WARN. Always refreshes checksums. |
 | `mb help` | Show command list | Prints all primary commands with one-line descriptions and examples. |
 
@@ -27,7 +27,7 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 | `mb validate` | `mb doctor` |
 | `mb audit` | `mb doctor` |
 | `mb budget` | `mb doctor` |
-| `mb compact` / `mb update` / `mb archive` / `mb slim` | `mb clean` |
+| `mb compact` / `mb archive` / `mb slim` | `mb clean` |
 | `mb install-hooks` | `mb upgrade` |
 
 ---
