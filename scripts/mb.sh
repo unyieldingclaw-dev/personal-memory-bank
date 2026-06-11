@@ -742,29 +742,17 @@ show_doctor() {
     fi
 
     # 10. Placeholder residue
+    # WHY: one combined grep per file instead of 7 separate grep calls per file.
+    # Reduces up to 35 grep + 5 cat subprocesses to 5-10 total.
     PLACEHOLDER_FILES_WARNED=0
+    _PH_PATTERN='\bTODO\b|\bTBD\b|\bFIXME\b|FILL IN|\[your |\[YOUR |lorem ipsum|YYYY-MM-DD'
     for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
         p="memory-bank/$f"
         [ ! -f "$p" ] && continue
-        content=$(cat "$p" 2>/dev/null)
-        matched=""
-        occurrences=0
-        _ph_check() {
-            local pat="$1" label="$2"
-            if echo "$content" | grep -qiE "$pat" 2>/dev/null; then
-                cnt=$(echo "$content" | grep -ciE "$pat" 2>/dev/null || echo 1)
-                occurrences=$((occurrences + cnt))
-                matched="${matched:+$matched, }$label"
-            fi
-        }
-        _ph_check '\bTODO\b'        'TODO'
-        _ph_check '\bTBD\b'         'TBD'
-        _ph_check '\bFIXME\b'       'FIXME'
-        _ph_check 'FILL IN'         'FILL IN'
-        _ph_check '\[your '         '[your ...]'
-        _ph_check 'lorem ipsum'     'lorem ipsum'
-        _ph_check 'YYYY-MM-DD'      'YYYY-MM-DD'
-        if [ -n "$matched" ]; then
+        occurrences=$(grep -ciE "$_PH_PATTERN" "$p" 2>/dev/null || true)
+        if [ "$occurrences" -gt 0 ]; then
+            matched=$(grep -oiE '\bTODO\b|\bTBD\b|\bFIXME\b|FILL IN|\[your [^]]*|\[YOUR [^]]*|lorem ipsum|YYYY-MM-DD' "$p" 2>/dev/null \
+                      | sort -uf | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
             echo -e "${YELLOW}[WARN] memory-bank/$f — placeholder text detected (${occurrences} occurrence(s)): ${matched}${NC}"
             PLACEHOLDER_FILES_WARNED=$((PLACEHOLDER_FILES_WARNED + 1))
         fi
