@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.9 — 2026-06-11
+
+### Added
+- **`mb update` alias** — `mb update` now runs the same upgrade logic as `mb upgrade`; documented in `docs/COMMANDS-REFERENCE.md`
+
+### Changed
+- **Hook script performance** — behavioral no-ops, same output, fewer processes:
+  - `check-contract.sh`: 3 Python spawns + 6 sed subshells → single Python heredoc invocation
+  - `pre-compact-check.sh`: sed subprocess per line → bash parameter expansion
+  - `mb doctor` check 10: 7 grep calls per file → 1 combined grep per file
+  - `mb doctor` check 17: echo|grep per line (~400 subshells) → grep directly on file (2 calls)
+
+---
+
 ## 1.0.8 — 2026-06-06
 
 ### Added

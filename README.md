@@ -1,6 +1,6 @@
 # Personal Memory Bank
 
-![Version](https://img.shields.io/badge/version-1.0.8-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.0.9-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
 
 Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (9 commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
 
@@ -15,7 +15,7 @@ Memory Bank solves this by keeping a small set of structured files in your proje
 | Area | What you get |
 |------|-------------|
 | Memory system | 5-file structured context, authority hierarchy, freshness tracking, provenance frontmatter |
-| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, help (8 primary commands) |
+| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, verify-integrity, help (9 primary commands; `mb update` aliases `mb upgrade`) |
 | Slash commands | `/test-audit`, `/code-review`, `/security-review`, `/feature-dev`, `/health-check` |
 | Governance | Pre/PostToolUse hooks, CI pipeline, task contracts, subagents |
 
