@@ -1548,7 +1548,7 @@ case "$COMMAND" in
     audit)         echo -e "${YELLOW}mb audit is now part of mb doctor. Run: mb doctor${NC}" ;;
     budget)        echo -e "${YELLOW}mb budget is now part of mb doctor. Run: mb doctor${NC}" ;;
     compact)       echo -e "${YELLOW}mb compact is now part of mb clean. Run: mb clean${NC}" ;;
-    update)        echo -e "${YELLOW}mb update is now part of mb clean. Run: mb clean${NC}" ;;
+    update)            invoke_upgrade ;;
     archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}" ;;
     slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}" ;;
     *)
