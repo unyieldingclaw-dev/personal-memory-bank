@@ -854,23 +854,17 @@ show_doctor() {
     fi
 
     # 17. Semantic drift signals — scan volatile files for transition/removal language
+    # WHY: grep directly on file (2 calls) instead of echo|grep per line (~400 calls).
     DRIFT_SIGNALS=()
+    _DRIFT_PATTERN='(no longer|migrat(ed|ing) (from|away)|replac(ed|ing) .{2,25} (with|by)|deprecat(ed|ing)|switch(ed|ing) (from|away from)|moving away from|transitioning (away )?from|dropp(ed|ing))'
     for df in memory-bank/activeContext.md memory-bank/progress.md; do
         [ ! -f "$df" ] && continue
-        IN_FM=0; FM_COUNT=0; LINE_NO=0
-        while IFS= read -r line; do
-            LINE_NO=$((LINE_NO + 1))
-            if [ "$line" = "---" ]; then
-                FM_COUNT=$((FM_COUNT + 1))
-                [ "$FM_COUNT" -eq 1 ] && IN_FM=1 || IN_FM=0
-                continue
-            fi
-            [ "$IN_FM" -eq 1 ] && continue
-            case "$line" in \#*|'') continue ;; esac
-            if echo "$line" | grep -qiE '(no longer|migrat(ed|ing) (from|away)|replac(ed|ing) .{2,25} (with|by)|deprecat(ed|ing)|switch(ed|ing) (from|away from)|moving away from|transitioning (away )?from|dropp(ed|ing))'; then
-                DRIFT_SIGNALS+=("$df:$LINE_NO: $(echo "$line" | sed 's/^[[:space:]]*//' | head -c 120)")
-            fi
-        done < "$df"
+        while IFS= read -r match; do
+            lineno="${match%%:*}"
+            text="${match#*:}"
+            trimmed="${text#"${text%%[! ]*}"}"
+            DRIFT_SIGNALS+=("$df:$lineno: ${trimmed:0:120}")
+        done < <(grep -inE "$_DRIFT_PATTERN" "$df" 2>/dev/null)
     done
     if [ "${#DRIFT_SIGNALS[@]}" -eq 0 ]; then
         echo -e "${GREEN}[OK]   No semantic drift signals in volatile files${NC}"
