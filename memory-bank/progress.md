@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-06-06
+last-reviewed: 2026-06-10
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -100,6 +100,18 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ **mb init/upgrade** — delegation-depth-check scripts added to init allowlist and upgrade TEMPLATE_OWNED
 - ✅ **docs/COMMANDS-REFERENCE.md** — updated to 20-check table; verify-integrity command added
 - ✅ **CHANGELOG.md + VERSION** — bumped to v1.0.8
+
+### Satellite Project Fixes + Hook Performance Plan (2026-06-10)
+- ✅ **BT CLAUDE.md — session-start gap** — added "Memory Bank" section telling Claude to read all 5 memory-bank files at conversation start (was missing cold-start instruction; only had compaction recovery)
+- ✅ **BT CLAUDE.md — Task Contract Protocol** — added full Task Contract Protocol section; BT had hook infrastructure (check-contract.ps1/.sh) but no advisory layer telling Claude when to propose contracts
+- ✅ **Performance fixes design doc** — audited check-contract.sh (4 Python spawns + sed), pre-compact-check.sh (sed-in-loop), mb.sh check 10 (70 grep calls), mb.sh check 17 (400 subshell greps); design doc written at `docs/superpowers/specs/2026-06-10-pmb-performance-fixes-design.md`
+- ✅ **Performance fixes implementation plan** — written at `docs/superpowers/plans/2026-06-10-pmb-performance-fixes.md`; 5 tasks with TDD steps and commit checkpoints; ready to execute
+
+### Hook Script Performance Fixes — perf/hook-script-fixes (2026-06-11)
+- ✅ **check-contract.sh** — consolidated 3 Python spawns + 6 sed subshells into single Python heredoc invocation (~150–300 ms saved per Write/Edit hook call); branch commit 8c8c740
+- ✅ **pre-compact-check.sh** — replaced sed subprocess in per-line loop with bash parameter expansion (~100 processes saved per compaction check); branch commit ee47554
+- ✅ **mb.sh check 10** — replaced 7 per-pattern grep calls per file with one combined grep per file (35 → 5–10 total grep calls); branch commit 54c8e26
+- ✅ **mb.sh check 17** — replaced per-line echo|grep loop (~400 subshell greps) with grep -inE directly on file (2 calls total); branch commit 17508d8
 
 ### Guardrails Batch — G1–G6 (2026-06-06)
 - ✅ **G1** — dangerous-commands hook extended to PowerShell tool; 8 PS-native BLOCK patterns added (Remove-Item -Recurse -Force, Format-Volume, pipe-to-iex/Invoke-Expression); both settings.json files updated

@@ -742,29 +742,17 @@ show_doctor() {
     fi
 
     # 10. Placeholder residue
+    # WHY: one combined grep per file instead of 7 separate grep calls per file.
+    # Reduces up to 35 grep + 5 cat subprocesses to 5-10 total.
     PLACEHOLDER_FILES_WARNED=0
+    _PH_PATTERN='\bTODO\b|\bTBD\b|\bFIXME\b|FILL IN|\[your |\[YOUR |lorem ipsum|YYYY-MM-DD'
     for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
         p="memory-bank/$f"
         [ ! -f "$p" ] && continue
-        content=$(cat "$p" 2>/dev/null)
-        matched=""
-        occurrences=0
-        _ph_check() {
-            local pat="$1" label="$2"
-            if echo "$content" | grep -qiE "$pat" 2>/dev/null; then
-                cnt=$(echo "$content" | grep -ciE "$pat" 2>/dev/null || echo 1)
-                occurrences=$((occurrences + cnt))
-                matched="${matched:+$matched, }$label"
-            fi
-        }
-        _ph_check '\bTODO\b'        'TODO'
-        _ph_check '\bTBD\b'         'TBD'
-        _ph_check '\bFIXME\b'       'FIXME'
-        _ph_check 'FILL IN'         'FILL IN'
-        _ph_check '\[your '         '[your ...]'
-        _ph_check 'lorem ipsum'     'lorem ipsum'
-        _ph_check 'YYYY-MM-DD'      'YYYY-MM-DD'
-        if [ -n "$matched" ]; then
+        occurrences=$(grep -ciE "$_PH_PATTERN" "$p" 2>/dev/null || true)
+        if [ "$occurrences" -gt 0 ]; then
+            matched=$(grep -oiE '\bTODO\b|\bTBD\b|\bFIXME\b|FILL IN|\[your [^]]*|\[YOUR [^]]*|lorem ipsum|YYYY-MM-DD' "$p" 2>/dev/null \
+                      | sort -uf | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
             echo -e "${YELLOW}[WARN] memory-bank/$f — placeholder text detected (${occurrences} occurrence(s)): ${matched}${NC}"
             PLACEHOLDER_FILES_WARNED=$((PLACEHOLDER_FILES_WARNED + 1))
         fi
@@ -866,23 +854,17 @@ show_doctor() {
     fi
 
     # 17. Semantic drift signals — scan volatile files for transition/removal language
+    # WHY: grep directly on file (2 calls) instead of echo|grep per line (~400 calls).
     DRIFT_SIGNALS=()
+    _DRIFT_PATTERN='(no longer|migrat(ed|ing) (from|away)|replac(ed|ing) .{2,25} (with|by)|deprecat(ed|ing)|switch(ed|ing) (from|away from)|moving away from|transitioning (away )?from|dropp(ed|ing))'
     for df in memory-bank/activeContext.md memory-bank/progress.md; do
         [ ! -f "$df" ] && continue
-        IN_FM=0; FM_COUNT=0; LINE_NO=0
-        while IFS= read -r line; do
-            LINE_NO=$((LINE_NO + 1))
-            if [ "$line" = "---" ]; then
-                FM_COUNT=$((FM_COUNT + 1))
-                [ "$FM_COUNT" -eq 1 ] && IN_FM=1 || IN_FM=0
-                continue
-            fi
-            [ "$IN_FM" -eq 1 ] && continue
-            case "$line" in \#*|'') continue ;; esac
-            if echo "$line" | grep -qiE '(no longer|migrat(ed|ing) (from|away)|replac(ed|ing) .{2,25} (with|by)|deprecat(ed|ing)|switch(ed|ing) (from|away from)|moving away from|transitioning (away )?from|dropp(ed|ing))'; then
-                DRIFT_SIGNALS+=("$df:$LINE_NO: $(echo "$line" | sed 's/^[[:space:]]*//' | head -c 120)")
-            fi
-        done < "$df"
+        while IFS= read -r match; do
+            lineno="${match%%:*}"
+            text="${match#*:}"
+            trimmed="${text#"${text%%[! ]*}"}"
+            DRIFT_SIGNALS+=("$df:$lineno: ${trimmed:0:120}")
+        done < <(grep -inE "$_DRIFT_PATTERN" "$df" 2>/dev/null)
     done
     if [ "${#DRIFT_SIGNALS[@]}" -eq 0 ]; then
         echo -e "${GREEN}[OK]   No semantic drift signals in volatile files${NC}"
@@ -1566,7 +1548,7 @@ case "$COMMAND" in
     audit)         echo -e "${YELLOW}mb audit is now part of mb doctor. Run: mb doctor${NC}" ;;
     budget)        echo -e "${YELLOW}mb budget is now part of mb doctor. Run: mb doctor${NC}" ;;
     compact)       echo -e "${YELLOW}mb compact is now part of mb clean. Run: mb clean${NC}" ;;
-    update)        echo -e "${YELLOW}mb update is now part of mb clean. Run: mb clean${NC}" ;;
+    update)            invoke_upgrade ;;
     archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}" ;;
     slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}" ;;
     *)
