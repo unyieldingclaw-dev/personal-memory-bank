@@ -101,6 +101,13 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ **docs/COMMANDS-REFERENCE.md** — updated to 20-check table; verify-integrity command added
 - ✅ **CHANGELOG.md + VERSION** — bumped to v1.0.8
 
+### Branch Cleanup Session (2026-06-12)
+- ✅ Reviewed all stale local branches (6) and remote branches (4) post-v1.1.0 commit
+- ✅ Removed two orphaned worktrees (`.claude/worktrees/`), deleted their branches
+- ✅ Rescued Bowling Tracker enforcement plan from unmerged branch `claude/memory-bank-upgrade-logic-28kmkn` — preserved in master via manual edit
+- ✅ Deleted remote branches: `feat/comment-provenance`, `feat/governance-integrity`, `feat/mb-upgrade`, `feat/mb-doctor-staleness`, `claude/memory-bank-upgrade-logic-28kmkn` (all content merged or preserved)
+- ✅ `git fetch --prune` cleaned stale remote-tracking refs for 3 already-deleted remotes
+
 ### Git Hooks Migration — v1.1.0 (2026-06-11)
 - ✅ **`core.hooksPath = .githooks`** — hooks now versioned in project repo, not copied to `.git/hooks/`; distributed via `mb upgrade` TEMPLATE_OWNED
 - ✅ **`templates/.githooks/pre-push`** and **`templates/.githooks/pre-commit`** created
