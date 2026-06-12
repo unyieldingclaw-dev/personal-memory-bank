@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-06-10
+last-reviewed: 2026-06-11
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -100,6 +100,17 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ **mb init/upgrade** — delegation-depth-check scripts added to init allowlist and upgrade TEMPLATE_OWNED
 - ✅ **docs/COMMANDS-REFERENCE.md** — updated to 20-check table; verify-integrity command added
 - ✅ **CHANGELOG.md + VERSION** — bumped to v1.0.8
+
+### Git Hooks Migration — v1.1.0 (2026-06-11)
+- ✅ **`core.hooksPath = .githooks`** — hooks now versioned in project repo, not copied to `.git/hooks/`; distributed via `mb upgrade` TEMPLATE_OWNED
+- ✅ **`templates/.githooks/pre-push`** and **`templates/.githooks/pre-commit`** created
+- ✅ **`mb init`** updated (bash + PowerShell): creates `.githooks/` dir, copies both hooks, sets `git config core.hooksPath .githooks`
+- ✅ **`mb upgrade`** updated (bash + PowerShell): TEMPLATE_OWNED entries for both hooks; sets `core.hooksPath`; removes old `.git/hooks/pre-push` PMB shim (migration cleanup)
+- ✅ **`mb doctor` check 4** updated (bash + PowerShell): verifies `.githooks/pre-push` + `core.hooksPath` value; bash parity (was PowerShell-only)
+- ✅ **Pre-commit hook activated**: existed in PMB repo but was dead; now fires (`git config core.hooksPath .githooks` run in PMB repo)
+- ✅ **`docs/HOOKS-GUIDE.md`**: new "Git Hooks (versioned)" section — mechanism, hook inventory, TEMPLATE_OWNED model, migration notes, verification commands
+- ✅ **`README.md`**: pre-push `<details>` block updated; version badge 1.0.9 → 1.1.0
+- ✅ **Breaking change**: projects must run `mb upgrade` to activate new layout; old `.git/hooks/pre-push` shim removed automatically
 
 ### Satellite Project Fixes + Hook Performance Plan (2026-06-10)
 - ✅ **BT CLAUDE.md — session-start gap** — added "Memory Bank" section telling Claude to read all 5 memory-bank files at conversation start (was missing cold-start instruction; only had compaction recovery)

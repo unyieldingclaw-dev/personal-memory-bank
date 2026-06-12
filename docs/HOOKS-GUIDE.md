@@ -106,6 +106,50 @@ Implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and `scripts/pre-c
 
 Note: `PreCompact` hooks have no `matcher` field — the hook type applies to the compaction event itself, not to a specific tool.
 
+## Git Hooks (versioned)
+
+PMB distributes two git hooks through the `.githooks/` directory, which is versioned in the project repo. `mb init` and `mb upgrade` both install these hooks and activate them via `core.hooksPath`.
+
+### How it works
+
+`core.hooksPath = .githooks` is a per-project git local config (stored in `.git/config`, not committed). When set, git resolves all hooks from `.githooks/` instead of `.git/hooks/`. The hook *files* are committed and versioned; the *activation* is a local git config that each `mb init`/`mb upgrade` run sets automatically.
+
+`mb upgrade` treats `.githooks/pre-push` and `.githooks/pre-commit` as `TEMPLATE_OWNED` — it overwrites them unconditionally if they differ from the template, so hook logic stays current across PMB version bumps.
+
+### The two hooks
+
+**`.githooks/pre-push`** — delegates to the 7-check push gate:
+- Unresolved merge conflicts or conflict markers
+- Uncommitted working tree changes
+- Missing `.gitattributes`
+- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs)
+- Files over 500 KB
+- `mb validate` result (if `mb` is in PATH)
+- Scans first pushes via `git log --not --remotes` when no upstream tracking ref exists
+
+Dispatches to `scripts/pre-push-check.ps1` (Windows/pwsh) or `scripts/pre-push-check.sh` (POSIX/bash). Fails open — if the script errors unexpectedly, the push is allowed through.
+
+**`.githooks/pre-commit`** — lightweight two-check gate before every commit:
+- **Blocks** if `handoff.md` is staged (`handoff.md` is ephemeral and must not be committed)
+- **Warns** if `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is missing from `.claude/settings.json` (token budget auto-compaction may not be configured)
+
+### Migration from `.git/hooks/`
+
+Projects initialized before PMB 1.1.0 have the old PMB shim at `.git/hooks/pre-push`. Running `mb upgrade` on those projects:
+1. Installs `.githooks/pre-push` and `.githooks/pre-commit` (TEMPLATE_OWNED)
+2. Sets `core.hooksPath = .githooks` (git local config)
+3. Removes `.git/hooks/pre-push` if it matches the PMB shim (detected by grepping for `pre-push-check`)
+
+Custom hooks at `.git/hooks/` are unaffected — the migration only removes the PMB-managed shim.
+
+### Verifying hook activation
+
+```bash
+git config core.hooksPath       # should print: .githooks
+ls .githooks/                   # should show: pre-push  pre-commit
+mb doctor                       # check 4 reports [OK] for both
+```
+
 ## Adding Per-Project Hooks
 
 Copy `.claude/settings.json` into your project, then add hooks as needed.

@@ -420,18 +420,28 @@ invoke_init() {
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
 
-    # .git/hooks/pre-push — install as executable git hook
+    # .githooks/ — versioned hooks directory; activated via core.hooksPath
+    # WHY: core.hooksPath makes git look in .githooks/ instead of .git/hooks/.
+    # Hooks are versioned in the project repo so mb upgrade can distribute updates.
     if [ -d "$TARGET/.git" ]; then
-        HOOK_SRC="$TEMPLATES_DIR/hooks/pre-push"
-        HOOK_DST="$TARGET/.git/hooks/pre-push"
-        if [ -f "$HOOK_SRC" ]; then
-            if [ ! -f "$HOOK_DST" ]; then
-                cp "$HOOK_SRC" "$HOOK_DST"
-                chmod +x "$HOOK_DST"
-                CREATED+=(".git/hooks/pre-push")
-            else
-                SKIPPED+=(".git/hooks/pre-push")
+        mkdir -p "$TARGET/.githooks"
+        for hook in pre-push pre-commit; do
+            HOOK_SRC="$TEMPLATES_DIR/.githooks/$hook"
+            HOOK_DST="$TARGET/.githooks/$hook"
+            if [ -f "$HOOK_SRC" ]; then
+                if [ ! -f "$HOOK_DST" ]; then
+                    cp "$HOOK_SRC" "$HOOK_DST"
+                    chmod +x "$HOOK_DST"
+                    CREATED+=(".githooks/$hook")
+                else
+                    SKIPPED+=(".githooks/$hook")
+                fi
             fi
+        done
+        # Activate the versioned hooks directory
+        if [ "$(git -C "$TARGET" config core.hooksPath 2>/dev/null)" != ".githooks" ]; then
+            git -C "$TARGET" config core.hooksPath .githooks
+            CREATED+=("core.hooksPath = .githooks")
         fi
     fi
 
@@ -623,6 +633,19 @@ show_doctor() {
             for h in "${MISSING_HOOKS[@]}"; do
                 echo -e "${YELLOW}[WARN] Hook script missing: $h — run 'mb init' to install${NC}"
             done
+        fi
+        # Git hooks — versioned via core.hooksPath
+        if [ -f ".githooks/pre-push" ]; then
+            echo -e "${GREEN}[OK]   .githooks/pre-push present${NC}"
+        else
+            echo -e "${YELLOW}[WARN] .githooks/pre-push missing — run 'mb init' or 'mb upgrade' to install${NC}"
+        fi
+        HOOKS_PATH=$(git config core.hooksPath 2>/dev/null || true)
+        if [ "$HOOKS_PATH" = ".githooks" ]; then
+            echo -e "${GREEN}[OK]   core.hooksPath = .githooks${NC}"
+        else
+            echo -e "${YELLOW}[WARN] core.hooksPath not set to .githooks — git hooks won't fire${NC}"
+            echo -e "       Run: git config core.hooksPath .githooks"
         fi
     else
         echo -e "${YELLOW}[WARN] No .claude/settings.json — safety hooks inactive${NC}"
@@ -1342,6 +1365,9 @@ invoke_upgrade() {
         ".claude/commands/feature-dev.md"
         ".claude/commands/security-review.md"
         ".claude/commands/pmb-status.md"
+        # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
+        ".githooks/pre-push"
+        ".githooks/pre-commit"
     )
 
     ADVISORY_DIFF=(
@@ -1413,6 +1439,29 @@ invoke_upgrade() {
             fi
         fi
     done
+
+    # Wire core.hooksPath — idempotent for new projects, one-shot migration for old ones
+    if [ -d ".git" ]; then
+        if [ "$(git config core.hooksPath 2>/dev/null)" != ".githooks" ]; then
+            if [ "$DRY_RUN" = false ]; then
+                git config core.hooksPath .githooks
+                echo -e "${GREEN}[+] core.hooksPath set to .githooks${NC}"
+            else
+                echo -e "${GREEN}[+?] core.hooksPath (would set to .githooks)${NC}"
+            fi
+        else
+            echo -e "${GRAY}[=] core.hooksPath (already .githooks)${NC}"
+        fi
+        # Migration cleanup: remove old PMB shim from .git/hooks/pre-push
+        if [ -f ".git/hooks/pre-push" ] && grep -q "pre-push-check" ".git/hooks/pre-push" 2>/dev/null; then
+            if [ "$DRY_RUN" = false ]; then
+                rm ".git/hooks/pre-push"
+                echo -e "${GREEN}[~] .git/hooks/pre-push (removed — migrated to .githooks/)${NC}"
+            else
+                echo -e "${GREEN}[~?] .git/hooks/pre-push (would remove — migrated to .githooks/)${NC}"
+            fi
+        fi
+    fi
 
     # Process ADVISORY_DIFF — compare and emit advisory diff, never write
     for target in "${ADVISORY_DIFF[@]}"; do

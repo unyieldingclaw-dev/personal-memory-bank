@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-06
+last-reviewed: 2026-06-11
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -18,49 +18,34 @@ lineage: []
 
 ## Current Focus
 
-v1.0.8 shipped (2026-06-06). Command consolidation review + 5 new features implemented:
-- **mb doctor** now has 20 checks (added 15–16 to mb.sh parity, added 17–20 new checks)
-- **Check 17**: Semantic drift signals in volatile files
-- **Check 18**: Old stable-authority decisions (>180 days)
-- **Check 19**: Cross-file authority/heading contradictions
-- **Check 20 + `mb verify-integrity`**: SHA-256 integrity checksums for memory-bank files (`.pmb-checksums`)
-- **Compaction quality gate**: pre-compact-check now BLOCKS (exit 2) unless activeContext.md has ≥3 substantive lines AND progress.md has a today-dated entry
-- **Agent delegation depth**: `delegation-depth-check.ps1/.sh` + PreToolUse hook on Agent tool; WARN when depth >1
-- **AGENTIC-SAFETY.md**: new "Agent Delegation Depth Enforcement" section
+v1.1.0 shipped (2026-06-11). Git hooks migrated from `.git/hooks/` copy-on-init to versioned `core.hooksPath = .githooks` layout:
+- **`.githooks/pre-push`** and **`.githooks/pre-commit`**: committed, versioned, distributed via `mb upgrade` (TEMPLATE_OWNED)
+- **`mb init`**: creates `.githooks/`, copies both hooks, sets `git config core.hooksPath .githooks`
+- **`mb upgrade`**: keeps hooks current via TEMPLATE_OWNED; sets `core.hooksPath`; removes old `.git/hooks/pre-push` PMB shim
+- **`mb doctor`** check 4: updated in both bash and PowerShell to verify `.githooks/pre-push` presence + `core.hooksPath` value
+- **Pre-commit hook now active**: blocked by missing `core.hooksPath` before; now fires on every commit (handoff.md block + AUTOCOMPACT warning)
+- **README version badge**: updated to 1.1.0
 
-**Context size**: still ~28 KB (above 25 KB ceiling). Need to archive old progress.md entries next session.
+**Context size**: ~28–30 KB (above 25 KB ceiling). Archive old progress.md entries when convenient.
 
-## What Was Just Completed (2026-06-03)
+## What Was Just Completed (2026-06-11)
 
-**Code Review Standard — v1.0.6:**
-- `Confidence: High|Medium|Low` replaced by `Basis: VERIFIED|INFERRED|SPECULATIVE` across 4 files (standards/CODE-REVIEW.md, templates/standards/CODE-REVIEW.md, both code-review command files)
-- Evidence requirements tightened per-basis: file:line required on all findings; SPECULATIVE must cite observed trigger + explicit uncertainty
-- Blocking constraint tightened: `Blocking: true` requires `Severity >= High AND Basis != SPECULATIVE`
-- Report format: single Findings table → `## Supported Findings` (VERIFIED+INFERRED) + `## Predicted Risks` (SPECULATIVE, omit if empty)
-- Three new Failure Criteria: missing file:line, evidence not materially supporting claim, SPECULATIVE marked blocking
-- Breaking change: `Confidence` field removed; documented in Compatibility Note
+**Git Hooks Migration — v1.1.0:**
+- `templates/.githooks/pre-push` and `templates/.githooks/pre-commit` created
+- `scripts/mb.sh`: init block, TEMPLATE_OWNED entries, upgrade wiring, doctor check — all updated
+- `scripts/mb.ps1`: init block, `$templateOwned` entries, upgrade wiring (replaced `Invoke-InstallHooks` call), doctor check — all updated
+- `docs/HOOKS-GUIDE.md`: new "Git Hooks (versioned)" section
+- `README.md`: pre-push `<details>` block and version badge updated
+- `CHANGELOG.md`: 1.1.0 entry prepended
+- `VERSION`: 1.0.9 → 1.1.0
+- PMB repo itself: `git config core.hooksPath .githooks` (activates previously-dead pre-commit)
 
-**`/pmb-status` + `mb status` redesign — v1.0.5:**
-- `mb status` reworked: replaced file-size table with 5-signal state check (Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present)
-- `/pmb-status` slash command: thin wrapper over `mb status` — no logic duplication; CLI owns behavior, slash command owns UX
-- Distributed via `mb init` and `mb upgrade` (same tier as other governance commands)
-- Design principle: `git status` / `git fsck` distinction — status = state, health-check = validation
-- Code review fixes (all confirmed findings addressed):
-  - `sed 's/d$//'` — trailing anchor prevents corrupting mid-string 'd' values [HIGH]
-  - `$STALE_DAYS` numeric guard prevents integer expression error on malformed frontmatter [HIGH]
-  - `REVIEWED_EPOCH=0` treated as parse failure (not ~19,000 false stale days) [MEDIUM]
-  - `compgen -G` replaces `ls|head` glob check (zero subprocesses, portable) [MEDIUM]
-  - WHY comments added to try/catch and cross-file sync notes [LOW]
-- All docs updated: README, QUICK-REFERENCE, RECOVERY, SETUP-GUIDE, COMMANDS-REFERENCE, CHANGELOG
+## What Was Completed (2026-06-06)
 
-## What Was Completed (2026-06-01)
-
-**Security & Performance Improvements — v1.0.4:**
-- `standards/SECURITY-RULES.md` — rule registry SEC-001–009; distributed via mb init/upgrade (ADVISORY_CREATE)
-- `standards/TRUST-CLASSIFICATION.md` — TRUSTED/SEMI_TRUSTED/UNTRUSTED reference; pointers in AGENTIC-SAFETY + SECURITY-GUARDRAILS
-- `standards/PERFORMANCE-BUDGET.md` — explicit limits: ≤20 standards, ≤50 memory entries, ≤1 agent delegation
-- `fixtures/security/` — 9 known-bad code samples for security regression testing (PMB dogfooding only)
-- `mb doctor` Checks 13+14; `/health-check` step 5; pre-push scan excludes fixtures/ and docs/
+**mb doctor v1.0.8 — 20 checks + compaction gate + agent delegation depth:**
+- Checks 17–20: semantic drift, stale decisions, cross-file contradictions, SHA-256 checksums (`mb verify-integrity`)
+- Compaction quality gate: pre-compact-check BLOCKS unless activeContext.md ≥3 lines AND progress.md has today's date
+- Agent delegation depth: `delegation-depth-check.ps1/.sh` + PreToolUse hook on Agent tool; WARN when depth >1
 
 ## Next Steps
 
@@ -81,4 +66,4 @@ v1.0.8 shipped (2026-06-06). Command consolidation review + 5 new features imple
 
 ## Git State
 
-master branch, clean. Last commit: `10afad8` — code review Basis/evidence standard. v1.0.6 shipped.
+master branch, uncommitted changes (hooks migration). Last tagged version: v1.1.0. Changes include: templates/.githooks/, scripts/mb.sh, scripts/mb.ps1, docs/HOOKS-GUIDE.md, README.md, CHANGELOG.md, VERSION, memory-bank/.

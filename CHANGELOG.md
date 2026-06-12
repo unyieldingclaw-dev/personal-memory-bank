@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0 — 2026-06-11
+
+### Changed
+- **Git hooks migrated to `core.hooksPath = .githooks`** — hooks are now versioned in the project repo (`.githooks/pre-push`, `.githooks/pre-commit`) and distributed via `mb upgrade` (TEMPLATE_OWNED). `mb init` and `mb upgrade` set `core.hooksPath = .githooks` automatically. `mb upgrade` performs one-shot cleanup of the old `.git/hooks/pre-push` shim on legacy projects.
+- **Pre-commit hook now active** — `.githooks/pre-commit` existed in the PMB repo but was dead (`core.hooksPath` not set). Now fires on every commit: blocks `handoff.md` staging, warns if `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is missing from `.claude/settings.json`.
+- **`mb doctor` check 4 updated** — verifies `.githooks/pre-push` presence and `core.hooksPath = .githooks`; bash doctor gains equivalent check (previously missing).
+- **`docs/HOOKS-GUIDE.md`** — new "Git Hooks (versioned)" section documents the two hooks, `core.hooksPath` activation, and migration path from `.git/hooks/`.
+
+### Breaking
+- Projects using PMB hooks must run `mb upgrade` to activate the new layout. After upgrade, `.git/hooks/pre-push` is removed (if it is the PMB shim) and hooks run from `.githooks/` instead.
+
+---
+
 ## 1.0.9 — 2026-06-11
 
 ### Added

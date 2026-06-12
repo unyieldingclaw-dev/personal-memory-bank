@@ -1,6 +1,6 @@
 # Personal Memory Bank
 
-![Version](https://img.shields.io/badge/version-1.0.9-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
 
 Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (9 commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
 
@@ -247,30 +247,31 @@ Each project gets a `.pmb-version` file recording which PMB version initialized 
 </details>
 
 <details>
-<summary>Pre-push git hook (optional)</summary>
+<summary>Git hooks (pre-push and pre-commit)</summary>
 
-`scripts/pre-push-check.ps1` (Windows/pwsh) and `scripts/pre-push-check.sh` (POSIX/bash) are optional git hooks that run before every `git push`. They block on errors and warn on advisory issues:
+PMB installs two git hooks automatically — no manual copying needed.
+
+**`mb init`** creates `.githooks/pre-push` and `.githooks/pre-commit` in the project and sets `core.hooksPath = .githooks` (a local git config, not committed), so git resolves hooks from the versioned `.githooks/` directory. **`mb upgrade`** keeps them current (both hooks are `TEMPLATE_OWNED` — overwritten if stale).
+
+**`.githooks/pre-push`** — runs before every `git push`, blocks on errors:
 
 - Unresolved merge conflicts or conflict markers in staged files
 - Uncommitted changes in the working tree
 - Missing `.gitattributes`
-- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs) — **now scans first pushes** using `git log --not --remotes` when no upstream tracking ref exists
+- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs) — scans first pushes via `git log --not --remotes` when no upstream tracking ref exists
 - Files over 500 KB
 - `mb validate` result (if `mb` is in PATH)
 
-To install, copy or symlink the appropriate script into your `.git/hooks/` directory:
+Fails open — if the script errors unexpectedly, the push is allowed through.
 
-```bash
-# Linux / macOS
-cp scripts/pre-push-check.sh .git/hooks/pre-push
-chmod +x .git/hooks/pre-push
+**`.githooks/pre-commit`** — runs before every `git commit`:
 
-# Windows (PowerShell wrapper)
-Copy-Item scripts\pre-push-check.ps1 .git\hooks\pre-push.ps1
-'#!/bin/sh' + "`npwsh -NonInteractive -File .git/hooks/pre-push.ps1`" | Set-Content .git\hooks\pre-push
-```
+- **Blocks** if `handoff.md` is staged (`handoff.md` is ephemeral and must not be committed)
+- **Warns** if `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is missing from `.claude/settings.json`
 
-The hooks fail open — if they error unexpectedly, the push is allowed through.
+Projects initialized before PMB 1.1.0 have the old shim at `.git/hooks/pre-push`. `mb upgrade` migrates them automatically: installs `.githooks/` hooks, sets `core.hooksPath`, and removes the old shim.
+
+See `docs/HOOKS-GUIDE.md` for the full reference.
 
 </details>
 

@@ -442,21 +442,30 @@ function Invoke-Init {
         Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
     }
 
-    # .git/hooks/pre-push — install as executable git hook
+    # .githooks/ — versioned hooks directory; activated via core.hooksPath
+    # WHY: core.hooksPath makes git look in .githooks/ instead of .git/hooks/.
+    # Hooks are versioned in the project repo so mb upgrade can distribute updates.
     $gitDir = Join-Path $Target ".git"
     if (Test-Path $gitDir) {
-        $hookSrc = Join-Path $TemplatesDir "hooks\pre-push"
-        $hookDst = Join-Path $gitDir "hooks\pre-push"
-        if (Test-Path $hookSrc) {
-            if (-not (Test-Path $hookDst)) {
-                Copy-Item -Path $hookSrc -Destination $hookDst -Force
-                # WHY: git hooks must be executable on Unix; on Windows Git for Windows respects
-                # the executable bit via core.fileMode. Set it so the hook works cross-platform.
-                if ($IsLinux -or $IsMacOS) { chmod +x $hookDst 2>/dev/null }
-                $Created += ".git/hooks/pre-push"
-            } else {
-                $Skipped += ".git/hooks/pre-push"
+        $githooksDir = Join-Path $Target ".githooks"
+        if (-not (Test-Path $githooksDir)) { New-Item -ItemType Directory -Path $githooksDir -Force | Out-Null }
+        foreach ($hook in @("pre-push", "pre-commit")) {
+            $hookSrc = Join-Path $TemplatesDir ".githooks\$hook"
+            $hookDst = Join-Path $githooksDir $hook
+            if (Test-Path $hookSrc) {
+                if (-not (Test-Path $hookDst)) {
+                    Copy-Item -Path $hookSrc -Destination $hookDst -Force
+                    if ($IsLinux -or $IsMacOS) { chmod +x $hookDst 2>$null }
+                    $Created += ".githooks/$hook"
+                } else {
+                    $Skipped += ".githooks/$hook"
+                }
             }
+        }
+        $currentHooksPath = git -C $Target config core.hooksPath 2>$null
+        if ($currentHooksPath -ne ".githooks") {
+            git -C $Target config core.hooksPath .githooks
+            $Created += "core.hooksPath = .githooks"
         }
     }
 
@@ -758,13 +767,18 @@ function Show-Doctor {
                 Write-Host "[WARN] Hook script missing: $h — run 'mb init' to install" -ForegroundColor Yellow
             }
         }
-        # Pre-push git hook
-        $prePushHook = ".git/hooks/pre-push"
-        if (Test-Path $prePushHook) {
-            Write-Host "[OK]   .git/hooks/pre-push installed" -ForegroundColor Green
+        # Git hooks — versioned via core.hooksPath
+        if (Test-Path ".githooks/pre-push") {
+            Write-Host "[OK]   .githooks/pre-push present" -ForegroundColor Green
         } else {
-            Write-Host "[WARN] .git/hooks/pre-push not installed — git push runs without pre-push checks" -ForegroundColor Yellow
-            Write-Host "       Run 'mb init' to install, or copy templates/hooks/pre-push to .git/hooks/pre-push" -ForegroundColor DarkGray
+            Write-Host "[WARN] .githooks/pre-push missing — run 'mb init' or 'mb upgrade' to install" -ForegroundColor Yellow
+        }
+        $hooksPath = git config core.hooksPath 2>$null
+        if ($hooksPath -eq ".githooks") {
+            Write-Host "[OK]   core.hooksPath = .githooks" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] core.hooksPath not set to .githooks — git hooks won't fire" -ForegroundColor Yellow
+            Write-Host "       Run: git config core.hooksPath .githooks" -ForegroundColor DarkGray
         }
     } else {
         Write-Host "[WARN] No .claude/settings.json — safety hooks inactive" -ForegroundColor Yellow
@@ -1494,6 +1508,9 @@ function Invoke-Upgrade {
         ".claude/commands/security-review.md"
         ".claude/commands/test-audit.md"
         ".claude/commands/pmb-status.md"
+        # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
+        ".githooks/pre-push"
+        ".githooks/pre-commit"
     )
 
     $advisoryDiff = @(
@@ -1568,13 +1585,29 @@ function Invoke-Upgrade {
         }
     }
 
-    # Absorbed from install-hooks: wire .git/hooks/ after templates are current
-    if (-not $DryRun) {
-        Write-Host ""
-        Write-Host "Installing git hooks..." -ForegroundColor Cyan
-        Invoke-InstallHooks
-    } else {
-        Write-Host "[~?] .git/hooks/pre-push (would run install-hooks)" -ForegroundColor Yellow
+    # Wire core.hooksPath and migrate old .git/hooks/pre-push
+    if (Test-Path ".git") {
+        $currentHooksPath = git config core.hooksPath 2>$null
+        if ($currentHooksPath -ne ".githooks") {
+            if (-not $DryRun) {
+                git config core.hooksPath .githooks
+                Write-Host "[+] core.hooksPath set to .githooks" -ForegroundColor Green
+            } else {
+                Write-Host "[+?] core.hooksPath (would set to .githooks)" -ForegroundColor Green
+            }
+        } else {
+            Write-Host "[=] core.hooksPath (already .githooks)" -ForegroundColor DarkGray
+        }
+        # Migration cleanup: remove old PMB shim from .git/hooks/pre-push
+        $oldHook = ".git/hooks/pre-push"
+        if ((Test-Path $oldHook) -and ((Get-Content $oldHook -Raw) -match "pre-push-check")) {
+            if (-not $DryRun) {
+                Remove-Item $oldHook -Force
+                Write-Host "[~] .git/hooks/pre-push (removed — migrated to .githooks/)" -ForegroundColor Green
+            } else {
+                Write-Host "[~?] .git/hooks/pre-push (would remove — migrated to .githooks/)" -ForegroundColor Green
+            }
+        }
     }
 
     # Process ADVISORY_DIFF — compare and emit advisory diff, never write
