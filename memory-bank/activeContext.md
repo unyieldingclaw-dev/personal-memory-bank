@@ -18,7 +18,7 @@ lineage: []
 
 ## Current Focus
 
-v1.1.0 shipped and all 9 key docs audited (2026-06-12). Startup context was at 29.3 KB (above 25 KB ERROR threshold) — memory bank maintenance pass in progress to bring it below threshold. After `mb clean` cleanup: run `mb verify-integrity`, `mb doctor`, then `mb commit`.
+v1.1.0 shipped, all 9 key docs audited, and memory bank maintenance complete (2026-06-12). Startup context reduced from 29.3 KB → 24.8 KB (WARN, below ERROR threshold). All checksums verified clean. No active work in progress.
 
 ## What Was Just Completed (2026-06-12)
 
@@ -45,4 +45,4 @@ v1.1.0 shipped and all 9 key docs audited (2026-06-12). Startup context was at 2
 
 ## Git State
 
-master branch. Clean — all session work committed and pushed. Pending: `mb verify-integrity` + `mb doctor` + `mb commit` to close out memory bank maintenance.
+master branch. Clean — all session work committed and pushed (08da0dc).
