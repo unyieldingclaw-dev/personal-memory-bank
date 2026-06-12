@@ -29,7 +29,7 @@ mb validate
 
 2. **memory-bank/ files are empty or placeholder** — open each file and confirm you've replaced the template text with real project content. A file full of `[Fill in your...]` brackets does nothing.
 
-3. **Context was compacted mid-session** — Claude Code compacts at ~75% context and CLAUDE.md doesn't reload. Tell the AI: *"Re-read all memory-bank/ files to restore context."* Then run `/pmb-status` and consider a `/compact` before your next session.
+3. **Context was compacted mid-session** — Claude Code compacts at ~40% context and CLAUDE.md doesn't reload. Tell the AI: *"Re-read all memory-bank/ files to restore context."* Then run `/pmb-status` and consider a `/compact` before your next session.
 
 4. **Cursor: rule not applying** — open `.cursor/rules/memory-bank.mdc` and verify `alwaysApply: true` is in the frontmatter. Restart Cursor.
 
@@ -122,7 +122,7 @@ cp /path/to/memory-bank-repo/templates/memory-bank/activeContext.md memory-bank/
 2. At the start of the new session, tell the AI: *"Read memory-bank/ and tell me what you understand about the current state of the project."*
 3. Correct anything missing, then continue
 
-For future sessions: run `/compact` at 60% context rather than waiting for auto-compaction at 75%.
+For future sessions: run `/compact` manually at natural task boundaries rather than waiting for auto-compaction at 40%.
 
 ---
 
@@ -132,7 +132,7 @@ For future sessions: run `/compact` at 60% context rather than waiting for auto-
 
 **Fix:**
 1. Run `mb audit` to see which files are flagged
-2. Run `mb compact` to get an AI prompt that rewrites memory to current state
+2. Run `mb clean` to get an AI prompt that rewrites memory to current state
 3. After compaction, update `last-reviewed` dates (the hook does this automatically on save, or `mb audit` will reflect the new dates after you've edited the files)
 4. Run `mb validate` to confirm health
 

@@ -150,7 +150,7 @@ For multi-session work, create `plan.md`:
 | Problem | Solution |
 |---------|----------|
 | AI doesn't know context | Check rule files, restart IDE |
-| Files too large | Run `mb compact` to deduplicate; run `mb doctor` to verify sizes |
+| Files too large | Run `mb clean` to deduplicate; run `mb doctor` to verify sizes |
 | Handoff not working | Explicitly: "Read handoff.md" |
 | Wrong patterns | Reference: `@memory-bank/systemPatterns.md` |
 

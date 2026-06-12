@@ -242,7 +242,7 @@ Use quick commands:
 
 ### Memory Bank Files Too Large
 
-Run `mb compact` to get an AI prompt that deduplicates and summarizes memory, or manually:
+Run `mb clean` to get an AI prompt that deduplicates and summarizes memory, or manually:
 1. Keep only current state in `activeContext.md`
 2. Archive old completed items in `progress.md`
 3. Run `mb doctor` to confirm sizes are back in range

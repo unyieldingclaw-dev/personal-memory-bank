@@ -183,4 +183,4 @@ These are built into Claude Code and don't require the memory bank system.
 | `activeContext.md` | 50–100 | 150 | volatile |
 | `progress.md` | 100–250 | 400 | accumulating |
 
-When a file exceeds its Max: run `mb slim` (for `activeContext.md`) or `mb archive` / `mb compact` (for others).
+When a file exceeds its Max: run `mb clean` to get an AI-guided cleanup prompt.
