@@ -6,7 +6,7 @@ param()
 
 $ContractFile = ".claude/contracts/active-task.json"
 
-# WHY: Outer try/catch logs unexpected errors to .pmb-hook-errors.log so mb doctor
+# WHY: Outer trap logs unexpected errors to .pmb-hook-errors.log so mb doctor
 # can surface them. The inner logic below uses narrow catches for expected failure
 # modes; this wrapper catches anything that slips through.
 trap {

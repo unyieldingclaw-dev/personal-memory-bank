@@ -26,15 +26,10 @@ Review the output of `git diff HEAD` for security vulnerabilities. Check every c
 **[LOW]**
 - Patterns safe now but that could become security issues if surrounding code changes
 
-Rules are defined in `standards/SECURITY-RULES.md`.
-
-For each finding, use this format:
-
-**[SEVERITY]** Rule: SEC-00X
-Evidence: `<exact code snippet triggering the issue>`
-Confidence: High | Medium | Low
-File: `path/to/file.ext:line`
-Issue: <what the problem is>
-Fix: <specific recommended fix, not generic>
+For each finding report:
+- Severity: [CRITICAL] / [HIGH] / [MEDIUM] / [LOW]
+- File path and line number
+- What the issue is
+- Recommended fix (specific, not generic)
 
 If no issues found: "No security issues found in current diff."

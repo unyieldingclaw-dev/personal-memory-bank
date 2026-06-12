@@ -1,73 +1,128 @@
 #!/usr/bin/env bash
 # check-contract.sh — PreToolUse hook for Write/Edit
-# Consolidated: single Python invocation handles all contract checks.
-# Exits 0 (warn) or 2 (hard-block only). Fails open on any error.
-# WHY: Original had 3 separate python3 spawns + 6 sed subshells per call.
-# Collapsed into one heredoc invocation: ~150-300ms saved per Write/Edit hook.
+# Checks the active task contract and warns if the target file is out of scope.
+# Always exits 0 (WARN tier). Exits silently if no contract or python3 unavailable.
+
+set -euo pipefail
 
 CONTRACT_FILE=".claude/contracts/active-task.json"
 
-command -v python3 >/dev/null 2>&1 || exit 0
-[ -f "$CONTRACT_FILE" ] || exit 0
+# --- Dependency check: python3 required for JSON parsing ---
+if ! command -v python3 >/dev/null 2>&1; then
+  exit 0  # Fail open: no python3, skip the check
+fi
 
-python3 - "$CONTRACT_FILE" <<'PYEOF'
-import sys, json, os, fnmatch
-from datetime import datetime, timezone
+# --- Contract existence check ---
+if [ ! -f "$CONTRACT_FILE" ]; then
+  exit 0  # No contract — silent pass
+fi
 
-contract_file = sys.argv[1]
+# --- Parse contract fields via python3 ---
+CONTRACT_DATA=$(python3 - "$CONTRACT_FILE" <<'PYEOF'
+import sys, json
+path = sys.argv[1]
 try:
-    with open(contract_file) as f:
+    with open(path) as f:
         data = json.load(f)
+    status = data.get("status", "")
+    expires_at = data.get("expires_at", "")
+    task = data.get("task", "")
+    files = data.get("scope", {}).get("files", [])
+    print(status)
+    print(expires_at)
+    print(task)
+    print("\n".join(files))
 except Exception:
-    sys.exit(0)  # fail open: malformed contract
-
-if data.get("status") != "active":
-    sys.exit(0)
-
-expires_at = data.get("expires_at", "")
-if expires_at:
-    try:
-        expires = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
-        if datetime.now(timezone.utc) > expires:
-            task = data.get("task", "")
-            print("⚠️  CONTRACT EXPIRED: The active task contract has expired.")
-            print(f"    Task: {task}")
-            print("    Propose a new contract before continuing.")
-            sys.exit(0)
-    except Exception:
-        pass  # fail open: unparseable expiry
-
-try:
-    target_file = json.loads(os.environ.get('CLAUDE_TOOL_INPUT', '{}')).get('file_path', '')
-except Exception:
-    target_file = ''
-
-if not target_file:
-    sys.exit(0)  # fail open: can't determine target
-
-scope_files = data.get("scope", {}).get("files", [])
-task = data.get("task", "")
-
-in_scope = any(
-    p and (
-        target_file == p
-        or (p.endswith('/') and target_file.startswith(p))
-        or fnmatch.fnmatch(target_file, p)
-    )
-    for p in scope_files
-)
-
-if not in_scope:
-    scope_summary = ", ".join(p for p in scope_files if p)
-    print(f"⚠️  CONTRACT SCOPE: Writing to '{target_file}' is outside the active contract.")
-    print(f"    Task: {task}")
-    print(f"    Declared scope: {scope_summary}")
-    # WHY: PMB_CONTRACT_HARD_BLOCK=1 promotes scope warnings to blocks (exit 2).
-    # Default is warn-only (exit 0); hard-block is opt-in for strict enforcement.
-    if os.environ.get('PMB_CONTRACT_HARD_BLOCK') == '1':
-        print("    Hard-block active (PMB_CONTRACT_HARD_BLOCK=1) — write blocked.")
-        sys.exit(2)
-    print("    Pause and confirm with user before proceeding.")
-
-sys.exit(0)
+    pass
 PYEOF
+) || true
+
+if [ -z "$CONTRACT_DATA" ]; then
+  exit 0  # Malformed contract — fail open
+fi
+
+# Extract parsed fields (line-delimited)
+STATUS=$(echo "$CONTRACT_DATA" | sed -n '1p')
+EXPIRES_AT=$(echo "$CONTRACT_DATA" | sed -n '2p')
+TASK=$(echo "$CONTRACT_DATA" | sed -n '3p')
+SCOPE_FILES=$(echo "$CONTRACT_DATA" | tail -n +4)
+
+# --- Status check ---
+if [ "$STATUS" != "active" ]; then
+  exit 0  # Contract is complete or cancelled — silent pass
+fi
+
+# --- Expiry check ---
+if [ -n "$EXPIRES_AT" ]; then
+  EXPIRED=$(EXPIRES_AT="$EXPIRES_AT" python3 -c "
+import os
+from datetime import datetime, timezone
+try:
+    expires = datetime.fromisoformat(os.environ['EXPIRES_AT'].replace('Z', '+00:00'))
+    now = datetime.now(timezone.utc)
+    print('yes' if now > expires else 'no')
+except Exception:
+    print('no')
+" 2>/dev/null) || true
+  if [ "$EXPIRED" = "yes" ]; then
+    echo "⚠️  CONTRACT EXPIRED: The active task contract has expired."
+    echo "    Task: $TASK"
+    echo "    Propose a new contract before continuing."
+    exit 0
+  fi
+fi
+
+# --- Extract target file from tool input ---
+TARGET_FILE=$(python3 -c "
+import sys, json, os
+try:
+    data = json.loads(os.environ.get('CLAUDE_TOOL_INPUT', '{}'))
+    print(data.get('file_path', ''))
+except Exception:
+    print('')
+" 2>/dev/null) || true
+
+if [ -z "$TARGET_FILE" ]; then
+  exit 0  # Can't determine target — fail open
+fi
+
+# --- Scope check ---
+IN_SCOPE=0
+while IFS= read -r pattern; do
+  [ -z "$pattern" ] && continue
+  # Exact match
+  if [ "$TARGET_FILE" = "$pattern" ]; then
+    IN_SCOPE=1
+    break
+  fi
+  # Directory prefix match (pattern ends with /)
+  if [[ "$pattern" == */ ]] && [[ "$TARGET_FILE" == "$pattern"* ]]; then
+    IN_SCOPE=1
+    break
+  fi
+  # Glob match via python3 fnmatch
+  MATCH=$(TARGET_FILE="$TARGET_FILE" PATTERN="$pattern" python3 -c "
+import fnmatch, os
+print('yes' if fnmatch.fnmatch(os.environ['TARGET_FILE'], os.environ['PATTERN']) else 'no')
+" 2>/dev/null) || true
+  if [ "$MATCH" = "yes" ]; then
+    IN_SCOPE=1
+    break
+  fi
+done <<< "$SCOPE_FILES"
+
+if [ "$IN_SCOPE" -eq 0 ]; then
+  SCOPE_SUMMARY=$(echo "$SCOPE_FILES" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
+  echo "⚠️  CONTRACT SCOPE: Writing to '$TARGET_FILE' is outside the active contract."
+  echo "    Task: $TASK"
+  echo "    Declared scope: $SCOPE_SUMMARY"
+  # WHY: PMB_CONTRACT_HARD_BLOCK=1 promotes scope warnings to blocks (exit 2).
+  # Default is warn-only (exit 0); hard-block is opt-in for strict enforcement.
+  if [ "${PMB_CONTRACT_HARD_BLOCK:-}" = "1" ]; then
+    echo "    Hard-block active (PMB_CONTRACT_HARD_BLOCK=1) — write blocked."
+    exit 2
+  fi
+  echo "    Pause and confirm with user before proceeding."
+fi
+
+exit 0
