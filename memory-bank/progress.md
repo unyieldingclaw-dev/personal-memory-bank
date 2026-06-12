@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-06-11
+last-reviewed: 2026-06-12
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -79,34 +79,18 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ mb command surface finalized: 8 active commands; mb.sh/mb.ps1 parity; mb doctor expanded to 20 checks (17: semantic drift, 18: stale stable decisions, 19: cross-file contradiction, 20: SHA-256 via `mb verify-integrity`); compaction quality gate blocks unless memory bank captured (exits 2); agent delegation depth hook (WARN depth>1); AGENTIC-SAFETY.md updated; all scripts templated
 
 ### Branch Cleanup Session (2026-06-12)
-- ✅ Reviewed all stale local branches (6) and remote branches (4) post-v1.1.0 commit
-- ✅ Removed two orphaned worktrees (`.claude/worktrees/`), deleted their branches
-- ✅ Rescued Bowling Tracker enforcement plan from unmerged branch `claude/memory-bank-upgrade-logic-28kmkn` — preserved in master via manual edit
-- ✅ Deleted remote branches: `feat/comment-provenance`, `feat/governance-integrity`, `feat/mb-upgrade`, `feat/mb-doctor-staleness`, `claude/memory-bank-upgrade-logic-28kmkn` (all content merged or preserved)
-- ✅ `git fetch --prune` cleaned stale remote-tracking refs for 3 already-deleted remotes
+- ✅ Deleted 6 local + 4 remote stale branches post-v1.1.0; removed 2 orphaned worktrees; rescued BT enforcement plan from unmerged branch; `git fetch --prune` cleaned tracking refs
 
 ### Git Hooks Migration — v1.1.0 (2026-06-11)
-- ✅ **`core.hooksPath = .githooks`** — hooks now versioned in project repo, not copied to `.git/hooks/`; distributed via `mb upgrade` TEMPLATE_OWNED
-- ✅ **`templates/.githooks/pre-push`** and **`templates/.githooks/pre-commit`** created
-- ✅ **`mb init`** updated (bash + PowerShell): creates `.githooks/` dir, copies both hooks, sets `git config core.hooksPath .githooks`
-- ✅ **`mb upgrade`** updated (bash + PowerShell): TEMPLATE_OWNED entries for both hooks; sets `core.hooksPath`; removes old `.git/hooks/pre-push` PMB shim (migration cleanup)
-- ✅ **`mb doctor` check 4** updated (bash + PowerShell): verifies `.githooks/pre-push` + `core.hooksPath` value; bash parity (was PowerShell-only)
-- ✅ **Pre-commit hook activated**: existed in PMB repo but was dead; now fires (`git config core.hooksPath .githooks` run in PMB repo)
-- ✅ **`docs/HOOKS-GUIDE.md`**: new "Git Hooks (versioned)" section — mechanism, hook inventory, TEMPLATE_OWNED model, migration notes, verification commands
-- ✅ **`README.md`**: pre-push `<details>` block updated; version badge 1.0.9 → 1.1.0
-- ✅ **Breaking change**: projects must run `mb upgrade` to activate new layout; old `.git/hooks/pre-push` shim removed automatically
+- ✅ `core.hooksPath = .githooks` — hooks versioned in repo (`templates/.githooks/pre-push` + `pre-commit`), distributed via `mb upgrade` TEMPLATE_OWNED
+- ✅ `mb init`, `mb upgrade`, `mb doctor` check 4 all updated (bash + PowerShell); pre-commit hook activated in PMB repo; README badge + CHANGELOG updated
+- ✅ **Breaking**: projects must run `mb upgrade`; old `.git/hooks/pre-push` shim removed automatically
 
 ### Satellite Project Fixes + Hook Performance Plan (2026-06-10)
-- ✅ **BT CLAUDE.md — session-start gap** — added "Memory Bank" section telling Claude to read all 5 memory-bank files at conversation start (was missing cold-start instruction; only had compaction recovery)
-- ✅ **BT CLAUDE.md — Task Contract Protocol** — added full Task Contract Protocol section; BT had hook infrastructure (check-contract.ps1/.sh) but no advisory layer telling Claude when to propose contracts
-- ✅ **Performance fixes design doc** — audited check-contract.sh (4 Python spawns + sed), pre-compact-check.sh (sed-in-loop), mb.sh check 10 (70 grep calls), mb.sh check 17 (400 subshell greps); design doc written at `docs/superpowers/specs/2026-06-10-pmb-performance-fixes-design.md`
-- ✅ **Performance fixes implementation plan** — written at `docs/superpowers/plans/2026-06-10-pmb-performance-fixes.md`; 5 tasks with TDD steps and commit checkpoints; ready to execute
+- ✅ BT CLAUDE.md: added memory bank session-start section + Task Contract Protocol; performance design + plan written for check-contract.sh/pre-compact-check.sh/mb.sh checks 10+17
 
 ### Hook Script Performance Fixes — perf/hook-script-fixes (2026-06-11)
-- ✅ **check-contract.sh** — consolidated 3 Python spawns + 6 sed subshells into single Python heredoc invocation (~150–300 ms saved per Write/Edit hook call); branch commit 8c8c740
-- ✅ **pre-compact-check.sh** — replaced sed subprocess in per-line loop with bash parameter expansion (~100 processes saved per compaction check); branch commit ee47554
-- ✅ **mb.sh check 10** — replaced 7 per-pattern grep calls per file with one combined grep per file (35 → 5–10 total grep calls); branch commit 54c8e26
-- ✅ **mb.sh check 17** — replaced per-line echo|grep loop (~400 subshell greps) with grep -inE directly on file (2 calls total); branch commit 17508d8
+- ✅ check-contract.sh (3 Python spawns → 1 heredoc), pre-compact-check.sh (sed loop → bash expansion), mb.sh check 10 (35 → 7 grep calls), check 17 (400 subshell greps → 2 file greps); ~500 ms saved per hook call
 
 ### Guardrails Batch — G1–G6 (2026-06-06)
 - ✅ G1: PS dangerous-commands patterns; G2: hook failure log (`.pmb-hook-errors.log`) + Check 16; G3: `PMB_CONTRACT_HARD_BLOCK=1` hard-block mode; G4: pre-push first-push secret scan fix; G5: CI rules-file-integrity job (invisible Unicode, HTML comments, bypass phrases); G6: CI SAST (Semgrep p/bash); Check 15: startup context ceiling (WARN >15 KB, ERROR >25 KB)
@@ -140,23 +124,16 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ⏸ handoff CLI, pinned.md, mb update --from-git, mb privacy
 
 ### mb.ps1 `diff -u` Windows Bug Fix (2026-06-12, complete)
-- ✅ **Root cause**: PowerShell aliases `diff` → `Compare-Object`; `& diff -u $src $target` called `Compare-Object -u`, failing with "parameter not found"
-- ✅ **Fix**: replaced both advisory-diff blocks (~lines 1628, 1667) with `@(git diff --no-index --unified=3 -- $src $target 2>$null)` + 20-line truncation guard; no `Get-Command diff` check needed
+- ✅ Replaced `diff -u` (PS alias → Compare-Object) with `git diff --no-index --unified=3` in both upgrade advisory-diff blocks; 20-line truncation guard added
 
 ### Cross-Project PreCompact + v1.1.0 Audit (2026-06-12, complete)
-- ✅ Scanned all 6 downstream projects for PreCompact hook + v1.1.0 git hooks
-- ✅ **Bowling-Tracker** — already had PreCompact + v1.1.0 hooks (confirmed, no action needed)
-- ✅ **Google-Organizer** — `mb upgrade` run; PreCompact hook added, delegation-depth added, AUTOCOMPACT 50→40, v1.1.0 git hooks installed
-- ✅ **GrillTimer** — `mb upgrade` run; same as Google-Organizer
-- ✅ **Nolan-Budget** — `mb upgrade` run; custom npm permissions (dev/build/preview/install) restored after TEMPLATE_OWNED overwrite
-- ✅ **rfx-cook-tracker** — manual patch (no mb upgrade — custom hook structure); PreCompact hook added pointing to `.claude/hooks/pre-compact-check.sh`; AUTOCOMPACT 50→40 fixed; `pre-compact-check.sh` created in `.claude/hooks/`
-- ✅ **AI-Code-Review-Agent** — `mb upgrade` run; `.githooks/pre-push` added (pre-commit + `core.hooksPath` were already present); custom `Stop` hook + `permissions.allow` survived TEMPLATE_OWNED overwrite intact
+- ✅ All 6 downstream projects upgraded: Google-Organizer, GrillTimer, Nolan-Budget, AI-Code-Review-Agent via `mb upgrade`; rfx-cook-tracker manual patch (custom hook structure); Bowling-Tracker already current. All have PreCompact hook + v1.1.0 git hooks + AUTOCOMPACT=40
 
 ### Bowling Tracker — Memory Bank Enforcement (2026-06-12, complete)
-- ✅ `CLAUDE.md` has Memory Bank section + sprint-completion rule + compaction recovery (was already present)
-- ✅ `scripts/pre-compact-check.sh/.ps1` present in BT (was already deployed)
-- ✅ PreCompact hook wired in BT `.claude/settings.json` (was already present)
-- ✅ `mb upgrade` run in BT: v1.1.0 hooks installed (`.githooks/pre-push`, `.githooks/pre-commit`, `core.hooksPath = .githooks`; old `.git/hooks/pre-push` shim removed)
+- ✅ BT confirmed: memory bank session-start + sprint rule + PreCompact hook all present; `mb upgrade` installed v1.1.0 hooks (`core.hooksPath = .githooks`; old shim removed)
+
+### Documentation Audit — All 9 Key Docs (2026-06-12, complete)
+- ✅ Audited README, CHANGELOG, COMMANDS-REFERENCE, QUICK-REFERENCE, SETUP-GUIDE, RECOVERY, HOOKS-GUIDE, UPGRADE, CONTRACTS-GUIDE; fixed 4 deprecated `mb compact`→`mb clean` references + 2 stale "75% context"→"40%" references; committed + pushed; GitHub repo description updated to reflect v1.1.0 features
 
 ## Satellite Projects
 

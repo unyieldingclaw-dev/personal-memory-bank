@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-11
+last-reviewed: 2026-06-12
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -18,34 +18,14 @@ lineage: []
 
 ## Current Focus
 
-v1.1.0 shipped (2026-06-11). Git hooks migrated from `.git/hooks/` copy-on-init to versioned `core.hooksPath = .githooks` layout:
-- **`.githooks/pre-push`** and **`.githooks/pre-commit`**: committed, versioned, distributed via `mb upgrade` (TEMPLATE_OWNED)
-- **`mb init`**: creates `.githooks/`, copies both hooks, sets `git config core.hooksPath .githooks`
-- **`mb upgrade`**: keeps hooks current via TEMPLATE_OWNED; sets `core.hooksPath`; removes old `.git/hooks/pre-push` PMB shim
-- **`mb doctor`** check 4: updated in both bash and PowerShell to verify `.githooks/pre-push` presence + `core.hooksPath` value
-- **Pre-commit hook now active**: blocked by missing `core.hooksPath` before; now fires on every commit (handoff.md block + AUTOCOMPACT warning)
-- **README version badge**: updated to 1.1.0
+v1.1.0 shipped and all 9 key docs audited (2026-06-12). Startup context was at 29.3 KB (above 25 KB ERROR threshold) — memory bank maintenance pass in progress to bring it below threshold. After `mb clean` cleanup: run `mb verify-integrity`, `mb doctor`, then `mb commit`.
 
-**Context size**: progress.md archived 2026-06-12 → 12 KB (below 15 KB warning threshold).
+## What Was Just Completed (2026-06-12)
 
-## What Was Just Completed (2026-06-11)
-
-**Git Hooks Migration — v1.1.0:**
-- `templates/.githooks/pre-push` and `templates/.githooks/pre-commit` created
-- `scripts/mb.sh`: init block, TEMPLATE_OWNED entries, upgrade wiring, doctor check — all updated
-- `scripts/mb.ps1`: init block, `$templateOwned` entries, upgrade wiring (replaced `Invoke-InstallHooks` call), doctor check — all updated
-- `docs/HOOKS-GUIDE.md`: new "Git Hooks (versioned)" section
-- `README.md`: pre-push `<details>` block and version badge updated
-- `CHANGELOG.md`: 1.1.0 entry prepended
-- `VERSION`: 1.0.9 → 1.1.0
-- PMB repo itself: `git config core.hooksPath .githooks` (activates previously-dead pre-commit)
-
-## What Was Completed (2026-06-06)
-
-**mb doctor v1.0.8 — 20 checks + compaction gate + agent delegation depth:**
-- Checks 17–20: semantic drift, stale decisions, cross-file contradictions, SHA-256 checksums (`mb verify-integrity`)
-- Compaction quality gate: pre-compact-check BLOCKS unless activeContext.md ≥3 lines AND progress.md has today's date
-- Agent delegation depth: `delegation-depth-check.ps1/.sh` + PreToolUse hook on Agent tool; WARN when depth >1
+**Documentation Audit + Memory Maintenance:**
+- All 9 key docs audited; fixed 4 `mb compact`→`mb clean` references + 2 "75%"→"40%" references in RECOVERY.md; committed + pushed
+- GitHub repo description updated to reflect v1.1.0 (versioned git hooks, slash commands suite)
+- Memory bank maintenance pass: compressed 7 verbose sections in progress.md, added docs audit entry
 
 ## Next Steps
 
@@ -65,4 +45,4 @@ v1.1.0 shipped (2026-06-11). Git hooks migrated from `.git/hooks/` copy-on-init 
 
 ## Git State
 
-master branch. Uncommitted: scripts/mb.ps1 (diff-u bug fix), memory-bank updates (progress.md archived + activeContext.md). Downstream projects all patched this session.
+master branch. Clean — all session work committed and pushed. Pending: `mb verify-integrity` + `mb doctor` + `mb commit` to close out memory bank maintenance.
