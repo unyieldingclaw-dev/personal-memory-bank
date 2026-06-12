@@ -179,6 +179,13 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 **Deferred pending operational evidence:**
 - ⏸ handoff CLI, pinned.md, mb update --from-git, mb privacy
 
+### Bowling Tracker — Memory Bank Enforcement (2026-06-10, plan ready, not yet implemented)
+- ⏳ Create `CLAUDE.md` at project root: sprint-completion rule referencing `mb update` by name + compaction recovery section
+- ⏳ Copy PMB `scripts/pre-compact-check.sh` → Bowling Tracker `scripts/pre-compact-check.sh` (no changes needed, already generic)
+- ⏳ Add PreCompact hook entry to Bowling Tracker `.claude/settings.json`
+- Rationale: `mb update` exists and works; nothing tells Claude to call it after sprints; no quality gate exists
+- Also: run `mb upgrade` in Bowling Tracker to pick up v1.1.0 hooks (.githooks/ + core.hooksPath)
+
 ## Satellite Projects
 
 - **ai-code-review-agent** (2026-06-04) — standalone GitHub Actions CI reviewer; repo `unyieldingclaw-dev/ai-code-review-agent` (private). LLM reviewer + verifier agents, finding cap, GITHUB_STEP_SUMMARY. Status: built and pushed, pending calibration PR validation.

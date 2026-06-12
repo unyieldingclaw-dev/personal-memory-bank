@@ -49,9 +49,10 @@ v1.1.0 shipped (2026-06-11). Git hooks migrated from `.git/hooks/` copy-on-init 
 
 ## Next Steps
 
-1. **Wait for 30-day growth data** (~June 4) — startup context section will show real growth % once repo crosses 30-day window; use that data to decide whether classification is needed
-2. **Architecture review items on hold** — boring mode (`mb init --minimal`), explicit non-goals doc, `/core` vs `/integrations` separation; revisit if adoption friction surfaces
-3. **Semantic identity** (progress.md backlog) — concept-level drift detection; detection-first, no auto-remediation; not yet, complexity budget is spent
+1. **Bowling Tracker enforcement** — add CLAUDE.md (sprint-completion rule + compaction recovery), copy `pre-compact-check.sh`, wire PreCompact hook in `.claude/settings.json`; also run `mb upgrade` to get v1.1.0 hooks. Plan in progress.md.
+2. **Archive old progress.md entries** — context still ~30 KB (above 25 KB ceiling); compress older completed sections
+3. **Architecture review items on hold** — boring mode (`mb init --minimal`), explicit non-goals doc, `/core` vs `/integrations` separation; revisit if adoption friction surfaces
+4. **Semantic identity** (progress.md backlog) — concept-level drift detection; detection-first, no auto-remediation; not yet, complexity budget is spent
 
 ## Architecture Constraints to Remember
 
@@ -66,4 +67,4 @@ v1.1.0 shipped (2026-06-11). Git hooks migrated from `.git/hooks/` copy-on-init 
 
 ## Git State
 
-master branch, uncommitted changes (hooks migration). Last tagged version: v1.1.0. Changes include: templates/.githooks/, scripts/mb.sh, scripts/mb.ps1, docs/HOOKS-GUIDE.md, README.md, CHANGELOG.md, VERSION, memory-bank/.
+master branch, clean. Last commit: `a8e187c` — feat: migrate git hooks to core.hooksPath = .githooks (v1.1.0).
