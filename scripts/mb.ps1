@@ -1625,19 +1625,17 @@ function Invoke-Upgrade {
             Write-Host "[=] $target (matches template)" -ForegroundColor DarkGray
         } else {
             Write-Host "[!] $target (differs from template — review manually)" -ForegroundColor Yellow
-            $diffCmd = Get-Command diff -ErrorAction SilentlyContinue
-            if ($diffCmd) {
-                $diffOutput = & diff -u $src $target 2>$null
-                $lines = if ($diffOutput) { $diffOutput -split "`n" } else { @() }
-                if ($lines.Count -le 20) {
-                    foreach ($line in $lines) { Write-Host "    $line" }
-                } else {
-                    for ($i = 0; $i -lt 20; $i++) { Write-Host "    $($lines[$i])" }
-                    $remaining = $lines.Count - 20
-                    Write-Host "    ... ($remaining more lines — compare manually with: diff $src $target)"
-                }
+            # WHY: `diff` is a PowerShell alias for Compare-Object, not the Unix diff tool;
+            # git diff --no-index gives proper unified output and works on all platforms.
+            $diffLines = @(git diff --no-index --unified=3 -- $src $target 2>$null)
+            if ($diffLines.Count -eq 0) {
+                Write-Host "    (no diff output — compare manually: git diff --no-index $src $target)"
+            } elseif ($diffLines.Count -le 20) {
+                foreach ($line in $diffLines) { Write-Host "    $line" }
             } else {
-                Write-Host "    (diff not available — compare manually with: diff $src $target)"
+                for ($i = 0; $i -lt 20; $i++) { Write-Host "    $($diffLines[$i])" }
+                $remaining = $diffLines.Count - 20
+                Write-Host "    ... ($remaining more lines — compare manually: git diff --no-index $src $target)"
             }
         }
     }
@@ -1664,19 +1662,17 @@ function Invoke-Upgrade {
             Write-Host "[=] $target (matches template)" -ForegroundColor DarkGray
         } else {
             Write-Host "[!] $target (differs from template — review manually)" -ForegroundColor Yellow
-            $diffCmd = Get-Command diff -ErrorAction SilentlyContinue
-            if ($diffCmd) {
-                $diffOutput = & diff -u $src $dst 2>$null
-                $lines = if ($diffOutput) { $diffOutput -split "`n" } else { @() }
-                if ($lines.Count -le 20) {
-                    foreach ($line in $lines) { Write-Host "    $line" }
-                } else {
-                    for ($i = 0; $i -lt 20; $i++) { Write-Host "    $($lines[$i])" }
-                    $remaining = $lines.Count - 20
-                    Write-Host "    ... ($remaining more lines — compare manually with: diff $src $dst)"
-                }
+            # WHY: `diff` is a PowerShell alias for Compare-Object, not the Unix diff tool;
+            # git diff --no-index gives proper unified output and works on all platforms.
+            $diffLines = @(git diff --no-index --unified=3 -- $src $dst 2>$null)
+            if ($diffLines.Count -eq 0) {
+                Write-Host "    (no diff output — compare manually: git diff --no-index $src $dst)"
+            } elseif ($diffLines.Count -le 20) {
+                foreach ($line in $diffLines) { Write-Host "    $line" }
             } else {
-                Write-Host "    (diff not available — compare manually with: diff $src $dst)"
+                for ($i = 0; $i -lt 20; $i++) { Write-Host "    $($diffLines[$i])" }
+                $remaining = $diffLines.Count - 20
+                Write-Host "    ... ($remaining more lines — compare manually: git diff --no-index $src $dst)"
             }
         }
     }

@@ -26,7 +26,7 @@ v1.1.0 shipped (2026-06-11). Git hooks migrated from `.git/hooks/` copy-on-init 
 - **Pre-commit hook now active**: blocked by missing `core.hooksPath` before; now fires on every commit (handoff.md block + AUTOCOMPACT warning)
 - **README version badge**: updated to 1.1.0
 
-**Context size**: ~28–30 KB (above 25 KB ceiling). Archive old progress.md entries when convenient.
+**Context size**: progress.md archived 2026-06-12 → 12 KB (below 15 KB warning threshold).
 
 ## What Was Just Completed (2026-06-11)
 
@@ -49,9 +49,8 @@ v1.1.0 shipped (2026-06-11). Git hooks migrated from `.git/hooks/` copy-on-init 
 
 ## Next Steps
 
-1. **Archive old progress.md entries** — context still ~30 KB (above 25 KB ceiling); compress older completed sections
-2. **Architecture review items on hold** — boring mode (`mb init --minimal`), explicit non-goals doc, `/core` vs `/integrations` separation; revisit if adoption friction surfaces
-3. **Semantic identity** (progress.md backlog) — concept-level drift detection; detection-first, no auto-remediation; not yet, complexity budget is spent
+1. **Architecture review items on hold** — boring mode (`mb init --minimal`), explicit non-goals doc, `/core` vs `/integrations` separation; revisit if adoption friction surfaces
+2. **Semantic identity** (progress.md backlog) — concept-level drift detection; detection-first, no auto-remediation; not yet, complexity budget is spent
 
 ## Architecture Constraints to Remember
 
@@ -66,4 +65,4 @@ v1.1.0 shipped (2026-06-11). Git hooks migrated from `.git/hooks/` copy-on-init 
 
 ## Git State
 
-master branch, clean. Last commit: `a8e187c` — feat: migrate git hooks to core.hooksPath = .githooks (v1.1.0).
+master branch. Uncommitted: scripts/mb.ps1 (diff-u bug fix), memory-bank updates (progress.md archived + activeContext.md). Downstream projects all patched this session.

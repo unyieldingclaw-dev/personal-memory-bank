@@ -72,34 +72,11 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ CLAUDE.md memory update discipline: task-boundary updates, compaction summaries are fallback
 - ✅ .gitignore: .claude/worktrees/ excluded
 
-### Consistency Corrections & Tooling (May–June 2026)
-- ✅ v1.0.1: first formally tagged GitHub release (four consistency corrections from architecture review)
-- ✅ mb doctor Check #10: template residue detection — lexical patterns only
-- ✅ mb doctor: identity boundary in function header — "observable integrity signals, not semantic correctness"
-- ✅ v1.0.2: /test-audit command + /health-check (PMB-only); COMMANDS-REFERENCE.md; mb upgrade includes test-audit; README badge fixed
-- ✅ PreCompact memory gate: pre-compact-check.ps1/.sh + settings.json hook + HOOKS-GUIDE.md documentation (2026-05-28)
-- ✅ Pre-push hook: pre-push-check.ps1/.sh (7 checks) + templates/hooks/pre-push shim + mb init/upgrade/doctor wiring (2026-05-29)
-- ✅ mb install-hooks: retrofit subcommand for existing projects; dry-run support (2026-05-29)
-- ✅ Standards distribution: templates/standards/ (12 files) + mb init loop + mb upgrade ADVISORY_CREATE category (2026-05-29)
-- ✅ .pmb-version tracking: written by mb init and mb upgrade; mb doctor check 12 (2026-05-29)
-- ✅ Remote version check in mb upgrade: soft non-blocking curl/Invoke-WebRequest; skips offline (2026-05-29)
-- ✅ mb doctor checks 11 (required standards) and 12 (.pmb-version) in bash + PowerShell (2026-05-29)
-- ✅ v1.0.3: VERSION, CHANGELOG, README, COMMANDS-REFERENCE all updated (2026-05-29)
+### v1.0.1–v1.0.3 — Consistency Corrections & Tooling (May–June 2026)
+- ✅ v1.0.1–1.0.3: architecture review corrections; mb doctor checks 10–12 (template residue, required standards, .pmb-version); PreCompact memory gate (pre-compact-check.ps1/.sh); pre-push hook (7 checks, pre-push-check.ps1/.sh); mb install-hooks; standards distribution (12 files via ADVISORY_CREATE); remote version check in mb upgrade; /test-audit + /health-check commands; COMMANDS-REFERENCE.md
 
-### Command Consolidation + Semantic Intelligence — v1.0.8 (2026-06-06)
-- ✅ **Command surface finalized** — 8 active commands (init, status, doctor, query, clean, commit, upgrade, verify-integrity); deprecated aliases clarified; `mb clean` references fixed throughout
-- ✅ **mb.sh parity** — checks 15 (startup context ceiling) and 16 (hook error log) added to mb.sh (were PowerShell-only)
-- ✅ **Check 17 — Semantic drift detection** — heuristic scan of volatile files for transition/removal keywords; flags lines for human review against stable files
-- ✅ **Check 18 — Old stable decisions** — flags authority:stable files not reviewed in >180 days
-- ✅ **Check 19 — Cross-file contradiction** — detects authority hierarchy violations and negation language under shared `##` headings
-- ✅ **Check 20 + mb verify-integrity** — SHA-256 checksums for all 5 memory-bank files; stored in `.pmb-checksums` (gitignored); reports external modifications as ERROR; refreshed on every mb doctor run
-- ✅ **Compaction quality gate** — pre-compact-check.ps1/.sh now exits 2 (blocks) unless: activeContext.md has ≥3 substantive lines AND progress.md has today's date; handoff.md bypasses
-- ✅ **Agent delegation depth** — delegation-depth-check.ps1/.sh; PreToolUse hook on Agent tool in settings.json; WARN when depth >1; session temp file `.pmb-delegation-depth` (gitignored, resets 2h)
-- ✅ **standards/AGENTIC-SAFETY.md** — "Agent Delegation Depth Enforcement" section added
-- ✅ **Templating** — pre-compact-check, delegation-depth-check scripts mirrored to templates/scripts/; settings.json and AGENTIC-SAFETY.md mirrored to templates/
-- ✅ **mb init/upgrade** — delegation-depth-check scripts added to init allowlist and upgrade TEMPLATE_OWNED
-- ✅ **docs/COMMANDS-REFERENCE.md** — updated to 20-check table; verify-integrity command added
-- ✅ **CHANGELOG.md + VERSION** — bumped to v1.0.8
+### v1.0.8 — Command Consolidation + Semantic Intelligence (2026-06-06)
+- ✅ mb command surface finalized: 8 active commands; mb.sh/mb.ps1 parity; mb doctor expanded to 20 checks (17: semantic drift, 18: stale stable decisions, 19: cross-file contradiction, 20: SHA-256 via `mb verify-integrity`); compaction quality gate blocks unless memory bank captured (exits 2); agent delegation depth hook (WARN depth>1); AGENTIC-SAFETY.md updated; all scripts templated
 
 ### Branch Cleanup Session (2026-06-12)
 - ✅ Reviewed all stale local branches (6) and remote branches (4) post-v1.1.0 commit
@@ -132,40 +109,16 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ **mb.sh check 17** — replaced per-line echo|grep loop (~400 subshell greps) with grep -inE directly on file (2 calls total); branch commit 17508d8
 
 ### Guardrails Batch — G1–G6 (2026-06-06)
-- ✅ **G1** — dangerous-commands hook extended to PowerShell tool; 8 PS-native BLOCK patterns added (Remove-Item -Recurse -Force, Format-Volume, pipe-to-iex/Invoke-Expression); both settings.json files updated
-- ✅ **G2** — hook failure alerting: all 4 hook scripts (dangerous-commands, check-contract, pre-compact-check, update-reviewed) log errors to `.pmb-hook-errors.log`; mb doctor Check 16 reports log presence; mb init now adds `.pmb-hook-errors.log` to .gitignore
-- ✅ **G3** — `PMB_CONTRACT_HARD_BLOCK=1` env var promotes contract scope warnings to blocks (exit 2); documented in `standards/SECURITY-GUARDRAILS.md`; both .ps1 and .sh scripts updated
-- ✅ **G4** — pre-push secret scan fixed for first push: when no upstream tracking ref, `git log --not --remotes -p` scans all commits not on any remote; Check 6 (large files) fixed in parallel; all 4 pre-push-check files updated
-- ✅ **G5** — `rules-file-integrity` CI job added to pmb-health.yml: invisible Unicode, HTML comments, LLM bypass phrases in CLAUDE.md/standards/
-- ✅ **G6** — `sast` CI job added to pmb-health.yml: Semgrep `p/bash` ruleset scanning scripts/ and templates/scripts/
-- ✅ **Housekeeping** — merged two handoff.md files; added `.pmb-version`; mb doctor Check 15 (startup context size ceiling: WARN >15 KB, ERROR >25 KB)
+- ✅ G1: PS dangerous-commands patterns; G2: hook failure log (`.pmb-hook-errors.log`) + Check 16; G3: `PMB_CONTRACT_HARD_BLOCK=1` hard-block mode; G4: pre-push first-push secret scan fix; G5: CI rules-file-integrity job (invisible Unicode, HTML comments, bypass phrases); G6: CI SAST (Semgrep p/bash); Check 15: startup context ceiling (WARN >15 KB, ERROR >25 KB)
 
 ### Code Review Standard — v1.0.6 (2026-06-03)
-- ✅ `Confidence: High|Medium|Low` replaced by `Basis: VERIFIED|INFERRED|SPECULATIVE` in `standards/CODE-REVIEW.md`, `templates/standards/CODE-REVIEW.md`, both `code-review.md` command files
-- ✅ Evidence requirements explicit per-basis: file:line required; SPECULATIVE must cite observed trigger + explicit uncertainty statement
-- ✅ Blocking constraint: `Blocking: true` requires `Severity >= High AND Basis != SPECULATIVE`
-- ✅ Report sections: `## Supported Findings` (VERIFIED+INFERRED, with [VERIFIED]/[INFERRED] prefix) + `## Predicted Risks` (SPECULATIVE, omit if empty)
-- ✅ Three new Failure Criteria added (file:line, evidence materially supports claim, SPECULATIVE/Blocking)
-- ✅ Compatibility Note documents breaking `Confidence` → `Basis` rename
+- ✅ `Confidence` → `Basis: VERIFIED|INFERRED|SPECULATIVE` rename; per-basis evidence requirements (file:line required); blocking constraint (Severity≥High + Basis≠SPECULATIVE); report split into Supported Findings + Predicted Risks; breaking change documented
 
 ### `/pmb-status` + `mb status` Redesign — v1.0.5 (2026-06-03)
-- ✅ `mb status` reworked: 5-signal state check replacing file-size table (Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present)
-- ✅ `/pmb-status` slash command: thin wrapper over `mb status`; CLI owns logic, no duplication
-- ✅ Distributed via `mb init` and `mb upgrade`; `templates/claude-commands/pmb-status.md` added
-- ✅ Code review hardening: `sed 's/d$//'` trailing anchor, `$STALE_DAYS` numeric guard, `REVIEWED_EPOCH=0` parse-failure path, `compgen -G` replacing `ls|head`
-- ✅ All docs updated: README, QUICK-REFERENCE, RECOVERY, SETUP-GUIDE, COMMANDS-REFERENCE, CHANGELOG
+- ✅ `mb status` reworked to 5-signal state check; `/pmb-status` as thin CLI wrapper; code review shell hardening fixes; all docs updated (README, QUICK-REFERENCE, RECOVERY, SETUP-GUIDE, COMMANDS-REFERENCE)
 
 ### Security & Performance Improvements — v1.0.4 (2026-06-01)
-- ✅ `standards/SECURITY-RULES.md` — rule registry SEC-001–009; distributed via mb init/upgrade (ADVISORY_CREATE)
-- ✅ `standards/TRUST-CLASSIFICATION.md` — TRUSTED/SEMI_TRUSTED/UNTRUSTED reference; pointers in AGENTIC-SAFETY + SECURITY-GUARDRAILS
-- ✅ `standards/PERFORMANCE-BUDGET.md` — explicit limits for standards count, memory entries, agent delegation depth
-- ✅ `fixtures/security/` — 9 known-bad code samples for security regression testing (PMB dogfooding only)
-- ✅ Structured finding format: Rule ID + Evidence + Confidence + Fix in security-review command and agent
-- ✅ Trust level note in security-reviewer agent (prompt-injection/rules-file-integrity findings)
-- ✅ mb doctor Check 13 (fixtures structure) and Check 14 (standards count ≤20) — now 14 checks total
-- ✅ /health-check step 5: security fixture verification (caught/missed per rule ID)
-- ✅ Pre-push hook: fixtures/ and docs/ excluded from secret scan (known-bad code + docs quoting it)
-- ✅ All 3 new standards in templates/standards/ for distribution
+- ✅ SEC-001–009 rule registry (SECURITY-RULES.md); TRUST-CLASSIFICATION.md; PERFORMANCE-BUDGET.md; 9 security fixtures in `fixtures/security/`; structured finding format (Rule ID + Evidence + Basis + Fix); mb doctor checks 13–14; /health-check step 5; pre-push fixtures/docs exclusion from secret scan; all 3 standards distributed via templates/
 
 ## Removed vs Enterprise
 
@@ -185,6 +138,19 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 
 **Deferred pending operational evidence:**
 - ⏸ handoff CLI, pinned.md, mb update --from-git, mb privacy
+
+### mb.ps1 `diff -u` Windows Bug Fix (2026-06-12, complete)
+- ✅ **Root cause**: PowerShell aliases `diff` → `Compare-Object`; `& diff -u $src $target` called `Compare-Object -u`, failing with "parameter not found"
+- ✅ **Fix**: replaced both advisory-diff blocks (~lines 1628, 1667) with `@(git diff --no-index --unified=3 -- $src $target 2>$null)` + 20-line truncation guard; no `Get-Command diff` check needed
+
+### Cross-Project PreCompact + v1.1.0 Audit (2026-06-12, complete)
+- ✅ Scanned all 6 downstream projects for PreCompact hook + v1.1.0 git hooks
+- ✅ **Bowling-Tracker** — already had PreCompact + v1.1.0 hooks (confirmed, no action needed)
+- ✅ **Google-Organizer** — `mb upgrade` run; PreCompact hook added, delegation-depth added, AUTOCOMPACT 50→40, v1.1.0 git hooks installed
+- ✅ **GrillTimer** — `mb upgrade` run; same as Google-Organizer
+- ✅ **Nolan-Budget** — `mb upgrade` run; custom npm permissions (dev/build/preview/install) restored after TEMPLATE_OWNED overwrite
+- ✅ **rfx-cook-tracker** — manual patch (no mb upgrade — custom hook structure); PreCompact hook added pointing to `.claude/hooks/pre-compact-check.sh`; AUTOCOMPACT 50→40 fixed; `pre-compact-check.sh` created in `.claude/hooks/`
+- ✅ **AI-Code-Review-Agent** — `mb upgrade` run; `.githooks/pre-push` added (pre-commit + `core.hooksPath` were already present); custom `Stop` hook + `permissions.allow` survived TEMPLATE_OWNED overwrite intact
 
 ### Bowling Tracker — Memory Bank Enforcement (2026-06-12, complete)
 - ✅ `CLAUDE.md` has Memory Bank section + sprint-completion rule + compaction recovery (was already present)
