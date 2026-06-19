@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-18
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -18,14 +18,17 @@ lineage: []
 
 ## Current Focus
 
-v1.1.0 shipped, all 9 key docs audited, and memory bank maintenance complete (2026-06-12). Startup context reduced from 29.3 KB → 24.8 KB (WARN, below ERROR threshold). All checksums verified clean. No active work in progress.
+PMB Commands Audit complete (2026-06-18). All 58 findings resolved or triaged. System is clean — no active work in progress.
 
-## What Was Just Completed (2026-06-12)
+## What Was Just Completed (2026-06-18)
 
-**Documentation Audit + Memory Maintenance:**
-- All 9 key docs audited; fixed 4 `mb compact`→`mb clean` references + 2 "75%"→"40%" references in RECOVERY.md; committed + pushed
-- GitHub repo description updated to reflect v1.1.0 (versioned git hooks, slash commands suite)
-- Memory bank maintenance pass: compressed 7 verbose sections in progress.md, added docs audit entry
+**PMB Commands Audit — 6-lens parallel review + full fix execution:**
+- Audit spec: `docs/superpowers/specs/2026-06-18-mb-commands-audit.md` (58 findings: 2C/14H/19M/23L)
+- Implementation plan: `C:\Users\Mizzo\.claude\plans\mb-audit-fixes.md`
+- All findings resolved: Z1 (budgetLimit), Z2 (pwsh consistency), L3 (HOOKS-GUIDE exit codes), L4 (handoff bypass already present), L5–L8 (template sync), M2 (pre-compact-check distribution), M3 (Agent in code-review), M4 (session-start steps)
+- **L1/M1:** `check-contract.ps1/.sh` (live + templates) fixed to read stdin (`$input|Out-String` / `cat`) — was silently failing open on every invocation due to nonexistent `$env:CLAUDE_TOOL_INPUT`
+- **L2:** `health-check.md` step 5 uses `@security-reviewer` (agent notation) — false positive, no change needed
+- **mb.sh parity fix:** `TEMPLATE_OWNED` array now includes `scripts/pre-push-check.sh` and `scripts/pre-push-check.ps1` (was missing; `mb.ps1` already had them); ordering matches `mb.ps1`
 
 ## Next Steps
 
@@ -45,4 +48,4 @@ v1.1.0 shipped, all 9 key docs audited, and memory bank maintenance complete (20
 
 ## Git State
 
-master branch. Clean — all session work committed and pushed (08da0dc).
+master branch. Uncommitted changes from audit fix session (check-contract stdin fix, mb.sh TEMPLATE_OWNED parity, activeContext update). Ready to commit.

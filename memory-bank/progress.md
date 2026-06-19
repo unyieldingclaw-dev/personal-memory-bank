@@ -93,6 +93,7 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ M4: CLAUDE.md + templates/CLAUDE.md session-start steps made explicit (check handoff.md → read memory bank → /pmb-status → merge/delete → confirm resume)
 - ✅ L1/M1: check-contract.ps1/.sh fixed to read stdin ($input|Out-String / cat) instead of nonexistent $env:CLAUDE_TOOL_INPUT; all 4 files (live + templates) updated
 - ✅ L2: health-check.md step 5 uses @security-reviewer (agent notation) — not a nested slash command; audit finding was a false positive, no change needed
+- ✅ mb.sh TEMPLATE_OWNED parity: added `scripts/pre-push-check.sh` and `scripts/pre-push-check.ps1` (was missing; `mb.ps1` already had them; `invoke_init` for loop already had them — only upgrade array was wrong)
 - All audit findings resolved
 
 ### Branch Cleanup Session (2026-06-12)

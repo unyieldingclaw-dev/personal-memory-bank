@@ -1359,6 +1359,8 @@ invoke_upgrade() {
         "scripts/check-contract.ps1"
         "scripts/update-reviewed.sh"
         "scripts/update-reviewed.ps1"
+        "scripts/pre-push-check.sh"
+        "scripts/pre-push-check.ps1"
         "scripts/delegation-depth-check.sh"
         "scripts/delegation-depth-check.ps1"
         "scripts/pre-compact-check.sh"
