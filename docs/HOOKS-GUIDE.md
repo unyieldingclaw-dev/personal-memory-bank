@@ -192,7 +192,7 @@ Add to the `PreToolUse` array (alongside the dangerous-command hook):
   "matcher": "Bash",
   "hooks": [{
     "type": "command",
-    "command": "echo \"$CLAUDE_TOOL_INPUT\" | grep -q 'git commit' && npm run lint 2>&1 || true"
+    "command": "HOOK_INPUT=$(cat 2>/dev/null); echo \"$HOOK_INPUT\" | grep -q 'git commit' && npm run lint 2>&1 || true"
   }]
 }
 ```

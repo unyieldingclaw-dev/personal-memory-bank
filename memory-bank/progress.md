@@ -78,6 +78,12 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 ### v1.0.8 — Command Consolidation + Semantic Intelligence (2026-06-06)
 - ✅ mb command surface finalized: 8 active commands; mb.sh/mb.ps1 parity; mb doctor expanded to 20 checks (17: semantic drift, 18: stale stable decisions, 19: cross-file contradiction, 20: SHA-256 via `mb verify-integrity`); compaction quality gate blocks unless memory bank captured (exits 2); agent delegation depth hook (WARN depth>1); AGENTIC-SAFETY.md updated; all scripts templated
 
+### v1.1.1 — Doc + Parity Fixes (2026-06-18)
+- ✅ VERSION bumped to 1.1.1; CHANGELOG entry added (check-contract stdin, mb.sh TEMPLATE_OWNED parity, HOOKS-GUIDE per-project example, QUICK-REFERENCE check count)
+- ✅ QUICK-REFERENCE.md: `mb doctor` description corrected from "16-point" to "20-check diagnostic"
+- ✅ HOOKS-GUIDE.md: "Lint Before Commit" per-project example fixed — replaced `echo "$CLAUDE_TOOL_INPUT"` (env var never set by Claude Code) with `HOOK_INPUT=$(cat 2>/dev/null); echo "$HOOK_INPUT"`
+- ✅ Pushed to origin; GitHub repo description updated
+
 ### PMB Commands Audit (2026-06-18)
 - ✅ 6-lens parallel audit completed: hook wiring, mb commands, slash commands, gaps/overstepping, session-start/handoff flow, template parity
 - ✅ 58 findings documented in `docs/superpowers/specs/2026-06-18-mb-commands-audit.md` (2 Critical, 14 High, 19 Medium, 23 Low)

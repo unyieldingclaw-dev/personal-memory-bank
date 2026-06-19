@@ -22,7 +22,7 @@ One-page cheatsheet for daily use.
 |---------|--------------|
 | `mb init` | Scaffold memory-bank/ in the current project |
 | `mb status` | Quick state check — initialized, memory, context, standards, tasks |
-| `mb doctor` | Full 16-point diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors |
+| `mb doctor` | Full 20-check diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, integrity |
 | `mb query TAG` | Find all memory tagged with TAG |
 | `mb clean` | Memory bank maintenance — slim check + guided cleanup prompt |
 | `mb commit` | Commit Memory Bank changes separately from feature code |

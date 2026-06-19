@@ -35,6 +35,14 @@ PMB Commands Audit complete (2026-06-18). All 58 findings resolved or triaged. S
 1. **Architecture review items on hold** — boring mode (`mb init --minimal`), explicit non-goals doc, `/core` vs `/integrations` separation; revisit if adoption friction surfaces
 2. **Semantic identity** (progress.md backlog) — concept-level drift detection; detection-first, no auto-remediation; not yet, complexity budget is spent
 
+## What Was Just Completed (2026-06-18, doc update pass)
+
+- Bumped VERSION to 1.1.1; added CHANGELOG entry documenting 4 fixes (check-contract stdin, mb.sh parity, HOOKS-GUIDE example, QUICK-REFERENCE count)
+- Fixed QUICK-REFERENCE.md: `mb doctor` "16-point" → "20-check diagnostic"
+- Fixed HOOKS-GUIDE.md: per-project "Lint Before Commit" example corrected from `echo "$CLAUDE_TOOL_INPUT"` to `HOOK_INPUT=$(cat 2>/dev/null); echo "$HOOK_INPUT"`
+- Committed audit spec (`docs/superpowers/specs/2026-06-18-mb-commands-audit.md`) as part of doc release
+- Pushed master to origin; updated GitHub repo description to reflect v1.1.1
+
 ## Architecture Constraints to Remember
 
 - `confidence:` is intentionally flat (high/medium/low)
@@ -48,4 +56,4 @@ PMB Commands Audit complete (2026-06-18). All 58 findings resolved or triaged. S
 
 ## Git State
 
-master branch. Uncommitted changes from audit fix session (check-contract stdin fix, mb.sh TEMPLATE_OWNED parity, activeContext update). Ready to commit.
+master branch. All changes committed and pushed. System is clean.

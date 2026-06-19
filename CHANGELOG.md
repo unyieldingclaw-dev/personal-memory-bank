@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.1 — 2026-06-18
+
+### Fixed
+- **`check-contract.ps1` / `check-contract.sh` stdin fix** — both live and template copies were reading tool input from `$env:CLAUDE_TOOL_INPUT` (PowerShell) / `os.environ.get('CLAUDE_TOOL_INPUT')` (bash), an env var that Claude Code never sets. Hooks were silently failing open on every invocation. Fixed to read stdin: `$input | Out-String` (PowerShell) and `HOOK_INPUT=$(cat 2>/dev/null)` (bash).
+- **`mb.sh` TEMPLATE_OWNED parity** — `scripts/pre-push-check.sh` and `scripts/pre-push-check.ps1` were missing from the bash `TEMPLATE_OWNED` array; `mb upgrade` on bash systems would silently skip overwriting these files. `mb.ps1` and the `invoke_init` for-loop already had them. Now consistent across all four sites.
+- **`docs/HOOKS-GUIDE.md` per-project example** — "Lint Before Commit" example used `echo "$CLAUDE_TOOL_INPUT"` (same broken env-var pattern). Fixed to `HOOK_INPUT=$(cat 2>/dev/null); echo "$HOOK_INPUT"`.
+- **`docs/QUICK-REFERENCE.md` doctor check count** — description read "16-point diagnostic"; doctor has had 20 checks since v1.0.8.
+
+---
+
 ## 1.1.0 — 2026-06-11
 
 ### Changed

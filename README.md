@@ -1,6 +1,6 @@
 # Personal Memory Bank
 
-![Version](https://img.shields.io/badge/version-1.1.0-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.1.1-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
 
 Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (9 commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
 
