@@ -90,7 +90,8 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ L5–L8: template sync (WORKFLOW, security-reviewer, SECURITY-GUARDRAILS, MEMORY-BANK); `mb compact`→`mb clean`
 - ✅ M2: pre-compact-check.ps1/.sh added to all 4 distribution lists in mb.ps1 + mb.sh (Invoke-Init + $templateOwned / invoke_init + TEMPLATE_OWNED)
 - ✅ M3: Agent added to code-review.md allowed-tools (commit 9866c1c)
-- Remaining: L1/M1 (check-contract stdin), L2 (health-check nested slash cmd), M4 (CLAUDE.md session-start)
+- ✅ M4: CLAUDE.md + templates/CLAUDE.md session-start steps made explicit (check handoff.md → read memory bank → /pmb-status → merge/delete → confirm resume)
+- Remaining: L1/M1 (check-contract stdin), L2 (health-check nested slash cmd)
 
 ### Branch Cleanup Session (2026-06-12)
 - ✅ Deleted 6 local + 4 remote stale branches post-v1.1.0; removed 2 orphaned worktrees; rescued BT enforcement plan from unmerged branch; `git fetch --prune` cleaned tracking refs

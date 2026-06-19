@@ -118,10 +118,11 @@ When user types "Handoff" or reports context >= 40%:
 4. **STOP** - do not continue
 
 When starting a new conversation:
-1. Check for `handoff.md` - if exists, read it FIRST
-2. Merge info into Memory Bank
-3. Delete `handoff.md`
-4. Continue work
+1. Check for `handoff.md` — if present, read it FIRST before anything else
+2. Read ALL files in `memory-bank/` to restore full project context
+3. Run `/pmb-status` to verify current system state
+4. If a handoff was found: merge its info into Memory Bank, delete `handoff.md`, summarize recovered context to user
+5. Confirm where to resume if mid-task; otherwise continue work
 
 ## Token Budget
 
