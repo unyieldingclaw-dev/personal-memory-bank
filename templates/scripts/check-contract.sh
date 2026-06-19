@@ -7,6 +7,9 @@ set -euo pipefail
 
 CONTRACT_FILE=".claude/contracts/active-task.json"
 
+# WHY: Claude Code PreToolUse hooks pass tool input as JSON via stdin, not env vars.
+HOOK_INPUT=$(cat 2>/dev/null) || HOOK_INPUT=""
+
 # --- Dependency check: python3 required for JSON parsing ---
 if ! command -v python3 >/dev/null 2>&1; then
   exit 0  # Fail open: no python3, skip the check
@@ -73,10 +76,10 @@ except Exception:
 fi
 
 # --- Extract target file from tool input ---
-TARGET_FILE=$(python3 -c "
-import sys, json, os
+TARGET_FILE=$(echo "$HOOK_INPUT" | python3 -c "
+import sys, json
 try:
-    data = json.loads(os.environ.get('CLAUDE_TOOL_INPUT', '{}'))
+    data = json.load(sys.stdin)
     print(data.get('file_path', ''))
 except Exception:
     print('')

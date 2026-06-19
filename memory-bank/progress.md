@@ -91,7 +91,9 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ M2: pre-compact-check.ps1/.sh added to all 4 distribution lists in mb.ps1 + mb.sh (Invoke-Init + $templateOwned / invoke_init + TEMPLATE_OWNED)
 - ✅ M3: Agent added to code-review.md allowed-tools (commit 9866c1c)
 - ✅ M4: CLAUDE.md + templates/CLAUDE.md session-start steps made explicit (check handoff.md → read memory bank → /pmb-status → merge/delete → confirm resume)
-- Remaining: L1/M1 (check-contract stdin), L2 (health-check nested slash cmd)
+- ✅ L1/M1: check-contract.ps1/.sh fixed to read stdin ($input|Out-String / cat) instead of nonexistent $env:CLAUDE_TOOL_INPUT; all 4 files (live + templates) updated
+- ✅ L2: health-check.md step 5 uses @security-reviewer (agent notation) — not a nested slash command; audit finding was a false positive, no change needed
+- All audit findings resolved
 
 ### Branch Cleanup Session (2026-06-12)
 - ✅ Deleted 6 local + 4 remote stale branches post-v1.1.0; removed 2 orphaned worktrees; rescued BT enforcement plan from unmerged branch; `git fetch --prune` cleaned tracking refs

@@ -52,8 +52,9 @@ if ($expiresAt) {
 }
 
 # --- Extract target file from tool input ---
-$toolInput = $env:CLAUDE_TOOL_INPUT
-if (-not $toolInput) {
+# WHY: Claude Code PreToolUse hooks pass tool input as JSON via stdin, not env vars.
+$toolInput = $input | Out-String
+if ([string]::IsNullOrWhiteSpace($toolInput)) {
     exit 0
 }
 
