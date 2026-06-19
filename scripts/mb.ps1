@@ -1465,7 +1465,7 @@ function Invoke-Upgrade {
         $localVersion = (Get-Content $versionFile -Raw).Trim()
         try {
             $response = Invoke-WebRequest `
-                -Uri "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/master/VERSION" `
+                -Uri "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" `
                 -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
             $remoteVersion = $response.Content.Trim()
             if ($remoteVersion -ne $localVersion) {

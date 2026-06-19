@@ -1327,7 +1327,7 @@ invoke_upgrade() {
         LOCAL_VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
         if command -v curl >/dev/null 2>&1; then
             REMOTE_VERSION=$(curl -sf --max-time 3 \
-                "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/master/VERSION" \
+                "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" \
                 2>/dev/null | tr -d '[:space:]' || true)
             if [ -n "$REMOTE_VERSION" ] && [ "$REMOTE_VERSION" != "$LOCAL_VERSION" ]; then
                 echo -e "${YELLOW}[WARN] PMB $LOCAL_VERSION installed locally, $REMOTE_VERSION available${NC}"

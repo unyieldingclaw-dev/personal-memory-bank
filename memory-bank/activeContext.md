@@ -41,7 +41,7 @@ PMB Commands Audit complete (2026-06-18). All 58 findings resolved or triaged. S
 - Fixed QUICK-REFERENCE.md: `mb doctor` "16-point" → "20-check diagnostic"
 - Fixed HOOKS-GUIDE.md: per-project "Lint Before Commit" example corrected from `echo "$CLAUDE_TOOL_INPUT"` to `HOOK_INPUT=$(cat 2>/dev/null); echo "$HOOK_INPUT"`
 - Committed audit spec (`docs/superpowers/specs/2026-06-18-mb-commands-audit.md`) as part of doc release
-- Pushed master to origin; updated GitHub repo description to reflect v1.1.1
+- Pushed main to origin; updated GitHub repo description to reflect v1.1.1
 
 ## Architecture Constraints to Remember
 
@@ -56,4 +56,4 @@ PMB Commands Audit complete (2026-06-18). All 58 findings resolved or triaged. S
 
 ## Git State
 
-master branch. All changes committed and pushed. System is clean.
+main branch. All changes committed and pushed. System is clean.
