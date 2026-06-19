@@ -1,11 +1,12 @@
 ---
-description: Full PMB health check — mb doctor (14 checks), staleness audit, structure validation, and security fixture verification on this repo's own memory bank. Reports a summary with pass/warn/fail for each area.
+description: Full PMB health check — mb doctor (20 checks), staleness audit, structure validation, and security fixture verification on this repo's own memory bank. Reports a summary with pass/warn/fail for each area.
 allowed-tools:
   - Bash(mb doctor)
   - Bash(mb validate)
   - Bash(mb audit)
   - Bash(git status)
   - Bash(git log *)
+  - Agent
 ---
 
 # /health-check
@@ -14,7 +15,7 @@ Run the following checks in order and print a labeled result for each. At the en
 
 ## 1. Doctor
 
-Run `mb doctor` from this repo's root. This runs all 14 health checks including structure, frontmatter, compaction integrity, and staleness summary.
+Run `mb doctor` from this repo's root. This runs all 20 health checks including structure, frontmatter, compaction integrity, and staleness summary.
 
 **Output header:** `### mb doctor`
 
@@ -42,17 +43,17 @@ Run `git status --short` and `git log --oneline -5`. Note any uncommitted change
 
 ## 5. Security Fixture Check
 
-Run `/security-review` against the `fixtures/security/` directory. For each fixture subdirectory, note whether the expected rule ID appears in the findings.
+If `fixtures/security/` does not exist, skip this step and note it in the summary.
+
+Otherwise, use the security-reviewer agent (`@security-reviewer`) to review the `fixtures/security/` directory. Ask it: "Review the fixtures/security/ directory. For each subdirectory, report whether the expected SEC-00X rule ID appears in the findings — ✅ caught or ❌ missed."
 
 **Output header:** `### Security Fixtures`
 
 For each subdirectory in `fixtures/security/`, report:
 - `SEC-00X` — ✅ caught / ❌ missed
 
-If `fixtures/security/` does not exist, skip this step and note it in the summary.
-
 ## 6. Summary
 
 Print a short paragraph summarizing all five areas. Use ✅ for clean, ⚠️ for warnings, ❌ for failures. Example:
 
-> ✅ mb doctor: all 14 checks OK. ✅ mb validate: structure valid. ⚠️ mb audit: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date. ✅ Security fixtures: 9/9 rules caught.
+> ✅ mb doctor: all 20 checks OK. ✅ mb validate: structure valid. ⚠️ mb audit: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date. ✅ Security fixtures: 9/9 rules caught.
