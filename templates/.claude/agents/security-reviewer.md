@@ -48,8 +48,21 @@ Review the provided code or diff for:
 - Insecure deserialization of LLM or external API responses
 - Trusting LLM output for security decisions without validation
 
-Return a structured list:
-**[SEVERITY]** Description — `file:line`
+Rules are defined in `standards/SECURITY-RULES.md`.
+
+Return findings using this format:
+
+**[SEVERITY]** Rule: SEC-00X
+Evidence: `<exact code snippet triggering the issue>`
+Confidence: High | Medium | Low
+File: `path/to/file.ext:line`
+Issue: <what the problem is>
+Fix: <specific recommended fix, not generic>
+
+When reporting prompt-injection or rules-file-integrity findings, note the trust level of
+the content source (TRUSTED / SEMI_TRUSTED / UNTRUSTED) as defined in
+`standards/TRUST-CLASSIFICATION.md`. Trust level is informational — it does not change
+severity automatically.
 
 Severity levels: CRITICAL · HIGH · MEDIUM · LOW
 

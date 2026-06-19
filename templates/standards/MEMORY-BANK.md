@@ -128,7 +128,7 @@ lineage: []                 # additive chain of all ancestor files (empty for ca
 | 3+ | Degraded | Regenerate from lower-generation sources |
 | 5+ | Unreliable | Likely information loss; do not trust without verification |
 
-When `mb compact` rewrites a file, increment `compaction_generation` and add parent files to `lineage`.
+When `mb clean` rewrites a file, increment `compaction_generation` and add parent files to `lineage`.
 Use git commit refs for verifiability: `activeContext.md@a81d2f`.
 
 **Note on field orthogonality:** `source_type` (origin) and `compaction_generation` (transformation
@@ -382,7 +382,7 @@ Compaction is distinct from eviction. Eviction removes stale entries. Compaction
 summarizes, deduplicates, and resolves contradictions across all memory-bank files.
 
 **When to compact:** when `mb audit` shows ≥ 2 files stale AND `memory-bank/` total size
-exceeds 60 KB. Run `mb compact` to get a structured AI prompt for the operation.
+exceeds 60 KB. Run `mb clean` to get a structured AI prompt for the operation.
 
 **What compaction does (AI-driven):**
 1. Reads all files in authority order

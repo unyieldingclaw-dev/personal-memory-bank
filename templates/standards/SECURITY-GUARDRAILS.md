@@ -291,3 +291,8 @@ hard CI/CD gates to be effective.
 2. SAST scan on every MR touching application code
 3. SCA scan on every MR modifying dependency files
 4. Branch protection on main/master (no direct push, MR required)
+
+## Related Standards
+
+- `TRUST-CLASSIFICATION.md` — trust levels for content sources (TRUSTED / SEMI_TRUSTED / UNTRUSTED)
+- `SECURITY-RULES.md` — rule registry for `/security-review` findings (SEC-001–009)
