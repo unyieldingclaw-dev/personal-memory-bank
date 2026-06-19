@@ -78,6 +78,12 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 ### v1.0.8 — Command Consolidation + Semantic Intelligence (2026-06-06)
 - ✅ mb command surface finalized: 8 active commands; mb.sh/mb.ps1 parity; mb doctor expanded to 20 checks (17: semantic drift, 18: stale stable decisions, 19: cross-file contradiction, 20: SHA-256 via `mb verify-integrity`); compaction quality gate blocks unless memory bank captured (exits 2); agent delegation depth hook (WARN depth>1); AGENTIC-SAFETY.md updated; all scripts templated
 
+### PMB Commands Audit (2026-06-18)
+- ✅ 6-lens parallel audit completed: hook wiring, mb commands, slash commands, gaps/overstepping, session-start/handoff flow, template parity
+- ✅ 58 findings documented in `docs/superpowers/specs/2026-06-18-mb-commands-audit.md` (2 Critical, 14 High, 19 Medium, 23 Low)
+- ✅ Key conclusions: O1 = cumulative vs. nesting mismatch (raise budgetLimit to 6); G1/G2 = detection gap, not creation/cleanup gap (deferred); F7 systemic = platform limitation (no SessionStart hook)
+- In progress: implementation plan at `C:\Users\Mizzo\.claude\plans\mb-audit-fixes.md`
+
 ### Branch Cleanup Session (2026-06-12)
 - ✅ Deleted 6 local + 4 remote stale branches post-v1.1.0; removed 2 orphaned worktrees; rescued BT enforcement plan from unmerged branch; `git fetch --prune` cleaned tracking refs
 
