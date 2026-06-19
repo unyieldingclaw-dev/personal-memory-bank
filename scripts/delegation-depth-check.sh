@@ -1,12 +1,13 @@
 #!/usr/bin/env sh
-# PreToolUse hook — agent delegation depth enforcement.
-# Tracks Agent tool invocations per session; warns when depth exceeds budget (≤1).
-# State stored in .pmb-delegation-depth (gitignored). Resets after 2h inactivity.
+# PreToolUse hook — agent spawn count advisory.
+# Tracks cumulative Agent invocations per 2-hour window (not nesting depth).
+# Warns when count exceeds budget (≤6). True nesting depth cannot be tracked —
+# no PostToolUse:Agent hook exists. State in .pmb-delegation-depth (gitignored).
 # Always exits 0 — advisory only, not blocking.
 
 DEPTH_FILE=".pmb-delegation-depth"
 MAX_AGE_MINUTES=120
-BUDGET_LIMIT=1
+BUDGET_LIMIT=6  # cumulative spawns per 2-hour window; see standards/PERFORMANCE-BUDGET.md
 
 depth=0
 if [ -f "$DEPTH_FILE" ]; then
@@ -26,8 +27,8 @@ if [ -f "$DEPTH_FILE" ]; then
 fi
 
 if [ "$depth" -ge "$BUDGET_LIMIT" ]; then
-    printf '[WARN] Agent delegation depth: %d (budget: ≤%d per standards/PERFORMANCE-BUDGET.md)\n' "$((depth + 1))" "$BUDGET_LIMIT"
-    printf '       Each nested delegation increases prompt-injection surface. Consider consolidating tasks.\n'
+    printf '[WARN] Agent spawn count: %d this session (budget: ≤%d per standards/PERFORMANCE-BUDGET.md)\n' "$((depth + 1))" "$BUDGET_LIMIT"
+    printf '       High agent volume increases prompt-injection surface. Consider consolidating tasks.\n'
 fi
 
 ts=$(date '+%Y-%m-%d %H:%M')
