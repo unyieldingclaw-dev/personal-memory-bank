@@ -5,6 +5,7 @@ allowed-tools:
   - Bash(git log *)
   - Bash(git status *)
   - Read
+  - Agent
 ---
 
 # Code Review
