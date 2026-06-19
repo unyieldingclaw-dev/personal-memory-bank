@@ -79,9 +79,13 @@ Fires after every `Write` or `Edit` tool call. Reads the edited file path from t
 
 ### 5. PreCompact Memory Gate (`PreCompact`)
 
-Fires before Claude Code compacts context. Checks whether either of the two volatile memory-bank files (`memory-bank/activeContext.md`, `memory-bank/progress.md`) was modified today **or** `handoff.md` exists in the project root. If neither condition is met, prints an actionable warning so Claude can update state before the compaction window closes.
+Fires before Claude Code compacts context. Checks whether either of the two volatile memory-bank files (`memory-bank/activeContext.md`, `memory-bank/progress.md`) was modified today **or** `handoff.md` exists in the project root.
 
-**Always exits 0** — compaction is never blocked. The gate is advisory: it surfaces the risk so Claude can act, but does not hard-stop the session.
+**Exit codes:**
+- **Exits 0** — memory bank is current (or `handoff.md` bypass is present). Compaction proceeds normally.
+- **Exits 2** — neither volatile file was modified today and no `handoff.md` exists. **Compaction is blocked.** Claude Code treats a non-zero exit from a PreCompact hook as a block signal. The hook prints an actionable message explaining what to do.
+
+**To unblock:** update `memory-bank/activeContext.md` or `memory-bank/progress.md` with today's session context, then retry. Alternatively, create `handoff.md` to bypass the gate (the handoff file signals that session state has been captured in another form).
 
 **Detection logic:**
 - Modified today: compares `LastWriteTime` (PowerShell) / `date -r` mtime (sh) to today's date
