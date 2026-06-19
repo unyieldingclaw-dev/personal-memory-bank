@@ -438,7 +438,7 @@ function Invoke-Init {
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
     # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
-    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1")) {
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1")) {
         Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
     }
 
@@ -1502,6 +1502,8 @@ function Invoke-Upgrade {
         "scripts/pre-push-check.ps1"
         "scripts/delegation-depth-check.sh"
         "scripts/delegation-depth-check.ps1"
+        "scripts/pre-compact-check.sh"
+        "scripts/pre-compact-check.ps1"
         # Slash commands — governance workflow commands from templates, not project-specific
         ".claude/commands/code-review.md"
         ".claude/commands/feature-dev.md"

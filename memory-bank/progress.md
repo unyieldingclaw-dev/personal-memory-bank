@@ -82,7 +82,15 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ 6-lens parallel audit completed: hook wiring, mb commands, slash commands, gaps/overstepping, session-start/handoff flow, template parity
 - ✅ 58 findings documented in `docs/superpowers/specs/2026-06-18-mb-commands-audit.md` (2 Critical, 14 High, 19 Medium, 23 Low)
 - ✅ Key conclusions: O1 = cumulative vs. nesting mismatch (raise budgetLimit to 6); G1/G2 = detection gap, not creation/cleanup gap (deferred); F7 systemic = platform limitation (no SessionStart hook)
-- In progress: implementation plan at `C:\Users\Mizzo\.claude\plans\mb-audit-fixes.md`
+- ✅ Implementation plan written: `C:\Users\Mizzo\.claude\plans\mb-audit-fixes.md`
+- ✅ Z1: budgetLimit 1→6, delegation-depth-check semantics corrected (cumulative spawns, not nesting depth)
+- ✅ Z2: PostToolUse hook `powershell`→`pwsh`; Stop hook intentionally keeps `powershell.exe` (Windows Forms)
+- ✅ L3: HOOKS-GUIDE.md PreCompact exit-code docs corrected (exit 2 blocks, was "always exits 0")
+- ✅ L4: pre-compact-check.ps1/.sh handoff.md bypass comment already present — no change needed
+- ✅ L5–L8: template sync (WORKFLOW, security-reviewer, SECURITY-GUARDRAILS, MEMORY-BANK); `mb compact`→`mb clean`
+- ✅ M2: pre-compact-check.ps1/.sh added to all 4 distribution lists in mb.ps1 + mb.sh (Invoke-Init + $templateOwned / invoke_init + TEMPLATE_OWNED)
+- ✅ M3: Agent added to code-review.md allowed-tools (commit 9866c1c)
+- Remaining: L1/M1 (check-contract stdin), L2 (health-check nested slash cmd), M4 (CLAUDE.md session-start)
 
 ### Branch Cleanup Session (2026-06-12)
 - ✅ Deleted 6 local + 4 remote stale branches post-v1.1.0; removed 2 orphaned worktrees; rescued BT enforcement plan from unmerged branch; `git fetch --prune` cleaned tracking refs
