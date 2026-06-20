@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-06-12
+last-reviewed: 2026-06-19
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -47,14 +47,14 @@ Full history: CHANGELOG.md
 
 ## Backlog
 
-**Semantic identity** — file-level health is covered; concept-level drift is not. Trigger: memory bank stable and aging (3–6 months), manual contradictions noticed. Detection-first; no auto-remediation.
-- ⏸ Duplicate concept detection — same decision in two files drifting apart over compaction cycles
-- ⏸ Supersession rot — old decision still looks authoritative after a newer one replaced it
-- ⏸ Cross-file contradiction detection — authority hierarchy violations (e.g. activeContext vs projectbrief)
-- ⏸ Claim extraction via `mb query` extension — surface semantically near-duplicate content; bounded scope, no new command needed
-
 **Deferred pending operational evidence:**
 - ⏸ handoff CLI, pinned.md, mb update --from-git, mb privacy
+
+## 2026-06-19 — Semantic Drift Detection
+
+- ✅ Checks 21–23 added to `mb doctor`: git-vs-reviewed lag, completed-but-still-planned, stale next step
+- ✅ `/mb-drift` skill created — on-demand semantic analysis for duplicate concepts, supersession rot, authority violations
+- ✅ `QUICK-REFERENCE.md` updated: 23-check doctor, `/mb-drift` skill listed
 
 ## 2026-06-19 — Startup Context Trim + Satellite Sync
 
