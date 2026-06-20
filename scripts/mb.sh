@@ -734,6 +734,7 @@ show_doctor() {
     # 9. Staleness summary
     STALE_VOLATILE=0
     STALE_STABLE=0
+    DRIFT_FOUND=false
     TODAY=$(date +%s)
     for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
         p="memory-bank/$f"
@@ -931,7 +932,10 @@ show_doctor() {
         [ ! -f "$f" ] && return
         actual=$(grep -m1 '^authority:' "$f" 2>/dev/null | sed 's/authority:[[:space:]]*//' | tr -d ' \r')
         [ -z "$actual" ] && return
-        [ "$actual" != "$expected" ] && CROSS_ISSUES+=("authority conflict: $f declares authority:$actual (expected $expected)")
+        # WHY: use if/then instead of [ ] && to avoid set -e triggering when test is false
+        if [ "$actual" != "$expected" ]; then
+            CROSS_ISSUES+=("authority conflict: $f declares authority:$actual (expected $expected)")
+        fi
     }
     _check_auth "memory-bank/projectbrief.md"   "immutable"
     _check_auth "memory-bank/systemPatterns.md" "stable"
@@ -1008,6 +1012,102 @@ show_doctor() {
         echo "# PMB Checksums — last verified by mb doctor $(date '+%Y-%m-%d %H:%M:%S')"
         echo -e "$CURRENT_HASHES" | grep -v '^$'
     } > "$CHECKSUM_FILE" 2>/dev/null || true
+
+    # 21. Git-vs-reviewed lag — last-reviewed frontmatter date vs. last git commit date
+    GIT_LAG_FOUND=false
+    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        p="memory-bank/$f"
+        [ ! -f "$p" ] && continue
+        last_rev=$(grep -m1 '^last-reviewed:' "$p" 2>/dev/null | sed 's/last-reviewed:[[:space:]]*//' | tr -d ' \r')
+        [ -z "$last_rev" ] || [ "$last_rev" = "YYYY-MM-DD" ] && continue
+        last_commit=$(git log -1 --format="%as" -- "$p" 2>/dev/null)
+        [ -z "$last_commit" ] && continue
+        # WHY: YYYY-MM-DD dates sort lexicographically — string comparison is safe.
+        if [[ "$last_commit" > "$last_rev" ]]; then
+            echo -e "${YELLOW}[WARN] Drift: $f last-reviewed $last_rev, last commit $last_commit${NC}"
+            echo "       Update last-reviewed frontmatter or confirm no review needed."
+            GIT_LAG_FOUND=true
+            DRIFT_FOUND=true
+        fi
+    done
+    [ "$GIT_LAG_FOUND" = false ] && echo -e "${GREEN}[OK]   Git-vs-reviewed lag — all files reviewed after last commit${NC}"
+
+    # 22. Completed-but-still-planned — ✅ in progress.md still listed as ⏸ elsewhere
+    _mb_normalize() {
+        # WHY: strip emoji/markers, lowercase, collapse whitespace for token comparison
+        echo "$1" | sed 's/[✅⏸*#-]//g' | tr '[:upper:]' '[:lower:]' | tr -s ' ' | sed 's/^ //;s/ $//'
+    }
+    C22_FOUND=false
+    PROGRESS_FILE="memory-bank/progress.md"
+    if [ -f "$PROGRESS_FILE" ]; then
+        while IFS= read -r done_line; do
+            done_norm=$(_mb_normalize "$done_line")
+            read -ra done_tokens <<< "$done_norm"
+            n=${#done_tokens[@]}
+            [ "$n" -lt 4 ] && continue
+            matched=false
+            for ((i=0; i<=n-4 && !matched; i++)); do
+                window="${done_tokens[$i]} ${done_tokens[$i+1]} ${done_tokens[$i+2]} ${done_tokens[$i+3]}"
+                for pf in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+                    pp="memory-bank/$pf"
+                    [ ! -f "$pp" ] && continue
+                    while IFS= read -r planned_line; do
+                        planned_norm=$(_mb_normalize "$planned_line")
+                        if echo "$planned_norm" | grep -qF "$window"; then
+                            echo -e "${YELLOW}[WARN] Drift: \"$window\" marked ✅ in progress.md but ⏸ in $pf${NC}"
+                            echo "       One of these is stale — resolve before next compaction."
+                            C22_FOUND=true
+                            DRIFT_FOUND=true
+                            matched=true
+                            break 2
+                        fi
+                    done < <(grep '⏸' "$pp" 2>/dev/null)
+                done
+            done
+        done < <(grep '✅' "$PROGRESS_FILE" 2>/dev/null)
+    fi
+    [ "$C22_FOUND" = false ] && echo -e "${GREEN}[OK]   Completed-but-still-planned — no cross-file completion conflicts${NC}"
+
+    # 23. Stale next step — Next Steps bullets in activeContext.md already in progress ✅
+    AC_FILE="memory-bank/activeContext.md"
+    C23_FOUND=false
+    if [ -f "$AC_FILE" ] && [ -f "$PROGRESS_FILE" ]; then
+        in_next_steps=false
+        while IFS= read -r line; do
+            if echo "$line" | grep -q '^## Next Steps'; then
+                in_next_steps=true; continue
+            fi
+            echo "$line" | grep -q '^## ' && in_next_steps=false
+            if [ "$in_next_steps" = true ] && echo "$line" | grep -qE '^\s*[-*]'; then
+                step_norm=$(_mb_normalize "$line")
+                read -ra step_tokens <<< "$step_norm"
+                ns=${#step_tokens[@]}
+                [ "$ns" -lt 4 ] && continue
+                matched_step=false
+                for ((j=0; j<=ns-4 && !matched_step; j++)); do
+                    swindow="${step_tokens[$j]} ${step_tokens[$j+1]} ${step_tokens[$j+2]} ${step_tokens[$j+3]}"
+                    while IFS= read -r done_line; do
+                        done_norm=$(_mb_normalize "$done_line")
+                        if echo "$done_norm" | grep -qF "$swindow"; then
+                            trimmed_step=$(echo "$line" | sed 's/^[[:space:]]*//')
+                            echo -e "${YELLOW}[WARN] Drift: Next Step appears completed — \"$trimmed_step\"${NC}"
+                            echo "       Remove from activeContext.md Next Steps or verify the progress entry."
+                            C23_FOUND=true
+                            DRIFT_FOUND=true
+                            matched_step=true
+                            break
+                        fi
+                    done < <(grep '✅' "$PROGRESS_FILE" 2>/dev/null)
+                done
+            fi
+        done < "$AC_FILE"
+    fi
+    [ "$C23_FOUND" = false ] && echo -e "${GREEN}[OK]   Stale next steps — all Next Steps items appear pending in progress${NC}"
+
+    if [ "$DRIFT_FOUND" = true ]; then
+        echo ""
+        echo -e "${YELLOW}       Structural drift signals detected — run /mb-drift for semantic analysis.${NC}"
+    fi
 
     # Startup context — observability section (not a numbered health check)
     echo ""
