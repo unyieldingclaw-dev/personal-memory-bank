@@ -27,7 +27,7 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ Security Guardrails (BLOCK/CONFIRM/WARN) + 9-rule registry (SECURITY-RULES.md) + 9 security fixtures
 - ✅ Code Quality, Logging, 7-phase Workflow standards; Supply Chain, MCP Security, Rules-File Integrity (reference)
 - ✅ Slash commands: /pmb-status, /code-review, /feature-dev, /security-review, /test-audit, /health-check
-- ✅ mb CLI: init, status, doctor (20 checks), query, clean, commit, upgrade, verify-integrity + deprecated aliases
+- ✅ mb CLI: init, status, doctor (23 checks), query, clean, commit, upgrade, verify-integrity + deprecated aliases
 - ✅ Hook suite: dangerous-commands blocker, contract scope check, delegation depth check, auto-last-reviewed, PreCompact memory gate
 - ✅ Versioned git hooks via core.hooksPath (.githooks/pre-push + pre-commit), distributed by mb upgrade (TEMPLATE_OWNED)
 - ✅ mb upgrade: TEMPLATE_OWNED/ADVISORY_DIFF distribution model; remote version check
