@@ -22,7 +22,7 @@ One-page cheatsheet for daily use.
 |---------|--------------|
 | `mb init` | Scaffold memory-bank/ in the current project |
 | `mb status` | Quick state check — initialized, memory, context, standards, tasks |
-| `mb doctor` | Full 20-check diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, integrity |
+| `mb doctor` | Full 23-check diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, drift flags, integrity |
 | `mb query TAG` | Find all memory tagged with TAG |
 | `mb clean` | Memory bank maintenance — slim check + guided cleanup prompt |
 | `mb commit` | Commit Memory Bank changes separately from feature code |
@@ -34,6 +34,7 @@ One-page cheatsheet for daily use.
 | `/code-review` | Multi-agent deep review: 3 parallel role subagents (security, performance, style) + test coverage review (generates missing tests) + opponent auditor compare (Claude Code / Cursor) |
 | `/test-audit` | Audit test coverage for changed files or full project; reports missing tests, empty test files, framework config, CI test step (Claude Code) |
 | `/health-check` | Full PMB health check — runs mb doctor + mb validate + mb audit and prints summary (PMB repo only) |
+| `/mb-drift` | On-demand semantic drift analysis — reads all 5 memory-bank files and finds duplicate concepts, superseded decisions, and authority violations (PMB repo only) |
 
 ---
 
