@@ -687,6 +687,8 @@ function Show-Doctor {
     Write-Host "======" -ForegroundColor Cyan
     Write-Host ""
 
+    $driftFound = $false
+
     # 0. Version
     $versionFile = Join-Path $RepoRoot "VERSION"
     if (Test-Path $versionFile) {
@@ -1172,6 +1174,34 @@ function Show-Doctor {
         foreach ($fname in $currentHashes.Keys | Sort-Object) { $csLines += "$fname=$($currentHashes[$fname])" }
         Set-Content -Path $checksumFile -Value $csLines -ErrorAction Stop
     } catch { Write-Host "[WARN] Could not write .pmb-checksums: $_" -ForegroundColor Yellow }
+
+    # 21. Git-vs-reviewed lag — last-reviewed frontmatter date vs. last git commit date
+    $gitLagFindings = @()
+    foreach ($f in @('projectbrief.md','systemPatterns.md','techContext.md','activeContext.md','progress.md')) {
+        $p = "memory-bank/$f"
+        if (-not (Test-Path $p)) { continue }
+        $raw = Get-Content $p -Raw
+        $lastReviewed = if ($raw -match '(?m)^last-reviewed:\s*(\d{4}-\d{2}-\d{2})') { $Matches[1] } else { $null }
+        if (-not $lastReviewed -or $lastReviewed -eq 'YYYY-MM-DD') { continue }
+        $lastCommit = git log -1 --format="%as" -- $p 2>$null
+        if (-not $lastCommit) { continue }
+        try {
+            $revDate    = [datetime]::ParseExact($lastReviewed, 'yyyy-MM-dd', $null)
+            $commitDate = [datetime]::ParseExact($lastCommit,   'yyyy-MM-dd', $null)
+            if ($commitDate -gt $revDate) {
+                $gitLagFindings += [pscustomobject]@{ File = $f; Reviewed = $lastReviewed; Commit = $lastCommit }
+            }
+        } catch {}
+    }
+    if ($gitLagFindings.Count -eq 0) {
+        Write-Host "[OK]   Git-vs-reviewed lag — all files reviewed after last commit" -ForegroundColor Green
+    } else {
+        $driftFound = $true
+        foreach ($item in $gitLagFindings) {
+            Write-Host "[WARN] Drift: $($item.File) last-reviewed $($item.Reviewed), last commit $($item.Commit)" -ForegroundColor Yellow
+            Write-Host "       Update last-reviewed frontmatter or confirm no review needed." -ForegroundColor DarkGray
+        }
+    }
 
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
