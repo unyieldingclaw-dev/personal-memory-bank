@@ -559,6 +559,7 @@ show_doctor() {
     echo -e "${CYAN}Doctor${NC}"
     echo -e "${CYAN}======${NC}"
     echo ""
+    DRIFT_FOUND=false
 
     # 0. Version
     VERSION_FILE="$REPO_ROOT/VERSION"
@@ -734,7 +735,6 @@ show_doctor() {
     # 9. Staleness summary
     STALE_VOLATILE=0
     STALE_STABLE=0
-    DRIFT_FOUND=false
     TODAY=$(date +%s)
     for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
         p="memory-bank/$f"
@@ -932,10 +932,7 @@ show_doctor() {
         [ ! -f "$f" ] && return
         actual=$(grep -m1 '^authority:' "$f" 2>/dev/null | sed 's/authority:[[:space:]]*//' | tr -d ' \r')
         [ -z "$actual" ] && return
-        # WHY: use if/then instead of [ ] && to avoid set -e triggering when test is false
-        if [ "$actual" != "$expected" ]; then
-            CROSS_ISSUES+=("authority conflict: $f declares authority:$actual (expected $expected)")
-        fi
+        [ "$actual" != "$expected" ] && CROSS_ISSUES+=("authority conflict: $f declares authority:$actual (expected $expected)") || true
     }
     _check_auth "memory-bank/projectbrief.md"   "immutable"
     _check_auth "memory-bank/systemPatterns.md" "stable"
