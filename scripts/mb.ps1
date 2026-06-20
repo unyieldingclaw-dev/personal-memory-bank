@@ -1203,6 +1203,101 @@ function Show-Doctor {
         }
     }
 
+    # Helper: strip emoji/markers, lowercase, collapse whitespace
+    function Normalize-MbLine([string]$s) {
+        ($s -replace '[✅⏸\-\*#]', '' -replace '\s+', ' ').Trim().ToLower()
+    }
+
+    # 22. Completed-but-still-planned — ✅ in progress.md still listed as ⏸ elsewhere
+    $completedLines = @()
+    if (Test-Path 'memory-bank/progress.md') {
+        $completedLines = Get-Content 'memory-bank/progress.md' | Where-Object { $_ -match '✅' }
+    }
+    $plannedItems = @()
+    foreach ($f in @('projectbrief.md','systemPatterns.md','techContext.md','activeContext.md','progress.md')) {
+        $p = "memory-bank/$f"
+        if (-not (Test-Path $p)) { continue }
+        $fLines = Get-Content $p
+        for ($i = 0; $i -lt $fLines.Count; $i++) {
+            if ($fLines[$i] -match '⏸') {
+                $plannedItems += [pscustomobject]@{ Text = $fLines[$i]; File = $f; Line = $i + 1 }
+            }
+        }
+    }
+    $c22Matches = @(); $c22Seen = @{}
+    foreach ($doneLine in $completedLines) {
+        $doneNorm = Normalize-MbLine $doneLine
+        $tokens   = $doneNorm -split '\s+' | Where-Object { $_ }
+        if ($tokens.Count -lt 4) { continue }
+        for ($i = 0; $i -le $tokens.Count - 4; $i++) {
+            $window = "$($tokens[$i]) $($tokens[$i+1]) $($tokens[$i+2]) $($tokens[$i+3])"
+            if ($c22Seen.ContainsKey($window)) { continue }
+            foreach ($planned in $plannedItems) {
+                $pNorm = Normalize-MbLine $planned.Text
+                if ($pNorm.Contains($window)) {
+                    $c22Matches += [pscustomobject]@{ Window = $window; File = $planned.File; Line = $planned.Line }
+                    $c22Seen[$window] = $true
+                    break
+                }
+            }
+        }
+    }
+    if ($c22Matches.Count -eq 0) {
+        Write-Host "[OK]   Completed-but-still-planned — no cross-file completion conflicts" -ForegroundColor Green
+    } else {
+        $driftFound = $true
+        foreach ($m in $c22Matches | Select-Object -First 5) {
+            Write-Host "[WARN] Drift: `"$($m.Window)`" marked ✅ in progress.md but ⏸ in $($m.File) (line $($m.Line))" -ForegroundColor Yellow
+            Write-Host "       One of these is stale — resolve before next compaction." -ForegroundColor DarkGray
+        }
+        if ($c22Matches.Count -gt 5) { Write-Host "       ... ($($c22Matches.Count - 5) more)" -ForegroundColor DarkGray }
+    }
+
+    # 23. Stale next step — Next Steps bullets in activeContext.md already completed in progress.md
+    $nextStepLines = @()
+    $acPath = 'memory-bank/activeContext.md'
+    if (Test-Path $acPath) {
+        $acLines = Get-Content $acPath
+        $inNextSteps = $false
+        foreach ($line in $acLines) {
+            if ($line -match '^## Next Steps') { $inNextSteps = $true; continue }
+            if ($inNextSteps -and $line -match '^## ')   { $inNextSteps = $false }
+            if ($inNextSteps -and $line -match '^\s*[-*]') { $nextStepLines += $line }
+        }
+    }
+    $c23Matches = @(); $c23Seen = @{}
+    foreach ($step in $nextStepLines) {
+        $stepNorm = Normalize-MbLine $step
+        $tokens   = $stepNorm -split '\s+' | Where-Object { $_ }
+        if ($tokens.Count -lt 4) { continue }
+        for ($i = 0; $i -le $tokens.Count - 4; $i++) {
+            $window = "$($tokens[$i]) $($tokens[$i+1]) $($tokens[$i+2]) $($tokens[$i+3])"
+            if ($c23Seen.ContainsKey($window)) { continue }
+            foreach ($doneLine in $completedLines) {
+                $doneNorm = Normalize-MbLine $doneLine
+                if ($doneNorm.Contains($window)) {
+                    $c23Matches += [pscustomobject]@{ Step = $step.Trim(); Window = $window }
+                    $c23Seen[$window] = $true
+                    break
+                }
+            }
+        }
+    }
+    if ($c23Matches.Count -eq 0) {
+        Write-Host "[OK]   Stale next steps — all Next Steps items appear pending in progress" -ForegroundColor Green
+    } else {
+        $driftFound = $true
+        foreach ($s in $c23Matches) {
+            Write-Host "[WARN] Drift: Next Step appears completed — `"$($s.Step)`"" -ForegroundColor Yellow
+            Write-Host "       Remove from activeContext.md Next Steps or verify the progress entry." -ForegroundColor DarkGray
+        }
+    }
+
+    if ($driftFound) {
+        Write-Host ""
+        Write-Host "       Structural drift signals detected — run /mb-drift for semantic analysis." -ForegroundColor DarkYellow
+    }
+
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
     Write-Host "  Startup Context"
