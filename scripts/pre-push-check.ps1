@@ -20,7 +20,7 @@ Write-Host ""
 try {
 
 # Check 1: Unresolved merge conflicts (block)
-$conflicts = git diff --name-only --diff-filter=U 2>&1
+$conflicts = git diff --name-only --diff-filter=U 2>$null
 if ($conflicts) {
     Write-Host "[ERROR] Unresolved merge conflicts:" -ForegroundColor Red
     $conflicts | ForEach-Object { Write-Host "        $_" -ForegroundColor Red }
@@ -41,7 +41,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # Check 3: Uncommitted changes in working tree (warn)
-$dirty = git status --porcelain 2>&1
+$dirty = git status --porcelain 2>$null
 if ($dirty) {
     Write-Host "[WARN] Uncommitted changes in working tree:" -ForegroundColor Yellow
     $dirty | Select-Object -First 10 | ForEach-Object { Write-Host "       $_" -ForegroundColor Yellow }

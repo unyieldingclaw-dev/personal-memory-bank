@@ -18,7 +18,7 @@ echo "==============="
 echo ""
 
 # Check 1: Unresolved merge conflicts (block)
-CONFLICTS=$(git diff --name-only --diff-filter=U 2>&1 || true)
+CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
 if [ -n "$CONFLICTS" ]; then
     echo -e "${RED}[ERROR] Unresolved merge conflicts:${RESET}"
     echo "$CONFLICTS" | while IFS= read -r f; do echo "        $f"; done
@@ -35,7 +35,7 @@ if git grep -lq "^<<<<<<< " --cached 2>/dev/null; then
 fi
 
 # Check 3: Uncommitted changes in working tree (warn)
-DIRTY=$(git status --porcelain 2>&1 || true)
+DIRTY=$(git status --porcelain 2>/dev/null || true)
 if [ -n "$DIRTY" ]; then
     echo -e "${YELLOW}[WARN] Uncommitted changes in working tree:${RESET}"
     echo "$DIRTY" | head -10 | while IFS= read -r line; do echo "       $line"; done
