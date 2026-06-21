@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-18
+last-reviewed: 2026-06-19
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -18,30 +18,37 @@ lineage: []
 
 ## Current Focus
 
-PMB Commands Audit complete (2026-06-18). All 58 findings resolved or triaged. System is clean — no active work in progress.
+Semantic drift detection complete (2026-06-19). System is clean — no active work in progress.
 
-## What Was Just Completed (2026-06-18)
+## What Was Just Completed (2026-06-19)
 
-**PMB Commands Audit — 6-lens parallel review + full fix execution:**
-- Audit spec: `docs/superpowers/specs/2026-06-18-mb-commands-audit.md` (58 findings: 2C/14H/19M/23L)
-- Implementation plan: `C:\Users\Mizzo\.claude\plans\mb-audit-fixes.md`
-- All findings resolved: Z1 (budgetLimit), Z2 (pwsh consistency), L3 (HOOKS-GUIDE exit codes), L4 (handoff bypass already present), L5–L8 (template sync), M2 (pre-compact-check distribution), M3 (Agent in code-review), M4 (session-start steps)
-- **L1/M1:** `check-contract.ps1/.sh` (live + templates) fixed to read stdin (`$input|Out-String` / `cat`) — was silently failing open on every invocation due to nonexistent `$env:CLAUDE_TOOL_INPUT`
-- **L2:** `health-check.md` step 5 uses `@security-reviewer` (agent notation) — false positive, no change needed
-- **mb.sh parity fix:** `TEMPLATE_OWNED` array now includes `scripts/pre-push-check.sh` and `scripts/pre-push-check.ps1` (was missing; `mb.ps1` already had them); ordering matches `mb.ps1`
+**Semantic drift detection — spec, plan, and full implementation:**
+- Spec: `docs/superpowers/specs/2026-06-19-semantic-drift-detection-design.md`
+- Plan: `docs/superpowers/plans/2026-06-19-semantic-drift-detection.md`
+- Check 21 (git-vs-reviewed lag), Check 22 (completed-but-still-planned), Check 23 (stale next step) added to `mb doctor` in both `scripts/mb.ps1` and `scripts/mb.sh`
+- Advisory nudge fires when any drift check warns: "run /mb-drift for semantic analysis"
+- `/mb-drift` skill created at `.claude/skills/mb-drift.md` — on-demand semantic analysis for duplicate concepts, supersession rot, authority violations
+- `QUICK-REFERENCE.md` updated: 23-check doctor, `/mb-drift` skill listed
+
+**Also completed this session (2026-06-19):**
+- `master` → `main` rename across all 8 repos (PMB + 7 satellites); GitHub defaults fixed
+- CLAUDE.md updated in Bowling-Tracker (PMB session-start sections) and GrillTimer (full PMB-format rewrite)
+- `pre-push-check.sh`/`.ps1` bug fixed: `2>&1` → `2>/dev/null` on `--diff-filter=U` and `--porcelain` lines (CRLF warnings were being treated as merge conflicts on Windows)
 
 ## Next Steps
 
 1. **Architecture review items on hold** — boring mode (`mb init --minimal`), explicit non-goals doc, `/core` vs `/integrations` separation; revisit if adoption friction surfaces
-2. **Semantic identity** (progress.md backlog) — concept-level drift detection; detection-first, no auto-remediation; not yet, complexity budget is spent
 
-## What Was Just Completed (2026-06-18, doc update pass)
+## Architecture Constraints to Remember
 
-- Bumped VERSION to 1.1.1; added CHANGELOG entry documenting 4 fixes (check-contract stdin, mb.sh parity, HOOKS-GUIDE example, QUICK-REFERENCE count)
-- Fixed QUICK-REFERENCE.md: `mb doctor` "16-point" → "20-check diagnostic"
-- Fixed HOOKS-GUIDE.md: per-project "Lint Before Commit" example corrected from `echo "$CLAUDE_TOOL_INPUT"` to `HOOK_INPUT=$(cat 2>/dev/null); echo "$HOOK_INPUT"`
-- Committed audit spec (`docs/superpowers/specs/2026-06-18-mb-commands-audit.md`) as part of doc release
-- Pushed main to origin; updated GitHub repo description to reflect v1.1.1
+- `confidence:` is intentionally flat (high/medium/low)
+- `source_type` and `compaction_generation` are independent axes — do not conflate
+- `authority` (volatility) and startup-criticality are independent axes — do not merge into one field
+- Detection-first, resist-automation: auto-remediation premature without semantic certainty
+- "Overhead proportionate to certainty" — governing principle for any new governance additions
+- `mb doctor` = observable integrity signals only; not semantic correctness, not workflow compliance
+- `fixtures/` and `docs/` are excluded from pre-push secret scanning (intentionally bad code + docs quoting it)
+- `mb status` = state ("can I work?"); `mb doctor`/`/health-check` = validation ("is it correct?")
 
 ## Architecture Constraints to Remember
 
@@ -56,4 +63,4 @@ PMB Commands Audit complete (2026-06-18). All 58 findings resolved or triaged. S
 
 ## Git State
 
-main branch. All changes committed and pushed. System is clean.
+main branch. All changes committed and pushed. System is clean. `mb doctor` shows 23 checks — Check 21 will warn until each file's `last-reviewed` catches up with recent commits.
