@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-06-19
+last-reviewed: 2026-06-22
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -26,8 +26,8 @@ Personal fork of the enterprise Memory Bank standard — lifecycle management an
 - ✅ Provenance frontmatter: compaction_generation, source_type, confidence, lineage
 - ✅ Security Guardrails (BLOCK/CONFIRM/WARN) + 9-rule registry (SECURITY-RULES.md) + 9 security fixtures
 - ✅ Code Quality, Logging, 7-phase Workflow standards; Supply Chain, MCP Security, Rules-File Integrity (reference)
-- ✅ Slash commands: /pmb-status, /code-review, /feature-dev, /security-review, /test-audit, /health-check
-- ✅ mb CLI: init, status, doctor (23 checks), query, clean, commit, upgrade, verify-integrity + deprecated aliases
+- ✅ Slash commands: /pmb-status, /code-review, /feature-dev, /security-review, /test-audit, /health-check, /mb-drift, /change-review
+- ✅ mb CLI: init, status, doctor (24 checks), query, clean, commit, upgrade, verify-integrity, plan (status/list/promote/archive) + deprecated aliases
 - ✅ Hook suite: dangerous-commands blocker, contract scope check, delegation depth check, auto-last-reviewed, PreCompact memory gate
 - ✅ Versioned git hooks via core.hooksPath (.githooks/pre-push + pre-commit), distributed by mb upgrade (TEMPLATE_OWNED)
 - ✅ mb upgrade: TEMPLATE_OWNED/ADVISORY_DIFF distribution model; remote version check
@@ -49,6 +49,15 @@ Full history: CHANGELOG.md
 
 **Deferred pending operational evidence:**
 - ⏸ handoff CLI, pinned.md, mb update --from-git, mb privacy
+
+## 2026-06-22 — PMB Infrastructure + /change-review
+
+- ✅ `.claude/plans/` gitignored; `docs/plans/` + `docs/archive/plans/` scaffolded with README
+- ✅ `templates/plan.md` updated with YAML frontmatter (status/created/approved/scope/risk/source)
+- ✅ `mb plan status|list|promote|archive` added to `mb.sh` and `mb.ps1`
+- ✅ `mb doctor` check 24 — plan hygiene (folder existence, tracked drafts, missing frontmatter, stale plans)
+- ✅ `standards/WORKFLOW.md` + `/feature-dev` Phase 3 updated: draft to `.claude/plans/`, promote to `docs/plans/`
+- ✅ `/change-review` command — 9-job change package review with optional ACR bridge
 
 ## 2026-06-19 — Semantic Drift Detection
 
