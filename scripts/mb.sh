@@ -1847,7 +1847,7 @@ invoke_plan_promote() {
     if [ "$HAS_FM" -eq 0 ]; then
         TODAY=$(date +%Y-%m-%d)
         FM="---\nstatus: planned\ncreated: $TODAY\napproved: $TODAY\nrelated_spec: null\nscope: local\nrisk: medium\nsource: ai-draft\n---\n\n"
-        printf "$FM" > "$DEST"
+        printf '%b' "$FM" > "$DEST"
         cat "$DRAFT" >> "$DEST"
         echo -e "${GREEN}Added frontmatter and promoted to $DEST${NC}"
     else
