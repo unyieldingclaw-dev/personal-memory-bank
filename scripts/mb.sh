@@ -1843,7 +1843,7 @@ invoke_plan_promote() {
     mkdir -p "docs/plans"
 
     # Check/add frontmatter
-    HAS_FM=$(head -1 "$DRAFT" | grep -c '^---' || echo 0)
+    HAS_FM=$(head -1 "$DRAFT" | grep -c '^---' || true)
     if [ "$HAS_FM" -eq 0 ]; then
         TODAY=$(date +%Y-%m-%d)
         FM="---\nstatus: planned\ncreated: $TODAY\napproved: $TODAY\nrelated_spec: null\nscope: local\nrisk: medium\nsource: ai-draft\n---\n\n"
