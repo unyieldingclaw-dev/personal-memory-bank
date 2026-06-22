@@ -20,10 +20,12 @@
 # Default to "help" so running "mb" alone shows usage, not an error.
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "help")]
+    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
     [string]$Arg = "",
+    [Parameter(Position=2)]
+    [string]$Arg2 = "",
     # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
     # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
     [switch]$DryRun
@@ -1859,6 +1861,212 @@ function Invoke-VerifyIntegrity {
     Write-Host ""
 }
 
+function Show-PlanStatus {
+    Write-Host ""
+    Write-Host "Plan Status" -ForegroundColor Cyan
+    Write-Host "===========" -ForegroundColor Cyan
+    Write-Host ""
+
+    $DurableDir = "docs/plans"
+    $ScratchDir = ".claude/plans"
+    $ArchiveDir = "docs/archive/plans"
+
+    $StatusCounts = @{}
+    $MissingFM = 0
+    $TotalDurable = 0
+
+    if (Test-Path $DurableDir) {
+        foreach ($f in (Get-ChildItem "$DurableDir/*.md" -ErrorAction SilentlyContinue)) {
+            $TotalDurable++
+            $StatusLine = Select-String -Path $f.FullName -Pattern '^status:' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($StatusLine) {
+                $Status = ($StatusLine.Line -replace '^status:\s*', '').Trim()
+                $StatusCounts[$Status] = ($StatusCounts[$Status] ?? 0) + 1
+            } else {
+                $MissingFM++
+            }
+        }
+    }
+
+    $DraftCount = 0
+    if (Test-Path $ScratchDir) {
+        $DraftCount = (Get-ChildItem "$ScratchDir/*.md" -ErrorAction SilentlyContinue | Measure-Object).Count
+    }
+
+    $ArchiveCount = 0
+    if (Test-Path $ArchiveDir) {
+        $ArchiveCount = (Get-ChildItem "$ArchiveDir/*.md" -ErrorAction SilentlyContinue | Measure-Object).Count
+    }
+
+    $TrackedScratch = 0
+    if (Test-Path $ScratchDir) {
+        $TrackedScratch = (& git ls-files $ScratchDir 2>$null | Measure-Object).Count
+    }
+
+    $StaleCount = 0
+    $TodayEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    if (Test-Path $DurableDir) {
+        foreach ($f in (Get-ChildItem "$DurableDir/*.md" -ErrorAction SilentlyContinue)) {
+            $StatusLine = Select-String -Path $f.FullName -Pattern '^status:' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $StatusLine) { continue }
+            $Status = ($StatusLine.Line -replace '^status:\s*', '').Trim()
+            if ($Status -notin @('planned', 'active')) { continue }
+            $LastCommit = & git log -1 --format="%as" -- $f.FullName 2>$null
+            if (-not $LastCommit) { continue }
+            try {
+                $CommitEpoch = [DateTimeOffset]::Parse($LastCommit).ToUnixTimeSeconds()
+                $Days = [int](($TodayEpoch - $CommitEpoch) / 86400)
+                if ($Days -gt 30) { $StaleCount++ }
+            } catch {}
+        }
+    }
+
+    $Parts = @()
+    foreach ($s in @('active', 'planned', 'done', 'superseded', 'rejected')) {
+        if ($StatusCounts[$s] -gt 0) { $Parts += "$($StatusCounts[$s]) $s" }
+    }
+    if ($ArchiveCount -gt 0) { $Parts += "$ArchiveCount archived" }
+    $Summary = if ($Parts.Count -gt 0) { $Parts -join ', ' } else { 'none' }
+    Write-Host "  Plans: $Summary"
+    Write-Host "  Drafts: $DraftCount in $ScratchDir"
+    Write-Host ""
+
+    $Problems = 0
+    if ($TrackedScratch -gt 0) {
+        Write-Host "  [ERROR] $TrackedScratch scratch plan(s) tracked by git" -ForegroundColor Red
+        $Problems++
+    }
+    if ($MissingFM -gt 0) {
+        Write-Host "  [WARN]  $MissingFM plan(s) missing frontmatter" -ForegroundColor Yellow
+        $Problems++
+    }
+    if ($StaleCount -gt 0) {
+        Write-Host "  [WARN]  $StaleCount plan(s) with status planned/active, no activity in 30+ days" -ForegroundColor Yellow
+        $Problems++
+    }
+    Write-Host "  Problems: $Problems"
+    Write-Host ""
+}
+
+function Show-PlanList {
+    Write-Host ""
+    Write-Host "Plans" -ForegroundColor Cyan
+    Write-Host "=====" -ForegroundColor Cyan
+
+    $DurableDir = "docs/plans"
+    if (-not (Test-Path $DurableDir)) {
+        Write-Host "No docs/plans/ directory found." -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+
+    $TodayEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $ByStatus = @{}
+
+    foreach ($f in (Get-ChildItem "$DurableDir/*.md" -ErrorAction SilentlyContinue)) {
+        $StatusLine = Select-String -Path $f.FullName -Pattern '^status:' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $Status = if ($StatusLine) { ($StatusLine.Line -replace '^status:\s*', '').Trim() } else { '(none)' }
+        $CreatedLine = Select-String -Path $f.FullName -Pattern '^created:' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $Created = if ($CreatedLine) { ($CreatedLine.Line -replace '^created:\s*', '').Trim() } else { '?' }
+        $SpecLine = Select-String -Path $f.FullName -Pattern '^related_spec:' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $Spec = if ($SpecLine) { ($SpecLine.Line -replace '^related_spec:\s*', '').Trim() } else { 'null' }
+
+        $StaleFlag = ''
+        if ($Status -in @('planned', 'active')) {
+            $LastCommit = & git log -1 --format="%as" -- $f.FullName 2>$null
+            if ($LastCommit) {
+                try {
+                    $CommitEpoch = [DateTimeOffset]::Parse($LastCommit).ToUnixTimeSeconds()
+                    $Days = [int](($TodayEpoch - $CommitEpoch) / 86400)
+                    if ($Days -gt 30) { $StaleFlag = " [STALE ${Days}d]" }
+                } catch {}
+            }
+        }
+
+        $Entry = "  $($f.Name)  status:$Status  created:$Created  spec:$Spec$StaleFlag"
+        if (-not $ByStatus[$Status]) { $ByStatus[$Status] = @() }
+        $ByStatus[$Status] += $Entry
+    }
+
+    foreach ($s in @('active', 'planned', 'done', 'superseded', 'rejected')) {
+        if (-not $ByStatus[$s]) { continue }
+        Write-Host ""
+        Write-Host $s -ForegroundColor Yellow
+        $ByStatus[$s] | ForEach-Object { Write-Host $_ }
+    }
+    Write-Host ""
+}
+
+function Invoke-PlanPromote {
+    param([string]$Draft)
+    if (-not $Draft) {
+        Write-Host "Usage: mb plan promote <path-to-draft>" -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Test-Path $Draft)) {
+        Write-Host "Draft not found: $Draft" -ForegroundColor Red
+        exit 1
+    }
+
+    $Filename = Split-Path $Draft -Leaf
+    $Dest = "docs/plans/$Filename"
+
+    if (Test-Path $Dest) {
+        Write-Host "Plan already exists: $Dest" -ForegroundColor Red
+        Write-Host "Use --force to overwrite." -ForegroundColor Yellow
+        exit 1
+    }
+
+    New-Item -ItemType Directory -Force -Path "docs/plans" | Out-Null
+    $Content = Get-Content $Draft -Raw
+    $HasFM = $Content -match '^---'
+
+    if (-not $HasFM) {
+        $Today = Get-Date -Format 'yyyy-MM-dd'
+        $FM = "---`nstatus: planned`ncreated: $Today`napproved: $Today`nrelated_spec: null`nscope: local`nrisk: medium`nsource: ai-draft`n---`n`n"
+        Set-Content -Path $Dest -Value ($FM + $Content) -NoNewline
+        Write-Host "Added frontmatter and promoted to $Dest" -ForegroundColor Green
+    } else {
+        Copy-Item $Draft $Dest
+        $Lines = Get-Content $Dest
+        $Updated = $Lines -replace '^status: draft', 'status: planned'
+        Set-Content -Path $Dest -Value $Updated
+        Write-Host "Promoted to $Dest" -ForegroundColor Green
+    }
+
+    Write-Host "Next: git add $Dest && git commit" -ForegroundColor Yellow
+    Write-Host ""
+}
+
+function Invoke-PlanArchive {
+    param([string]$Plan)
+    if (-not $Plan) {
+        Write-Host "Usage: mb plan archive <path-to-plan>" -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Test-Path $Plan)) {
+        Write-Host "Plan not found: $Plan" -ForegroundColor Red
+        exit 1
+    }
+
+    $StatusLine = Select-String -Path $Plan -Pattern '^status:' | Select-Object -First 1
+    $Status = if ($StatusLine) { ($StatusLine.Line -replace '^status:\s*', '').Trim() } else { '' }
+
+    if ($Status -notin @('done', 'superseded', 'rejected')) {
+        Write-Host "Cannot archive plan with status: $Status" -ForegroundColor Red
+        Write-Host "Set status to done, superseded, or rejected first." -ForegroundColor Yellow
+        exit 1
+    }
+
+    New-Item -ItemType Directory -Force -Path "docs/archive/plans" | Out-Null
+    $Filename = Split-Path $Plan -Leaf
+    $Dest = "docs/archive/plans/$Filename"
+    Move-Item $Plan $Dest
+    Write-Host "Archived to $Dest" -ForegroundColor Green
+    Write-Host "Next: git add -A && git commit" -ForegroundColor Yellow
+    Write-Host ""
+}
+
 # Run command
 switch ($Command) {
     "init"             { Invoke-Init }
@@ -1870,6 +2078,20 @@ switch ($Command) {
     "upgrade"          { Invoke-Upgrade }
     "verify-integrity" { Invoke-VerifyIntegrity }
     "help"             { Show-Help }
+    "plan" {
+        $SubCmd = if ($Arg) { $Arg } else { 'status' }
+        switch ($SubCmd) {
+            'status'  { Show-PlanStatus }
+            'list'    { Show-PlanList }
+            'promote' { Invoke-PlanPromote -Draft $Arg2 }
+            'archive' { Invoke-PlanArchive -Plan $Arg2 }
+            default {
+                Write-Host "Unknown plan subcommand: $SubCmd" -ForegroundColor Red
+                Write-Host "Usage: mb plan <status|list|promote|archive>" -ForegroundColor Yellow
+                exit 1
+            }
+        }
+    }
     # Deprecated aliases — kept for backward compatibility, not shown in help
     "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow }
     "validate"      { Write-Host "mb validate is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
