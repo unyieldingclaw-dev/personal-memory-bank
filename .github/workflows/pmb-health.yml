@@ -240,3 +240,13 @@ jobs:
           done
           [ "$FAIL" -eq 0 ] && echo "template-integrity: PASS" || echo "template-integrity: FAIL"
           exit $FAIL
+
+  mb-command-tests:
+    name: MB Command Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Run mb command tests
+        shell: bash
+        run: bash tests/run.sh
