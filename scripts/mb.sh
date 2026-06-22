@@ -54,7 +54,9 @@ show_help() {
     echo "  commit            Stage and commit Memory Bank changes"
     echo "  upgrade           Propagate current governance templates to this project"
     echo "  verify-integrity  Check and refresh memory-bank file integrity checksums"
-    echo "  plan     Plan management: status, list, promote, archive"
+    echo "  plan              Plan management: status, list, promote, archive"
+    echo "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
+    echo "  change-check      Post-change summary: diff stats, file types, /change-review job preview"
     echo "  help              Show this help message"
     echo ""
     echo "Examples:"
@@ -1963,6 +1965,123 @@ invoke_plan_archive() {
     echo ""
 }
 
+show_preflight() {
+    echo ""
+    echo -e "${CYAN}Preflight${NC}"
+    echo -e "${CYAN}=========${NC}"
+    echo ""
+
+    ALL_OK=true
+
+    # git — always required
+    GIT_VER=$(git --version 2>/dev/null | awk '{print $3}' || echo "")
+    if [ -n "$GIT_VER" ]; then
+        echo -e "${GREEN}[OK]   git $GIT_VER${NC}"
+    else
+        echo -e "${RED}[ERROR] git not found${NC}"
+        ALL_OK=false
+    fi
+
+    # gh — needed for --pr mode in /change-review
+    GH_VER=$(gh --version 2>/dev/null | head -1 | awk '{print $3}' || echo "")
+    if [ -n "$GH_VER" ]; then
+        echo -e "${GREEN}[OK]   gh $GH_VER  (PR mode available)${NC}"
+    else
+        echo -e "${YELLOW}[WARN] gh not found — /change-review --pr mode unavailable${NC}"
+    fi
+
+    # ai-review-agent — optional ACR backend for /change-review Job 7
+    ACR_VER=$(ai-review-agent --version 2>/dev/null || echo "")
+    if [ -n "$ACR_VER" ]; then
+        echo -e "${GREEN}[OK]   ai-review-agent $ACR_VER  (ACR security analysis available)${NC}"
+    else
+        echo -e "${YELLOW}[WARN] ai-review-agent not found — /change-review Job 7 uses PMB-native security only${NC}"
+    fi
+
+    # semgrep — optional SAST for /security-review
+    SG_VER=$(semgrep --version 2>/dev/null | head -1 || echo "")
+    if [ -n "$SG_VER" ]; then
+        echo -e "${GREEN}[OK]   semgrep found  (SAST available for /security-review)${NC}"
+    else
+        echo -e "${YELLOW}[WARN] semgrep not found — SAST unavailable${NC}"
+    fi
+
+    echo ""
+    if [ "$ALL_OK" = true ]; then
+        echo -e "${GREEN}Review tools ready.${NC}"
+    else
+        echo -e "${RED}Critical tools missing — fix errors above before reviewing.${NC}"
+    fi
+    echo ""
+}
+
+show_change_check() {
+    echo ""
+    echo -e "${CYAN}Change Check${NC}"
+    echo -e "${CYAN}============${NC}"
+    echo ""
+
+    # Determine base ref
+    BASE="origin/main"
+    if ! git rev-parse "$BASE" >/dev/null 2>&1; then
+        BASE="origin/master"
+    fi
+    if ! git rev-parse "$BASE" >/dev/null 2>&1; then
+        BASE="HEAD~1"
+    fi
+    if [ -n "$ARG" ]; then
+        BASE="$ARG"
+    fi
+
+    DIFF_STAT=$(git diff --stat "$BASE"...HEAD 2>/dev/null || true)
+    if [ -z "$DIFF_STAT" ]; then
+        echo -e "${YELLOW}No diff found against $BASE. Nothing to check.${NC}"
+        echo ""
+        return
+    fi
+
+    # File counts by type
+    CHANGED_FILES=$(git diff --name-only "$BASE"...HEAD 2>/dev/null || true)
+    TOTAL=$(echo "$CHANGED_FILES" | grep -c '.' || echo 0)
+    UI_FILES=$(echo "$CHANGED_FILES" | grep -cE '\.(html|jsx|tsx|vue|svelte|css|scss|sass)$' || echo 0)
+    TEST_FILES=$(echo "$CHANGED_FILES" | grep -cE '(test|spec)\.(ts|js|py|go|rb)$|/tests?/' || echo 0)
+    SOURCE_FILES=$(echo "$CHANGED_FILES" | grep -cvE '(test|spec)\.(ts|js|py|go|rb)$|/tests?/|\.(md|json|yaml|yml|txt|lock)$' || echo 0)
+
+    # Line stats
+    INSERTIONS=$(git diff --stat "$BASE"...HEAD 2>/dev/null | tail -1 | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)
+    DELETIONS=$(git diff --stat "$BASE"...HEAD 2>/dev/null | tail -1 | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo 0)
+    TOTAL_LINES=$(( ${INSERTIONS:-0} + ${DELETIONS:-0} ))
+
+    echo -e "  Base:  $BASE"
+    echo -e "  Files: $TOTAL changed (+${INSERTIONS:-0} -${DELETIONS:-0} lines)"
+    echo -e "  Types: ${SOURCE_FILES} source, ${TEST_FILES} test, ${UI_FILES} UI"
+    echo ""
+
+    # Checks
+    if [ "$TOTAL_LINES" -gt 1000 ]; then
+        echo -e "${YELLOW}[WARN] Large diff (${TOTAL_LINES} lines) — consider splitting${NC}"
+    else
+        echo -e "${GREEN}[OK]   Diff size moderate (${TOTAL_LINES} lines)${NC}"
+    fi
+
+    if [ "${TEST_FILES}" -eq 0 ] && [ "${SOURCE_FILES}" -gt 0 ]; then
+        echo -e "${YELLOW}[WARN] No test files in change — /change-review Job 5 and 6 will flag gaps${NC}"
+    else
+        echo -e "${GREEN}[OK]   Test files present in change${NC}"
+    fi
+
+    if [ "${UI_FILES}" -gt 0 ]; then
+        echo -e "${GREEN}[OK]   UI files detected — /change-review Job 8 (accessibility) will activate${NC}"
+    else
+        echo -e "       No UI files — /change-review Job 8 will be skipped"
+    fi
+
+    echo ""
+    echo -e "  Run ${CYAN}mb preflight${NC} to check tool availability."
+    echo -e "  Run ${CYAN}/change-review${NC} to start the full 9-job review."
+    echo ""
+}
+
 case "$COMMAND" in
     init)              invoke_init ;;
     doctor)            show_doctor ;;
@@ -1972,6 +2091,8 @@ case "$COMMAND" in
     commit)            invoke_commit ;;
     upgrade)           invoke_upgrade ;;
     verify-integrity)  invoke_verify_integrity ;;
+    preflight)         show_preflight ;;
+    change-check)      show_change_check ;;
     help)              show_help ;;
     # Deprecated aliases — kept for backward compatibility, not shown in help
     install-hooks) echo -e "${YELLOW}mb install-hooks is now part of mb upgrade. Run: mb upgrade${NC}" ;;

@@ -20,7 +20,7 @@
 # Default to "help" so running "mb" alone shows usage, not an error.
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "help")]
+    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "preflight", "change-check", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
     [string]$Arg = "",
@@ -1861,6 +1861,118 @@ function Invoke-VerifyIntegrity {
     Write-Host ""
 }
 
+function Show-Preflight {
+    Write-Host ""
+    Write-Host "Preflight" -ForegroundColor Cyan
+    Write-Host "=========" -ForegroundColor Cyan
+    Write-Host ""
+
+    $allOk = $true
+
+    # git — always required
+    $gitVer = (& git --version 2>$null) -replace 'git version ', ''
+    if ($gitVer) {
+        Write-Host "[OK]   git $gitVer" -ForegroundColor Green
+    } else {
+        Write-Host "[ERROR] git not found" -ForegroundColor Red
+        $allOk = $false
+    }
+
+    # gh — needed for --pr mode in /change-review
+    $ghVer = (& gh --version 2>$null | Select-Object -First 1) -replace 'gh version ', '' -replace ' .*', ''
+    if ($ghVer) {
+        Write-Host "[OK]   gh $ghVer  (PR mode available)" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] gh not found — /change-review --pr mode unavailable" -ForegroundColor Yellow
+    }
+
+    # ai-review-agent — optional ACR backend for /change-review Job 7
+    $acrCmd = Get-Command 'ai-review-agent' -ErrorAction SilentlyContinue
+    if ($acrCmd) {
+        $acrVer = (& $acrCmd.Source --version 2>$null) -replace '^.*?(\d+\.\d+\.\d+).*$', '$1'
+        Write-Host "[OK]   ai-review-agent $acrVer  (ACR security analysis available)" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] ai-review-agent not found — /change-review Job 7 uses PMB-native security only" -ForegroundColor Yellow
+    }
+
+    # semgrep — optional SAST for /security-review
+    $sgCmd = Get-Command 'semgrep' -ErrorAction SilentlyContinue
+    if ($sgCmd) {
+        $sgVer = (& $sgCmd.Source --version 2>$null | Select-Object -First 1) -replace 'Semgrep ', ''
+        Write-Host "[OK]   semgrep $sgVer  (SAST available for /security-review)" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] semgrep not found — SAST unavailable" -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    if ($allOk) {
+        Write-Host "Review tools ready." -ForegroundColor Green
+    } else {
+        Write-Host "Critical tools missing — fix errors above before reviewing." -ForegroundColor Red
+    }
+    Write-Host ""
+}
+
+function Show-ChangeCheck {
+    Write-Host ""
+    Write-Host "Change Check" -ForegroundColor Cyan
+    Write-Host "============" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Determine base ref
+    $base = if ($Arg) { $Arg } else { 'origin/main' }
+    $baseExists = & git rev-parse $base 2>$null
+    if (-not $baseExists) { $base = 'origin/master' }
+    $baseExists = & git rev-parse $base 2>$null
+    if (-not $baseExists) { $base = 'HEAD~1' }
+
+    $diffStat = & git diff --stat "${base}...HEAD" 2>$null
+    if (-not $diffStat) {
+        Write-Host "No diff found against $base. Nothing to check." -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+
+    $changedFiles = & git diff --name-only "${base}...HEAD" 2>$null
+    $total = @($changedFiles).Count
+    $uiFiles   = @($changedFiles | Where-Object { $_ -match '\.(html|jsx|tsx|vue|svelte|css|scss|sass)$' }).Count
+    $testFiles = @($changedFiles | Where-Object { $_ -match '(test|spec)\.(ts|js|py|go|rb)$|/tests?/' }).Count
+    $srcFiles  = @($changedFiles | Where-Object { $_ -notmatch '(test|spec)\.(ts|js|py|go|rb)$|/tests?/|\.(md|json|yaml|yml|txt|lock)$' }).Count
+
+    $statLine  = $diffStat | Select-Object -Last 1
+    $ins  = if ($statLine -match '(\d+) insertion') { [int]$Matches[1] } else { 0 }
+    $del  = if ($statLine -match '(\d+) deletion')  { [int]$Matches[1] } else { 0 }
+    $totalLines = $ins + $del
+
+    Write-Host "  Base:  $base"
+    Write-Host "  Files: $total changed (+$ins -$del lines)"
+    Write-Host "  Types: $srcFiles source, $testFiles test, $uiFiles UI"
+    Write-Host ""
+
+    if ($totalLines -gt 1000) {
+        Write-Host "[WARN] Large diff ($totalLines lines) — consider splitting" -ForegroundColor Yellow
+    } else {
+        Write-Host "[OK]   Diff size moderate ($totalLines lines)" -ForegroundColor Green
+    }
+
+    if ($testFiles -eq 0 -and $srcFiles -gt 0) {
+        Write-Host "[WARN] No test files in change — /change-review Jobs 5 and 6 will flag gaps" -ForegroundColor Yellow
+    } else {
+        Write-Host "[OK]   Test files present in change" -ForegroundColor Green
+    }
+
+    if ($uiFiles -gt 0) {
+        Write-Host "[OK]   UI files detected — /change-review Job 8 (accessibility) will activate" -ForegroundColor Green
+    } else {
+        Write-Host "       No UI files — /change-review Job 8 will be skipped"
+    }
+
+    Write-Host ""
+    Write-Host "  Run mb preflight to check tool availability." -ForegroundColor Cyan
+    Write-Host "  Run /change-review to start the full 9-job review." -ForegroundColor Cyan
+    Write-Host ""
+}
+
 function Show-PlanStatus {
     Write-Host ""
     Write-Host "Plan Status" -ForegroundColor Cyan
@@ -2077,6 +2189,8 @@ switch ($Command) {
     "commit"           { Invoke-Commit }
     "upgrade"          { Invoke-Upgrade }
     "verify-integrity" { Invoke-VerifyIntegrity }
+    "preflight"        { Show-Preflight }
+    "change-check"     { Show-ChangeCheck }
     "help"             { Show-Help }
     "plan" {
         $SubCmd = if ($Arg) { $Arg } else { 'status' }

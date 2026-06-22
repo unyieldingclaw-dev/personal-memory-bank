@@ -22,8 +22,10 @@ One-page cheatsheet for daily use.
 |---------|--------------|
 | `mb init` | Scaffold memory-bank/ in the current project |
 | `mb status` | Quick state check — initialized, memory, context, standards, tasks |
-| `mb doctor` | Full 23-check diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, drift flags, integrity |
+| `mb doctor` | Full 24-check diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, drift flags, integrity, plan hygiene |
 | `mb query TAG` | Find all memory tagged with TAG |
+| `mb preflight` | Check tool availability for /change-review (git, gh, ai-review-agent, semgrep) |
+| `mb change-check` | Post-change summary — diff stats, file types, /change-review job preview |
 | `mb clean` | Memory bank maintenance — slim check + guided cleanup prompt |
 | `mb commit` | Commit Memory Bank changes separately from feature code |
 | `mb upgrade` | Pull latest templates, standards, and hooks from the memory bank repo |
@@ -35,6 +37,8 @@ One-page cheatsheet for daily use.
 | `/test-audit` | Audit test coverage for changed files or full project; reports missing tests, empty test files, framework config, CI test step (Claude Code) |
 | `/health-check` | Full PMB health check — runs mb doctor + mb validate + mb audit and prints summary (PMB repo only) |
 | `/mb-drift` | On-demand semantic drift analysis — reads all 5 memory-bank files and finds duplicate concepts, superseded decisions, and authority violations (PMB repo only) |
+| `/change-review` | 9-job change package review — scope, claims, seams, runtime, tests, coverage, security, accessibility, opposition; optional ACR bridge |
+| `/accessibility-review` | WCAG 2.1 AA review of UI file changes (html/jsx/tsx/vue/svelte/css); called by /change-review Job 8 or standalone |
 
 ---
 
