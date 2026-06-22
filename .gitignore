@@ -48,3 +48,7 @@ temp/
 ~$*.pptx
 ~$*.docx
 ~$*.xlsx
+
+# AI-generated scratch planning/session state
+.claude/plans/
+.memory-bank/state/
