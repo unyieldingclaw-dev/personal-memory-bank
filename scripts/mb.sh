@@ -1107,6 +1107,67 @@ show_doctor() {
         echo -e "${YELLOW}       Structural drift signals detected — run /mb-drift for semantic analysis.${NC}"
     fi
 
+    # 24. Plan hygiene — docs/plans/ structure and draft tracking
+    PLAN_DIR="docs/plans"
+    SCRATCH_PLAN_DIR=".claude/plans"
+
+    # Check: docs/plans/ exists
+    if [ -d "$PLAN_DIR" ]; then
+        echo -e "${GREEN}[OK]   docs/plans/ exists${NC}"
+    else
+        echo -e "${YELLOW}[WARN] docs/plans/ not found — run 'mb plan status' for setup${NC}"
+    fi
+
+    # Check: tracked scratch plans (error — should never be committed)
+    if [ -d "$SCRATCH_PLAN_DIR" ]; then
+        TRACKED=$(git ls-files "$SCRATCH_PLAN_DIR" 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$TRACKED" -gt 0 ]; then
+            echo -e "${RED}[ERROR] $TRACKED scratch plan(s) in $SCRATCH_PLAN_DIR are tracked by git${NC}"
+            git ls-files "$SCRATCH_PLAN_DIR" 2>/dev/null | while read -r f; do echo "       $f"; done
+            echo -e "       Fix: git rm --cached $SCRATCH_PLAN_DIR/*.md"
+        else
+            echo -e "${GREEN}[OK]   No tracked scratch plans in $SCRATCH_PLAN_DIR${NC}"
+        fi
+    fi
+
+    # Check: plans missing frontmatter
+    if [ -d "$PLAN_DIR" ]; then
+        MISSING_FM_PLANS=()
+        for f in "$PLAN_DIR"/*.md; do
+            [ ! -f "$f" ] && continue
+            HAS_FM=$(head -1 "$f" | grep -c '^---' || true)
+            [ "$HAS_FM" -eq 0 ] && MISSING_FM_PLANS+=("$f")
+        done
+        if [ "${#MISSING_FM_PLANS[@]}" -gt 0 ]; then
+            echo -e "${YELLOW}[WARN] ${#MISSING_FM_PLANS[@]} plan(s) missing frontmatter:${NC}"
+            for p in "${MISSING_FM_PLANS[@]}"; do echo "       $p"; done
+        else
+            echo -e "${GREEN}[OK]   All plans have frontmatter${NC}"
+        fi
+    fi
+
+    # Check: stale plans (planned/active with no activity 30+ days)
+    STALE_PLANS=()
+    TODAY_P=$(date +%s)
+    if [ -d "$PLAN_DIR" ]; then
+        for f in "$PLAN_DIR"/*.md; do
+            [ ! -f "$f" ] && continue
+            STATUS=$(grep -m1 '^status:' "$f" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
+            [ "$STATUS" != "planned" ] && [ "$STATUS" != "active" ] && continue
+            LAST_COMMIT=$(git log -1 --format="%as" -- "$f" 2>/dev/null || echo "")
+            [ -z "$LAST_COMMIT" ] && continue
+            COMMIT_EPOCH=$(date -d "$LAST_COMMIT" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$LAST_COMMIT" +%s 2>/dev/null || echo 0)
+            DAYS=$(( (TODAY_P - COMMIT_EPOCH) / 86400 ))
+            [ "$DAYS" -gt 30 ] && STALE_PLANS+=("$(basename "$f") (${DAYS}d, status:$STATUS)")
+        done
+    fi
+    if [ "${#STALE_PLANS[@]}" -gt 0 ]; then
+        echo -e "${YELLOW}[WARN] ${#STALE_PLANS[@]} plan(s) with no activity in 30+ days:${NC}"
+        for p in "${STALE_PLANS[@]}"; do echo "       $p"; done
+    else
+        [ -d "$PLAN_DIR" ] && echo -e "${GREEN}[OK]   No stale plans${NC}"
+    fi
+
     # Startup context — observability section (not a numbered health check)
     echo ""
     echo "  Startup Context"
