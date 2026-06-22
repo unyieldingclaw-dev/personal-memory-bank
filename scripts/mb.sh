@@ -1135,6 +1135,7 @@ show_doctor() {
         MISSING_FM_PLANS=()
         for f in "$PLAN_DIR"/*.md; do
             [ ! -f "$f" ] && continue
+            [ "$(basename "$f")" = "README.md" ] && continue
             HAS_FM=$(head -1 "$f" | grep -c '^---' || true)
             [ "$HAS_FM" -eq 0 ] && MISSING_FM_PLANS+=("$f")
         done
@@ -1152,6 +1153,7 @@ show_doctor() {
     if [ -d "$PLAN_DIR" ]; then
         for f in "$PLAN_DIR"/*.md; do
             [ ! -f "$f" ] && continue
+            [ "$(basename "$f")" = "README.md" ] && continue
             STATUS=$(grep -m1 '^status:' "$f" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
             [ "$STATUS" != "planned" ] && [ "$STATUS" != "active" ] && continue
             LAST_COMMIT=$(git log -1 --format="%as" -- "$f" 2>/dev/null || echo "")
