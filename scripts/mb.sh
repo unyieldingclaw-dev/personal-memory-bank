@@ -54,6 +54,7 @@ show_help() {
     echo "  commit            Stage and commit Memory Bank changes"
     echo "  upgrade           Propagate current governance templates to this project"
     echo "  verify-integrity  Check and refresh memory-bank file integrity checksums"
+    echo "  plan     Plan management: status, list, promote, archive"
     echo "  help              Show this help message"
     echo ""
     echo "Examples:"
@@ -1683,6 +1684,222 @@ invoke_verify_integrity() {
     echo ""
 }
 
+show_plan_status() {
+    echo ""
+    echo -e "${CYAN}Plan Status${NC}"
+    echo -e "${CYAN}===========${NC}"
+    echo ""
+
+    DURABLE_DIR="docs/plans"
+    SCRATCH_DIR=".claude/plans"
+    ARCHIVE_DIR="docs/archive/plans"
+
+    # Count durable plans by status
+    declare -A STATUS_COUNTS
+    MISSING_FM=0
+    TOTAL_DURABLE=0
+    if [ -d "$DURABLE_DIR" ]; then
+        for f in "$DURABLE_DIR"/*.md; do
+            [ ! -f "$f" ] && continue
+            TOTAL_DURABLE=$((TOTAL_DURABLE + 1))
+            STATUS=$(grep -m1 '^status:' "$f" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
+            if [ -z "$STATUS" ]; then
+                MISSING_FM=$((MISSING_FM + 1))
+            else
+                STATUS_COUNTS["$STATUS"]=$(( ${STATUS_COUNTS["$STATUS"]:-0} + 1 ))
+            fi
+        done
+    fi
+
+    # Count scratch drafts
+    DRAFT_COUNT=0
+    if [ -d "$SCRATCH_DIR" ]; then
+        DRAFT_COUNT=$(find "$SCRATCH_DIR" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    # Count archived
+    ARCHIVE_COUNT=0
+    if [ -d "$ARCHIVE_DIR" ]; then
+        ARCHIVE_COUNT=$(find "$ARCHIVE_DIR" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    # Check for tracked scratch plans (error)
+    TRACKED_SCRATCH=0
+    if [ -d "$SCRATCH_DIR" ]; then
+        TRACKED_SCRATCH=$(git ls-files "$SCRATCH_DIR" 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    # Stale check: planned/active with no git activity in 30+ days
+    STALE_COUNT=0
+    TODAY_EPOCH=$(date +%s)
+    if [ -d "$DURABLE_DIR" ]; then
+        for f in "$DURABLE_DIR"/*.md; do
+            [ ! -f "$f" ] && continue
+            STATUS=$(grep -m1 '^status:' "$f" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
+            [ "$STATUS" != "planned" ] && [ "$STATUS" != "active" ] && continue
+            LAST_COMMIT=$(git log -1 --format="%as" -- "$f" 2>/dev/null || echo "")
+            [ -z "$LAST_COMMIT" ] && continue
+            COMMIT_EPOCH=$(date -d "$LAST_COMMIT" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$LAST_COMMIT" +%s 2>/dev/null || echo 0)
+            DAYS=$(( (TODAY_EPOCH - COMMIT_EPOCH) / 86400 ))
+            [ "$DAYS" -gt 30 ] && STALE_COUNT=$((STALE_COUNT + 1))
+        done
+    fi
+
+    # Print summary line
+    SUMMARY=""
+    for s in active planned done superseded rejected draft; do
+        count=${STATUS_COUNTS["$s"]:-0}
+        [ "$count" -gt 0 ] && SUMMARY="${SUMMARY}${count} ${s}, "
+    done
+    [ "$ARCHIVE_COUNT" -gt 0 ] && SUMMARY="${SUMMARY}${ARCHIVE_COUNT} archived, "
+    SUMMARY="${SUMMARY%, }"
+    [ -n "$SUMMARY" ] && echo -e "  Plans: $SUMMARY" || echo -e "  Plans: none"
+    echo -e "  Drafts: $DRAFT_COUNT in $SCRATCH_DIR"
+    echo ""
+
+    # Problems
+    PROBLEMS=0
+    if [ "$TRACKED_SCRATCH" -gt 0 ]; then
+        echo -e "  ${RED}[ERROR] $TRACKED_SCRATCH scratch plan(s) tracked by git — run: git rm --cached $SCRATCH_DIR/*.md${NC}"
+        PROBLEMS=$((PROBLEMS + 1))
+    fi
+    if [ "$MISSING_FM" -gt 0 ]; then
+        echo -e "  ${YELLOW}[WARN]  $MISSING_FM plan(s) missing frontmatter${NC}"
+        PROBLEMS=$((PROBLEMS + 1))
+    fi
+    if [ "$STALE_COUNT" -gt 0 ]; then
+        echo -e "  ${YELLOW}[WARN]  $STALE_COUNT plan(s) with status planned/active, no activity in 30+ days${NC}"
+        PROBLEMS=$((PROBLEMS + 1))
+    fi
+    echo -e "  Problems: $PROBLEMS"
+    echo ""
+}
+
+show_plan_list() {
+    echo ""
+    echo -e "${CYAN}Plans${NC}"
+    echo -e "${CYAN}=====${NC}"
+
+    DURABLE_DIR="docs/plans"
+    if [ ! -d "$DURABLE_DIR" ]; then
+        echo -e "${YELLOW}No docs/plans/ directory found. Run 'mb plan status' to see setup guidance.${NC}"
+        echo ""
+        return
+    fi
+
+    TODAY_EPOCH=$(date +%s)
+    declare -A BY_STATUS
+
+    for f in "$DURABLE_DIR"/*.md; do
+        [ ! -f "$f" ] && continue
+        STATUS=$(grep -m1 '^status:' "$f" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "(none)")
+        CREATED=$(grep -m1 '^created:' "$f" 2>/dev/null | sed 's/created:[[:space:]]*//' | tr -d ' \r' || echo "")
+        SPEC=$(grep -m1 '^related_spec:' "$f" 2>/dev/null | sed 's/related_spec:[[:space:]]*//' | tr -d ' \r' || echo "null")
+
+        STALE_FLAG=""
+        if [ "$STATUS" = "planned" ] || [ "$STATUS" = "active" ]; then
+            LAST_COMMIT=$(git log -1 --format="%as" -- "$f" 2>/dev/null || echo "")
+            if [ -n "$LAST_COMMIT" ]; then
+                COMMIT_EPOCH=$(date -d "$LAST_COMMIT" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$LAST_COMMIT" +%s 2>/dev/null || echo 0)
+                DAYS=$(( (TODAY_EPOCH - COMMIT_EPOCH) / 86400 ))
+                [ "$DAYS" -gt 30 ] && STALE_FLAG=" [STALE ${DAYS}d]"
+            fi
+        fi
+
+        ENTRY="  $(basename "$f")  status:${STATUS}  created:${CREATED:-?}  spec:${SPEC}${STALE_FLAG}"
+        BY_STATUS["$STATUS"]="${BY_STATUS[$STATUS]:-}${ENTRY}\n"
+    done
+
+    for s in active planned done superseded rejected; do
+        [ -z "${BY_STATUS[$s]:-}" ] && continue
+        echo ""
+        echo -e "${YELLOW}${s}${NC}"
+        printf "${BY_STATUS[$s]}"
+    done
+    echo ""
+}
+
+invoke_plan_promote() {
+    DRAFT="$ARG"
+    if [ -z "$DRAFT" ]; then
+        echo -e "${RED}Usage: mb plan promote <path-to-draft>${NC}"
+        echo -e "${YELLOW}Example: mb plan promote .claude/plans/2026-06-20-my-feature.md${NC}"
+        exit 1
+    fi
+    if [ ! -f "$DRAFT" ]; then
+        echo -e "${RED}Draft not found: $DRAFT${NC}"
+        exit 1
+    fi
+
+    FILENAME=$(basename "$DRAFT")
+    DEST="docs/plans/$FILENAME"
+
+    if [ -f "$DEST" ]; then
+        echo -e "${RED}Plan already exists: $DEST${NC}"
+        echo -e "${YELLOW}Use --force to overwrite: mb plan promote $DRAFT --force${NC}"
+        exit 1
+    fi
+
+    mkdir -p "docs/plans"
+
+    # Check/add frontmatter
+    HAS_FM=$(head -1 "$DRAFT" | grep -c '^---' || echo 0)
+    if [ "$HAS_FM" -eq 0 ]; then
+        TODAY=$(date +%Y-%m-%d)
+        FM="---\nstatus: planned\ncreated: $TODAY\napproved: $TODAY\nrelated_spec: null\nscope: local\nrisk: medium\nsource: ai-draft\n---\n\n"
+        printf "$FM" > "$DEST"
+        cat "$DRAFT" >> "$DEST"
+        echo -e "${GREEN}Added frontmatter and promoted to $DEST${NC}"
+    else
+        cp "$DRAFT" "$DEST"
+        # Ensure status is at least 'planned'
+        CURRENT_STATUS=$(grep -m1 '^status:' "$DEST" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
+        if [ "$CURRENT_STATUS" = "draft" ] || [ -z "$CURRENT_STATUS" ]; then
+            sed -i.bak 's/^status: draft/status: planned/' "$DEST" && rm -f "${DEST}.bak"
+            echo -e "${GREEN}Promoted to $DEST (status: draft → planned)${NC}"
+        else
+            echo -e "${GREEN}Promoted to $DEST (status: $CURRENT_STATUS preserved)${NC}"
+        fi
+    fi
+
+    echo -e "${YELLOW}Next: git add $DEST && git commit${NC}"
+    echo ""
+}
+
+invoke_plan_archive() {
+    PLAN="$ARG"
+    if [ -z "$PLAN" ]; then
+        echo -e "${RED}Usage: mb plan archive <path-to-plan>${NC}"
+        echo -e "${YELLOW}Example: mb plan archive docs/plans/2026-06-20-my-feature.md${NC}"
+        exit 1
+    fi
+    if [ ! -f "$PLAN" ]; then
+        echo -e "${RED}Plan not found: $PLAN${NC}"
+        exit 1
+    fi
+
+    STATUS=$(grep -m1 '^status:' "$PLAN" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
+    TERMINAL_STATUSES="done superseded rejected"
+    IS_TERMINAL=false
+    for ts in $TERMINAL_STATUSES; do
+        [ "$STATUS" = "$ts" ] && IS_TERMINAL=true && break
+    done
+
+    if [ "$IS_TERMINAL" = false ]; then
+        echo -e "${RED}Cannot archive plan with status: $STATUS${NC}"
+        echo -e "${YELLOW}Set status to done, superseded, or rejected first.${NC}"
+        echo -e "${YELLOW}Or use --force: mb plan archive $PLAN --force${NC}"
+        exit 1
+    fi
+
+    FILENAME=$(basename "$PLAN")
+    mkdir -p "docs/archive/plans"
+    git mv "$PLAN" "docs/archive/plans/$FILENAME" 2>/dev/null || mv "$PLAN" "docs/archive/plans/$FILENAME"
+    echo -e "${GREEN}Archived to docs/archive/plans/$FILENAME${NC}"
+    echo -e "${YELLOW}Next: git add -A && git commit${NC}"
+    echo ""
+}
+
 case "$COMMAND" in
     init)              invoke_init ;;
     doctor)            show_doctor ;;
@@ -1702,6 +1919,21 @@ case "$COMMAND" in
     update)            invoke_upgrade ;;
     archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}" ;;
     slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}" ;;
+    plan)
+        SUBCMD="${2:-status}"
+        ARG="${3:-}"
+        case "$SUBCMD" in
+            status)  show_plan_status ;;
+            list)    show_plan_list ;;
+            promote) invoke_plan_promote ;;
+            archive) invoke_plan_archive ;;
+            *)
+                echo -e "${RED}Unknown plan subcommand: $SUBCMD${NC}"
+                echo -e "${YELLOW}Usage: mb plan <status|list|promote|archive>${NC}"
+                exit 1
+                ;;
+        esac
+        ;;
     *)
         echo -e "${RED}Unknown command: $COMMAND${NC}"
         show_help
