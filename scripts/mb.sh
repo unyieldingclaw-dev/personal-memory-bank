@@ -747,6 +747,7 @@ show_doctor() {
         authority=$(grep -m1 '^authority:' "$p" 2>/dev/null | sed 's/authority:[[:space:]]*//' | tr -d ' \r')
         [ -z "$last_reviewed" ] || [ "$last_reviewed" = "YYYY-MM-DD" ] && continue
         [ -z "$threshold" ] && continue
+        [[ "$threshold" =~ ^[0-9]+$ ]] || continue
         [ "$authority" = "immutable" ] && continue
         REVIEWED_EPOCH=$(date -d "$last_reviewed" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$last_reviewed" +%s 2>/dev/null || echo "0")
         [ "$REVIEWED_EPOCH" = "0" ] && continue
@@ -1307,8 +1308,10 @@ show_audit() {
         TOTAL_BYTES=$((TOTAL_BYTES + $(wc -c < "$PATH_")))
 
         LAST_REVIEWED=$(grep -m1 'last-reviewed:' "$PATH_" | sed 's/last-reviewed:\s*//' | tr -d ' \r' || true)
-        STALE_DAYS=$(grep -m1 'staleness-threshold:' "$PATH_" | sed 's/staleness-threshold:\s*//' | sed 's/d//' | tr -d ' \r' || echo "90")
-        REVIEW_DAYS=$(grep -m1 'review-cycle:' "$PATH_" | sed 's/review-cycle:\s*//' | sed 's/d//' | tr -d ' \r' || true)
+        STALE_DAYS=$(grep -m1 'staleness-threshold:' "$PATH_" | sed 's/staleness-threshold:\s*//' | sed 's/d$//' | tr -d ' \r' || echo "90")
+        [[ "$STALE_DAYS" =~ ^[0-9]+$ ]] || STALE_DAYS=90
+        REVIEW_DAYS=$(grep -m1 'review-cycle:' "$PATH_" | sed 's/review-cycle:\s*//' | sed 's/d$//' | tr -d ' \r' || true)
+        [[ "$REVIEW_DAYS" =~ ^[0-9]+$ ]] || REVIEW_DAYS=""
 
         if [ -z "$LAST_REVIEWED" ] || [ "$LAST_REVIEWED" = "YYYY-MM-DD" ]; then
             printf "%-22s %-16s %-17s " "$NAME" "no frontmatter" "${STALE_DAYS}d"
