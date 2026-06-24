@@ -80,13 +80,13 @@
   "permissions": {
     "allow": [
       "Bash(git *)",
-      "Bash(npm run lint)",
-      "Bash(npm run test)",
+      "Bash(npm run *)",
       "Bash(npm test)",
       "Bash(npx *)",
       "Bash(python -m pytest *)",
       "Bash(python -m mypy *)",
       "Bash(python -m ruff *)"
+      "Bash(bash tests/*.sh)"
     ]
   }
 }
