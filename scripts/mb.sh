@@ -64,6 +64,12 @@ show_help() {
     echo "  mb query auth         Find files tagged auth/* or sections mentioning auth"
     echo "  mb clean              Get maintenance prompt for memory bank cleanup"
     echo ""
+    echo "Deprecated aliases (redirect to current commands):"
+    echo "  validate, audit  → mb doctor"
+    echo "  update           → mb upgrade"
+    echo "  compact, slim, archive, budget  → mb clean"
+    echo "  install-hooks    → mb upgrade"
+    echo ""
 }
 
 # WHY: Status is the "git status" of PMB — a fast, always-safe state check that
@@ -1038,6 +1044,17 @@ show_doctor() {
         # WHY: strip emoji/markers, lowercase, collapse whitespace for token comparison
         echo "$1" | sed 's/[✅⏸*#-]//g' | tr '[:upper:]' '[:lower:]' | tr -s ' ' | sed 's/^ //;s/ $//'
     }
+    # Pre-normalize all ⏸ lines once — avoids O(n²) subprocess spawning in inner loop
+    _PLANNED_CACHE=()
+    _PLANNED_FILES=()
+    for _pf in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+        _pp="memory-bank/$_pf"
+        [ ! -f "$_pp" ] && continue
+        while IFS= read -r _pl; do
+            _PLANNED_CACHE+=("$(_mb_normalize "$_pl")")
+            _PLANNED_FILES+=("$_pf")
+        done < <(grep '⏸' "$_pp" 2>/dev/null)
+    done
     C22_FOUND=false
     PROGRESS_FILE="memory-bank/progress.md"
     if [ -f "$PROGRESS_FILE" ]; then
@@ -1049,20 +1066,15 @@ show_doctor() {
             matched=false
             for ((i=0; i<=n-4 && !matched; i++)); do
                 window="${done_tokens[$i]} ${done_tokens[$i+1]} ${done_tokens[$i+2]} ${done_tokens[$i+3]}"
-                for pf in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
-                    pp="memory-bank/$pf"
-                    [ ! -f "$pp" ] && continue
-                    while IFS= read -r planned_line; do
-                        planned_norm=$(_mb_normalize "$planned_line")
-                        if echo "$planned_norm" | grep -qF "$window"; then
-                            echo -e "${YELLOW}[WARN] Drift: \"$window\" marked ✅ in progress.md but ⏸ in $pf${NC}"
-                            echo "       One of these is stale — resolve before next compaction."
-                            C22_FOUND=true
-                            DRIFT_FOUND=true
-                            matched=true
-                            break 2
-                        fi
-                    done < <(grep '⏸' "$pp" 2>/dev/null)
+                for _ci in "${!_PLANNED_CACHE[@]}"; do
+                    if echo "${_PLANNED_CACHE[$_ci]}" | grep -qF "$window"; then
+                        echo -e "${YELLOW}[WARN] Drift: \"$window\" marked ✅ in progress.md but ⏸ in ${_PLANNED_FILES[$_ci]}${NC}"
+                        echo "       One of these is stale — resolve before next compaction."
+                        C22_FOUND=true
+                        DRIFT_FOUND=true
+                        matched=true
+                        break 2
+                    fi
                 done
             done
         done < <(grep '✅' "$PROGRESS_FILE" 2>/dev/null)
@@ -1070,6 +1082,13 @@ show_doctor() {
     [ "$C22_FOUND" = false ] && echo -e "${GREEN}[OK]   Completed-but-still-planned — no cross-file completion conflicts${NC}"
 
     # 23. Stale next step — Next Steps bullets in activeContext.md already in progress ✅
+    # Pre-normalize all ✅ lines from progress.md once
+    _DONE_CACHE=()
+    if [ -f "$PROGRESS_FILE" ]; then
+        while IFS= read -r _dl; do
+            _DONE_CACHE+=("$(_mb_normalize "$_dl")")
+        done < <(grep '✅' "$PROGRESS_FILE" 2>/dev/null)
+    fi
     AC_FILE="memory-bank/activeContext.md"
     C23_FOUND=false
     if [ -f "$AC_FILE" ] && [ -f "$PROGRESS_FILE" ]; then
@@ -1087,9 +1106,8 @@ show_doctor() {
                 matched_step=false
                 for ((j=0; j<=ns-4 && !matched_step; j++)); do
                     swindow="${step_tokens[$j]} ${step_tokens[$j+1]} ${step_tokens[$j+2]} ${step_tokens[$j+3]}"
-                    while IFS= read -r done_line; do
-                        done_norm=$(_mb_normalize "$done_line")
-                        if echo "$done_norm" | grep -qF "$swindow"; then
+                    for _di in "${!_DONE_CACHE[@]}"; do
+                        if echo "${_DONE_CACHE[$_di]}" | grep -qF "$swindow"; then
                             trimmed_step=$(echo "$line" | sed 's/^[[:space:]]*//')
                             echo -e "${YELLOW}[WARN] Drift: Next Step appears completed — \"$trimmed_step\"${NC}"
                             echo "       Remove from activeContext.md Next Steps or verify the progress entry."
@@ -1098,7 +1116,7 @@ show_doctor() {
                             matched_step=true
                             break
                         fi
-                    done < <(grep '✅' "$PROGRESS_FILE" 2>/dev/null)
+                    done
                 done
             fi
         done < "$AC_FILE"
@@ -1255,7 +1273,7 @@ show_budget() {
     fi
 
     if [ -d "$MEMORY_BANK_PATH" ]; then
-        MB_BYTES=$(find "$MEMORY_BANK_PATH" -maxdepth 1 -type f | xargs wc -c 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
+        MB_BYTES=$(find "$MEMORY_BANK_PATH" -maxdepth 1 -type f -exec wc -c {} + 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
         MB_KB=$(awk "BEGIN {printf \"%.1f\", $MB_BYTES / 1024}")
         MB_TOKENS=$(awk "BEGIN {printf \"%d\", $MB_KB * 250}")
         if awk "BEGIN {exit ($MB_KB > 40) ? 0 : 1}"; then
@@ -1420,7 +1438,7 @@ show_compact() {
 
     TOTAL_BYTES=0
     if [ -d "$MEMORY_BANK_PATH" ]; then
-        TOTAL_BYTES=$(find "$MEMORY_BANK_PATH" -maxdepth 1 -type f | xargs wc -c 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
+        TOTAL_BYTES=$(find "$MEMORY_BANK_PATH" -maxdepth 1 -type f -exec wc -c {} + 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
     fi
     TOTAL_KB=$(( TOTAL_BYTES / 1024 ))
 

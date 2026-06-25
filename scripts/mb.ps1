@@ -63,6 +63,12 @@ function Show-Help {
     Write-Host "  mb query auth         Find files tagged auth/* or sections mentioning auth"
     Write-Host "  mb clean              Get maintenance prompt for memory bank cleanup"
     Write-Host ""
+    Write-Host "Deprecated aliases (redirect to current commands):"
+    Write-Host "  validate, audit  -> mb doctor"
+    Write-Host "  update           -> mb upgrade"
+    Write-Host "  compact, slim, archive, budget  -> mb clean"
+    Write-Host "  install-hooks    -> mb upgrade"
+    Write-Host ""
 }
 
 # WHY: Status is the "git status" of PMB — a fast, always-safe state check that
@@ -1222,7 +1228,7 @@ function Show-Doctor {
         $fLines = Get-Content $p
         for ($i = 0; $i -lt $fLines.Count; $i++) {
             if ($fLines[$i] -match '⏸') {
-                $plannedItems += [pscustomobject]@{ Text = $fLines[$i]; File = $f; Line = $i + 1 }
+                $plannedItems += [pscustomobject]@{ Text = $fLines[$i]; NormText = (Normalize-MbLine $fLines[$i]); File = $f; Line = $i + 1 }
             }
         }
     }
@@ -1235,8 +1241,7 @@ function Show-Doctor {
             $window = "$($tokens[$i]) $($tokens[$i+1]) $($tokens[$i+2]) $($tokens[$i+3])"
             if ($c22Seen.ContainsKey($window)) { continue }
             foreach ($planned in $plannedItems) {
-                $pNorm = Normalize-MbLine $planned.Text
-                if ($pNorm.Contains($window)) {
+                if ($planned.NormText.Contains($window)) {
                     $c22Matches += [pscustomobject]@{ Window = $window; File = $planned.File; Line = $planned.Line }
                     $c22Seen[$window] = $true
                     break
@@ -1267,6 +1272,8 @@ function Show-Doctor {
             if ($inNextSteps -and $line -match '^\s*[-*]') { $nextStepLines += $line }
         }
     }
+    # Pre-normalize completed lines once to avoid O(n²) Normalize-MbLine calls
+    $completedNorms = $completedLines | ForEach-Object { Normalize-MbLine $_ }
     $c23Matches = @(); $c23Seen = @{}
     foreach ($step in $nextStepLines) {
         $stepNorm = Normalize-MbLine $step
@@ -1275,8 +1282,7 @@ function Show-Doctor {
         for ($i = 0; $i -le $tokens.Count - 4; $i++) {
             $window = "$($tokens[$i]) $($tokens[$i+1]) $($tokens[$i+2]) $($tokens[$i+3])"
             if ($c23Seen.ContainsKey($window)) { continue }
-            foreach ($doneLine in $completedLines) {
-                $doneNorm = Normalize-MbLine $doneLine
+            foreach ($doneNorm in $completedNorms) {
                 if ($doneNorm.Contains($window)) {
                     $c23Matches += [pscustomobject]@{ Step = $step.Trim(); Window = $window }
                     $c23Seen[$window] = $true
