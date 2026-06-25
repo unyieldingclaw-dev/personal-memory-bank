@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0 — 2026-06-24
+
+### Added
+- **Comprehensive bash test suite** — expanded from 3 tested commands to all 11 `mb` commands. Added 8 new test files covering `mb doctor` (25 cases — all 24 checks + clean baseline), `mb status` (6 cases), `mb verify-integrity` (3 cases), `mb query` (4 cases), `mb init` (3 cases), `mb clean` (2 cases), `mb commit` (2 cases), and `mb upgrade` (3 cases). Total test count: 92 assertions across 11 suites.
+
+---
+
 ## 1.1.2 — 2026-06-24
 
 ### Fixed
