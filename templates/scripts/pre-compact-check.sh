@@ -32,8 +32,8 @@ if [ -f "$ACTIVE_CTX" ]; then
             \#*|'') continue ;;
         esac
         length=${#line}
-        # strip leading whitespace approximation
-        trimmed=$(echo "$line" | sed 's/^[[:space:]]*//')
+        # WHY: pure bash expansion avoids spawning sed per line (~100 processes saved)
+        trimmed="${line#"${line%%[! ]*}"}"
         trimlen=${#trimmed}
         [ "$trimlen" -ge 20 ] && substantive=$((substantive + 1))
     done < "$ACTIVE_CTX"
