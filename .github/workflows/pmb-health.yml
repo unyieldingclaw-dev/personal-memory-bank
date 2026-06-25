@@ -274,3 +274,13 @@ jobs:
             exit 1
           }
           Write-Host "PSScriptAnalyzer: no errors found in $($files.Count) file(s)"
+
+  mb-doctor-self-check:
+    name: MB Doctor Self-Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Run mb doctor on this repo
+        shell: bash
+        run: MB_HOME="$(pwd)" bash scripts/mb.sh doctor
