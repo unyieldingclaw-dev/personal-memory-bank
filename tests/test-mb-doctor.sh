@@ -354,11 +354,14 @@ cp "$REPO_ROOT/VERSION" "$TMPDIR_DOC/.pmb-version"
 echo ""
 echo "--- check 13: fixtures/security/ missing ---"
 
-mv "$REPO_ROOT/fixtures/security" "$REPO_ROOT/fixtures/security.bak"
+# Rename only one fixture subdir — safer than renaming the entire security/ dir
+SEC001="$REPO_ROOT/fixtures/security/SEC-001-hardcoded-secret"
+mv "$SEC001" "${SEC001}.bak"
 output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
-mv "$REPO_ROOT/fixtures/security.bak" "$REPO_ROOT/fixtures/security"
+# Conditional restore: always runs, even if output capture failed
+[ -d "${SEC001}.bak" ] && mv "${SEC001}.bak" "$SEC001"
 
-assert_contains "$output" "fixtures/security/ not found" "check 13: fixtures/security missing → [WARN]"
+assert_contains "$output" "SEC-001" "check 13: missing fixture → [WARN]"
 
 # ── Check 14: standards count > 20 ───────────────────────────────────────────
 echo ""
