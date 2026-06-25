@@ -36,8 +36,8 @@ Intercepts both Bash and PowerShell tool calls before they run using `scripts/da
 *Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
 
-**CONFIRM** (5 patterns — surfaces confirmation dialog):
-`git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify`
+**CONFIRM** (7 patterns — surfaces confirmation dialog):
+`git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `TRUNCATE TABLE` · `DELETE FROM`
 
 **WARN** (4 patterns — exits 0, surfaces access alert):
 `id_rsa` · `.pem` · `.env.production` · `credentials.json`
@@ -79,19 +79,20 @@ Fires after every `Write` or `Edit` tool call. Reads the edited file path from t
 
 ### 5. PreCompact Memory Gate (`PreCompact`)
 
-Fires before Claude Code compacts context. Checks whether either of the two volatile memory-bank files (`memory-bank/activeContext.md`, `memory-bank/progress.md`) was modified today **or** `handoff.md` exists in the project root.
+Fires before Claude Code compacts context. Runs two content-based quality checks on the memory bank **or** bypasses via `handoff.md`.
 
 **Exit codes:**
-- **Exits 0** — memory bank is current (or `handoff.md` bypass is present). Compaction proceeds normally.
-- **Exits 2** — neither volatile file was modified today and no `handoff.md` exists. **Compaction is blocked.** Claude Code treats a non-zero exit from a PreCompact hook as a block signal. The hook prints an actionable message explaining what to do.
+- **Exits 0** — both checks pass (or `handoff.md` bypass is present). Compaction proceeds normally.
+- **Exits 2** — one or more checks fail. **Compaction is blocked.** Claude Code treats a non-zero exit from a PreCompact hook as a block signal. The hook prints an actionable message explaining what to do.
 
-**To unblock:** update `memory-bank/activeContext.md` or `memory-bank/progress.md` with today's session context, then retry. Alternatively, create `handoff.md` to bypass the gate (the handoff file signals that session state has been captured in another form).
+**To unblock:** address the failing check (see below), then retry. Alternatively, create `handoff.md` to bypass the gate (the handoff file signals that session state has been captured via the Handoff Protocol).
 
-**Detection logic:**
-- Modified today: compares `LastWriteTime` (PowerShell) / `date -r` mtime (sh) to today's date
-- Handoff present: checks for `handoff.md` in the project root
+**Detection logic (content-based, not mtime):**
+- **Check 1 — `activeContext.md` substantive content:** counts non-frontmatter, non-heading, non-empty lines with ≥20 characters. Requires ≥3 such lines. A file that was only touched (e.g. `last-reviewed` timestamp updated) fails this check.
+- **Check 2 — `progress.md` dated entry:** looks for at least one line starting with today's date (or a markdown heading/list prefix followed by today's date). The date must appear at the start of a line — embedded dates in prose do not count.
+- **Bypass:** `handoff.md` present in the project root skips both checks.
 
-**Fails open:** if neither runtime is available or mtime cannot be determined, the hook exits 0 silently.
+**Fails open:** unexpected errors (missing runtimes, unreadable files) exit 0 silently and log to `.pmb-hook-errors.log`.
 
 Implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and `scripts/pre-compact-check.sh` (POSIX/sh):
 

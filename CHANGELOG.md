@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.2 — 2026-06-24
+
+### Fixed
+- **`settings.json` invalid JSON** — missing comma in the `permissions.allow` array (after `"Bash(python -m ruff *)"`) caused strict JSON parsers to reject the file. Added the missing comma.
+- **`pre-compact-check` false positives** — the progress.md date check used a free substring search (`grep -q "$today"`), which matched dates embedded in prose (e.g. "see spec from 2026-06-24") and incorrectly allowed compaction. Fixed to require the date at the start of a line (optionally preceded by a markdown heading or list prefix). Applied to `scripts/pre-compact-check.sh`, `scripts/pre-compact-check.ps1`, and their template copies.
+- **Missing `TRUNCATE TABLE` and `DELETE FROM` guardrails** — both patterns were listed as CONFIRM-tier in `standards/SECURITY-GUARDRAILS.md` but absent from the dangerous-commands scripts. Added to `scripts/dangerous-commands.sh`, `scripts/dangerous-commands.ps1`, and their template copies. Shell scripts include explicit lowercase variants for POSIX case-sensitivity parity; PowerShell uses its native case-insensitive matching.
+- **`templates/scripts/pre-compact-check.sh` stale whitespace trimming** — template was still using a `sed` subprocess per line; synced with the live script's pure bash parameter expansion (~100 fewer process spawns per compaction check).
+
+### Documentation
+- **`docs/HOOKS-GUIDE.md`** — updated CONFIRM pattern count from 5 to 7; corrected PreCompact detection logic description from mtime-based to content-based (the actual implementation).
+
+---
+
 ## 1.1.1 — 2026-06-18
 
 ### Fixed
