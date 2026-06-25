@@ -17,9 +17,17 @@ run_suite() {
   fi
 }
 
-run_suite "mb plan"         "$REPO_ROOT/tests/test-mb-plan.sh"
-run_suite "mb preflight"    "$REPO_ROOT/tests/test-mb-preflight.sh"
-run_suite "mb change-check" "$REPO_ROOT/tests/test-mb-change-check.sh"
+run_suite "mb plan"              "$REPO_ROOT/tests/test-mb-plan.sh"
+run_suite "mb preflight"         "$REPO_ROOT/tests/test-mb-preflight.sh"
+run_suite "mb change-check"      "$REPO_ROOT/tests/test-mb-change-check.sh"
+run_suite "mb status"            "$REPO_ROOT/tests/test-mb-status.sh"
+run_suite "mb verify-integrity"  "$REPO_ROOT/tests/test-mb-verify-integrity.sh"
+run_suite "mb query"             "$REPO_ROOT/tests/test-mb-query.sh"
+run_suite "mb init"              "$REPO_ROOT/tests/test-mb-init.sh"
+run_suite "mb clean"             "$REPO_ROOT/tests/test-mb-clean.sh"
+run_suite "mb commit"            "$REPO_ROOT/tests/test-mb-commit.sh"
+run_suite "mb upgrade"           "$REPO_ROOT/tests/test-mb-upgrade.sh"
+run_suite "mb doctor"            "$REPO_ROOT/tests/test-mb-doctor.sh"
 
 echo ""
 echo "════════════════════════════════════"
