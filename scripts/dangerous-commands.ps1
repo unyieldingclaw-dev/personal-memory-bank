@@ -65,6 +65,8 @@ $confirmPatterns = @(
     @{ pattern = "sudo rm";           reason = "privileged deletion" }                      # WHY: elevated deletion can remove system files
     @{ pattern = "chmod -R 777";      reason = "world-writable recursive chmod" }           # WHY: makes entire tree world-writable
     @{ pattern = "--no-verify";       reason = "bypasses pre-commit hooks (local governance)" } # WHY: skips safety hooks on commit
+    @{ pattern = "TRUNCATE TABLE"; reason = "SQL table truncation"  }  # WHY: deletes all rows, not easily reversed in many engines
+    @{ pattern = "DELETE FROM";    reason = "SQL delete rows"        }  # WHY: can delete data without a WHERE clause
 )
 
 foreach ($entry in $confirmPatterns) {

@@ -73,6 +73,10 @@ confirm "git update-ref"    "low-level ref manipulation"        # WHY: low-level
 confirm "sudo rm"           "privileged deletion"               # WHY: elevated deletion can remove system files
 confirm "chmod -R 777"      "world-writable recursive chmod"    # WHY: makes entire tree world-writable
 confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WHY: skips safety hooks on commit
+confirm "TRUNCATE TABLE"   "SQL table truncation"              # WHY: deletes all rows, not easily reversed in many engines
+confirm "truncate table"   "SQL table truncation (lowercase)"  # WHY: parity with ps1 OrdinalIgnoreCase — catches lowercase SQL
+confirm "DELETE FROM"      "SQL delete rows"                   # WHY: can delete data without a WHERE clause
+confirm "delete from"      "SQL delete rows (lowercase)"       # WHY: parity with ps1 OrdinalIgnoreCase — catches lowercase SQL
 
 # WARN: credential/secrets access — legitimate workflows exist, surface the access only
 warn "id_rsa"           "SSH private key access"                # WHY: SSH private key — may be intentional (key setup)
