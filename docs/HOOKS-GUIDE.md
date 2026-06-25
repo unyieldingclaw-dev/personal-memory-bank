@@ -111,6 +111,14 @@ Implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and `scripts/pre-c
 
 Note: `PreCompact` hooks have no `matcher` field — the hook type applies to the compaction event itself, not to a specific tool.
 
+### 6. Agent Delegation Depth Check (`PreToolUse` — Agent tool)
+
+Fires before every `Agent` tool call. Tracks nested agent delegation depth and emits a WARN when depth exceeds the budget defined in `standards/PERFORMANCE-BUDGET.md` (default: ≤1 subagent deep). Implemented in `scripts/delegation-depth-check.ps1` and `scripts/delegation-depth-check.sh`.
+
+**Runtime state file:** The hook stores its counter in `.pmb-delegation-depth` in the project root (gitignored). This file is created automatically on the first agent dispatch and resets after 2 hours of inactivity. Delete it manually to reset the depth counter mid-session without restarting.
+
+**Hook error logging:** Unexpected errors are logged to `.pmb-hook-errors.log`.
+
 ## Git Hooks (versioned)
 
 PMB distributes two git hooks through the `.githooks/` directory, which is versioned in the project repo. `mb init` and `mb upgrade` both install these hooks and activate them via `core.hooksPath`.

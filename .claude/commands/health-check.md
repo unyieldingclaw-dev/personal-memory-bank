@@ -1,5 +1,5 @@
 ---
-description: Full PMB health check — mb doctor (20 checks), staleness audit, structure validation, and security fixture verification on this repo's own memory bank. Reports a summary with pass/warn/fail for each area.
+description: Full PMB health check — mb doctor (24 checks), staleness audit, structure validation, and security fixture verification on this repo's own memory bank. Reports a summary with pass/warn/fail for each area.
 allowed-tools:
   - Bash(mb doctor)
   - Bash(mb validate)
@@ -15,7 +15,7 @@ Run the following checks in order and print a labeled result for each. At the en
 
 ## 1. Doctor
 
-Run `mb doctor` from this repo's root. This runs all 20 health checks including structure, frontmatter, compaction integrity, and staleness summary.
+Run `mb doctor` from this repo's root. This runs all 24 health checks including structure, frontmatter, compaction integrity, and staleness summary.
 
 **Output header:** `### mb doctor`
 
@@ -56,4 +56,4 @@ For each subdirectory in `fixtures/security/`, report:
 
 Print a short paragraph summarizing all five areas. Use ✅ for clean, ⚠️ for warnings, ❌ for failures. Example:
 
-> ✅ mb doctor: all 20 checks OK. ✅ mb validate: structure valid. ⚠️ mb audit: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date. ✅ Security fixtures: 9/9 rules caught.
+> ✅ mb doctor: all 24 checks OK. ✅ mb validate: structure valid. ⚠️ mb audit: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date. ✅ Security fixtures: 9/9 rules caught.
