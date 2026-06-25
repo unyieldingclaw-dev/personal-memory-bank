@@ -48,7 +48,8 @@ try {
     $progressFile = "memory-bank/progress.md"
     if (Test-Path $progressFile) {
         $content = Get-Content $progressFile -Raw
-        if ($content -notmatch [regex]::Escape($today)) {
+        $hasEntry = ($content -split "`n") | Where-Object { $_ -match "^(#{1,6} |- )?$([regex]::Escape($today))" }
+        if (-not $hasEntry) {
             $blockReasons += "progress.md has no entry dated $today — add today's progress before compacting"
         }
     } else {

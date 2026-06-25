@@ -47,7 +47,7 @@ fi
 # Check 2: progress.md — must contain at least one entry dated today
 PROGRESS_FILE="memory-bank/progress.md"
 if [ -f "$PROGRESS_FILE" ]; then
-    if ! grep -q "$today" "$PROGRESS_FILE" 2>/dev/null; then
+    if ! grep -qE "(^|^#+ |^- )${today}" "$PROGRESS_FILE" 2>/dev/null; then
         BLOCK_REASONS+=("progress.md has no entry dated $today — add today's progress before compacting")
     fi
 else
