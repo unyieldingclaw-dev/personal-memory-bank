@@ -85,7 +85,7 @@
       "Bash(npx *)",
       "Bash(python -m pytest *)",
       "Bash(python -m mypy *)",
-      "Bash(python -m ruff *)"
+      "Bash(python -m ruff *)",
       "Bash(bash tests/*.sh)"
     ]
   }
