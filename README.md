@@ -1,8 +1,8 @@
 # Personal Memory Bank
 
-![Version](https://img.shields.io/badge/version-1.1.1-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
 
-Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (9 commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
+Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (11 commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
 
 ## The Problem It Solves
 
@@ -72,7 +72,7 @@ to confirm the memory bank is healthy before you start.
 
 ```
 mb status     Quick state check — initialized, memory, context, standards, tasks
-mb doctor     Full 20-point diagnostic — git, templates, hooks, file sizes, version, drift detection, checksums, context ceiling
+mb doctor     Full 24-point diagnostic — git, templates, hooks, file sizes, version, drift detection, checksums, context ceiling
 mb query TAG  Find all memory tagged with TAG (e.g. mb query auth)
 mb clean      Memory bank maintenance — slim check + guided cleanup prompt
 mb commit     Commit memory bank changes separately from feature code

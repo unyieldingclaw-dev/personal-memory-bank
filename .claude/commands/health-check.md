@@ -2,8 +2,7 @@
 description: Full PMB health check — mb doctor (24 checks), staleness audit, structure validation, and security fixture verification on this repo's own memory bank. Reports a summary with pass/warn/fail for each area.
 allowed-tools:
   - Bash(mb doctor)
-  - Bash(mb validate)
-  - Bash(mb audit)
+  - Bash(mb status)
   - Bash(git status)
   - Bash(git log *)
   - Agent
@@ -21,17 +20,17 @@ Run `mb doctor` from this repo's root. This runs all 24 health checks including 
 
 Print the full output. Call out any check that is not `[OK]`.
 
-## 2. Validate
+## 2. Status
 
-Run `mb validate` on this repo's own `memory-bank/`. This checks that all required files exist and have valid frontmatter.
+Run `mb status` on this repo's own `memory-bank/`. This checks initialization state, memory bank presence, context standards, and recent activity.
 
-**Output header:** `### mb validate`
+**Output header:** `### mb status`
 
 ## 3. Staleness Audit
 
-Run `mb audit`. This lists each memory-bank file with its staleness status (days since last review vs threshold).
+Review the staleness summary produced by `mb doctor` (Check 24 — staleness report). It lists each memory-bank file with its staleness status (days since last review vs threshold).
 
-**Output header:** `### mb audit`
+**Output header:** `### Staleness Review`
 
 Note any files flagged as stale. Stable files (90d threshold) and volatile files (7d threshold) have very different cadences — flag volatile overdue files as higher priority.
 
