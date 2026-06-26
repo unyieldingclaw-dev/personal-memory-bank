@@ -71,6 +71,36 @@ Full history: CHANGELOG.md
 - ✅ Ran `mb upgrade` on all downstream satellite projects to distribute v1.1.1 template changes
 - ✅ Re-ran `mb doctor` to refresh checksums after direct edits; startup context confirmed below 25 KB threshold
 
+## 2026-06-24 — Comprehensive Audit + Remediation Sprint
+
+**PMB WS1 — Bug fixes (v1.1.2):**
+- ✅ `settings.json` invalid JSON (missing comma) fixed
+- ✅ `pre-compact-check` false positives fixed (date anchored to line start)
+- ✅ Missing TRUNCATE TABLE + DELETE FROM guardrails added to both shells + templates
+- ✅ Template pre-compact whitespace trimming synced
+
+**PMB WS2 — Test coverage (v1.2.0):**
+- ✅ 8 new test files; 115 assertions across 11 suites; all mb commands now covered
+- ✅ Doctor test check-13 fixture rename hardened; check-2 templates rename hardened
+
+**PMB WS3 — CI hardening:**
+- ✅ `powershell-lint` job: PSScriptAnalyzer at Error severity on all .ps1 files
+- ✅ `mb-doctor-self-check` job: runs mb doctor on PMB repo on every push
+- ✅ Total: 9 CI jobs
+
+**PMB WS4 — Performance + docs:**
+- ✅ O(n²) pre-cache in doctor checks 22+23 (sh + ps1)
+- ✅ `find | xargs wc` → `find -exec wc {} +` in show_budget
+- ✅ `mb help` + `mb.ps1 Show-Help` deprecated aliases section; ps1 gains plan/preflight/change-check
+- ✅ HOOKS-GUIDE section 6: delegation depth hook + .pmb-delegation-depth runtime file
+- ✅ health-check.md: 20→24 check count
+
+**ACR — P0 + P1 + P2:**
+- ✅ P0: comment marker versioned, provider validation, README 15-agent count, Prettier CI
+- ✅ P1 partial: orchestrator deterministic-source guard, sanitizer JSON metadata, command docs
+- ✅ P1 deferred (confirmed already in v1.1.0): policy layer, SARIF, GitHub annotations, agentPolicy docs
+- ✅ P2: schemaVersion/toolVersion/profile in ReviewResult + integration contract docs
+
 ## Satellite Projects
 
-- **ai-code-review-agent** (2026-06-04) — standalone GitHub Actions CI reviewer; repo `unyieldingclaw-dev/ai-code-review-agent` (private). LLM reviewer + verifier agents, finding cap, GITHUB_STEP_SUMMARY. Status: built and pushed, pending calibration PR validation.
+- **ai-code-review-agent** — `unyieldingclaw-dev/ai-code-review-agent`. v1.1.0: 15 observe-only agents, profiles, --context memory-bank, SARIF, GitHub annotations, agentPolicy, integration contract. 276 tests passing.

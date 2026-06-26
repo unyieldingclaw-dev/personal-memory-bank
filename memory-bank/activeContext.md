@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-24
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -18,29 +18,20 @@ lineage: []
 
 ## Current Focus
 
-PMB Infrastructure complete (2026-06-22). ACR integration track in progress — `/change-review` command added, ACR P0 fixes and schema alignment underway in the ACR repo.
+Comprehensive audit + remediation sprint complete (2026-06-24). PMB v1.2.0 and ACR v1.1.0+ are both fully shipped. No active work items.
 
-## What Was Just Completed (2026-06-22)
+## What Was Completed (2026-06-24)
 
-**PMB Infrastructure — plan lifecycle and `/change-review`:**
-- Plan: `docs/superpowers/plans/2026-06-20-pmb-infrastructure.md`
-- `.claude/plans/` gitignored; `docs/plans/` + `docs/archive/plans/` created with README
-- `templates/plan.md` updated with YAML frontmatter (status/created/approved/scope/risk/source)
-- `mb plan status|list|promote|archive` added to `mb.sh` and `mb.ps1`
-- `mb doctor` check 24 added — plan hygiene (docs/plans/ exists, no tracked drafts, frontmatter present, no stale plans); README.md excluded from frontmatter check
-- `standards/WORKFLOW.md` + `/feature-dev` updated: Phase 3 now drafts to `.claude/plans/`, promotes to `docs/plans/`
-- `/change-review` command created (`.claude/commands/` + `templates/`) — 9-job change package review with optional ACR bridge
+**PMB Audit — 4 workstreams:**
+- WS1 (v1.1.2): Bug fixes — settings.json invalid JSON, pre-compact false positives, missing TRUNCATE/DELETE FROM guardrails
+- WS2 (v1.2.0): Test coverage — 115 assertions across 11 suites; all mb commands now tested
+- WS3: CI hardening — PSScriptAnalyzer (PowerShell lint) + mb doctor self-check; 9 total CI jobs
+- WS4: Performance + docs — O(n²) pre-cache in doctor checks 22+23, find pipe fix, help aliases, delegation-depth docs
 
-**Earlier this session (2026-06-19):**
-- Semantic drift detection: Checks 21–23 in `mb doctor`, `/mb-drift` skill
-- `master` → `main` across all 8 repos; GitHub defaults fixed
-- `pre-push-check.sh`/`.ps1` CRLF false-positive bug fixed
-
-## Next Steps
-
-1. **ACR P0 fixes** (ACR repo) — testgen opt-in, spawnSync, remove Anthropic provider, MCP version sync, agent count drift, dead config field
-2. **ACR schema alignment** — `profiles.ts`, extended `Finding` schema, agent prompt updates, formatter updates
-3. **Architecture review items on hold** — boring mode, non-goals doc, /core vs /integrations; revisit if adoption friction surfaces
+**ACR Audit:**
+- P0+P1 partial: comment marker, provider validation, README count, orchestrator deterministic-source guard, sanitizer metadata, Prettier CI, command docs
+- P1 deferred (already in v1.1.0): policy layer, SARIF, GitHub annotations — all confirmed implemented
+- P2: schemaVersion/toolVersion/profile fields in ReviewResult + integration contract docs in README
 
 ## Architecture Constraints to Remember
 
@@ -48,11 +39,17 @@ PMB Infrastructure complete (2026-06-22). ACR integration track in progress — 
 - `source_type` and `compaction_generation` are independent axes — do not conflate
 - `authority` (volatility) and startup-criticality are independent axes — do not merge into one field
 - Detection-first, resist-automation: auto-remediation premature without semantic certainty
-- "Overhead proportionate to certainty" — governing principle for any new governance additions
 - `mb doctor` = observable integrity signals only; not semantic correctness, not workflow compliance
 - `fixtures/` and `docs/` are excluded from pre-push secret scanning (intentionally bad code + docs quoting it)
 - `mb status` = state ("can I work?"); `mb doctor`/`/health-check` = validation ("is it correct?")
+- Doctor test renames use single subdirectory + conditional restore (not whole-dir rename) to prevent data loss
+
+## Next Steps
+
+No active work items. Potential follow-ons:
+- ACR calibration against real diffs (calibrate.ts)
+- PMB `mb upgrade` on downstream satellite projects to distribute v1.2.0 changes
 
 ## Git State
 
-main branch. All changes committed and pushed. System is clean.
+Both repos on `main`, all commits pushed. Working trees clean.

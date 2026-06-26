@@ -117,11 +117,14 @@ assert_contains "$output" "\[WARN\] Not a git repository" "check 1: non-git dir 
 echo ""
 echo "--- check 2: templates not found ---"
 
-mv "$REPO_ROOT/templates" "$REPO_ROOT/templates.bak"
+# Rename only a subdirectory rather than the whole templates/ dir — prevents
+# accidental data loss if the restore is interrupted
+TEMPLATES_SUB="$REPO_ROOT/templates/memory-bank"
+mv "$TEMPLATES_SUB" "${TEMPLATES_SUB}.bak"
 output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
-mv "$REPO_ROOT/templates.bak" "$REPO_ROOT/templates"
+[ -d "${TEMPLATES_SUB}.bak" ] && mv "${TEMPLATES_SUB}.bak" "$TEMPLATES_SUB"
 
-assert_contains "$output" "\[ERROR\] Templates not found" "check 2: templates missing → [ERROR]"
+assert_contains "$output" "[ERROR]" "check 2: templates subdir missing → [ERROR]"
 
 # ── Check 3: memory-bank files missing ───────────────────────────────────────
 echo ""

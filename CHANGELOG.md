@@ -3,7 +3,21 @@
 ## 1.2.0 — 2026-06-24
 
 ### Added
-- **Comprehensive bash test suite** — expanded from 3 tested commands to all 11 `mb` commands. Added 8 new test files covering `mb doctor` (25 cases — all 24 checks + clean baseline), `mb status` (6 cases), `mb verify-integrity` (3 cases), `mb query` (4 cases), `mb init` (3 cases), `mb clean` (2 cases), `mb commit` (2 cases), and `mb upgrade` (3 cases). Total test count: 92 assertions across 11 suites.
+- **Comprehensive bash test suite** — expanded from 3 tested commands to all 11 `mb` commands. Added 8 new test files covering `mb doctor` (25 cases — all 24 checks + clean baseline), `mb status` (6 cases), `mb verify-integrity` (3 cases), `mb query` (4 cases), `mb init` (3 cases), `mb clean` (2 cases), `mb commit` (2 cases), and `mb upgrade` (3 cases). Total test count: 115 assertions across 11 suites.
+- **CI: `powershell-lint` job** — PSScriptAnalyzer at Error severity on all `.ps1` files in `scripts/` and `templates/scripts/`. CI now has 9 jobs total.
+- **CI: `mb-doctor-self-check` job** — runs `mb doctor` against the PMB repo itself on every push, surfacing drift in memory-bank, standards count, plan hygiene, and hook config.
+
+### Fixed
+- **`mb doctor` check 2 + check 13 fixture restore hardened** — test previously renamed entire `templates/` or `fixtures/security/` directories; now renames a single subdirectory with conditional restore, preventing data loss if interrupted.
+
+### Changed
+- **`mb doctor` checks 22 & 23: O(n²) → pre-cached normalization** — normalized strings are now pre-built once before the outer loop in both `mb.sh` and `mb.ps1`, eliminating ~10,000 subprocess spawns per doctor run on 100-line files.
+- **`show_budget` find pipe** — replaced `find | xargs wc -c` with `find -exec wc -c {} +` (single `wc` call instead of one per file) in `mb.sh`.
+- **`mb help` deprecated aliases** — both `mb.sh` and `mb.ps1` now show a `Deprecated aliases` section at the bottom of help output. `mb.ps1` Show-Help also gains `plan`, `preflight`, and `change-check` in the active commands list (parity with `mb.sh`).
+
+### Documentation
+- **`docs/HOOKS-GUIDE.md`** — added section 6 (Agent Delegation Depth Check) documenting the `.pmb-delegation-depth` runtime state file, 2-hour reset behavior, and error logging.
+- **`.claude/commands/health-check.md`** — corrected `mb doctor` check count from 20 to 24.
 
 ---
 
