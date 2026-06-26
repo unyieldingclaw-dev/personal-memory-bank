@@ -23,13 +23,26 @@ if (-not (Test-Path $ContractFile)) {
 try {
     $contract = Get-Content $ContractFile -Raw | ConvertFrom-Json
 } catch {
-    exit 0  # Malformed contract — fail open
+    Write-Host "⚠️  CONTRACT WARNING: .claude/contracts/active-task.json contains malformed JSON."
+    Write-Host "    Scope enforcement is disabled until the file is fixed or removed."
+    exit 0
 }
 
 $status    = $contract.status
 $task      = $contract.task
 $expiresAt = $contract.expires_at
-$scopeFiles = $contract.scope.files
+
+# Handle both scope formats:
+#   PMB template: scope.files (array of strings)
+#   ACR/canonical: scope (array of {file, op} objects)
+$rawScope = $contract.scope
+if ($rawScope -is [System.Array] -and $rawScope.Count -gt 0 -and $rawScope[0] -is [PSCustomObject]) {
+    $scopeFiles = $rawScope | ForEach-Object { $_.file }
+} elseif ($rawScope -is [PSCustomObject]) {
+    $scopeFiles = $rawScope.files
+} else {
+    $scopeFiles = $rawScope
+}
 
 # --- Status check ---
 if ($status -ne "active") {

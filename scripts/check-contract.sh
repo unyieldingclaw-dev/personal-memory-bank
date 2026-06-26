@@ -30,18 +30,35 @@ try:
     status = data.get("status", "")
     expires_at = data.get("expires_at", "")
     task = data.get("task", "")
-    files = data.get("scope", {}).get("files", [])
+    # Handle both scope formats:
+    #   PMB template: scope.files (array of strings)
+    #   ACR/canonical: scope (array of {file, op} objects)
+    scope = data.get("scope", [])
+    if isinstance(scope, list):
+        files = [item["file"] if isinstance(item, dict) else item for item in scope]
+    elif isinstance(scope, dict):
+        files = scope.get("files", [])
+    else:
+        files = []
     print(status)
     print(expires_at)
     print(task)
     print("\n".join(files))
+except json.JSONDecodeError:
+    print("__MALFORMED__")
 except Exception:
     pass
 PYEOF
 ) || true
 
 if [ -z "$CONTRACT_DATA" ]; then
-  exit 0  # Malformed contract — fail open
+  exit 0  # Script failed unexpectedly — fail open
+fi
+
+if [ "$CONTRACT_DATA" = "__MALFORMED__" ]; then
+  echo "⚠️  CONTRACT WARNING: .claude/contracts/active-task.json contains malformed JSON."
+  echo "    Scope enforcement is disabled until the file is fixed or removed."
+  exit 0
 fi
 
 # Extract parsed fields (line-delimited)
