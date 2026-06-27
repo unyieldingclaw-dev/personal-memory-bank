@@ -67,6 +67,11 @@ EXPIRES_AT=$(echo "$CONTRACT_DATA" | sed -n '2p')
 TASK=$(echo "$CONTRACT_DATA" | sed -n '3p')
 SCOPE_FILES=$(echo "$CONTRACT_DATA" | tail -n +4)
 
+# No scope declared — no enforcement
+if [ -z "$SCOPE_FILES" ]; then
+  exit 0
+fi
+
 # --- Status check ---
 if [ "$STATUS" != "active" ]; then
   exit 0  # Contract is complete or cancelled — silent pass

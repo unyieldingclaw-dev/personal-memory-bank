@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-06-22
+last-reviewed: 2026-06-26
 compaction_generation: 0
 source_type: canonical
 confidence: high

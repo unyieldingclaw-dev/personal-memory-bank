@@ -82,6 +82,11 @@ if (-not $targetFile) {
     exit 0
 }
 
+# No scope declared — no enforcement
+if (-not $scopeFiles -or $scopeFiles.Count -eq 0) {
+    exit 0
+}
+
 # --- Scope check ---
 $inScope = $false
 foreach ($pattern in $scopeFiles) {

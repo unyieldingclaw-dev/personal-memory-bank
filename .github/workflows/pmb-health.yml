@@ -267,7 +267,7 @@ jobs:
           $files = Get-ChildItem -Recurse -Filter "*.ps1" -Path "scripts","templates/scripts" |
             Select-Object -ExpandProperty FullName
           $results = $files | ForEach-Object {
-            Invoke-ScriptAnalyzer -Path $_ -Severity Error
+            Invoke-ScriptAnalyzer -Path $_ -Severity Error,Warning
           }
           if ($results) {
             $results | Format-Table RuleName,Severity,Line,Message -AutoSize

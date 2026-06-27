@@ -15,7 +15,7 @@ Memory Bank solves this by keeping a small set of structured files in your proje
 | Area | What you get |
 |------|-------------|
 | Memory system | 5-file structured context, authority hierarchy, freshness tracking, provenance frontmatter |
-| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, verify-integrity, help (9 primary commands; `mb update` aliases `mb upgrade`) |
+| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, verify-integrity, help (11 primary commands; `mb update` aliases `mb upgrade`) |
 | Slash commands | `/test-audit`, `/code-review`, `/security-review`, `/feature-dev`, `/health-check` |
 | Governance | Pre/PostToolUse hooks, CI pipeline, task contracts, subagents |
 
@@ -76,8 +76,10 @@ mb doctor     Full 24-point diagnostic — git, templates, hooks, file sizes, ve
 mb query TAG  Find all memory tagged with TAG (e.g. mb query auth)
 mb clean      Memory bank maintenance — slim check + guided cleanup prompt
 mb commit     Commit memory bank changes separately from feature code
-mb upgrade    Propagate latest governance templates to this project; checks remote for newer PMB version
-mb help       Full command list
+mb upgrade       Propagate latest governance templates to this project; checks remote for newer PMB version
+mb preflight     Pre-task readiness check: memory bank state, git status, plan hygiene
+mb change-check  Validates a change package against its declared plan before review
+mb help          Full command list
 ```
 
 > Deprecated commands (`validate`, `audit`, `budget`, `compact`, `update`, `archive`, `slim`, `install-hooks`) still work as redirects to their absorbing command. They are not shown in `mb help` but will not error.
@@ -110,7 +112,7 @@ Together: `/test-audit` tells you *what's missing*. `/code-review` tells you *wh
 | `/code-review` | 6–8 subagent review — 5 always-on domains (Security, Correctness, Maintainability, Testing, Architecture Drift) + up to 2 conditional (Performance, Accessibility) + Opposition audit |
 | `/security-review` | Scans current diff for 9 security patterns (secrets, injection, auth, crypto, etc.) |
 | `/feature-dev` | Runs the full 7-phase feature development workflow (brainstorm → spec → plan → implement → review → commit) |
-| `/health-check` | PMB-only: runs `mb doctor` (20 checks) and prints a labeled summary |
+| `/health-check` | PMB-only: runs `mb doctor` (24 checks) and prints a labeled summary |
 
 ## How It Works
 
