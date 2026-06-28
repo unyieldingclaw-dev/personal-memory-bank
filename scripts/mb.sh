@@ -665,8 +665,8 @@ show_doctor() {
     # 5. Token Budget drift
     GLOBAL_CLAUDE="$HOME/.claude/CLAUDE.md"
     if [ -f "CLAUDE.md" ] && [ -f "$GLOBAL_CLAUDE" ]; then
-        LOCAL_HAS=$(grep -c "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "CLAUDE.md" 2>/dev/null || echo 0)
-        GLOBAL_HAS=$(grep -c "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "$GLOBAL_CLAUDE" 2>/dev/null || echo 0)
+        LOCAL_HAS=0; grep -q "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "CLAUDE.md" 2>/dev/null && LOCAL_HAS=1 || true
+        GLOBAL_HAS=0; grep -q "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "$GLOBAL_CLAUDE" 2>/dev/null && GLOBAL_HAS=1 || true
         if [ "$GLOBAL_HAS" -gt 0 ] && [ "$LOCAL_HAS" -eq 0 ]; then
             echo -e "${YELLOW}[WARN] Token Budget section may have drifted from ~/.claude/CLAUDE.md${NC}"
             echo -e "       Run 'mb init' to refresh or manually copy the Token Budget section"

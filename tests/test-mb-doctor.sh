@@ -90,9 +90,11 @@ fi
 echo ""
 echo "--- check 0: VERSION file not found ---"
 
+trap 'mv "$REPO_ROOT/VERSION.bak" "$REPO_ROOT/VERSION" 2>/dev/null || true; trap - EXIT' EXIT
 mv "$REPO_ROOT/VERSION" "$REPO_ROOT/VERSION.bak"
 output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
 mv "$REPO_ROOT/VERSION.bak" "$REPO_ROOT/VERSION"
+trap - EXIT
 
 assert_contains "$output" "\[WARN\] VERSION file not found" "check 0: VERSION file missing → [WARN]"
 
@@ -120,9 +122,11 @@ echo "--- check 2: templates not found ---"
 # Rename only a subdirectory rather than the whole templates/ dir — prevents
 # accidental data loss if the restore is interrupted
 TEMPLATES_SUB="$REPO_ROOT/templates/memory-bank"
+trap '[ -d "${TEMPLATES_SUB}.bak" ] && mv "${TEMPLATES_SUB}.bak" "$TEMPLATES_SUB" 2>/dev/null || true; trap - EXIT' EXIT
 mv "$TEMPLATES_SUB" "${TEMPLATES_SUB}.bak"
 output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
 [ -d "${TEMPLATES_SUB}.bak" ] && mv "${TEMPLATES_SUB}.bak" "$TEMPLATES_SUB"
+trap - EXIT
 
 assert_contains "$output" "[ERROR]" "check 2: templates subdir missing → [ERROR]"
 
@@ -232,12 +236,25 @@ assert_contains "$output" "\[WARN\] core.hooksPath not set to .githooks" "check 
 echo ""
 echo "--- check 5: token budget drift ---"
 
-# WHY: mb.sh check 5 uses `grep -c ... || echo 0` which on Git Bash produces "0\n0"
-# when grep finds 0 matches (grep -c exits 1, so || fires, appending a second 0).
-# The resulting LOCAL_HAS="0\n0" fails the integer comparison [ "$LOCAL_HAS" -eq 0 ],
-# making this check untestable on this platform. Skip as a known platform limitation.
-echo "  SKIP: check 5 — Token Budget drift check has a platform-incompatible grep -c pattern in mb.sh on Git Bash"
-PASS=$((PASS + 1))
+# WHY: Previously mb.sh used `grep -c ... || echo 0` which on Git Bash produced "0\n0"
+# on no-match (grep exits 1, || fires, appending a second 0). Fixed in mb.sh to use
+# grep -q + explicit 0/1 assignment. Check 5 now runs correctly on all platforms.
+
+TMPDIR_DRIFT="$(mktemp -d 2>/dev/null || mktemp -d -t mb-drift-test)"
+trap 'rm -rf "$TMPDIR_DRIFT"' EXIT
+
+setup_doctor_project "$TMPDIR_DRIFT"
+# Set up a global CLAUDE.md with the token budget marker
+FAKE_HOME="$(mktemp -d 2>/dev/null || mktemp -d -t mb-drift-home)"
+trap 'rm -rf "$FAKE_HOME"' EXIT
+mkdir -p "$FAKE_HOME/.claude"
+echo "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40" > "$FAKE_HOME/.claude/CLAUDE.md"
+# Local CLAUDE.md without the marker — should warn
+echo "# Project" > "$TMPDIR_DRIFT/CLAUDE.md"
+
+output=$(cd "$TMPDIR_DRIFT" && HOME="$FAKE_HOME" MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "\[WARN\].*Token Budget\|Token Budget.*\[WARN\]" "check 5: token budget drift → [WARN]" || \
+    assert_contains "$output" "Token Budget" "check 5: token budget section mentioned"
 
 # ── Check 6: File size over limit ─────────────────────────────────────────────
 echo ""
@@ -359,10 +376,12 @@ echo "--- check 13: fixtures/security/ missing ---"
 
 # Rename only one fixture subdir — safer than renaming the entire security/ dir
 SEC001="$REPO_ROOT/fixtures/security/SEC-001-hardcoded-secret"
+trap '[ -d "${SEC001}.bak" ] && mv "${SEC001}.bak" "$SEC001" 2>/dev/null || true; trap - EXIT' EXIT
 mv "$SEC001" "${SEC001}.bak"
 output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
 # Conditional restore: always runs, even if output capture failed
 [ -d "${SEC001}.bak" ] && mv "${SEC001}.bak" "$SEC001"
+trap - EXIT
 
 assert_contains "$output" "SEC-001" "check 13: missing fixture → [WARN]"
 
@@ -371,6 +390,7 @@ echo ""
 echo "--- check 14: standards count > 20 ---"
 
 EXTRA_STD_FILES=()
+trap 'for f in "${EXTRA_STD_FILES[@]}"; do rm -f "$f"; done; trap - EXIT' EXIT
 for i in $(seq 1 15); do
     f="$REPO_ROOT/standards/EXTRA-STD-$i.md"
     echo "# Extra $i" > "$f"
@@ -380,6 +400,7 @@ done
 output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
 
 for f in "${EXTRA_STD_FILES[@]}"; do rm -f "$f"; done
+trap - EXIT
 
 assert_contains "$output" "standards files" "check 14: standards count warning message"
 assert_contains "$output" "budget is" "check 14: budget message present"
