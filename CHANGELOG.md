@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0] — 2026-06-26 (additional hardening)
+
+### Fixed
+- `scripts/mb.sh`: doctor check 5 token budget drift — replaced `grep -c` with `grep -q` + explicit 0/1 assignment (was permanently SKIP in Git Bash due to double-output bug)
+- `tests/test-mb-doctor.sh`: added EXIT trap guards to all 4 sites that mutated `$REPO_ROOT` directly — git status now clean after any test outcome
+- `scripts/check-contract.sh` + `.ps1`: empty scope `[]` no longer fires spurious out-of-scope warning; malformed JSON now emits visible warning instead of silent pass; handles both ACR `[{file,op}]` and PMB `{files:[]}` scope schemas
+- `.claude/commands/health-check.md`: removed deprecated `mb validate` and `mb audit` (now aliases for `mb doctor`); replaced with `mb status` and doctor staleness review
+- `.github/workflows/pmb-health.yml`: PSScriptAnalyzer now checks `-Severity Error,Warning`; gitleaks-action pinned to commit SHA `ff98106e`
+
+### Added
+- `.github/dependabot.yml`: weekly GitHub Actions version tracking
+- `.claude/commands/change-review.md` Job 7: now passes `--diff <tmpfile>` to ACR (was reviewing wrong diff surface for non-default invocations)
+
+---
+
 ## 1.2.0 — 2026-06-24
 
 ### Added

@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-24
+last-reviewed: 2026-06-26
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,22 +16,11 @@ lineage: []
 
 # Active Context
 
+## Last Updated: 2026-06-26
+
 ## Current Focus
 
-Comprehensive audit + remediation sprint complete (2026-06-24). PMB v1.2.0 and ACR v1.1.0+ are both fully shipped. No active work items.
-
-## What Was Completed (2026-06-24)
-
-**PMB Audit — 4 workstreams:**
-- WS1 (v1.1.2): Bug fixes — settings.json invalid JSON, pre-compact false positives, missing TRUNCATE/DELETE FROM guardrails
-- WS2 (v1.2.0): Test coverage — 115 assertions across 11 suites; all mb commands now tested
-- WS3: CI hardening — PSScriptAnalyzer (PowerShell lint) + mb doctor self-check; 9 total CI jobs
-- WS4: Performance + docs — O(n²) pre-cache in doctor checks 22+23, find pipe fix, help aliases, delegation-depth docs
-
-**ACR Audit:**
-- P0+P1 partial: comment marker, provider validation, README count, orchestrator deterministic-source guard, sanitizer metadata, Prettier CI, command docs
-- P1 deferred (already in v1.1.0): policy layer, SARIF, GitHub annotations — all confirmed implemented
-- P2: schemaVersion/toolVersion/profile fields in ReviewResult + integration contract docs in README
+**PMB v1.2.0 infrastructure complete.** Three-round pre-production audit (2026-06-24 to 2026-06-26) complete — all findings resolved. Doctor suite 32/32 passing (check 5 bug fixed, test isolation hardened). All contracts, hooks, and CI hardened.
 
 ## Architecture Constraints to Remember
 
@@ -46,10 +35,10 @@ Comprehensive audit + remediation sprint complete (2026-06-24). PMB v1.2.0 and A
 
 ## Next Steps
 
-No active work items. Potential follow-ons:
-- ACR calibration against real diffs (calibrate.ts)
-- PMB `mb upgrade` on downstream satellite projects to distribute v1.2.0 changes
+1. **Monitor PMB CI** — pmb-health.yml now runs 9 jobs including PSScriptAnalyzer at Warning severity. Watch for new lint warnings surfacing in existing .ps1 files.
+2. **mb plan workflow** — `/feature-dev` Phase 3 now drafts plans to `.claude/plans/` and promotes via `mb plan promote`. Ensure new projects use this workflow.
+3. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
 
 ## Git State
 
-Both repos on `main`, all commits pushed. Working trees clean.
+main branch. All changes committed and pushed. System is clean.
