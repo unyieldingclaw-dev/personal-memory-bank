@@ -40,6 +40,170 @@ $RepoRoot = if ($env:MB_HOME) { $env:MB_HOME } else { Split-Path -Parent $PSScri
 # This matches the expected usage pattern (developers run "mb" from their project).
 $MemoryBankPath = "memory-bank"
 
+# ─── mb setup helpers ────────────────────────────────────────────────────────
+
+function Get-MbMode {
+    param([string]$ProjectPath)
+    if (Test-Path (Join-Path $ProjectPath 'memory-bank') -PathType Container) {
+        return 'upgrade'
+    }
+    return 'init'
+}
+
+function Get-MbUpgradeAnalysis {
+    param([string]$ProjectPath, [string]$TemplatesDir)
+    $mbPath        = Join-Path $ProjectPath 'memory-bank'
+    $templateMbDir = Join-Path $TemplatesDir 'memory-bank'
+
+    $required = Get-ChildItem $templateMbDir -File | Select-Object -ExpandProperty Name
+    $present  = @()
+    $missing  = @()
+    foreach ($name in $required) {
+        if (Test-Path (Join-Path $mbPath $name)) { $present += $name }
+        else                                     { $missing += $name }
+    }
+
+    $templateOwned = @(
+        '.claude/settings.json',
+        'scripts/dangerous-commands.ps1', 'scripts/dangerous-commands.sh',
+        'scripts/check-contract.ps1',     'scripts/check-contract.sh',
+        'scripts/update-reviewed.ps1',    'scripts/update-reviewed.sh',
+        'scripts/pre-push-check.ps1',     'scripts/pre-push-check.sh',
+        'scripts/delegation-depth-check.ps1', 'scripts/delegation-depth-check.sh',
+        'scripts/pre-compact-check.ps1',  'scripts/pre-compact-check.sh'
+    )
+    $govMissing = $templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) }
+
+    return @{
+        Present    = $present
+        Missing    = $missing
+        GovMissing = $govMissing
+    }
+}
+
+function Invoke-MbVerify {
+    param([string]$ProjectPath, [string]$TemplatesDir)
+    $mbPath        = Join-Path $ProjectPath 'memory-bank'
+    $templateMbDir = Join-Path $TemplatesDir 'memory-bank'
+    $required      = Get-ChildItem $templateMbDir -File | Select-Object -ExpandProperty Name
+    $missing       = @()
+    foreach ($name in $required) {
+        if (-not (Test-Path (Join-Path $mbPath $name))) { $missing += $name }
+    }
+    return @{
+        Passed  = ($missing.Count -eq 0)
+        Missing = $missing
+    }
+}
+
+function Invoke-Setup {
+    $templatesDir = Join-Path $RepoRoot 'templates'
+
+    Write-Host ""
+    Write-Host "=== PMB Setup ===" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Step 1: Resolve target folder
+    $target = $null
+    if ($Arg -and (Test-Path $Arg -PathType Container)) {
+        $target = (Resolve-Path $Arg).Path
+    } else {
+        $pickerScript = Join-Path $RepoRoot 'scripts/pick-folder.ps1'
+        $target = pwsh -NoLogo -ExecutionPolicy Bypass -File $pickerScript `
+                       -Description 'Select the project folder to set up with PMB'
+    }
+    if (-not $target) {
+        Write-Host "No folder selected. Exiting." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Press any key to close..."
+        $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        return
+    }
+
+    Write-Host "Target: $target" -ForegroundColor Gray
+    Write-Host ""
+
+    # Step 2: Detect mode
+    $mode = Get-MbMode -ProjectPath $target
+
+    if ($mode -eq 'init') {
+        # ── INIT ─────────────────────────────────────────────────────────────
+        Write-Host "No memory-bank found — initializing..." -ForegroundColor Cyan
+        Write-Host ""
+        $script:Arg = $target
+        Invoke-Init
+
+    } else {
+        # ── UPGRADE ───────────────────────────────────────────────────────────
+        Write-Host "Memory bank found — analyzing for upgrade..." -ForegroundColor Cyan
+        Write-Host ""
+
+        $analysis = Get-MbUpgradeAnalysis -ProjectPath $target -TemplatesDir $templatesDir
+
+        Write-Host "--- Current State ---" -ForegroundColor Yellow
+        foreach ($f in $analysis.Present)    { Write-Host "  ✅ $f" -ForegroundColor Green }
+        foreach ($f in $analysis.Missing)    { Write-Host "  ❌ $f (missing)" -ForegroundColor Red }
+        if ($analysis.GovMissing.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  Governance files not yet installed:" -ForegroundColor DarkYellow
+            foreach ($f in $analysis.GovMissing | Select-Object -First 5) {
+                Write-Host "    ⚠️  $f" -ForegroundColor DarkYellow
+            }
+            if ($analysis.GovMissing.Count -gt 5) {
+                Write-Host "    ... ($($analysis.GovMissing.Count - 5) more)" -ForegroundColor DarkYellow
+            }
+        }
+
+        Write-Host ""
+        Write-Host "--- Upgrade Plan ---" -ForegroundColor Yellow
+        foreach ($f in $analysis.Missing) {
+            Write-Host "  Will add:      $f (scaffold from template)" -ForegroundColor Green
+        }
+        if ($analysis.GovMissing.Count -gt 0) {
+            Write-Host "  Will install:  $($analysis.GovMissing.Count) governance file(s) (hooks, settings, standards)" -ForegroundColor Cyan
+        }
+        if ($analysis.Present.Count -gt 0 -and $analysis.Missing.Count -eq 0 -and $analysis.GovMissing.Count -eq 0) {
+            Write-Host "  All memory-bank files current. Governance files will be checked." -ForegroundColor DarkGray
+        }
+
+        Write-Host ""
+        $ans = Read-Host "Proceed with upgrade? (Y/N)"
+        if ($ans -notmatch '^[Yy]') {
+            Write-Host "Upgrade cancelled." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Press any key to close..."
+            $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+            return
+        }
+
+        Write-Host ""
+        Push-Location $target
+        try {
+            Invoke-Upgrade
+        } finally {
+            Pop-Location
+        }
+    }
+
+    # Step 3: Verify
+    Write-Host ""
+    Write-Host "--- Verification ---" -ForegroundColor Cyan
+    $verify = Invoke-MbVerify -ProjectPath $target -TemplatesDir $templatesDir
+    if ($verify.Passed) {
+        Write-Host "  ✅ All required memory-bank files present" -ForegroundColor Green
+    } else {
+        Write-Host "  ❌ Missing files after ${mode}:" -ForegroundColor Red
+        foreach ($f in $verify.Missing) { Write-Host "    - $f" -ForegroundColor Red }
+        Write-Host "  Re-run mb-setup.bat to retry." -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    Write-Host "Done. Open Claude Code in $target to start your session." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Press any key to close..."
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+}
+
 function Show-Help {
     Write-Host ""
     Write-Host "Memory Bank Utility Commands" -ForegroundColor Cyan
