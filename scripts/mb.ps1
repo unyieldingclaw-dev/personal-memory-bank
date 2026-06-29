@@ -55,6 +55,7 @@ function Get-MbUpgradeAnalysis {
     $mbPath        = Join-Path $ProjectPath 'memory-bank'
     $templateMbDir = Join-Path $TemplatesDir 'memory-bank'
 
+    if (-not (Test-Path $templateMbDir)) { return @{ Present = @(); Missing = @(); GovMissing = @() } }
     $required = Get-ChildItem $templateMbDir -File | Select-Object -ExpandProperty Name
     $present  = @()
     $missing  = @()
@@ -63,6 +64,9 @@ function Get-MbUpgradeAnalysis {
         else                                     { $missing += $name }
     }
 
+    # WHY: Subset of Invoke-Upgrade's $templateOwned — only hook/settings scripts.
+    # Governance files that need per-project customization (CLAUDE.md, .cursor/rules/) are excluded
+    # because Invoke-Upgrade handles them with advisory-diff logic rather than overwrite.
     $templateOwned = @(
         '.claude/settings.json',
         'scripts/dangerous-commands.ps1', 'scripts/dangerous-commands.sh',
@@ -85,6 +89,7 @@ function Invoke-MbVerify {
     param([string]$ProjectPath, [string]$TemplatesDir)
     $mbPath        = Join-Path $ProjectPath 'memory-bank'
     $templateMbDir = Join-Path $TemplatesDir 'memory-bank'
+    if (-not (Test-Path $templateMbDir)) { return @{ Passed = $false; Missing = @('templates/memory-bank/ not found') } }
     $required      = Get-ChildItem $templateMbDir -File | Select-Object -ExpandProperty Name
     $missing       = @()
     foreach ($name in $required) {
@@ -98,6 +103,14 @@ function Invoke-MbVerify {
 
 function Invoke-Setup {
     $templatesDir = Join-Path $RepoRoot 'templates'
+    if (-not (Test-Path $templatesDir)) {
+        Write-Host "[ERROR] Templates not found at $templatesDir" -ForegroundColor Red
+        Write-Host "        Set MB_HOME or run from the memory-bank repo." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Press any key to close..."
+        $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        return
+    }
 
     Write-Host ""
     Write-Host "=== PMB Setup ===" -ForegroundColor Cyan
@@ -108,6 +121,7 @@ function Invoke-Setup {
     if ($Arg -and (Test-Path $Arg -PathType Container)) {
         $target = (Resolve-Path $Arg).Path
     } else {
+        if ($Arg) { Write-Host "[WARN] '$Arg' is not a valid directory — opening folder picker." -ForegroundColor Yellow; Write-Host "" }
         $pickerScript = Join-Path $RepoRoot 'scripts/pick-folder.ps1'
         $target = pwsh -NoLogo -ExecutionPolicy Bypass -File $pickerScript `
                        -Description 'Select the project folder to set up with PMB'
