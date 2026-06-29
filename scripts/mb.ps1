@@ -137,8 +137,7 @@ function Invoke-Setup {
         # ── INIT ─────────────────────────────────────────────────────────────
         Write-Host "No memory-bank found — initializing..." -ForegroundColor Cyan
         Write-Host ""
-        $script:Arg = $target
-        Invoke-Init
+        Invoke-Init -TargetPath $target
 
     } else {
         # ── UPGRADE ───────────────────────────────────────────────────────────
@@ -181,12 +180,7 @@ function Invoke-Setup {
         }
 
         Write-Host ""
-        Push-Location $target
-        try {
-            Invoke-Upgrade
-        } finally {
-            Pop-Location
-        }
+        Invoke-Upgrade -ProjectPath $target
     }
 
     # Step 3: Verify
@@ -565,6 +559,7 @@ function Show-Budget {
 }
 
 function Invoke-Init {
+    param([string]$TargetPath = "")
     Write-Host ""
     Write-Host "Memory Bank" -ForegroundColor Cyan
     Write-Host "===========" -ForegroundColor Cyan
@@ -577,10 +572,11 @@ function Invoke-Init {
         return
     }
 
-    if ($Arg) {
-        $resolved = (Resolve-Path $Arg -ErrorAction SilentlyContinue)?.Path
+    $pathArg = if ($TargetPath) { $TargetPath } else { $Arg }
+    if ($pathArg) {
+        $resolved = (Resolve-Path $pathArg -ErrorAction SilentlyContinue)?.Path
         if (-not $resolved) {
-            Write-Host "[ERROR] Path not found: $Arg" -ForegroundColor Red
+            Write-Host "[ERROR] Path not found: $pathArg" -ForegroundColor Red
             return
         }
         $Target = $resolved
@@ -1737,10 +1733,13 @@ Do not commit the changes until I confirm.
 }
 
 function Invoke-Upgrade {
+    param([string]$ProjectPath = "")
     # WHY: $DryRun is read from the script-level switch parameter rather than
     # checking $Arg for "--dry-run". PS7 parses --dry-run as a named parameter
     # flag, not a positional string; a [switch] is the idiomatic PS7 equivalent.
     $dryRun = $DryRun.IsPresent
+
+    if ($ProjectPath) { Push-Location $ProjectPath }
 
     Write-Host ""
     Write-Host "mb upgrade" -ForegroundColor Cyan
@@ -1992,6 +1991,7 @@ function Invoke-Upgrade {
     }
 
     Write-Host ""
+    if ($ProjectPath) { Pop-Location }
 }
 
 function Invoke-VerifyIntegrity {
