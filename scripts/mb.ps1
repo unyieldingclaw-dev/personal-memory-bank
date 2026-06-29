@@ -35,6 +35,12 @@ param(
 # The repo root is one level up; templates/ lives there.
 # $env:MB_HOME overrides this for globally installed mb (via install.bat).
 $RepoRoot = if ($env:MB_HOME) { $env:MB_HOME } else { Split-Path -Parent $PSScriptRoot }
+# WHY: Validate MB_HOME points to a real PMB installation before trusting it for script paths.
+# An attacker-controlled MB_HOME could otherwise load a crafted pick-folder.ps1 or templates.
+if ($env:MB_HOME -and -not (Test-Path (Join-Path $RepoRoot 'templates') -PathType Container)) {
+    Write-Host "[ERROR] MB_HOME '$env:MB_HOME' is not a valid PMB installation (templates/ not found)." -ForegroundColor Red
+    exit 1
+}
 
 # WHY: Hardcoded relative path assumes script runs from project root.
 # This matches the expected usage pattern (developers run "mb" from their project).
