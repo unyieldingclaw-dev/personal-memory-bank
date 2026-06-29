@@ -37,6 +37,7 @@ Double-click it in Explorer, or run it from a terminal. Opens a new terminal aut
 ```
 mb init
 ```
+Or use the GUI setup tool (see "Setting Up a Project" below).
 
 That's it. Start a Claude Code or Cursor session — your AI will have context immediately.
 
@@ -47,6 +48,23 @@ That's it. Start a Claude Code or Cursor session — your AI will have context i
 chmod +x install.sh && ./install.sh
 ```
 Then in any project: `mb init`
+
+---
+
+## Setting Up a Project
+
+Double-click **`mb-setup.bat`** from Windows Explorer to set up Memory Bank in any project:
+
+- **New project**: detects no `memory-bank/` folder and runs a full init — scaffolds all files, installs hooks and governance scripts
+- **Existing project**: shows what's current vs. outdated, asks for confirmation, then upgrades
+- **Drag-and-drop**: drag a project folder onto `mb-setup.bat` to skip the folder picker
+
+Or from the command line:
+
+```powershell
+mb setup                          # GUI folder picker
+mb setup "C:\path\to\project"    # direct path (or drag-drop equivalent)
+```
 
 ---
 
