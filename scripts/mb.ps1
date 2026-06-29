@@ -20,7 +20,7 @@
 # Default to "help" so running "mb" alone shows usage, not an error.
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "preflight", "change-check", "help")]
+    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "preflight", "change-check", "setup", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
     [string]$Arg = "",
@@ -55,6 +55,7 @@ function Show-Help {
     Write-Host "  clean         Memory bank maintenance: slim check + unified cleanup prompt"
     Write-Host "  commit            Stage and commit Memory Bank changes"
     Write-Host "  upgrade           Propagate current governance templates to this project"
+    Write-Host "  setup             Initialize or upgrade a project — folder picker, auto-detects mode"
     Write-Host "  verify-integrity  Check and refresh memory-bank file integrity checksums"
     Write-Host "  plan              Plan management: status, list, promote, archive"
     Write-Host "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
@@ -2197,6 +2198,7 @@ switch ($Command) {
     "clean"            { Show-Clean }
     "commit"           { Invoke-Commit }
     "upgrade"          { Invoke-Upgrade }
+    "setup"            { Invoke-Setup }
     "verify-integrity" { Invoke-VerifyIntegrity }
     "preflight"        { Show-Preflight }
     "change-check"     { Show-ChangeCheck }
