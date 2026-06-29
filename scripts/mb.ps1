@@ -87,18 +87,16 @@ function Get-MbUpgradeAnalysis {
 
 function Invoke-MbVerify {
     param([string]$ProjectPath, [string]$TemplatesDir)
-    $mbPath        = Join-Path $ProjectPath 'memory-bank'
-    $templateMbDir = Join-Path $TemplatesDir 'memory-bank'
-    if (-not (Test-Path $templateMbDir)) { return @{ Passed = $false; Missing = @('templates/memory-bank/ not found') } }
-    $required      = Get-ChildItem $templateMbDir -File | Select-Object -ExpandProperty Name
-    $missing       = @()
-    foreach ($name in $required) {
-        if (-not (Test-Path (Join-Path $mbPath $name))) { $missing += $name }
-    }
-    return @{
-        Passed  = ($missing.Count -eq 0)
-        Missing = $missing
-    }
+    $a = Get-MbUpgradeAnalysis -ProjectPath $ProjectPath -TemplatesDir $TemplatesDir
+    return @{ Passed = ($a.Missing.Count -eq 0); Missing = $a.Missing }
+}
+
+function Invoke-ExitSetup {
+    param([string]$Msg = '', [string]$Color = 'Yellow')
+    if ($Msg) { Write-Host $Msg -ForegroundColor $Color }
+    Write-Host ""
+    Write-Host "Press any key to close..."
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
 }
 
 function Invoke-Setup {
@@ -106,9 +104,7 @@ function Invoke-Setup {
     if (-not (Test-Path $templatesDir)) {
         Write-Host "[ERROR] Templates not found at $templatesDir" -ForegroundColor Red
         Write-Host "        Set MB_HOME or run from the memory-bank repo." -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "Press any key to close..."
-        $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        Invoke-ExitSetup
         return
     }
 
@@ -127,10 +123,7 @@ function Invoke-Setup {
                        -Description 'Select the project folder to set up with PMB'
     }
     if (-not $target) {
-        Write-Host "No folder selected. Exiting." -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "Press any key to close..."
-        $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        Invoke-ExitSetup 'No folder selected. Exiting.'
         return
     }
 
@@ -183,10 +176,7 @@ function Invoke-Setup {
         Write-Host ""
         $ans = Read-Host "Proceed with upgrade? (Y/N)"
         if ($ans -notmatch '^[Yy]') {
-            Write-Host "Upgrade cancelled." -ForegroundColor Yellow
-            Write-Host ""
-            Write-Host "Press any key to close..."
-            $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+            Invoke-ExitSetup 'Upgrade cancelled.'
             return
         }
 
@@ -213,9 +203,7 @@ function Invoke-Setup {
 
     Write-Host ""
     Write-Host "Done. Open Claude Code in $target to start your session." -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Press any key to close..."
-    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    Invoke-ExitSetup
 }
 
 function Show-Help {
