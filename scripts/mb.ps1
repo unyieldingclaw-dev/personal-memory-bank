@@ -166,6 +166,14 @@ function Invoke-Setup {
             }
         }
 
+        # Nothing to do — exit early
+        if ($analysis.Missing.Count -eq 0 -and $analysis.GovMissing.Count -eq 0) {
+            Write-Host ""
+            Write-Host "  ✅ Memory bank is up to date. No changes needed." -ForegroundColor Green
+            Invoke-ExitSetup
+            return
+        }
+
         Write-Host ""
         Write-Host "--- Upgrade Plan ---" -ForegroundColor Yellow
         foreach ($f in $analysis.Missing) {
@@ -173,9 +181,6 @@ function Invoke-Setup {
         }
         if ($analysis.GovMissing.Count -gt 0) {
             Write-Host "  Will install:  $($analysis.GovMissing.Count) governance file(s) (hooks, settings, standards)" -ForegroundColor Cyan
-        }
-        if ($analysis.Present.Count -gt 0 -and $analysis.Missing.Count -eq 0 -and $analysis.GovMissing.Count -eq 0) {
-            Write-Host "  All memory-bank files current. Governance files will be checked." -ForegroundColor DarkGray
         }
 
         Write-Host ""
