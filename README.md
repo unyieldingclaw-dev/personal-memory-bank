@@ -15,7 +15,7 @@ Memory Bank solves this by keeping a small set of structured files in your proje
 | Area | What you get |
 |------|-------------|
 | Memory system | 5-file structured context, authority hierarchy, freshness tracking, provenance frontmatter |
-| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, verify-integrity, help (11 primary commands; `mb update` aliases `mb upgrade`) |
+| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, setup, verify-integrity, plan, preflight, change-check (12 commands; `mb update` aliases `mb upgrade`) |
 | Slash commands | `/test-audit`, `/code-review`, `/security-review`, `/feature-dev`, `/health-check` |
 | Governance | Pre/PostToolUse hooks, CI pipeline, task contracts, subagents |
 

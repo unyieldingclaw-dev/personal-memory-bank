@@ -82,7 +82,19 @@ function Get-MbUpgradeAnalysis {
         'scripts/delegation-depth-check.ps1', 'scripts/delegation-depth-check.sh',
         'scripts/pre-compact-check.ps1',  'scripts/pre-compact-check.sh'
     )
-    $govMissing = $templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) }
+    $govMissing = @($templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) })
+
+    # WHY: templates/claude-commands/ holds slash commands that are governance artifacts
+    # (change-review, accessibility-review, etc.) installed alongside hook scripts.
+    # Projects initialized before these commands existed won't have them — detect that here.
+    $templateCmdDir = Join-Path $TemplatesDir 'claude-commands'
+    if (Test-Path $templateCmdDir) {
+        foreach ($f in Get-ChildItem $templateCmdDir -File) {
+            if (-not (Test-Path (Join-Path $ProjectPath ".claude\commands\$($f.Name)"))) {
+                $govMissing += ".claude/commands/$($f.Name)"
+            }
+        }
+    }
 
     return @{
         Present    = $present
