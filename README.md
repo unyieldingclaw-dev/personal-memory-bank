@@ -258,7 +258,7 @@ When Claude Code approaches its context limit, type `Handoff`. The AI creates `h
 <details>
 <summary>Standards distribution and version tracking</summary>
 
-`mb init` copies 12 governance standards files (`standards/`) into every new project so slash commands can reference them at runtime. `mb upgrade` checks for missing standards files and creates them; if a file has been customized it shows an advisory diff instead of overwriting.
+`mb init` copies 15 governance standards files (`standards/`) into every new project so slash commands can reference them at runtime. `mb upgrade` keeps them current unconditionally — standards files are pure governance substrate and are not project-customized, so they are overwritten on hash mismatch rather than showing an advisory diff.
 
 Each project gets a `.pmb-version` file recording which PMB version initialized or last upgraded it. `mb upgrade` checks the remote for a newer version and warns if one is available (non-blocking — works offline).
 

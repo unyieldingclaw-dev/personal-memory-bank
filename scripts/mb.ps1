@@ -1838,20 +1838,8 @@ function Invoke-Upgrade {
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
-    )
-
-    $advisoryDiff = @(
-        # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
-        "CLAUDE.md"
-        # Agent definitions likely contain project-specific tool lists and instructions
-        ".claude/agents/researcher.md"
-        ".claude/agents/security-reviewer.md"
-    )
-
-    # WHY: $advisoryCreate — files that must exist for commands to work at runtime.
-    # Create if missing (unlike $advisoryDiff which skips missing files), but show
-    # a diff rather than silently overwriting if the file has been customized.
-    $advisoryCreate = @(
+        # Standards documents — pure governance substrate; projects do not add custom content here,
+        # so deferring updates until manual review just means they silently fall behind the template.
         "standards/CODE-REVIEW.md"
         "standards/WORKFLOW.md"
         "standards/SECURITY-GUARDRAILS.md"
@@ -1868,6 +1856,18 @@ function Invoke-Upgrade {
         "standards/TRUST-CLASSIFICATION.md"
         "standards/PERFORMANCE-BUDGET.md"
     )
+
+    $advisoryDiff = @(
+        # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
+        "CLAUDE.md"
+        # Agent definitions likely contain project-specific tool lists and instructions
+        ".claude/agents/researcher.md"
+        ".claude/agents/security-reviewer.md"
+    )
+
+    # WHY: $advisoryCreate is kept for future files that must exist at runtime but may have
+    # project-local content. Standards files were moved to $templateOwned — see comment above.
+    $advisoryCreate = @()
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X -> templates/cursor/rules/X (no dot prefix)
