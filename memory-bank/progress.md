@@ -104,3 +104,11 @@ Full history: CHANGELOG.md
 ## Satellite Projects
 
 - **ai-code-review-agent** — `unyieldingclaw-dev/ai-code-review-agent`. v1.1.0: 15 observe-only agents, profiles, --context memory-bank, SARIF, GitHub annotations, agentPolicy, integration contract. 276 tests passing.
+
+## `mb upgrade` Standards Ownership Fix (2026-07-02)
+
+- ✅ Root cause: `standards/*.md` (15 files) were in `$advisoryCreate` — create-if-missing, diff-only-if-different. Standards are pure governance substrate (no per-project customization), so projects silently fell behind template updates instead of auto-syncing.
+- ✅ Fix: moved all 15 `standards/` entries from `$advisoryCreate` to `$templateOwned` in `scripts/mb.ps1` (`Invoke-Upgrade`) — now overwritten unconditionally on hash mismatch, same as `.claude/settings.json` and `.githooks/*`.
+- ✅ `$advisoryCreate` kept as `@()` for future files that legitimately need create-if-missing + diff-if-customized semantics.
+- ✅ README.md corrected: 12 → 15 standards files; overwrite semantics documented instead of advisory-diff.
+- ✅ 6/6 `mb-setup.Tests.ps1` Pester tests still pass. Committed `a453a5a`, pushed to origin/main.
