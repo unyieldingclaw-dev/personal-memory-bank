@@ -80,7 +80,8 @@ function Get-MbUpgradeAnalysis {
         'scripts/update-reviewed.ps1',    'scripts/update-reviewed.sh',
         'scripts/pre-push-check.ps1',     'scripts/pre-push-check.sh',
         'scripts/delegation-depth-check.ps1', 'scripts/delegation-depth-check.sh',
-        'scripts/pre-compact-check.ps1',  'scripts/pre-compact-check.sh'
+        'scripts/pre-compact-check.ps1',  'scripts/pre-compact-check.sh',
+        'scripts/review-reminders.ps1',   'scripts/review-reminders.sh'
     )
     $govMissing = @($templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) })
 
@@ -687,6 +688,8 @@ function Invoke-Init {
     if ($gitignoreContent -notmatch "\.pmb-hook-errors\.log") { $gitignoreAdded += ".pmb-hook-errors.log" }
     if ($gitignoreContent -notmatch "\.pmb-checksums") { $gitignoreAdded += ".pmb-checksums" }
     if ($gitignoreContent -notmatch "\.pmb-delegation-depth") { $gitignoreAdded += ".pmb-delegation-depth" }
+    if ($gitignoreContent -notmatch "\.claude/\.code-review-ok") { $gitignoreAdded += ".claude/.code-review-ok" }
+    if ($gitignoreContent -notmatch "\.claude/\.change-review-ok") { $gitignoreAdded += ".claude/.change-review-ok" }
     if ($gitignoreAdded.Count -gt 0) {
         if (-not (Test-Path $gitignore)) {
             Set-Content -Path $gitignore -Value "# Memory Bank"
@@ -1829,6 +1832,8 @@ function Invoke-Upgrade {
         "scripts/delegation-depth-check.ps1"
         "scripts/pre-compact-check.sh"
         "scripts/pre-compact-check.ps1"
+        "scripts/review-reminders.sh"
+        "scripts/review-reminders.ps1"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"

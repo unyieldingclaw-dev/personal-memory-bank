@@ -119,6 +119,19 @@ Fires before every `Agent` tool call. Tracks nested agent delegation depth and e
 
 **Hook error logging:** Unexpected errors are logged to `.pmb-hook-errors.log`.
 
+### 7. Review Gate (`PreToolUse` — Bash tool)
+
+Fires before every Bash tool call and pattern-matches `git commit` / `git push` (including compound commands like `cd X && git commit ...`). Blocks the commit or push unless a matching review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
+
+**Marker files (single-use, gitignored):**
+
+- `.claude/.code-review-ok` — written by `/code-review` when the Verdict is **Approve**. Consumed (deleted) by the hook on the next `git commit`.
+- `.claude/.change-review-ok` — written by `/change-review` when no finding has `Blocking: Yes`. Consumed on the next `git push`.
+
+Each marker authorizes exactly one commit or push — the hook deletes it the moment it checks it, so the next change requires a fresh review. If the review finds blocking issues, no marker is written and the gate stays shut until the findings are addressed and the review re-run.
+
+**Why JSON-stdout instead of an exit code:** `settings.json` wires this hook as `... 2>/dev/null || bash ... 2>/dev/null || true` for cross-platform fail-open behavior (so a missing `pwsh`/`bash` doesn't break every Bash call). That `|| true` suffix would silently swallow a nonzero exit code from a legitimate block. Instead the hook prints `{"continue": false, "stopReason": "..."}` to stdout, which Claude Code reads directly regardless of the wrapping shell's final exit code.
+
 ## Git Hooks (versioned)
 
 PMB distributes two git hooks through the `.githooks/` directory, which is versioned in the project repo. `mb init` and `mb upgrade` both install these hooks and activate them via `core.hooksPath`.
