@@ -112,3 +112,10 @@ Full history: CHANGELOG.md
 - ✅ `$advisoryCreate` kept as `@()` for future files that legitimately need create-if-missing + diff-if-customized semantics.
 - ✅ README.md corrected: 12 → 15 standards files; overwrite semantics documented instead of advisory-diff.
 - ✅ 6/6 `mb-setup.Tests.ps1` Pester tests still pass. Committed `a453a5a`, pushed to origin/main.
+
+## `mb upgrade` Slash Command Auto-Discovery Fix (2026-07-02)
+
+- ✅ Root cause: `Invoke-Upgrade`'s `$templateOwned` hardcoded 5 command filenames. `accessibility-review.md` + `change-review.md` shipped in 1.2.0 but were never added to the list, so `mb upgrade` silently skipped them in every existing project. `mb init` and `Get-MbUpgradeAnalysis` already discover commands dynamically from `templates/claude-commands/` — only the actual upgrade-copy logic was stuck on a stale static list.
+- ✅ Fix: `Invoke-Upgrade` now appends every file found in `templates/claude-commands/` to `$templateOwned` at runtime (same pattern `mb init` already used). No list to remember to update when a new command ships.
+- ✅ Verified via dry-run + live run against `rfx-cook-tracker`: both missing commands added, existing ones reported unchanged. Committed `465d5d1`, pushed to origin/main.
+- ⚠️ Side effect discovered during verification: running `mb upgrade` for real on a project several versions behind syncs *all* of `$templateOwned`, not just commands — surprised the user mid-session since `rfx-cook-tracker` was behind on cursor rules/settings/standards too. Not a bug, but worth stating explicitly when asking a user to approve running `mb upgrade` on a stale project: it's an all-or-nothing sync of the owned-file set, not a single-file patch.
