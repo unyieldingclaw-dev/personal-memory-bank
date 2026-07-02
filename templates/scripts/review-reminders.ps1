@@ -1,11 +1,25 @@
 # PreToolUse hook — blocks git commit/push until the matching review slash command has run.
 # /code-review writes .claude/.code-review-ok on an Approve verdict; /change-review writes
 # .claude/.change-review-ok when no finding is Blocking. Each marker authorizes exactly one
-# commit or push -- this hook deletes it the moment it's consumed, so the next change needs a
-# fresh review. Uses the {"continue": false, "stopReason": ...} JSON-stdout protocol (not exit
-# codes) because settings.json wires this hook with a "|| true" fail-open suffix for portability
-# across machines without pwsh/bash -- that wrapping swallows a nonzero exit code, but stdout
-# JSON survives it and is what Claude Code actually reads to decide whether to block.
+# commit or push attempt -- consumed the moment this hook sees it, so the next change needs a
+# fresh review. Known limitation: the marker is consumed even if the commit/push itself then
+# fails (e.g. a separate pre-commit hook rejects it) -- an accepted false-strict tradeoff, not
+# a security gap, since the failure mode is "re-run the review," not "skip it."
+#
+# WHY match "git\s+commit\b" anywhere in $cmd instead of anchoring to command start/operators:
+# an anchored regex (^|[;&|]\s*)git\s+commit\b misses real shapes -- multi-line Bash tool
+# commands (git commit after a literal newline), a bare single "&", or nested subshells. $cmd
+# is already the exact, JSON-parsed command text (not raw payload noise), so an unanchored
+# match is safe: the only real risk is a false positive if "git commit" appears as a substring
+# elsewhere in the command, which just means an occasional unnecessary re-review -- the safe
+# failure direction for a security gate.
+#
+# WHY hookSpecificOutput.permissionDecision, not top-level "continue": top-level
+# {"continue": false} only stops the agent's turn *after* the tool call has already run --
+# it does not prevent execution. Verified empirically: an earlier version of this hook using
+# {"continue": false} let a real `git commit` through untouched, then interrupted the next
+# turn. hookSpecificOutput.permissionDecision = "deny" is the mechanism that actually denies
+# the tool call before it executes.
 try {
     $raw = [Console]::In.ReadToEnd()
     if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
@@ -26,12 +40,23 @@ function Test-AndConsumeMarker {
     return $false
 }
 
-if ($cmd -match '(^|[;&|]\s*)git\s+commit\b') {
+function Deny {
+    param([string]$Reason)
+    @{
+        hookSpecificOutput = @{
+            hookEventName            = "PreToolUse"
+            permissionDecision       = "deny"
+            permissionDecisionReason = $Reason
+        }
+    } | ConvertTo-Json -Compress | Write-Output
+}
+
+if ($cmd -match 'git\s+commit\b') {
     if (-not (Test-AndConsumeMarker (Join-Path $root '.claude/.code-review-ok'))) {
-        Write-Output '{"continue": false, "stopReason": "Run /code-review before committing -- it writes the review-ok marker this hook checks."}'
+        Deny "Run /code-review before committing -- it writes the review-ok marker this hook checks."
     }
-} elseif ($cmd -match '(^|[;&|]\s*)git\s+push\b') {
+} elseif ($cmd -match 'git\s+push\b') {
     if (-not (Test-AndConsumeMarker (Join-Path $root '.claude/.change-review-ok'))) {
-        Write-Output '{"continue": false, "stopReason": "Run /change-review before pushing -- it writes the review-ok marker this hook checks."}'
+        Deny "Run /change-review before pushing -- it writes the review-ok marker this hook checks."
     }
 }
