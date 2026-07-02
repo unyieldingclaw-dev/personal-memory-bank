@@ -1829,12 +1829,6 @@ function Invoke-Upgrade {
         "scripts/delegation-depth-check.ps1"
         "scripts/pre-compact-check.sh"
         "scripts/pre-compact-check.ps1"
-        # Slash commands — governance workflow commands from templates, not project-specific
-        ".claude/commands/code-review.md"
-        ".claude/commands/feature-dev.md"
-        ".claude/commands/security-review.md"
-        ".claude/commands/test-audit.md"
-        ".claude/commands/pmb-status.md"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
@@ -1868,6 +1862,16 @@ function Invoke-Upgrade {
     # WHY: $advisoryCreate is kept for future files that must exist at runtime but may have
     # project-local content. Standards files were moved to $templateOwned — see comment above.
     $advisoryCreate = @()
+
+    # WHY: Slash commands are auto-discovered from templates/claude-commands/ instead of hardcoded —
+    # a static list silently goes stale whenever a new command file is added (accessibility-review.md
+    # and change-review.md shipped in 1.2.0 but were never added to the old hardcoded list, so
+    # mb upgrade never copied them into existing projects). mb init already discovers commands this
+    # way; this keeps upgrade and init on a single source of truth.
+    $templateCmdDir = Join-Path $TemplatesDir "claude-commands"
+    if (Test-Path $templateCmdDir) {
+        $templateOwned += (Get-ChildItem $templateCmdDir -File | ForEach-Object { ".claude/commands/$($_.Name)" })
+    }
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X -> templates/cursor/rules/X (no dot prefix)
