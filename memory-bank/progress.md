@@ -119,3 +119,9 @@ Full history: CHANGELOG.md
 - ✅ Fix: `Invoke-Upgrade` now appends every file found in `templates/claude-commands/` to `$templateOwned` at runtime (same pattern `mb init` already used). No list to remember to update when a new command ships.
 - ✅ Verified via dry-run + live run against `rfx-cook-tracker`: both missing commands added, existing ones reported unchanged. Committed `465d5d1`, pushed to origin/main.
 - ⚠️ Side effect discovered during verification: running `mb upgrade` for real on a project several versions behind syncs *all* of `$templateOwned`, not just commands — surprised the user mid-session since `rfx-cook-tracker` was behind on cursor rules/settings/standards too. Not a bug, but worth stating explicitly when asking a user to approve running `mb upgrade` on a stale project: it's an all-or-nothing sync of the owned-file set, not a single-file patch.
+
+## Agent Frontmatter `name:` Fix + mb doctor Check 25 (2026-07-03)
+
+- ✅ Fixed missing `name:` frontmatter on `researcher`/`security-reviewer` agents (live + template) that made Claude Code silently fail to register them. Added `mb doctor` check 25 (24→25) to catch this class of bug going forward, in `mb.sh` and `mb.ps1`, plus a live/template parity check. Ported the previously-missing check 24 into `mb.ps1`. Fixed doc-count and mislabel drift. Full detail: CHANGELOG.md "agent frontmatter fix" entry.
+- ✅ Code review (5 domains + opposition, then a focused re-review) found and fixed all 17 non-blocking issues: elif-suppression in check 25, unscoped `name:` extraction, quote/whitespace-stripping edge case, unhandled `ParseExact` in the ported check 24, stale doc counts, casing drift — plus bash test coverage for every new edge case.
+- ✅ Also fixed unrelated pre-existing bug found in passing: `mb query`'s tag-matching `awk` script used `\s` (gawk-only; silently never matched on `mawk`, this environment's default `awk`) — replaced with portable `[[:space:]]`.

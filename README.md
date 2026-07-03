@@ -90,7 +90,7 @@ to confirm the memory bank is healthy before you start.
 
 ```
 mb status     Quick state check — initialized, memory, context, standards, tasks
-mb doctor     Full 24-point diagnostic — git, templates, hooks, file sizes, version, drift detection, checksums, context ceiling
+mb doctor     Full 25-point diagnostic — git, templates, hooks, file sizes, version, drift detection, checksums, context ceiling
 mb query TAG  Find all memory tagged with TAG (e.g. mb query auth)
 mb clean      Memory bank maintenance — slim check + guided cleanup prompt
 mb commit     Commit memory bank changes separately from feature code
@@ -130,7 +130,7 @@ Together: `/test-audit` tells you *what's missing*. `/code-review` tells you *wh
 | `/code-review` | 6–8 subagent review — 5 always-on domains (Security, Correctness, Maintainability, Testing, Architecture Drift) + up to 2 conditional (Performance, Accessibility) + Opposition audit |
 | `/security-review` | Scans current diff for 9 security patterns (secrets, injection, auth, crypto, etc.) |
 | `/feature-dev` | Runs the full 7-phase feature development workflow (brainstorm → spec → plan → implement → review → commit) |
-| `/health-check` | PMB-only: runs `mb doctor` (24 checks) and prints a labeled summary |
+| `/health-check` | PMB-only: runs `mb doctor` (25 checks) and prints a labeled summary |
 
 ## How It Works
 

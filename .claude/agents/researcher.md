@@ -1,4 +1,5 @@
 ---
+name: researcher
 description: Codebase investigator. Reads files, traces code paths, and summarizes findings. Never modifies files. Use to investigate questions without consuming the main context window.
 tools:
   - Read

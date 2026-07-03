@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0] — 2026-07-03 (agent frontmatter fix)
+
+### Fixed
+- **`.claude/agents/*.md` missing `name:` field** — Claude Code silently fails to register a custom subagent without a `name:` frontmatter field; `researcher.md` and `security-reviewer.md` (plus their `templates/.claude/agents/` copies) had this bug. Added `name:` to all 4 files.
+- **`.claude/commands/health-check.md`** — corrected a mislabeled "Check 24" reference to the actual staleness check (check 9); removed the only non-functional `@agent-name` invocation-syntax mention in the repo.
+- **`mb doctor` check 25 ("Agent frontmatter") elif-suppression** — a directory with both a missing-`name:` agent and a mismatched-`name:` agent only reported the first; now both report independently.
+- **`mb doctor` check 25 `name:` extraction** — now scoped to the frontmatter block only (was scanning the whole file), strips surrounding quotes, and no longer over-strips internal spaces from multi-word values, on both `mb.sh` and `mb.ps1`.
+- **`mb.ps1` check 24 (Plan hygiene) port** — was previously missing entirely from `mb.ps1`, leaving `mb.sh`/`mb.ps1` doctor check counts out of sync; ported, including a `ParseExact` try/catch guard matching sibling call sites (was unguarded, could abort the rest of `mb doctor` on an unparseable git date) and a frontmatter-presence match aligned with `mb.sh`'s looser `grep -c '^---'` behavior.
+- **"24 checks" → "25 checks"** — updated `README.md` (both occurrences), `.claude/commands/health-check.md`, `docs/COMMANDS-REFERENCE.md` (was already stale at "20 checks"; table extended through check 25), and `tests/test-mb-doctor.sh` header.
+
+### Added
+- **`mb doctor` check 25 ("Agent frontmatter")** — scans `.claude/agents/*.md`, warns on missing or filename-mismatched `name:` fields, in both `mb.sh` and `mb.ps1`.
+- **`mb doctor` check 25 live/template parity check** — in the PMB source repo (where `templates/.claude/agents/` exists), warns if a live agent file diverges from its template copy.
+
 ## [1.2.0] — 2026-06-26 (additional hardening)
 
 ### Fixed

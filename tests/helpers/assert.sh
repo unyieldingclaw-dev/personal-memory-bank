@@ -17,6 +17,18 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local output="$1" pattern="$2" desc="$3"
+  if echo "$output" | grep -qi "$pattern"; then
+    echo "  FAIL: $desc"
+    echo "    Expected output NOT to contain (case-insensitive): '$pattern'"
+    FAIL=$((FAIL + 1))
+  else
+    echo "  PASS: $desc"
+    PASS=$((PASS + 1))
+  fi
+}
+
 assert_exit_zero() {
   local code="$1" desc="$2"
   if [ "$code" -eq 0 ]; then

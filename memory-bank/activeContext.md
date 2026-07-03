@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-26
+last-reviewed: 2026-07-03
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,11 +16,11 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-06-26
+## Last Updated: 2026-07-03
 
 ## Current Focus
 
-**PMB v1.2.0 infrastructure complete.** Three-round pre-production audit (2026-06-24 to 2026-06-26) complete — all findings resolved. Doctor suite 32/32 passing (check 5 bug fixed, test isolation hardened). All contracts, hooks, and CI hardened.
+**PMB v1.2.0 infrastructure complete.** Three-round pre-production audit (2026-06-24 to 2026-06-26) complete — all findings resolved. Doctor suite now 35/35 passing (check 25 "Agent frontmatter" added 2026-07-03 to catch missing `name:` fields in `.claude/agents/*.md`, plus check 24 ported to `mb.ps1`). All contracts, hooks, and CI hardened.
 
 ## Architecture Constraints to Remember
 

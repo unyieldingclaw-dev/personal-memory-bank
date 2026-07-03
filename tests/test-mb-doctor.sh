@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/test-mb-doctor.sh — tests for mb doctor (all 24 checks + clean baseline)
+# tests/test-mb-doctor.sh — tests for mb doctor (all 25 checks + clean baseline)
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -627,5 +627,242 @@ rm -rf "$TMPDIR_NOPLANS/docs/plans"
 
 output=$(cd "$TMPDIR_NOPLANS" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
 assert_contains "$output" "docs/plans/ not found" "check 24: docs/plans missing → [WARN]"
+
+# ── Check 25: agent missing name: in frontmatter ─────────────────────────────
+echo ""
+echo "--- check 25: agent missing name: → [WARN] ---"
+
+TMPDIR_AGENTNONAME="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentnoname-test)"
+trap 'rm -rf "$TMPDIR_AGENTNONAME"' EXIT
+
+setup_test_project "$TMPDIR_AGENTNONAME"
+mkdir -p "$TMPDIR_AGENTNONAME/.claude/agents"
+cat > "$TMPDIR_AGENTNONAME/.claude/agents/researcher.md" <<'EOF'
+---
+description: Codebase investigator.
+tools:
+  - Read
+---
+You are a researcher.
+EOF
+
+output=$(cd "$TMPDIR_AGENTNONAME" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "missing name: in frontmatter" "check 25: agent missing name: → [WARN]"
+
+# ── Check 25: agent name: mismatches filename ─────────────────────────────────
+echo ""
+echo "--- check 25: agent name: mismatches filename → [WARN] ---"
+
+TMPDIR_AGENTMISMATCH="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentmismatch-test)"
+trap 'rm -rf "$TMPDIR_AGENTMISMATCH"' EXIT
+
+setup_test_project "$TMPDIR_AGENTMISMATCH"
+mkdir -p "$TMPDIR_AGENTMISMATCH/.claude/agents"
+cat > "$TMPDIR_AGENTMISMATCH/.claude/agents/researcher.md" <<'EOF'
+---
+name: not-researcher
+description: Codebase investigator.
+tools:
+  - Read
+---
+You are a researcher.
+EOF
+
+output=$(cd "$TMPDIR_AGENTMISMATCH" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "doesn't match their filename" "check 25: agent name: mismatches filename → [WARN]"
+
+# ── Check 25: agents/ clean → [OK] ────────────────────────────────────────────
+echo ""
+echo "--- check 25: agents/ clean → [OK] ---"
+
+TMPDIR_AGENTCLEAN="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentclean-test)"
+trap 'rm -rf "$TMPDIR_AGENTCLEAN"' EXIT
+
+setup_test_project "$TMPDIR_AGENTCLEAN"
+mkdir -p "$TMPDIR_AGENTCLEAN/.claude/agents"
+cat > "$TMPDIR_AGENTCLEAN/.claude/agents/researcher.md" <<'EOF'
+---
+name: researcher
+description: Codebase investigator.
+tools:
+  - Read
+---
+You are a researcher.
+EOF
+
+output=$(cd "$TMPDIR_AGENTCLEAN" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "All agent definitions have name" "check 25: agents/ clean → [OK]"
+
+# ── Check 25: mixed missing + mismatched agents both reported ────────────────
+echo ""
+echo "--- check 25: missing + mismatched agents both reported → both [WARN] ---"
+
+TMPDIR_AGENTMIXED="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentmixed-test)"
+trap 'rm -rf "$TMPDIR_AGENTMIXED"' EXIT
+
+setup_test_project "$TMPDIR_AGENTMIXED"
+mkdir -p "$TMPDIR_AGENTMIXED/.claude/agents"
+cat > "$TMPDIR_AGENTMIXED/.claude/agents/researcher.md" <<'EOF'
+---
+name: not-researcher
+description: Codebase investigator.
+tools:
+  - Read
+---
+You are a researcher.
+EOF
+cat > "$TMPDIR_AGENTMIXED/.claude/agents/security-reviewer.md" <<'EOF'
+---
+description: Security-focused code reviewer.
+tools:
+  - Read
+---
+You are a security reviewer.
+EOF
+
+output=$(cd "$TMPDIR_AGENTMIXED" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "missing name: in frontmatter" "check 25: mixed case — missing name still reported"
+assert_contains "$output" "doesn't match their filename" "check 25: mixed case — mismatched name still reported (not suppressed by elif)"
+
+# ── Check 25: name: extraction scoped to frontmatter, not body text ──────────
+echo ""
+echo "--- check 25: body text starting with name: is not mistaken for frontmatter → [WARN] missing ---"
+
+TMPDIR_AGENTBODY="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentbody-test)"
+trap 'rm -rf "$TMPDIR_AGENTBODY"' EXIT
+
+setup_test_project "$TMPDIR_AGENTBODY"
+mkdir -p "$TMPDIR_AGENTBODY/.claude/agents"
+cat > "$TMPDIR_AGENTBODY/.claude/agents/researcher.md" <<'EOF'
+---
+description: Codebase investigator.
+tools:
+  - Read
+---
+Example frontmatter shown to the user:
+name: not-a-real-frontmatter-field
+EOF
+
+output=$(cd "$TMPDIR_AGENTBODY" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "missing name: in frontmatter" "check 25: name: in body text is not mistaken for frontmatter"
+
+# ── Check 25: quoted name: value matches filename cleanly ────────────────────
+echo ""
+echo "--- check 25: quoted name: value → [OK] ---"
+
+TMPDIR_AGENTQUOTED="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentquoted-test)"
+trap 'rm -rf "$TMPDIR_AGENTQUOTED"' EXIT
+
+setup_test_project "$TMPDIR_AGENTQUOTED"
+mkdir -p "$TMPDIR_AGENTQUOTED/.claude/agents"
+cat > "$TMPDIR_AGENTQUOTED/.claude/agents/researcher.md" <<'EOF'
+---
+name: "researcher"
+description: Codebase investigator.
+tools:
+  - Read
+---
+You are a researcher.
+EOF
+
+output=$(cd "$TMPDIR_AGENTQUOTED" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "All agent definitions have name" "check 25: quoted name: value matches filename → [OK]"
+
+# ── Check 25: quoted name: value with trailing whitespace still matches ──────
+echo ""
+echo "--- check 25: quoted name: value with trailing whitespace → [OK] ---"
+
+TMPDIR_AGENTQUOTEDWS="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentquotedws-test)"
+trap 'rm -rf "$TMPDIR_AGENTQUOTEDWS"' EXIT
+
+setup_test_project "$TMPDIR_AGENTQUOTEDWS"
+mkdir -p "$TMPDIR_AGENTQUOTEDWS/.claude/agents"
+{
+  printf '%s\n' '---'
+  printf 'name: "researcher"   \n'
+  printf '%s\n' 'description: Codebase investigator.'
+  printf '%s\n' 'tools:'
+  printf '%s\n' '  - Read'
+  printf '%s\n' '---'
+  printf '%s\n' 'You are a researcher.'
+} > "$TMPDIR_AGENTQUOTEDWS/.claude/agents/researcher.md"
+
+output=$(cd "$TMPDIR_AGENTQUOTEDWS" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "All agent definitions have name" "check 25: quoted name: with trailing whitespace matches filename → [OK]"
+
+# ── Check 25: multiple clean agents → [OK], correct pluralization elsewhere ──
+echo ""
+echo "--- check 25: multiple agents, one broken → count reflects only the broken one ---"
+
+TMPDIR_AGENTMULTI="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentmulti-test)"
+trap 'rm -rf "$TMPDIR_AGENTMULTI"' EXIT
+
+setup_test_project "$TMPDIR_AGENTMULTI"
+mkdir -p "$TMPDIR_AGENTMULTI/.claude/agents"
+cat > "$TMPDIR_AGENTMULTI/.claude/agents/researcher.md" <<'EOF'
+---
+name: researcher
+description: Codebase investigator.
+tools:
+  - Read
+---
+You are a researcher.
+EOF
+cat > "$TMPDIR_AGENTMULTI/.claude/agents/security-reviewer.md" <<'EOF'
+---
+description: Security-focused code reviewer.
+tools:
+  - Read
+---
+You are a security reviewer.
+EOF
+
+output=$(cd "$TMPDIR_AGENTMULTI" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "1 agent(s) missing name: in frontmatter" "check 25: multiple agents — count reflects only the broken one"
+
+# ── Check 25: no .claude/agents/ directory → no check-25 output ──────────────
+echo ""
+echo "--- check 25: no .claude/agents/ dir → check silently skipped ---"
+
+TMPDIR_NOAGENTS="$(mktemp -d 2>/dev/null || mktemp -d -t mb-noagents-test)"
+trap 'rm -rf "$TMPDIR_NOAGENTS"' EXIT
+
+setup_test_project "$TMPDIR_NOAGENTS"
+rm -rf "$TMPDIR_NOAGENTS/.claude/agents"
+
+output=$(cd "$TMPDIR_NOAGENTS" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_not_contains "$output" "agent definitions have name" "check 25: no .claude/agents/ → no OK line printed"
+assert_not_contains "$output" "missing name: in frontmatter" "check 25: no .claude/agents/ → no WARN line printed"
+
+# ── Check 25: live/template parity — divergent copy → [WARN] ─────────────────
+echo ""
+echo "--- check 25: live agent differs from templates/.claude/agents/ copy → [WARN] ---"
+
+TMPDIR_AGENTPARITY="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentparity-test)"
+trap 'rm -rf "$TMPDIR_AGENTPARITY"' EXIT
+
+setup_test_project "$TMPDIR_AGENTPARITY"
+mkdir -p "$TMPDIR_AGENTPARITY/.claude/agents" "$TMPDIR_AGENTPARITY/templates/.claude/agents"
+cat > "$TMPDIR_AGENTPARITY/.claude/agents/researcher.md" <<'EOF'
+---
+name: researcher
+description: Codebase investigator — LIVE VERSION.
+tools:
+  - Read
+---
+You are a researcher.
+EOF
+cat > "$TMPDIR_AGENTPARITY/templates/.claude/agents/researcher.md" <<'EOF'
+---
+name: researcher
+description: Codebase investigator — TEMPLATE VERSION.
+tools:
+  - Read
+---
+You are a researcher.
+EOF
+
+output=$(cd "$TMPDIR_AGENTPARITY" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "differ from their templates/.claude/agents/ copy" "check 25: live/template parity — divergent copy → [WARN]"
 
 print_summary

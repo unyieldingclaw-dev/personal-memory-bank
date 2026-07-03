@@ -1503,6 +1503,128 @@ function Show-Doctor {
         Write-Host "       Structural drift signals detected — run /mb-drift for semantic analysis." -ForegroundColor DarkYellow
     }
 
+    # 24. Plan hygiene — docs/plans/ structure and draft tracking
+    $durableDir = "docs/plans"
+    $scratchDir = ".claude/plans"
+
+    if (Test-Path $durableDir) {
+        Write-Host "[OK]   docs/plans/ exists" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] docs/plans/ not found — run 'mb plan status' for setup" -ForegroundColor Yellow
+    }
+
+    if (Test-Path $scratchDir) {
+        $trackedScratch = @(git ls-files $scratchDir 2>$null)
+        if ($trackedScratch.Count -gt 0) {
+            Write-Host "[ERROR] $($trackedScratch.Count) scratch plan(s) in $scratchDir are tracked by git" -ForegroundColor Red
+            foreach ($f in $trackedScratch) { Write-Host "       $f" }
+            Write-Host "       Fix: git rm --cached $scratchDir/*.md" -ForegroundColor Red
+        } else {
+            Write-Host "[OK]   No tracked scratch plans in $scratchDir" -ForegroundColor Green
+        }
+    }
+
+    if (Test-Path $durableDir) {
+        $missingFmPlans = @()
+        Get-ChildItem -Path $durableDir -Filter "*.md" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
+            # -notmatch '^---' (not exact equality) mirrors bash's `grep -c '^---'`, which
+            # also accepts "----" or "--- trailing text" as a valid frontmatter opener.
+            $firstLine = Get-Content $_.FullName -TotalCount 1
+            if ($firstLine -notmatch '^---') { $missingFmPlans += $_.FullName }
+        }
+        if ($missingFmPlans.Count -gt 0) {
+            Write-Host "[WARN] $($missingFmPlans.Count) plan(s) missing frontmatter:" -ForegroundColor Yellow
+            foreach ($p in $missingFmPlans) { Write-Host "       $p" }
+        } else {
+            Write-Host "[OK]   All plans have frontmatter" -ForegroundColor Green
+        }
+
+        $stalePlans = @()
+        $todayP = Get-Date
+        Get-ChildItem -Path $durableDir -Filter "*.md" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
+            $statusLine = Get-Content $_.FullName | Where-Object { $_ -match '^status:\s*(.+)$' } | Select-Object -First 1
+            if ($statusLine -match '^status:\s*(.+)$') {
+                $status = $matches[1].Trim()
+                if ($status -eq "planned" -or $status -eq "active") {
+                    $lastCommit = (git log -1 --format="%as" -- $_.FullName 2>$null)
+                    if ($lastCommit) {
+                        # WHY: ParseExact throws on any format other than yyyy-MM-dd; wrap so an
+                        # unexpected git date format can't abort the rest of mb doctor.
+                        try {
+                            $commitDate = [datetime]::ParseExact($lastCommit, "yyyy-MM-dd", $null)
+                            $days = ($todayP - $commitDate).Days
+                            if ($days -gt 30) { $stalePlans += "$($_.Name) (${days}d, status:$status)" }
+                        } catch { }
+                    }
+                }
+            }
+        }
+        if ($stalePlans.Count -gt 0) {
+            Write-Host "[WARN] $($stalePlans.Count) plan(s) with no activity in 30+ days:" -ForegroundColor Yellow
+            foreach ($p in $stalePlans) { Write-Host "       $p" }
+        } else {
+            Write-Host "[OK]   No stale plans" -ForegroundColor Green
+        }
+    }
+
+    # 25. Agent frontmatter — .claude/agents/*.md must declare name: matching filename
+    $agentsDir = ".claude/agents"
+    if (Test-Path $agentsDir) {
+        $missingNameAgents = @()
+        $mismatchedNameAgents = @()
+        Get-ChildItem -Path $agentsDir -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $stem = $_.BaseName
+            # Scope to the frontmatter block only, so a body line starting with "name:"
+            # (e.g. example YAML in an agent's own instructions) can't false-match.
+            $content = Get-Content $_.FullName -Raw
+            $fmMatch = [regex]::Match($content, '(?s)^---\r?\n(.+?)\r?\n---')
+            $agentName = ""
+            if ($fmMatch.Success) {
+                $nameMatch = [regex]::Match($fmMatch.Groups[1].Value, '(?m)^name:\s*(.+)$')
+                if ($nameMatch.Success) {
+                    $agentName = $nameMatch.Groups[1].Value.Trim().Trim('"', "'")
+                }
+            }
+            if ([string]::IsNullOrEmpty($agentName)) {
+                $missingNameAgents += $_.FullName
+            } elseif ($agentName -ne $stem) {
+                $mismatchedNameAgents += "$($_.FullName) (name: $agentName, filename: $stem)"
+            }
+        }
+        if ($missingNameAgents.Count -gt 0) {
+            Write-Host "[WARN] $($missingNameAgents.Count) agent(s) missing name: in frontmatter — Claude Code will silently fail to register them:" -ForegroundColor Yellow
+            foreach ($a in $missingNameAgents) { Write-Host "       $a" }
+        }
+        if ($mismatchedNameAgents.Count -gt 0) {
+            Write-Host "[WARN] $($mismatchedNameAgents.Count) agent(s) have name: that doesn't match their filename:" -ForegroundColor Yellow
+            foreach ($a in $mismatchedNameAgents) { Write-Host "       $a" }
+        }
+        if ($missingNameAgents.Count -eq 0 -and $mismatchedNameAgents.Count -eq 0) {
+            Write-Host "[OK]   All agent definitions have name: matching their filename" -ForegroundColor Green
+        }
+
+        # Live/template parity — only applies in the PMB source repo, which ships both
+        # a dogfooded .claude/agents/ and a templates/.claude/agents/ copy.
+        $templateAgentsDir = "templates/.claude/agents"
+        if (Test-Path $templateAgentsDir) {
+            $parityIssues = @()
+            Get-ChildItem -Path $agentsDir -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+                $templatePath = Join-Path $templateAgentsDir $_.Name
+                if (Test-Path $templatePath) {
+                    $liveHash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+                    $templateHash = (Get-FileHash $templatePath -Algorithm SHA256).Hash
+                    if ($liveHash -ne $templateHash) { $parityIssues += $_.Name }
+                }
+            }
+            if ($parityIssues.Count -gt 0) {
+                Write-Host "[WARN] $($parityIssues.Count) agent(s) differ from their templates/.claude/agents/ copy:" -ForegroundColor Yellow
+                foreach ($a in $parityIssues) { Write-Host "       $a" }
+            } else {
+                Write-Host "[OK]   Live agents match templates/.claude/agents/" -ForegroundColor Green
+            }
+        }
+    }
+
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
     Write-Host "  Startup Context"
