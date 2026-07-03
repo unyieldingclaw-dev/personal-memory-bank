@@ -2,7 +2,7 @@
   "model": "sonnet",
   "env": {
     "MAX_THINKING_TOKENS": "10000",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "40",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "65",
     "CLAUDE_CODE_SUBAGENT_MODEL": "haiku",
     "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1"
   },
@@ -14,6 +14,15 @@
           {
             "type": "command",
             "command": "powershell -File scripts/update-reviewed.ps1 2>/dev/null || bash scripts/update-reviewed.sh 2>/dev/null || true"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NonInteractive -File scripts/review-reminders-post.ps1 2>/dev/null || bash scripts/review-reminders-post.sh 2>/dev/null || true"
           }
         ]
       }

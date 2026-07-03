@@ -1,6 +1,7 @@
 # check-contract.ps1 — PreToolUse hook for Write/Edit (PowerShell)
 # Checks the active task contract and warns if the target file is out of scope.
-# Always exits 0 (WARN tier). Exits silently if no contract found.
+# WARN tier by default (advisory, allows the write); PMB_CONTRACT_HARD_BLOCK=1
+# promotes this to a real block. Exits silently if no contract found.
 
 param()
 
@@ -14,6 +15,17 @@ trap {
     exit 0
 }
 
+function Deny {
+    param([string]$Reason)
+    @{
+        hookSpecificOutput = @{
+            hookEventName            = "PreToolUse"
+            permissionDecision       = "deny"
+            permissionDecisionReason = $Reason
+        }
+    } | ConvertTo-Json -Compress | Write-Output
+}
+
 # --- Contract existence check ---
 if (-not (Test-Path $ContractFile)) {
     exit 0
@@ -23,26 +35,16 @@ if (-not (Test-Path $ContractFile)) {
 try {
     $contract = Get-Content $ContractFile -Raw | ConvertFrom-Json
 } catch {
-    Write-Host "⚠️  CONTRACT WARNING: .claude/contracts/active-task.json contains malformed JSON."
-    Write-Host "    Scope enforcement is disabled until the file is fixed or removed."
-    exit 0
+    exit 0  # Malformed contract — fail open
 }
 
 $status    = $contract.status
 $task      = $contract.task
 $expiresAt = $contract.expires_at
-
-# Handle both scope formats:
-#   PMB template: scope.files (array of strings)
-#   ACR/canonical: scope (array of {file, op} objects)
-$rawScope = $contract.scope
-if ($rawScope -is [System.Array] -and $rawScope.Count -gt 0 -and $rawScope[0] -is [PSCustomObject]) {
-    $scopeFiles = $rawScope | ForEach-Object { $_.file }
-} elseif ($rawScope -is [PSCustomObject]) {
-    $scopeFiles = $rawScope.files
-} else {
-    $scopeFiles = $rawScope
-}
+# WHY: scope is an array of {file, op} objects per docs/CONTRACTS-GUIDE.md, not an
+# object with a .files property. The prior version read $contract.scope.files, which
+# is always null against a real contract — the scope check never matched anything.
+$scopeFiles = @($contract.scope | ForEach-Object { $_.file } | Where-Object { $_ })
 
 # --- Status check ---
 if ($status -ne "active") {
@@ -66,6 +68,11 @@ if ($expiresAt) {
 
 # --- Extract target file from tool input ---
 # WHY: Claude Code PreToolUse hooks pass tool input as JSON via stdin, not env vars.
+# WHY .tool_input.file_path, not .file_path: the real payload nests everything under
+# "tool_input" (e.g. {"tool_name":"Edit","tool_input":{"file_path":"..."}}), confirmed
+# by capturing a live hook payload. The prior version read $inputData.file_path (flat),
+# which is always null against the real payload shape, so the scope check never even
+# saw a target file -- it silently fell through to "exit 0" on every single write.
 $toolInput = $input | Out-String
 if ([string]::IsNullOrWhiteSpace($toolInput)) {
     exit 0
@@ -73,17 +80,12 @@ if ([string]::IsNullOrWhiteSpace($toolInput)) {
 
 try {
     $inputData = $toolInput | ConvertFrom-Json
-    $targetFile = $inputData.file_path
+    $targetFile = $inputData.tool_input.file_path
 } catch {
     exit 0
 }
 
 if (-not $targetFile) {
-    exit 0
-}
-
-# No scope declared — no enforcement
-if (-not $scopeFiles -or $scopeFiles.Count -eq 0) {
     exit 0
 }
 
@@ -116,12 +118,15 @@ if (-not $inScope) {
     Write-Host "⚠️  CONTRACT SCOPE: Writing to '$targetFile' is outside the active contract."
     Write-Host "    Task: $task"
     Write-Host "    Declared scope: $scopeSummary"
-    # WHY: PMB_CONTRACT_HARD_BLOCK=1 promotes scope warnings to blocks (exit 2).
-    # Default is warn-only (exit 0) so accidental scope drift doesn't break workflows;
-    # hard-block is opt-in for strict enforcement contexts.
+    # WHY: PMB_CONTRACT_HARD_BLOCK=1 promotes scope warnings to a real block.
+    # Default is warn-only so accidental scope drift doesn't break workflows;
+    # hard-block is opt-in for strict enforcement contexts. Uses
+    # hookSpecificOutput.permissionDecision, not an exit code, for the same reason
+    # documented in dangerous-commands.ps1 -- exit codes are unreliable under this
+    # hook's "|| true" fail-open wiring in settings.json.
     if ($env:PMB_CONTRACT_HARD_BLOCK -eq '1') {
-        Write-Host "    Hard-block active (PMB_CONTRACT_HARD_BLOCK=1) — write blocked."
-        exit 2
+        Deny "Writing to '$targetFile' is outside the active contract (task: $task). Hard-block active (PMB_CONTRACT_HARD_BLOCK=1)."
+        exit 0
     }
     Write-Host "    Pause and confirm with user before proceeding."
 }

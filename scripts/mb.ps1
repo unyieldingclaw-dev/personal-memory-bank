@@ -81,7 +81,8 @@ function Get-MbUpgradeAnalysis {
         'scripts/pre-push-check.ps1',     'scripts/pre-push-check.sh',
         'scripts/delegation-depth-check.ps1', 'scripts/delegation-depth-check.sh',
         'scripts/pre-compact-check.ps1',  'scripts/pre-compact-check.sh',
-        'scripts/review-reminders.ps1',   'scripts/review-reminders.sh'
+        'scripts/review-reminders.ps1',   'scripts/review-reminders.sh',
+        'scripts/review-reminders-post.ps1', 'scripts/review-reminders-post.sh'
     )
     $govMissing = @($templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) })
 
@@ -690,6 +691,10 @@ function Invoke-Init {
     if ($gitignoreContent -notmatch "\.pmb-delegation-depth") { $gitignoreAdded += ".pmb-delegation-depth" }
     if ($gitignoreContent -notmatch "\.claude/\.code-review-ok") { $gitignoreAdded += ".claude/.code-review-ok" }
     if ($gitignoreContent -notmatch "\.claude/\.change-review-ok") { $gitignoreAdded += ".claude/.change-review-ok" }
+    if ($gitignoreContent -notmatch "\.claude/\.code-review-ok\.claimed") { $gitignoreAdded += ".claude/.code-review-ok.claimed*" }
+    if ($gitignoreContent -notmatch "\.claude/\.change-review-ok\.claimed") { $gitignoreAdded += ".claude/.change-review-ok.claimed*" }
+    if ($gitignoreContent -notmatch "\.claude/\.pending-commit-presha") { $gitignoreAdded += ".claude/.pending-commit-presha" }
+    if ($gitignoreContent -notmatch "\.claude/\.pending-push-presha") { $gitignoreAdded += ".claude/.pending-push-presha" }
     if ($gitignoreAdded.Count -gt 0) {
         if (-not (Test-Path $gitignore)) {
             Set-Content -Path $gitignore -Value "# Memory Bank"
@@ -1834,6 +1839,8 @@ function Invoke-Upgrade {
         "scripts/pre-compact-check.ps1"
         "scripts/review-reminders.sh"
         "scripts/review-reminders.ps1"
+        "scripts/review-reminders-post.sh"
+        "scripts/review-reminders-post.ps1"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
