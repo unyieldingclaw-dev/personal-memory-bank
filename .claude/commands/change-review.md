@@ -35,6 +35,20 @@ Run `which ai-review-agent 2>/dev/null` (bash) or `Get-Command ai-review-agent -
 
 Look for an active plan at `docs/plans/*.md` with `status: active`. If found, note its path — it informs claim mapping in job 2. Do not load all plans.
 
+## Step 3.5: Baseline Repo Health (informational — not a review job)
+
+**Why this step exists:** every job in this skill reasons over the diff only (Step 1's `git diff`). That's deliberate — this repo's own `docs/HOOKS-GUIDE.md` assigns "codebase invariants" to CI and says the reviewer layer should not duplicate CI's mechanical pattern-matching. But a purely diff-scoped review can silently approve a change sitting on top of a base branch that's already failing repo-wide CI checks — the diff looks clean, CI still goes red, and it's not obvious why. This step closes that visibility gap without duplicating CI's authority: it's a cheap, local, informational spot-check, not a tenth review job, and it never blocks.
+
+Run only checks that are **fully local and offline** (no registry fetch, no module install, no network call) against the **whole working tree**, not the diff:
+
+- The 3 greps from `.github/workflows/pmb-health.yml`'s "Rules-File Integrity" job (invisible Unicode, hidden HTML comments, LLM bypass phrases) against `standards/`, `CLAUDE.md`, `templates/CLAUDE.md`
+- The credential grep and the placeholder (`TBD`/`TODO`) grep from the "Forbidden Patterns" job against the same file sets that job covers
+- "Template Integrity"'s check that hook scripts referenced in `templates/.claude/settings.json` exist under `templates/`
+
+Do **not** attempt to replicate Semgrep (registry fetch), PSScriptAnalyzer (`Install-Module` fetch), or gitleaks (network action) — those are correctly CI-only per this repo's own layering rule, and this skill can't reliably or quickly reproduce a network-dependent tool.
+
+Report results in their own section (see Step 5's report template) with a one-line pass/fail per check. If a check fails, note whether the offending file(s) are touched by the current diff or pre-existing — this is the detail that would have flagged PR #7's situation immediately. This section never sets `Blocking: Yes` and never factors into the Verdict.
+
 ## Step 4: Run 9 review jobs
 
 Work through all 9 jobs. For each finding, use this schema:
@@ -184,6 +198,19 @@ Play devil's advocate against the entire change:
 
 _(If no findings: "No findings. Change package looks clean.")_
 
+## Baseline Repo Health (informational — not scoped to this diff)
+
+| Check | Status | Notes |
+| ----- | ------ | ----- |
+| Invisible Unicode characters | ✅ Pass / ❌ Fail | ... |
+| Hidden HTML comments | ✅ Pass / ❌ Fail | ... |
+| LLM bypass phrases | ✅ Pass / ❌ Fail | ... |
+| Credential grep | ✅ Pass / ❌ Fail | ... |
+| Spec placeholder grep | ✅ Pass / ❌ Fail | ... |
+| Template Integrity | ✅ Pass / ❌ Fail | ... |
+
+_(This section is informational only — it never sets `Blocking: Yes` and never affects the Verdict. If any check fails, state whether the affected file(s) are touched by this diff or pre-existing on the base branch.)_
+
 ## Job Summary
 
 | Job                       | Status                              | Notes |
@@ -207,20 +234,28 @@ _(If no findings: "No findings. Change package looks clean.")_
 - **Security review:** reviewed (PMB-native) | reviewed (ACR) | skipped
 - **Accessibility:** reviewed | skipped — no UI files
 - **ACR backend:** used | not installed | disabled
+- **Baseline repo health:** all checks pass | N check(s) failing (pre-existing)
 ```
 
 ## Step 6: Record Review Completion
 
 If no finding in the report has `Blocking: Yes` (including the "No findings" case), compute a hash of the reviewed diff and write it to `.claude/.change-review-ok` (create the `.claude` directory first if it doesn't exist). The marker is bound to this exact diff — a `PreToolUse` hook recomputes the same hash before the next `git push` and only allows it through if the diff hasn't changed since the review. Use the same diff command from Step 1 (`git diff origin/main...HEAD`, or `git diff HEAD` if no upstream):
 
-Bash:
+Bash (do NOT pipe `git diff` directly into `sha256sum` — the push-gate hook computes the hash via `$(git diff ...)` command substitution, which strips the trailing newline a direct pipe preserves; a raw pipe produces a different digest and the hook will reject a valid review. Also include the `git diff HEAD` fallback below even when Step 1 used `origin/main...HEAD` successfully — the hook always tries `origin/main...HEAD` first and only falls back if that command itself fails (no upstream), so the marker must be computed the same way to match in every branch, not just the common case):
 ```
-git diff origin/main...HEAD | sha256sum | cut -d' ' -f1 > .claude/.change-review-ok
+expected=$(git diff origin/main...HEAD 2>/dev/null)
+if [ $? -ne 0 ]; then
+  expected=$(git diff HEAD 2>/dev/null)
+fi
+printf '%s' "$expected" | sha256sum | cut -d' ' -f1 > .claude/.change-review-ok
 ```
 
-PowerShell (do NOT pipe `git diff` directly into a hash cmdlet — PowerShell's pipeline re-tokenizes external-command output and will not match the hash `review-reminders.ps1` recomputes; redirect to a file first so the hash covers the exact raw bytes):
+PowerShell (do NOT pipe `git diff` directly into a hash cmdlet — PowerShell's pipeline re-tokenizes external-command output and will not match the hash `review-reminders.ps1` recomputes; redirect to a file first so the hash covers the exact raw bytes. Include the `git diff HEAD` fallback below, matching `review-reminders.ps1`'s `Get-PushDiffHash`, so the marker matches in every branch, not just the common upstream-exists case):
 ```
-git diff origin/main...HEAD > "$env:TEMP\pmb-diff-hash.tmp"
+git diff origin/main...HEAD > "$env:TEMP\pmb-diff-hash.tmp" 2>$null
+if ($LASTEXITCODE -ne 0) {
+  git diff HEAD > "$env:TEMP\pmb-diff-hash.tmp" 2>$null
+}
 (Get-FileHash "$env:TEMP\pmb-diff-hash.tmp" -Algorithm SHA256).Hash.ToLower() | Set-Content .claude/.change-review-ok
 Remove-Item "$env:TEMP\pmb-diff-hash.tmp" -Force
 ```

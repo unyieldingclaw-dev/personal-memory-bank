@@ -12,7 +12,7 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 |---------|--------------|----------------------|
 | `mb init` | Scaffold memory-bank/ in the current project | Creates 5 memory-bank files, `CLAUDE.md`, `.claude/settings.json`, hook scripts, slash commands, and `standards/` files. Writes `.pmb-version`. Skips files that already exist. |
 | `mb status` | Quick state check | 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present. Green ✓ per signal; ⚠ items surface in an Attention section with remediation hint. |
-| `mb doctor` | Full 20-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. Absorbs `validate`, `audit`, and `budget` checks. Writes `.pmb-checksums` on each run. |
+| `mb doctor` | Full 25-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. Absorbs `validate`, `audit`, and `budget` checks. Writes `.pmb-checksums` on each run. |
 | `mb query <TAG>` | Search memory-bank by tag or section header | Lists files with matching tags or `##` headings. Supports partial hierarchical match (`mb query auth` matches `auth/session`). |
 | `mb clean` | Memory bank maintenance | Slim check for `activeContext.md`; prints guided cleanup prompt (archive + compact + update). Absorbs `compact`, `update`, `archive`, `slim`. |
 | `mb commit` | Stage and commit memory-bank/ changes | Runs `git add memory-bank/` + `git commit`; checks for subworktree and refuses if detected. |
@@ -144,7 +144,7 @@ These are built into Claude Code and don't require the memory bank system.
 
 ## `mb doctor` Checks
 
-`mb doctor` runs 20 deterministic health checks and prints a startup context observability section. On every run it writes `.pmb-checksums` to establish or refresh the integrity baseline.
+`mb doctor` runs 25 deterministic health checks and prints a startup context observability section. On every run it writes `.pmb-checksums` to establish or refresh the integrity baseline.
 
 | # | Check | Pass Condition | What to Do on Failure |
 |---|-------|---------------|----------------------|
@@ -169,6 +169,11 @@ These are built into Claude Code and don't require the memory bank system.
 | 18 | Old stable decisions | All `authority:stable` files reviewed within 180 days | Review decisions and update `last-reviewed` date, or revise if drifted |
 | 19 | Cross-file contradictions | No `authority:` mismatches from expected hierarchy; no negation language under shared `##` headings | Resolve authority conflicts; clarify intentional transitions vs. real contradictions |
 | 20 | Integrity checksums | All memory-bank file SHA-256 hashes match `.pmb-checksums` baseline | Review external edits; checksums refresh automatically on each `mb doctor` run |
+| 21 | Git-vs-reviewed lag | `last-reviewed` frontmatter date is not before the file's last git commit date | Update `last-reviewed` frontmatter or confirm no review is needed |
+| 22 | Completed-but-still-planned | No item marked ✅ complete in `progress.md` still appears as ⏸ planned/pending elsewhere | Resolve the stale planned-item drift before the next compaction |
+| 23 | Stale Next Steps | No `activeContext.md` Next Steps item already appears completed in `progress.md` | Remove it from Next Steps or verify the `progress.md` entry |
+| 24 | Plan hygiene | `docs/plans/` exists; no tracked scratch plans in `.claude/plans/`; all plans have frontmatter; no plan stale 30+ days | Run `mb plan status` for setup; `git rm --cached` tracked scratch plans; add frontmatter; review stale plans |
+| 25 | Agent frontmatter | `.claude/agents/*.md` declare a `name:` field matching the filename (WARN-tier) | Add a `name:` field matching the filename to the agent's frontmatter |
 | — | Startup context | (observability, not a health check) — reports files loaded, estimated tokens, largest contributors, 30-day growth, stale-but-loaded count | Use to decide when files need trimming |
 
 ---

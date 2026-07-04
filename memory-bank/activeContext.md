@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-06-26
+last-reviewed: 2026-07-04
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,11 +16,11 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-06-26
+## Last Updated: 2026-07-04
 
 ## Current Focus
 
-**PMB v1.2.0 infrastructure complete.** Three-round pre-production audit (2026-06-24 to 2026-06-26) complete — all findings resolved. Doctor suite 32/32 passing (check 5 bug fixed, test isolation hardened). All contracts, hooks, and CI hardened.
+**PMB v1.2.0 infrastructure complete.** Doctor suite 35/35 passing; all 9 CI jobs confirmed green on PR #7 (`b1105e3`) as of 2026-07-04 (details: progress.md). `/change-review` now includes a Baseline Repo Health spot-check.
 
 ## Architecture Constraints to Remember
 
@@ -35,7 +35,7 @@ lineage: []
 
 ## Next Steps
 
-1. **Monitor PMB CI** — pmb-health.yml now runs 9 jobs including PSScriptAnalyzer at Warning severity. Watch for new lint warnings surfacing in existing .ps1 files.
+1. **Monitor PMB CI** — all 9 jobs confirmed green on PR #7 as of 2026-07-04; watch for genuinely new PSScriptAnalyzer lint categories in future `.ps1` changes (Write-Host is now excluded project-wide; comment-only catch blocks still count as "empty").
 2. **mb plan workflow** — `/feature-dev` Phase 3 now drafts plans to `.claude/plans/` and promotes via `mb plan promote`. Ensure new projects use this workflow.
 3. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
 

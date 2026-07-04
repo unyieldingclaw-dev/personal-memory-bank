@@ -1,4 +1,4 @@
-# check-contract.ps1 — PreToolUse hook for Write/Edit (PowerShell)
+﻿# check-contract.ps1 — PreToolUse hook for Write/Edit (PowerShell)
 # Checks the active task contract and warns if the target file is out of scope.
 # WARN tier by default (advisory, allows the write); PMB_CONTRACT_HARD_BLOCK=1
 # promotes this to a real block. Exits silently if no contract found.
@@ -11,7 +11,7 @@ $ContractFile = ".claude/contracts/active-task.json"
 # can surface them. The inner logic below uses narrow catches for expected failure
 # modes; this wrapper catches anything that slips through.
 trap {
-    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] check-contract.ps1: $_" -ErrorAction SilentlyContinue } catch {}
+    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] check-contract.ps1: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
     exit 0
 }
 
@@ -63,6 +63,7 @@ if ($expiresAt) {
         }
     } catch {
         # Ignore parse errors — fail open
+        Write-Verbose "Could not parse expires_at '$expiresAt'; treating contract as not expired."
     }
 }
 

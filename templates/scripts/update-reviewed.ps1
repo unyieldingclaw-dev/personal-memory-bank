@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Auto-update last-reviewed frontmatter in memory-bank files after edits.
 
@@ -42,7 +42,7 @@ try {
     # WHY: Silent failure — this hook must never block agent work. If the update
     # fails, the agent continues; the user can run mb audit to find stale files.
     # WHY: Log to .pmb-hook-errors.log so mb doctor can surface repeated failures.
-    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] update-reviewed.ps1: $_" -ErrorAction SilentlyContinue } catch {}
+    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] update-reviewed.ps1: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
     exit 0
 }
 

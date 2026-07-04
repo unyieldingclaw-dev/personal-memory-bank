@@ -50,72 +50,31 @@ Full history: CHANGELOG.md
 **Deferred pending operational evidence:**
 - ⏸ handoff CLI, pinned.md, mb update --from-git, mb privacy
 
-## 2026-06-22 — PMB Infrastructure + /change-review
+## Earlier Sessions (2026-06-19 to 2026-06-24) — condensed, full detail in CHANGELOG.md
 
-- ✅ `.claude/plans/` gitignored; `docs/plans/` + `docs/archive/plans/` scaffolded with README
-- ✅ `templates/plan.md` updated with YAML frontmatter (status/created/approved/scope/risk/source)
-- ✅ `mb plan status|list|promote|archive` added to `mb.sh` and `mb.ps1`
-- ✅ `mb doctor` check 24 — plan hygiene (folder existence, tracked drafts, missing frontmatter, stale plans)
-- ✅ `standards/WORKFLOW.md` + `/feature-dev` Phase 3 updated: draft to `.claude/plans/`, promote to `docs/plans/`
-- ✅ `/change-review` command — 9-job change package review with optional ACR bridge
-
-## 2026-06-19 — Semantic Drift Detection
-
-- ✅ Checks 21–23 added to `mb doctor`: git-vs-reviewed lag, completed-but-still-planned, stale next step
-- ✅ `/mb-drift` skill created — on-demand semantic analysis for duplicate concepts, supersession rot, authority violations
-- ✅ `QUICK-REFERENCE.md` updated: 23-check doctor, `/mb-drift` skill listed
-
-## 2026-06-19 — Startup Context Trim + Satellite Sync
-
-- ✅ `progress.md` trimmed from 11.6 KB to target ~4 KB; session history collapsed to pointer at CHANGELOG.md
-- ✅ Ran `mb upgrade` on all downstream satellite projects to distribute v1.1.1 template changes
-- ✅ Re-ran `mb doctor` to refresh checksums after direct edits; startup context confirmed below 25 KB threshold
-
-## 2026-06-24 — Comprehensive Audit + Remediation Sprint
-
-**PMB WS1 — Bug fixes (v1.1.2):**
-- ✅ `settings.json` invalid JSON (missing comma) fixed
-- ✅ `pre-compact-check` false positives fixed (date anchored to line start)
-- ✅ Missing TRUNCATE TABLE + DELETE FROM guardrails added to both shells + templates
-- ✅ Template pre-compact whitespace trimming synced
-
-**PMB WS2 — Test coverage (v1.2.0):**
-- ✅ 8 new test files; 115 assertions across 11 suites; all mb commands now covered
-- ✅ Doctor test check-13 fixture rename hardened; check-2 templates rename hardened
-
-**PMB WS3 — CI hardening:**
-- ✅ `powershell-lint` job: PSScriptAnalyzer at Error severity on all .ps1 files
-- ✅ `mb-doctor-self-check` job: runs mb doctor on PMB repo on every push
-- ✅ Total: 9 CI jobs
-
-**PMB WS4 — Performance + docs:**
-- ✅ O(n²) pre-cache in doctor checks 22+23 (sh + ps1)
-- ✅ `find | xargs wc` → `find -exec wc {} +` in show_budget
-- ✅ `mb help` + `mb.ps1 Show-Help` deprecated aliases section; ps1 gains plan/preflight/change-check
-- ✅ HOOKS-GUIDE section 6: delegation depth hook + .pmb-delegation-depth runtime file
-- ✅ health-check.md: 20→24 check count
-
-**ACR — P0 + P1 + P2:**
-- ✅ P0: comment marker versioned, provider validation, README 15-agent count, Prettier CI
-- ✅ P1 partial: orchestrator deterministic-source guard, sanitizer JSON metadata, command docs
-- ✅ P1 deferred (confirmed already in v1.1.0): policy layer, SARIF, GitHub annotations, agentPolicy docs
-- ✅ P2: schemaVersion/toolVersion/profile in ReviewResult + integration contract docs
+- ✅ **06-19:** Semantic drift checks 21-23 added to `mb doctor`; `/mb-drift` skill created; startup context trimmed to below 25 KB.
+- ✅ **06-22:** `docs/plans/` + `.claude/plans/` workflow scaffolded; `mb plan status|list|promote|archive`; doctor check 24 (plan hygiene); `/change-review` command created (9-job review + ACR bridge).
+- ✅ **06-24 Audit Sprint:** Bug fixes (settings.json JSON, pre-compact false positives, TRUNCATE/DELETE guardrails); 8 new test files (115 assertions); CI hardened to 9 jobs (PSScriptAnalyzer, mb-doctor-self-check); perf fixes (O(n²) pre-cache); ACR P0/P1/P2 (comment markers, SARIF, GitHub annotations, schemaVersion).
 
 ## Satellite Projects
 
 - **ai-code-review-agent** — `unyieldingclaw-dev/ai-code-review-agent`. v1.1.0: 15 observe-only agents, profiles, --context memory-bank, SARIF, GitHub annotations, agentPolicy, integration contract. 276 tests passing.
 
-## `mb upgrade` Standards Ownership Fix (2026-07-02)
+## `mb upgrade` Fixes (2026-07-02)
 
-- ✅ Root cause: `standards/*.md` (15 files) were in `$advisoryCreate` — create-if-missing, diff-only-if-different. Standards are pure governance substrate (no per-project customization), so projects silently fell behind template updates instead of auto-syncing.
-- ✅ Fix: moved all 15 `standards/` entries from `$advisoryCreate` to `$templateOwned` in `scripts/mb.ps1` (`Invoke-Upgrade`) — now overwritten unconditionally on hash mismatch, same as `.claude/settings.json` and `.githooks/*`.
-- ✅ `$advisoryCreate` kept as `@()` for future files that legitimately need create-if-missing + diff-if-customized semantics.
-- ✅ README.md corrected: 12 → 15 standards files; overwrite semantics documented instead of advisory-diff.
-- ✅ 6/6 `mb-setup.Tests.ps1` Pester tests still pass. Committed `a453a5a`, pushed to origin/main.
+- ✅ Standards ownership: moved 15 `standards/*.md` from `$advisoryCreate` to `$templateOwned` in `Invoke-Upgrade` — they're pure governance substrate, so projects were silently falling behind template updates. Committed `a453a5a`.
+- ✅ Slash-command auto-discovery: `Invoke-Upgrade`'s `$templateOwned` hardcoded 5 command filenames, missing 2 shipped in 1.2.0. Now appends every file found in `templates/claude-commands/` at runtime, same pattern `mb init` already used. Committed `465d5d1`. Note: running `mb upgrade` on a stale project syncs *all* of `$templateOwned`, not just commands — all-or-nothing, not a single-file patch.
 
-## `mb upgrade` Slash Command Auto-Discovery Fix (2026-07-02)
+## Agent Frontmatter `name:` Fix + mb doctor Check 25 (2026-07-03)
 
-- ✅ Root cause: `Invoke-Upgrade`'s `$templateOwned` hardcoded 5 command filenames. `accessibility-review.md` + `change-review.md` shipped in 1.2.0 but were never added to the list, so `mb upgrade` silently skipped them in every existing project. `mb init` and `Get-MbUpgradeAnalysis` already discover commands dynamically from `templates/claude-commands/` — only the actual upgrade-copy logic was stuck on a stale static list.
-- ✅ Fix: `Invoke-Upgrade` now appends every file found in `templates/claude-commands/` to `$templateOwned` at runtime (same pattern `mb init` already used). No list to remember to update when a new command ships.
-- ✅ Verified via dry-run + live run against `rfx-cook-tracker`: both missing commands added, existing ones reported unchanged. Committed `465d5d1`, pushed to origin/main.
-- ⚠️ Side effect discovered during verification: running `mb upgrade` for real on a project several versions behind syncs *all* of `$templateOwned`, not just commands — surprised the user mid-session since `rfx-cook-tracker` was behind on cursor rules/settings/standards too. Not a bug, but worth stating explicitly when asking a user to approve running `mb upgrade` on a stale project: it's an all-or-nothing sync of the owned-file set, not a single-file patch.
+- ✅ Fixed missing `name:` frontmatter on `researcher`/`security-reviewer` agents, which silently broke registration. Added `mb doctor` check 25 (name/parity validation); ported missing check 24 into `mb.ps1`. Full detail: CHANGELOG.md.
+
+## Fixed 4 Pre-Existing CI Failures + Closed a Review-Process Gap (2026-07-04)
+
+- ✅ Root cause: PR #7 (above) passed review but CI showed 4 failing jobs, confirmed pre-existing on `main` (inherited, not caused).
+- ✅ **SAST:** `p/bash` Semgrep config 404'd → `--config auto`.
+- ✅ **Rules-File Integrity / Forbidden Patterns:** both greps false-positived on doc-formatted examples of the patterns they detect. Took two review rounds to close correctly: a single-char lookbehind (bypassable, 1 stray backtick) → a fenced+paired-backtick stripper with a fence-count guard (opposition review found this *still* bypassable: an odd backtick count on one line lets a stray backtick pair with an unrelated later one, deleting real content between them) → final fix adds a per-line even/odd backtick-parity guard, verified against both bypasses plus all known true/false positives.
+- ✅ **PowerShell Lint:** `scripts/PSScriptAnalyzerSettings.psd1` excludes `PSAvoidUsingWriteHost` project-wide (console-output CLI/hook scripts); `Write-Verbose` added to 22 empty catches; BOM added to 17 files; `Normalize-MbLine`→`Format-MbLine` rename; dead `Invoke-InstallHooks` removed; 2 false-positive unused-param warnings suppressed.
+- ✅ **Closed the review-process gap** (`docs/HOOKS-GUIDE.md`: Reviewer shouldn't duplicate CI): added `/change-review` Step 3.5 — Baseline Repo Health, local/offline, informational, never blocking. Also fixed its marker-hash commands, which didn't match the push-gate hook in all cases.
+- ✅ Two rounds of 5-domain review + opposition caught 3 self-inflicted regressions pre-commit: the bypassable strip logic (twice, above) and a stray em dash that would've reintroduced a BOM warning. `bash tests/run.sh` (44/44), `mb doctor` clean.
+- ✅ Pushed (`c83e007`); CI still showed 2 `PSAvoidUsingEmptyCatchBlock` warnings at `check-contract.ps1:64` — a `catch { # comment }` is still "empty" to PSScriptAnalyzer (comments aren't statements), missed in the 22-instance sweep since it wasn't a bare `catch {}`. Fixed with the same `Write-Verbose` pattern (`b1105e3`), both `scripts/` and `templates/scripts/` copies. All 9 CI jobs confirmed green on PR #7.

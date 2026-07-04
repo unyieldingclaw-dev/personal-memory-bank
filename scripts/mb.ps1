@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Memory Bank utility commands.
 
@@ -18,6 +18,7 @@
 # WHY: ValidateSet ensures typos show helpful error messages listing valid commands.
 # Position=0 allows "mb status" instead of requiring "mb -Command status".
 # Default to "help" so running "mb" alone shows usage, not an error.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'DryRun', Justification='Read by nested functions (e.g. Invoke-Upgrade) via script-scope chaining — PSScriptAnalyzer cannot see usage inside a separately-scoped function body.')]
 param(
     [Parameter(Position=0)]
     [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "preflight", "change-check", "setup", "help")]
@@ -728,98 +729,6 @@ function Invoke-Init {
     Write-Host ""
 }
 
-function Invoke-InstallHooks {
-    # WHY: Separate from mb init so users who already initialized can retrofit the pre-push hook
-    # without re-running init (which would skip everything as already present). mb init handles
-    # new projects; install-hooks handles the retrofit case.
-    Write-Host ""
-    Write-Host "Install Git Hooks" -ForegroundColor Cyan
-    Write-Host "=================" -ForegroundColor Cyan
-    Write-Host ""
-
-    $gitDir = Join-Path $PWD.Path ".git"
-    if (-not (Test-Path $gitDir)) {
-        Write-Host "[ERROR] No .git directory found. Run this from the root of a git repository." -ForegroundColor Red
-        return
-    }
-
-    $TemplatesDir = Join-Path $RepoRoot "templates"
-    if (-not (Test-Path $TemplatesDir)) {
-        Write-Host "[ERROR] Templates not found at $TemplatesDir" -ForegroundColor Red
-        Write-Host "Run install.bat from the memory-bank repo, or set MB_HOME." -ForegroundColor Yellow
-        return
-    }
-
-    $Target = $PWD.Path
-    $Installed = @()
-    $Skipped   = @()
-
-    # Ensure scripts/ exists and pre-push check scripts are present
-    $scriptsDir = Join-Path $Target "scripts"
-    if (-not (Test-Path $scriptsDir)) {
-        if (-not $DryRun) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
-    }
-    foreach ($scriptName in @("pre-push-check.ps1", "pre-push-check.sh", "delegation-depth-check.ps1", "delegation-depth-check.sh")) {
-        $src = Join-Path $TemplatesDir "scripts\$scriptName"
-        $dst = Join-Path $scriptsDir $scriptName
-        if (-not (Test-Path $src)) {
-            Write-Host "[WARN] Template source missing: $src" -ForegroundColor Yellow
-            continue
-        }
-        if (Test-Path $dst) {
-            Write-Host "  [=] scripts/$scriptName (already present)" -ForegroundColor DarkGray
-            $Skipped += "scripts/$scriptName"
-        } else {
-            if ($DryRun) {
-                Write-Host "  [+] scripts/$scriptName (would create)" -ForegroundColor Green
-            } else {
-                Copy-Item -Path $src -Destination $dst -Force
-                Write-Host "  [+] scripts/$scriptName" -ForegroundColor Green
-            }
-            $Installed += "scripts/$scriptName"
-        }
-    }
-
-    # Install .git/hooks/pre-push
-    $hookSrc  = Join-Path $TemplatesDir "hooks\pre-push"
-    $hooksDir = Join-Path $gitDir "hooks"
-    $hookDst  = Join-Path $hooksDir "pre-push"
-
-    if (-not (Test-Path $hookSrc)) {
-        Write-Host "[ERROR] Hook template not found: $hookSrc" -ForegroundColor Red
-        return
-    }
-    if (-not (Test-Path $hooksDir) -and -not $DryRun) {
-        New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
-    }
-
-    if (Test-Path $hookDst) {
-        Write-Host "  [=] .git/hooks/pre-push (already installed)" -ForegroundColor DarkGray
-        Write-Host "      To reinstall: delete .git/hooks/pre-push and re-run mb install-hooks" -ForegroundColor DarkGray
-        $Skipped += ".git/hooks/pre-push"
-    } else {
-        if ($DryRun) {
-            Write-Host "  [+] .git/hooks/pre-push (would install)" -ForegroundColor Green
-        } else {
-            Copy-Item -Path $hookSrc -Destination $hookDst -Force
-            # WHY: git hooks must be executable on Unix; Windows Git for Windows checks the bit too.
-            if ($IsLinux -or $IsMacOS) { chmod +x $hookDst 2>/dev/null }
-            Write-Host "  [+] .git/hooks/pre-push" -ForegroundColor Green
-        }
-        $Installed += ".git/hooks/pre-push"
-    }
-
-    Write-Host ""
-    if ($DryRun) {
-        Write-Host "Dry run — no files written." -ForegroundColor Yellow
-    } elseif ($Installed.Count -gt 0) {
-        Write-Host "Done. The pre-push check will run automatically on every 'git push'." -ForegroundColor Green
-    } else {
-        Write-Host "Hooks already in place — nothing changed." -ForegroundColor DarkGray
-    }
-    Write-Host ""
-}
-
 function Show-Validate {
     Write-Host ""
     Write-Host "Validation" -ForegroundColor Cyan
@@ -1289,7 +1198,7 @@ function Show-Doctor {
         try {
             $days = ([datetime]::Today - [datetime]::ParseExact($lastReviewed, 'yyyy-MM-dd', $null)).Days
             if ($days -gt 180) { $oldStableFindings += @{File=$f; Days=$days; Auth=$authority} }
-        } catch {}
+        } catch { Write-Verbose "Could not parse last-reviewed date '$lastReviewed' for $f; skipping from 180-day check." }
     }
     if ($oldStableFindings.Count -eq 0) {
         Write-Host "[OK]   All stable-authority decisions reviewed within 180 days" -ForegroundColor Green
@@ -1396,7 +1305,7 @@ function Show-Doctor {
             if ($commitDate -gt $revDate) {
                 $gitLagFindings += [pscustomobject]@{ File = $f; Reviewed = $lastReviewed; Commit = $lastCommit }
             }
-        } catch {}
+        } catch { Write-Verbose "Could not parse a date for $f (reviewed='$lastReviewed', commit='$lastCommit'); skipping git-lag check." }
     }
     if ($gitLagFindings.Count -eq 0) {
         Write-Host "[OK]   Git-vs-reviewed lag — all files reviewed after last commit" -ForegroundColor Green
@@ -1409,7 +1318,7 @@ function Show-Doctor {
     }
 
     # Helper: strip emoji/markers, lowercase, collapse whitespace
-    function Normalize-MbLine([string]$s) {
+    function Format-MbLine([string]$s) {
         ($s -replace '[✅⏸\-\*#]', '' -replace '\s+', ' ').Trim().ToLower()
     }
 
@@ -1425,13 +1334,13 @@ function Show-Doctor {
         $fLines = Get-Content $p
         for ($i = 0; $i -lt $fLines.Count; $i++) {
             if ($fLines[$i] -match '⏸') {
-                $plannedItems += [pscustomobject]@{ Text = $fLines[$i]; NormText = (Normalize-MbLine $fLines[$i]); File = $f; Line = $i + 1 }
+                $plannedItems += [pscustomobject]@{ Text = $fLines[$i]; NormText = (Format-MbLine $fLines[$i]); File = $f; Line = $i + 1 }
             }
         }
     }
     $c22Matches = @(); $c22Seen = @{}
     foreach ($doneLine in $completedLines) {
-        $doneNorm = Normalize-MbLine $doneLine
+        $doneNorm = Format-MbLine $doneLine
         $tokens   = $doneNorm -split '\s+' | Where-Object { $_ }
         if ($tokens.Count -lt 4) { continue }
         for ($i = 0; $i -le $tokens.Count - 4; $i++) {
@@ -1469,11 +1378,11 @@ function Show-Doctor {
             if ($inNextSteps -and $line -match '^\s*[-*]') { $nextStepLines += $line }
         }
     }
-    # Pre-normalize completed lines once to avoid O(n²) Normalize-MbLine calls
-    $completedNorms = $completedLines | ForEach-Object { Normalize-MbLine $_ }
+    # Pre-normalize completed lines once to avoid O(n²) Format-MbLine calls
+    $completedNorms = $completedLines | ForEach-Object { Format-MbLine $_ }
     $c23Matches = @(); $c23Seen = @{}
     foreach ($step in $nextStepLines) {
-        $stepNorm = Normalize-MbLine $step
+        $stepNorm = Format-MbLine $step
         $tokens   = $stepNorm -split '\s+' | Where-Object { $_ }
         if ($tokens.Count -lt 4) { continue }
         for ($i = 0; $i -le $tokens.Count - 4; $i++) {
@@ -1503,6 +1412,128 @@ function Show-Doctor {
         Write-Host "       Structural drift signals detected — run /mb-drift for semantic analysis." -ForegroundColor DarkYellow
     }
 
+    # 24. Plan hygiene — docs/plans/ structure and draft tracking
+    $durableDir = "docs/plans"
+    $scratchDir = ".claude/plans"
+
+    if (Test-Path $durableDir) {
+        Write-Host "[OK]   docs/plans/ exists" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] docs/plans/ not found — run 'mb plan status' for setup" -ForegroundColor Yellow
+    }
+
+    if (Test-Path $scratchDir) {
+        $trackedScratch = @(git ls-files $scratchDir 2>$null)
+        if ($trackedScratch.Count -gt 0) {
+            Write-Host "[ERROR] $($trackedScratch.Count) scratch plan(s) in $scratchDir are tracked by git" -ForegroundColor Red
+            foreach ($f in $trackedScratch) { Write-Host "       $f" }
+            Write-Host "       Fix: git rm --cached $scratchDir/*.md" -ForegroundColor Red
+        } else {
+            Write-Host "[OK]   No tracked scratch plans in $scratchDir" -ForegroundColor Green
+        }
+    }
+
+    if (Test-Path $durableDir) {
+        $missingFmPlans = @()
+        Get-ChildItem -Path $durableDir -Filter "*.md" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
+            # -notmatch '^---' (not exact equality) mirrors bash's `grep -c '^---'`, which
+            # also accepts "----" or "--- trailing text" as a valid frontmatter opener.
+            $firstLine = Get-Content $_.FullName -TotalCount 1
+            if ($firstLine -notmatch '^---') { $missingFmPlans += $_.FullName }
+        }
+        if ($missingFmPlans.Count -gt 0) {
+            Write-Host "[WARN] $($missingFmPlans.Count) plan(s) missing frontmatter:" -ForegroundColor Yellow
+            foreach ($p in $missingFmPlans) { Write-Host "       $p" }
+        } else {
+            Write-Host "[OK]   All plans have frontmatter" -ForegroundColor Green
+        }
+
+        $stalePlans = @()
+        $todayP = Get-Date
+        Get-ChildItem -Path $durableDir -Filter "*.md" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
+            $statusLine = Get-Content $_.FullName | Where-Object { $_ -match '^status:\s*(.+)$' } | Select-Object -First 1
+            if ($statusLine -match '^status:\s*(.+)$') {
+                $status = $matches[1].Trim()
+                if ($status -eq "planned" -or $status -eq "active") {
+                    $lastCommit = (git log -1 --format="%as" -- $_.FullName 2>$null)
+                    if ($lastCommit) {
+                        # WHY: ParseExact throws on any format other than yyyy-MM-dd; wrap so an
+                        # unexpected git date format can't abort the rest of mb doctor.
+                        try {
+                            $commitDate = [datetime]::ParseExact($lastCommit, "yyyy-MM-dd", $null)
+                            $days = ($todayP - $commitDate).Days
+                            if ($days -gt 30) { $stalePlans += "$($_.Name) (${days}d, status:$status)" }
+                        } catch { Write-Verbose "Could not parse commit date '$lastCommit' for $($_.Name); skipping stale-plan check." }
+                    }
+                }
+            }
+        }
+        if ($stalePlans.Count -gt 0) {
+            Write-Host "[WARN] $($stalePlans.Count) plan(s) with no activity in 30+ days:" -ForegroundColor Yellow
+            foreach ($p in $stalePlans) { Write-Host "       $p" }
+        } else {
+            Write-Host "[OK]   No stale plans" -ForegroundColor Green
+        }
+    }
+
+    # 25. Agent frontmatter — .claude/agents/*.md must declare name: matching filename
+    $agentsDir = ".claude/agents"
+    if (Test-Path $agentsDir) {
+        $missingNameAgents = @()
+        $mismatchedNameAgents = @()
+        Get-ChildItem -Path $agentsDir -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $stem = $_.BaseName
+            # Scope to the frontmatter block only, so a body line starting with "name:"
+            # (e.g. example YAML in an agent's own instructions) can't false-match.
+            $content = Get-Content $_.FullName -Raw
+            $fmMatch = [regex]::Match($content, '(?s)^---\r?\n(.+?)\r?\n---')
+            $agentName = ""
+            if ($fmMatch.Success) {
+                $nameMatch = [regex]::Match($fmMatch.Groups[1].Value, '(?m)^name:\s*(.+)$')
+                if ($nameMatch.Success) {
+                    $agentName = $nameMatch.Groups[1].Value.Trim().Trim('"', "'")
+                }
+            }
+            if ([string]::IsNullOrEmpty($agentName)) {
+                $missingNameAgents += $_.FullName
+            } elseif ($agentName -ne $stem) {
+                $mismatchedNameAgents += "$($_.FullName) (name: $agentName, filename: $stem)"
+            }
+        }
+        if ($missingNameAgents.Count -gt 0) {
+            Write-Host "[WARN] $($missingNameAgents.Count) agent(s) missing name: in frontmatter — Claude Code will silently fail to register them:" -ForegroundColor Yellow
+            foreach ($a in $missingNameAgents) { Write-Host "       $a" }
+        }
+        if ($mismatchedNameAgents.Count -gt 0) {
+            Write-Host "[WARN] $($mismatchedNameAgents.Count) agent(s) have name: that doesn't match their filename:" -ForegroundColor Yellow
+            foreach ($a in $mismatchedNameAgents) { Write-Host "       $a" }
+        }
+        if ($missingNameAgents.Count -eq 0 -and $mismatchedNameAgents.Count -eq 0) {
+            Write-Host "[OK]   All agent definitions have name: matching their filename" -ForegroundColor Green
+        }
+
+        # Live/template parity — only applies in the PMB source repo, which ships both
+        # a dogfooded .claude/agents/ and a templates/.claude/agents/ copy.
+        $templateAgentsDir = "templates/.claude/agents"
+        if (Test-Path $templateAgentsDir) {
+            $parityIssues = @()
+            Get-ChildItem -Path $agentsDir -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+                $templatePath = Join-Path $templateAgentsDir $_.Name
+                if (Test-Path $templatePath) {
+                    $liveHash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+                    $templateHash = (Get-FileHash $templatePath -Algorithm SHA256).Hash
+                    if ($liveHash -ne $templateHash) { $parityIssues += $_.Name }
+                }
+            }
+            if ($parityIssues.Count -gt 0) {
+                Write-Host "[WARN] $($parityIssues.Count) agent(s) differ from their templates/.claude/agents/ copy:" -ForegroundColor Yellow
+                foreach ($a in $parityIssues) { Write-Host "       $a" }
+            } else {
+                Write-Host "[OK]   Live agents match templates/.claude/agents/" -ForegroundColor Green
+            }
+        }
+    }
+
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
     Write-Host "  Startup Context"
@@ -1529,7 +1560,7 @@ function Show-Doctor {
                 # the raw string gives an approximation consistent with current-file sizing.
                 $content30d = git show "${commit30d}:${f}" 2>$null
                 if ($content30d) { $total30d += [System.Text.Encoding]::UTF8.GetByteCount($content30d) }
-            } catch {}
+            } catch { Write-Verbose "Could not read historical content for $f at $commit30d; excluding from 30-day growth calc." }
         }
         if ($total30d -gt 0) {
             $growth = [int](($totalBytes - $total30d) * 100 / $total30d)
@@ -2244,7 +2275,7 @@ function Show-PlanStatus {
                 $CommitEpoch = [DateTimeOffset]::Parse($LastCommit).ToUnixTimeSeconds()
                 $Days = [int](($TodayEpoch - $CommitEpoch) / 86400)
                 if ($Days -gt 30) { $StaleCount++ }
-            } catch {}
+            } catch { Write-Verbose "Could not parse commit date '$LastCommit'; skipping stale-count check." }
         }
     }
 
@@ -2306,7 +2337,7 @@ function Show-PlanList {
                     $CommitEpoch = [DateTimeOffset]::Parse($LastCommit).ToUnixTimeSeconds()
                     $Days = [int](($TodayEpoch - $CommitEpoch) / 86400)
                     if ($Days -gt 30) { $StaleFlag = " [STALE ${Days}d]" }
-                } catch {}
+                } catch { Write-Verbose "Could not parse commit date '$LastCommit'; skipping stale-flag check." }
             }
         }
 

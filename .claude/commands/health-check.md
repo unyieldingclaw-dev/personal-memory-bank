@@ -1,5 +1,5 @@
 ---
-description: Full PMB health check — mb doctor (24 checks), staleness audit, structure validation, and security fixture verification on this repo's own memory bank. Reports a summary with pass/warn/fail for each area.
+description: Full PMB health check — mb doctor (25 checks), staleness audit, structure validation, and security fixture verification on this repo's own memory bank. Reports a summary with pass/warn/fail for each area.
 allowed-tools:
   - Bash(mb doctor)
   - Bash(mb status)
@@ -14,7 +14,7 @@ Run the following checks in order and print a labeled result for each. At the en
 
 ## 1. Doctor
 
-Run `mb doctor` from this repo's root. This runs all 24 health checks including structure, frontmatter, compaction integrity, and staleness summary.
+Run `mb doctor` from this repo's root. This runs all 25 health checks including structure, frontmatter, compaction integrity, and staleness summary.
 
 **Output header:** `### mb doctor`
 
@@ -28,7 +28,7 @@ Run `mb status` on this repo's own `memory-bank/`. This checks initialization st
 
 ## 3. Staleness Audit
 
-Review the staleness summary produced by `mb doctor` (Check 24 — staleness report). It lists each memory-bank file with its staleness status (days since last review vs threshold).
+Review the staleness summary produced by `mb doctor` (Check 9 — staleness summary). It lists each memory-bank file with its staleness status (days since last review vs threshold).
 
 **Output header:** `### Staleness Review`
 
@@ -44,7 +44,7 @@ Run `git status --short` and `git log --oneline -5`. Note any uncommitted change
 
 If `fixtures/security/` does not exist, skip this step and note it in the summary.
 
-Otherwise, use the security-reviewer agent (`@security-reviewer`) to review the `fixtures/security/` directory. Ask it: "Review the fixtures/security/ directory. For each subdirectory, report whether the expected SEC-00X rule ID appears in the findings — ✅ caught or ❌ missed."
+Otherwise, use the security-reviewer agent to review the `fixtures/security/` directory. Ask it: "Review the fixtures/security/ directory. For each subdirectory, report whether the expected SEC-00X rule ID appears in the findings — ✅ caught or ❌ missed."
 
 **Output header:** `### Security Fixtures`
 
@@ -55,4 +55,4 @@ For each subdirectory in `fixtures/security/`, report:
 
 Print a short paragraph summarizing all five areas. Use ✅ for clean, ⚠️ for warnings, ❌ for failures. Example:
 
-> ✅ mb doctor: all 24 checks OK. ✅ mb validate: structure valid. ⚠️ mb audit: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date. ✅ Security fixtures: 9/9 rules caught.
+> ✅ mb doctor: all 25 checks OK. ✅ mb validate: structure valid. ⚠️ mb audit: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date. ✅ Security fixtures: 9/9 rules caught.
