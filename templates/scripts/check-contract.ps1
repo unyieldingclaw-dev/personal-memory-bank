@@ -63,6 +63,7 @@ if ($expiresAt) {
         }
     } catch {
         # Ignore parse errors — fail open
+        Write-Verbose "Could not parse expires_at '$expiresAt'; treating contract as not expired."
     }
 }
 
