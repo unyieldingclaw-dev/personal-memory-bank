@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0] — 2026-07-04 (CI health fixes)
+
+### Fixed
+- **`.github/workflows/pmb-health.yml` SAST job** — `semgrep --config "p/bash"` returned HTTP 404 (no longer a resolvable registry ruleset); switched to `--config auto`.
+- **Rules-File Integrity "hidden HTML comments" check** — false-positived on `standards/RULES-FILE-INTEGRITY.md`'s own backtick-wrapped documentation examples. Refined to strip fenced code blocks and paired inline-code spans before matching, with two guard rails found necessary through two rounds of adversarial review: (1) an odd count of ``` fence markers falls back to inline-only stripping, so a malformed fence can't hide the rest of a file from the check; (2) an odd count of backticks *on a single line* leaves that line unstripped entirely, since a naive `` s/`[^`]*`//g `` still pairs a stray backtick with an unrelated later one and silently deletes everything between — including a real hidden comment placed right after the stray backtick. (Two earlier variants — a single-character negative lookbehind, then a stripper without the per-line parity guard — were each found bypassable in review and replaced before shipping.)
+- **Forbidden Patterns "spec placeholder grep"** — false-positived on two spec docs' own code-formatted examples of the TBD/TODO pattern. Uses the identical strip-fenced-code-and-paired-backticks helper (with both guard rails) as the fix above.
+- **PowerShell Lint** — added `scripts/PSScriptAnalyzerSettings.psd1` excluding `PSAvoidUsingWriteHost` project-wide (every `.ps1` here is a CLI/hook script whose job is console output); added `Write-Verbose` diagnostics to 22 previously-empty `catch {}` blocks; added a UTF-8 BOM to the 17 `.ps1` files that needed it; renamed `Normalize-MbLine` → `Format-MbLine` in `mb.ps1` (not an approved PowerShell verb); removed the dead `Invoke-InstallHooks` function (~92 lines, zero call sites); added targeted suppressions for `$DryRun`/`$Force` false-positive unused-parameter warnings (both read via script-scope chaining in nested functions).
+- **`.claude/commands/change-review.md` marker-hash commands** — both the Bash and PowerShell snippets were missing the `git diff HEAD` fallback that `scripts/review-reminders.sh`/`.ps1` actually use when no `origin/main` upstream exists; added to match exactly.
+
+### Added
+- **`.claude/commands/change-review.md` Step 3.5 — Baseline Repo Health** — a new informational-only, offline-only spot-check against the whole working tree (not diff-scoped), so a diff-clean review doesn't silently approve a change sitting on a CI-red base branch. Never blocking; explicitly excludes network-dependent tools (Semgrep, PSScriptAnalyzer, gitleaks), which remain CI-only per this repo's layered-enforcement design.
+
 ## [1.2.0] — 2026-07-03 (agent frontmatter fix)
 
 ### Fixed

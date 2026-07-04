@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     PreToolUse hook — 3-tier dangerous command guardrails for Claude Code.
 .DESCRIPTION
@@ -37,7 +37,7 @@ try {
 } catch {
     Write-Host "[HOOK ERROR] dangerous-commands.ps1 failed unexpectedly."
     Write-Host "Proceeding in fails-open mode."
-    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] dangerous-commands.ps1: $_" -ErrorAction SilentlyContinue } catch {}
+    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] dangerous-commands.ps1: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
     exit 0
 }
 

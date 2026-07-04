@@ -122,6 +122,13 @@ Full history: CHANGELOG.md
 
 ## Agent Frontmatter `name:` Fix + mb doctor Check 25 (2026-07-03)
 
-- ✅ Fixed missing `name:` frontmatter on `researcher`/`security-reviewer` agents (live + template) that made Claude Code silently fail to register them. Added `mb doctor` check 25 (24→25) to catch this class of bug going forward, in `mb.sh` and `mb.ps1`, plus a live/template parity check. Ported the previously-missing check 24 into `mb.ps1`. Fixed doc-count and mislabel drift. Full detail: CHANGELOG.md "agent frontmatter fix" entry.
-- ✅ Code review (5 domains + opposition, then a focused re-review) found and fixed all 17 non-blocking issues: elif-suppression in check 25, unscoped `name:` extraction, quote/whitespace-stripping edge case, unhandled `ParseExact` in the ported check 24, stale doc counts, casing drift — plus bash test coverage for every new edge case.
-- ✅ Also fixed unrelated pre-existing bug found in passing: `mb query`'s tag-matching `awk` script used `\s` (gawk-only; silently never matched on `mawk`, this environment's default `awk`) — replaced with portable `[[:space:]]`.
+- ✅ Fixed missing `name:` frontmatter on `researcher`/`security-reviewer` agents, which silently broke registration. Added `mb doctor` check 25 (name/parity validation); ported missing check 24 into `mb.ps1`. Full detail: CHANGELOG.md.
+
+## Fixed 4 Pre-Existing CI Failures + Closed a Review-Process Gap (2026-07-04)
+
+- ✅ Root cause: PR #7 (above) passed review but CI showed 4 failing jobs, confirmed pre-existing on `main` (inherited, not caused).
+- ✅ **SAST:** `p/bash` Semgrep config 404'd → `--config auto`.
+- ✅ **Rules-File Integrity / Forbidden Patterns:** both greps false-positived on doc-formatted examples of the patterns they detect. Took two review rounds to close correctly: a single-char lookbehind (bypassable, 1 stray backtick) → a fenced+paired-backtick stripper with a fence-count guard (opposition review found this *still* bypassable: an odd backtick count on one line lets a stray backtick pair with an unrelated later one, deleting real content between them) → final fix adds a per-line even/odd backtick-parity guard, verified against both bypasses plus all known true/false positives.
+- ✅ **PowerShell Lint:** `scripts/PSScriptAnalyzerSettings.psd1` excludes `PSAvoidUsingWriteHost` project-wide (console-output CLI/hook scripts); `Write-Verbose` added to 22 empty catches; BOM added to 17 files; `Normalize-MbLine`→`Format-MbLine` rename; dead `Invoke-InstallHooks` removed; 2 false-positive unused-param warnings suppressed.
+- ✅ **Closed the review-process gap** (`docs/HOOKS-GUIDE.md`: Reviewer shouldn't duplicate CI): added `/change-review` Step 3.5 — Baseline Repo Health, local/offline, informational, never blocking. Also fixed its marker-hash commands, which didn't match the push-gate hook in all cases.
+- ✅ Two rounds of 5-domain review + opposition caught 3 self-inflicted regressions pre-commit: the bypassable strip logic (twice, above) and a stray em dash that would've reintroduced a BOM warning. `bash tests/run.sh` (44/44), `mb doctor` clean.

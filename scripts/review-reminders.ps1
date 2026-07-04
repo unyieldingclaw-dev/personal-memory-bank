@@ -1,4 +1,4 @@
-# PreToolUse hook — blocks git commit/push until the matching review slash command has run.
+﻿# PreToolUse hook — blocks git commit/push until the matching review slash command has run.
 # /code-review writes .claude/.code-review-ok on an Approve verdict; /change-review writes
 # .claude/.change-review-ok when no finding is Blocking. Each marker authorizes exactly one
 # commit or push attempt for a SPECIFIC diff -- see below.
@@ -103,7 +103,7 @@ function Test-AndConsumeMarker {
         return $false
     }
     $content = $null
-    try { $content = (Get-Content $claimed -Raw -ErrorAction Stop).Trim() } catch {}
+    try { $content = (Get-Content $claimed -Raw -ErrorAction Stop).Trim() } catch { Write-Verbose "Could not read consumed marker '$claimed'; treating as empty." }
     Remove-Item $claimed -Force -ErrorAction SilentlyContinue
     return ($content -and $content -eq $ExpectedHash)
 }
