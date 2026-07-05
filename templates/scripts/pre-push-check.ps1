@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Pre-push git hook — full error and warning check before any push.
 .DESCRIPTION

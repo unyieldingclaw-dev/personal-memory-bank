@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     PreToolUse hook — agent spawn count advisory.
 .DESCRIPTION
@@ -25,7 +25,7 @@ try {
             try {
                 $ts = [datetime]::ParseExact($Matches[1], 'yyyy-MM-dd HH:mm', $null)
                 if (([datetime]::Now - $ts).TotalMinutes -gt $maxAge) { $depth = 0 }
-            } catch {}
+            } catch { Write-Verbose "Could not parse stored timestamp; leaving depth unchanged." }
         }
     }
 
@@ -35,10 +35,10 @@ try {
     }
 
     $ts = Get-Date -Format 'yyyy-MM-dd HH:mm'
-    try { Set-Content -Path $depthFile -Value "depth=$($depth + 1)`ntimestamp=$ts" -NoNewline -ErrorAction Stop } catch {}
+    try { Set-Content -Path $depthFile -Value "depth=$($depth + 1)`ntimestamp=$ts" -NoNewline -ErrorAction Stop } catch { Write-Verbose "Could not persist $depthFile; depth tracking will reset next run." }
 
     exit 0
 } catch {
-    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] delegation-depth-check.ps1: $_" -ErrorAction SilentlyContinue } catch {}
+    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] delegation-depth-check.ps1: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
     exit 0
 }

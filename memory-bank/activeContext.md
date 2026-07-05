@@ -22,6 +22,8 @@ lineage: []
 
 **PMB v1.2.1** — fixed `templates/docs/` scaffolding gap (see `progress.md`). Downstream `mb upgrade` reruns still pending.
 
+**Also completed (separate session, merged in):** PMB v1.2.0 CI infrastructure — doctor suite 35/35 passing, all 9 CI jobs confirmed green on PR #7 (`b1105e3`) as of 2026-07-04 (details: progress.md); `/change-review` now includes a Baseline Repo Health spot-check.
+
 Also in progress: fix CI-red mains on `Bowling-Tracker`/`gmail-organizer`, then branch-protect `personal-memory-bank` + 8 downstream repos (approved, not yet executed).
 
 ## Architecture Constraints to Remember
@@ -40,8 +42,9 @@ Also in progress: fix CI-red mains on `Bowling-Tracker`/`gmail-organizer`, then 
 1. Fix red CI on `Bowling-Tracker`/`gmail-organizer`, then branch-protect `personal-memory-bank` + 8 downstream repos using each repo's own CI (not PMB's 9-job workflow).
 2. Re-run `mb upgrade` on downstream projects (Nolan-Budget + 8 repos) once 1.2.1 lands, to pick up `templates/docs/`.
 3. Port `mb.ps1`'s command auto-discovery fix to `mb.sh` (still hardcodes a stale list — see CHANGELOG).
-4. Monitor PMB CI (9 jobs, PSScriptAnalyzer at Warning severity).
-5. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08.
+4. **Monitor PMB CI** — all 9 jobs confirmed green on PR #7 as of 2026-07-04, PSScriptAnalyzer at Warning severity; watch for genuinely new lint categories in future `.ps1` changes (Write-Host is now excluded project-wide; comment-only catch blocks still count as "empty").
+5. **mb plan workflow** — `/feature-dev` Phase 3 now drafts plans to `.claude/plans/` and promotes via `mb plan promote`. Ensure new projects use this workflow.
+6. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
 
 ## Git State
 

@@ -1198,6 +1198,63 @@ show_doctor() {
         [ -d "$PLAN_DIR" ] && echo -e "${GREEN}[OK]   No stale plans${NC}"
     fi
 
+    # 25. Agent frontmatter — .claude/agents/*.md must declare name: matching filename
+    AGENTS_DIR=".claude/agents"
+    if [ -d "$AGENTS_DIR" ]; then
+        MISSING_NAME_AGENTS=()
+        MISMATCHED_NAME_AGENTS=()
+        for f in "$AGENTS_DIR"/*.md; do
+            [ ! -f "$f" ] && continue
+            STEM=$(basename "$f" .md)
+            # Scope to the frontmatter block only, so a body line starting with
+            # "name:" (e.g. example YAML in an agent's own instructions) can't false-match.
+            FM=$(awk 'NR==1{next} /^---$/{exit} {print}' "$f" 2>/dev/null)
+            AGENT_NAME=$(echo "$FM" | grep -m1 '^name:' \
+                | sed 's/^name:[[:space:]]*//' \
+                | sed -E 's/\r$//' \
+                | sed -E 's/[[:space:]]+$//' \
+                | sed -E 's/^"(.*)"$/\1/' \
+                | sed -E "s/^'(.*)'\$/\1/" \
+                | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')
+            if [ -z "$AGENT_NAME" ]; then
+                MISSING_NAME_AGENTS+=("$f")
+            elif [ "$AGENT_NAME" != "$STEM" ]; then
+                MISMATCHED_NAME_AGENTS+=("$f (name: $AGENT_NAME, filename: $STEM)")
+            fi
+        done
+        if [ "${#MISSING_NAME_AGENTS[@]}" -gt 0 ]; then
+            echo -e "${YELLOW}[WARN] ${#MISSING_NAME_AGENTS[@]} agent(s) missing name: in frontmatter — Claude Code will silently fail to register them:${NC}"
+            for a in "${MISSING_NAME_AGENTS[@]}"; do echo "       $a"; done
+        fi
+        if [ "${#MISMATCHED_NAME_AGENTS[@]}" -gt 0 ]; then
+            echo -e "${YELLOW}[WARN] ${#MISMATCHED_NAME_AGENTS[@]} agent(s) have name: that doesn't match their filename:${NC}"
+            for a in "${MISMATCHED_NAME_AGENTS[@]}"; do echo "       $a"; done
+        fi
+        if [ "${#MISSING_NAME_AGENTS[@]}" -eq 0 ] && [ "${#MISMATCHED_NAME_AGENTS[@]}" -eq 0 ]; then
+            echo -e "${GREEN}[OK]   All agent definitions have name: matching their filename${NC}"
+        fi
+
+        # Live/template parity — only applies in the PMB source repo, which ships
+        # both a dogfooded .claude/agents/ and a templates/.claude/agents/ copy.
+        TEMPLATE_AGENTS_DIR="templates/.claude/agents"
+        if [ -d "$TEMPLATE_AGENTS_DIR" ]; then
+            PARITY_ISSUES=()
+            for f in "$AGENTS_DIR"/*.md; do
+                [ ! -f "$f" ] && continue
+                t="$TEMPLATE_AGENTS_DIR/$(basename "$f")"
+                if [ -f "$t" ] && ! diff -q "$f" "$t" >/dev/null 2>&1; then
+                    PARITY_ISSUES+=("$(basename "$f")")
+                fi
+            done
+            if [ "${#PARITY_ISSUES[@]}" -gt 0 ]; then
+                echo -e "${YELLOW}[WARN] ${#PARITY_ISSUES[@]} agent(s) differ from their templates/.claude/agents/ copy:${NC}"
+                for a in "${PARITY_ISSUES[@]}"; do echo "       $a"; done
+            else
+                echo -e "${GREEN}[OK]   Live agents match templates/.claude/agents/${NC}"
+            fi
+        fi
+    fi
+
     # Startup context — observability section (not a numbered health check)
     echo ""
     echo "  Startup Context"
@@ -1410,10 +1467,12 @@ show_query() {
 
         # WHY: Two-pass search — tags in frontmatter, then ## section headers.
         # Frontmatter ends at second --- delimiter; grep -A handles partial matches.
+        # WHY [[:space:]] not \s: \s is a gawk-only extension — mawk (the default
+        # /usr/bin/awk on some Linux distros) treats it as a literal "s" and never matches.
         MATCHED_TAGS=$(awk '
             /^---/ { fm_count++; next }
-            fm_count == 1 && /^\s+-\s+/ {
-                tag = $0; gsub(/^\s+-\s+/, "", tag)
+            fm_count == 1 && /^[[:space:]]+-[[:space:]]+/ {
+                tag = $0; gsub(/^[[:space:]]+-[[:space:]]+/, "", tag)
                 if (tag ~ kw) print "  " tag
             }
             fm_count >= 2 { exit }

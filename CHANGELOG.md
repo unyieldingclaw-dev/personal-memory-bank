@@ -24,6 +24,32 @@ Any project that ran `mb init`/`mb setup` before this fix has a `CLAUDE.md` with
 - `scripts/review-reminders.ps1/.sh` + `-post.ps1/.sh`: `PreToolUse`/`PostToolUse` hook pair mechanically enforcing review-before-commit/push via a SHA-256 diff-hash marker (see ai-code-review-agent CHANGELOG for full design). Wired into PMB's own live `.claude/settings.json` (dogfooding) and added to `scripts/mb.ps1`'s `$templateOwned` list so `mb init`/`mb upgrade` distribute it to downstream projects.
 - `docs/HOOKS-GUIDE.md`: documented the fixed dangerous-commands/check-contract mechanisms and the review-gate hash-binding/atomic-consume/reissue design.
 
+## [1.2.0] — 2026-07-04 (CI health fixes)
+
+### Fixed
+- **`.github/workflows/pmb-health.yml` SAST job** — `semgrep --config "p/bash"` returned HTTP 404 (no longer a resolvable registry ruleset); switched to `--config auto`.
+- **Rules-File Integrity "hidden HTML comments" check** — false-positived on `standards/RULES-FILE-INTEGRITY.md`'s own backtick-wrapped documentation examples. Refined to strip fenced code blocks and paired inline-code spans before matching, with two guard rails found necessary through two rounds of adversarial review: (1) an odd count of ``` fence markers falls back to inline-only stripping, so a malformed fence can't hide the rest of a file from the check; (2) an odd count of backticks *on a single line* leaves that line unstripped entirely, since a naive `` s/`[^`]*`//g `` still pairs a stray backtick with an unrelated later one and silently deletes everything between — including a real hidden comment placed right after the stray backtick. (Two earlier variants — a single-character negative lookbehind, then a stripper without the per-line parity guard — were each found bypassable in review and replaced before shipping.)
+- **Forbidden Patterns "spec placeholder grep"** — false-positived on two spec docs' own code-formatted examples of the TBD/TODO pattern. Uses the identical strip-fenced-code-and-paired-backticks helper (with both guard rails) as the fix above.
+- **PowerShell Lint** — added `scripts/PSScriptAnalyzerSettings.psd1` excluding `PSAvoidUsingWriteHost` project-wide (every `.ps1` here is a CLI/hook script whose job is console output); added `Write-Verbose` diagnostics to 22 previously-empty `catch {}` blocks; added a UTF-8 BOM to the 17 `.ps1` files that needed it; renamed `Normalize-MbLine` → `Format-MbLine` in `mb.ps1` (not an approved PowerShell verb); removed the dead `Invoke-InstallHooks` function (~92 lines, zero call sites); added targeted suppressions for `$DryRun`/`$Force` false-positive unused-parameter warnings (both read via script-scope chaining in nested functions).
+- **`.claude/commands/change-review.md` marker-hash commands** — both the Bash and PowerShell snippets were missing the `git diff HEAD` fallback that `scripts/review-reminders.sh`/`.ps1` actually use when no `origin/main` upstream exists; added to match exactly.
+
+### Added
+- **`.claude/commands/change-review.md` Step 3.5 — Baseline Repo Health** — a new informational-only, offline-only spot-check against the whole working tree (not diff-scoped), so a diff-clean review doesn't silently approve a change sitting on a CI-red base branch. Never blocking; explicitly excludes network-dependent tools (Semgrep, PSScriptAnalyzer, gitleaks), which remain CI-only per this repo's layered-enforcement design.
+
+## [1.2.0] — 2026-07-03 (agent frontmatter fix)
+
+### Fixed
+- **`.claude/agents/*.md` missing `name:` field** — Claude Code silently fails to register a custom subagent without a `name:` frontmatter field; `researcher.md` and `security-reviewer.md` (plus their `templates/.claude/agents/` copies) had this bug. Added `name:` to all 4 files.
+- **`.claude/commands/health-check.md`** — corrected a mislabeled "Check 24" reference to the actual staleness check (check 9); removed the only non-functional `@agent-name` invocation-syntax mention in the repo.
+- **`mb doctor` check 25 ("Agent frontmatter") elif-suppression** — a directory with both a missing-`name:` agent and a mismatched-`name:` agent only reported the first; now both report independently.
+- **`mb doctor` check 25 `name:` extraction** — now scoped to the frontmatter block only (was scanning the whole file), strips surrounding quotes, and no longer over-strips internal spaces from multi-word values, on both `mb.sh` and `mb.ps1`.
+- **`mb.ps1` check 24 (Plan hygiene) port** — was previously missing entirely from `mb.ps1`, leaving `mb.sh`/`mb.ps1` doctor check counts out of sync; ported, including a `ParseExact` try/catch guard matching sibling call sites (was unguarded, could abort the rest of `mb doctor` on an unparseable git date) and a frontmatter-presence match aligned with `mb.sh`'s looser `grep -c '^---'` behavior.
+- **"24 checks" → "25 checks"** — updated `README.md` (both occurrences), `.claude/commands/health-check.md`, `docs/COMMANDS-REFERENCE.md` (was already stale at "20 checks"; table extended through check 25), and `tests/test-mb-doctor.sh` header.
+
+### Added
+- **`mb doctor` check 25 ("Agent frontmatter")** — scans `.claude/agents/*.md`, warns on missing or filename-mismatched `name:` fields, in both `mb.sh` and `mb.ps1`.
+- **`mb doctor` check 25 live/template parity check** — in the PMB source repo (where `templates/.claude/agents/` exists), warns if a live agent file diverges from its template copy.
+
 ## [1.2.0] — 2026-06-26 (additional hardening)
 
 ### Fixed

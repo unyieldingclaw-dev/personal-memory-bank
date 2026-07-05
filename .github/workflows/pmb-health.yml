@@ -78,13 +78,62 @@ jobs:
         run: |
           # Exclude *ci-governance* specs: they document the CI pattern itself
           # and necessarily reference the placeholder markers in prose.
-          FOUND=$(find docs/superpowers/specs -name "*.md" \
-            -not -name "*ci-governance*" \
-            -print0 \
-            | xargs -0 grep -lE '\bTBD\b|\bTODO\b' 2>/dev/null || true)
-          if [ -n "$FOUND" ]; then
+          #
+          # WHY strip code blocks/inline code first: specs about this very
+          # placeholder-detection feature (or about the grep pattern itself)
+          # necessarily show TODO/TBD as a code example (fenced ```...``` block
+          # or inline `backticks`), not as real leftover placeholder residue.
+          # Stripping code-formatted text before matching distinguishes "an
+          # example of the pattern" from "an actual unresolved placeholder".
+          # WHY the fence-count guard: an unbalanced (odd) count of ``` markers
+          # means the file has a malformed/unterminated fence -- naively
+          # toggling on every ``` would silently treat the rest of the file as
+          # "inside code" and never check it again. Falling back to inline-only
+          # stripping in that case keeps the rest of the file checked, erring
+          # toward catching a real placeholder rather than silently missing one.
+          #
+          # WHY the per-line backtick-parity guard: a line with an ODD number of
+          # backticks has a stray, unpaired backtick. A naive `s/`[^`]*`//g` still
+          # pairs it with the NEXT backtick on the line -- even an unrelated,
+          # legitimately-paired one from later in the line -- silently deleting
+          # everything between them, including any placeholder marker that stray
+          # backtick was placed in front of. Requiring an EVEN count before
+          # stripping a line at all closes that: an unpaired backtick means
+          # nothing on that line is provably real inline code, so nothing is
+          # stripped and the line is checked as-is.
+          strip_code() {
+            local file="$1"
+            local fence_count
+            fence_count=$(grep -c '^```' "$file" 2>/dev/null)
+            fence_count=${fence_count:-0}
+            local fence_stage
+            if [ $((fence_count % 2)) -ne 0 ]; then
+              fence_stage=$(cat "$file")
+            else
+              fence_stage=$(awk '/^```/{f=!f;next} f{next} {print}' "$file")
+            fi
+            printf '%s\n' "$fence_stage" | awk '
+              {
+                line = $0
+                n = gsub(/`/, "`", line)
+                if (n % 2 == 0) {
+                  gsub(/`[^`]*`/, "", line)
+                }
+                print line
+              }
+            '
+          }
+          FAIL=0
+          FOUND=""
+          while IFS= read -r -d '' file; do
+            if strip_code "$file" | grep -qE '\bTBD\b|\bTODO\b'; then
+              FOUND="$FOUND$file"$'\n'
+              FAIL=1
+            fi
+          done < <(find docs/superpowers/specs -name "*.md" -not -name "*ci-governance*" -print0)
+          if [ "$FAIL" -eq 1 ]; then
             echo "FAIL: placeholder markers found in spec files:"
-            echo "$FOUND"
+            printf '%s' "$FOUND"
             exit 1
           fi
           echo "OK: No placeholder markers in spec files"
@@ -138,7 +187,11 @@ jobs:
             echo "No script directories found — skipping SAST"
             exit 0
           fi
-          semgrep --config "p/bash" --error $SCAN_DIRS
+          # WHY auto: "p/bash" is no longer a resolvable Semgrep Registry
+          # ruleset (returns HTTP 404) — auto is Semgrep's own maintained
+          # zero-config default, detecting languages present and applying
+          # the appropriate rulesets.
+          semgrep --config auto --error $SCAN_DIRS
 
   rules-file-integrity:
     name: Rules-File Integrity
@@ -171,11 +224,55 @@ jobs:
         run: |
           # HTML comments (<!-- -->) render invisibly in Markdown but are visible
           # to LLMs, making them a smuggling vector for hidden instructions.
+          # WHY strip fenced code + paired inline-code spans first: a `<!-- -->`
+          # wrapped in a genuinely CLOSED backtick span renders visibly as
+          # monospace text — a documented example of the forbidden pattern, not
+          # an actual hidden comment. A single-char lookbehind check is bypassable
+          # with one unmatched backtick (it never renders as code, so the real
+          # comment stays invisible); requiring a matched `[^`]*` pair closes that.
+          # WHY the fence-count guard: an unbalanced (odd) count of ``` markers
+          # means the file has a malformed/unterminated fence -- naively
+          # toggling on every ``` would silently treat the rest of the file as
+          # "inside code" and never check it again. Falling back to inline-only
+          # stripping in that case keeps the rest of the file checked, erring
+          # toward catching a real hidden comment rather than silently missing one.
+          #
+          # WHY the per-line backtick-parity guard: a line with an ODD number of
+          # backticks has a stray, unpaired backtick. A naive `s/`[^`]*`//g` still
+          # pairs it with the NEXT backtick on the line -- even an unrelated,
+          # legitimately-paired one from later in the line -- silently deleting
+          # everything between them, including a real hidden comment that stray
+          # backtick was placed in front of. Requiring an EVEN count before
+          # stripping a line at all closes that: an unpaired backtick means
+          # nothing on that line is provably real inline code, so nothing is
+          # stripped and the line is checked as-is.
+          strip_code() {
+            local file="$1"
+            local fence_count
+            fence_count=$(grep -c '^```' "$file" 2>/dev/null)
+            fence_count=${fence_count:-0}
+            local fence_stage
+            if [ $((fence_count % 2)) -ne 0 ]; then
+              fence_stage=$(cat "$file")
+            else
+              fence_stage=$(awk '/^```/{f=!f;next} f{next} {print}' "$file")
+            fi
+            printf '%s\n' "$fence_stage" | awk '
+              {
+                line = $0
+                n = gsub(/`/, "`", line)
+                if (n % 2 == 0) {
+                  gsub(/`[^`]*`/, "", line)
+                }
+                print line
+              }
+            '
+          }
           FAIL=0
           FILES=$(find standards CLAUDE.md templates/CLAUDE.md -name "*.md" -o -name "CLAUDE.md" 2>/dev/null | sort -u)
           while IFS= read -r file; do
             [ -f "$file" ] || continue
-            if grep -Pn '<!--' "$file"; then
+            if strip_code "$file" | grep -Pn '<!--'; then
               echo "FAIL: $file — HTML comment found above (hidden from rendered view, visible to LLMs)"
               FAIL=1
             fi
@@ -268,7 +365,7 @@ jobs:
           $files = Get-ChildItem -Recurse -Filter "*.ps1" -Path "scripts","templates/scripts" |
             Select-Object -ExpandProperty FullName
           $results = $files | ForEach-Object {
-            Invoke-ScriptAnalyzer -Path $_ -Severity Error,Warning
+            Invoke-ScriptAnalyzer -Path $_ -Severity Error,Warning -Settings "scripts/PSScriptAnalyzerSettings.psd1"
           }
           if ($results) {
             $results | Format-Table RuleName,Severity,Line,Message -AutoSize

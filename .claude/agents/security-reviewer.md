@@ -1,4 +1,5 @@
 ---
+name: security-reviewer
 description: Security-focused code reviewer. Checks for vulnerabilities, secrets, injection risks, supply chain issues, and AI-era antipatterns. Read-only — never modifies files.
 tools:
   - Read
