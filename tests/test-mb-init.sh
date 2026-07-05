@@ -32,6 +32,10 @@ done
 
 assert_file_exists "$TMPDIR_INIT/.pmb-version" "mb init creates .pmb-version"
 
+for f in CONTRACTS-GUIDE.md HOOKS-GUIDE.md; do
+  assert_file_exists "$TMPDIR_INIT/docs/$f" "mb init creates docs/$f"
+done
+
 # ── Re-init: already initialized ─────────────────────────────────────────────
 echo ""
 echo "--- re-init: already initialized ---"

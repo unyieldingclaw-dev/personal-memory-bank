@@ -56,6 +56,19 @@ function Get-MbMode {
     return 'init'
 }
 
+
+# WHY: Slash-commands and guide-docs are both discovered the same way — "list files under
+# templates/<subdir>, guarded by Test-Path" — and that shape was being hand-copied at every
+# call site (Get-MbUpgradeAnalysis, Invoke-Init, Invoke-Upgrade). A shared helper removes the
+# duplicated guard+enumerate boilerplate; each call site keeps its own target-path mapping,
+# since that part legitimately differs (.claude/commands/ vs docs/).
+function Get-TemplateDirFiles {
+    param([string]$TemplatesDir, [string]$Subdir)
+    $dir = Join-Path $TemplatesDir $Subdir
+    if (-not (Test-Path $dir)) { return @() }
+    return @(Get-ChildItem $dir -File)
+}
+
 function Get-MbUpgradeAnalysis {
     param([string]$ProjectPath, [string]$TemplatesDir)
     $mbPath        = Join-Path $ProjectPath 'memory-bank'
@@ -89,12 +102,19 @@ function Get-MbUpgradeAnalysis {
     # WHY: templates/claude-commands/ holds slash commands that are governance artifacts
     # (change-review, accessibility-review, etc.) installed alongside hook scripts.
     # Projects initialized before these commands existed won't have them — detect that here.
-    $templateCmdDir = Join-Path $TemplatesDir 'claude-commands'
-    if (Test-Path $templateCmdDir) {
-        foreach ($f in Get-ChildItem $templateCmdDir -File) {
-            if (-not (Test-Path (Join-Path $ProjectPath ".claude\commands\$($f.Name)"))) {
-                $govMissing += ".claude/commands/$($f.Name)"
-            }
+    foreach ($f in (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir 'claude-commands')) {
+        if (-not (Test-Path (Join-Path $ProjectPath ".claude\commands\$($f.Name)"))) {
+            $govMissing += ".claude/commands/$($f.Name)"
+        }
+    }
+
+    # WHY: templates/docs/ holds guide docs (CONTRACTS-GUIDE.md, HOOKS-GUIDE.md) referenced
+    # from CLAUDE.md's Task Contract Protocol and Tools sections. Projects scaffolded before
+    # this existed have a CLAUDE.md pointing at docs that were never created — detect that here
+    # the same way missing slash commands are detected above.
+    foreach ($f in (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir 'docs')) {
+        if (-not (Test-Path (Join-Path $ProjectPath "docs\$($f.Name)"))) {
+            $govMissing += "docs/$($f.Name)"
         }
     }
 
@@ -669,7 +689,7 @@ function Invoke-Init {
     }
 
     # .claude/commands/
-    foreach ($f in Get-ChildItem (Join-Path $TemplatesDir "claude-commands") -File) {
+    foreach ($f in (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir "claude-commands")) {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"
     }
 
@@ -679,6 +699,11 @@ function Invoke-Init {
         foreach ($f in Get-ChildItem $standardsTemplate -File) {
             Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target "standards\$($f.Name)") -Label "standards/$($f.Name)"
         }
+    }
+
+    # docs/ files — guide docs referenced from CLAUDE.md (Task Contract Protocol, Tools section)
+    foreach ($f in (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir "docs")) {
+        Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target "docs\$($f.Name)") -Label "docs/$($f.Name)"
     }
 
     # .gitignore
@@ -1871,8 +1896,9 @@ function Invoke-Upgrade {
         ".claude/agents/security-reviewer.md"
     )
 
-    # WHY: $advisoryCreate is kept for future files that must exist at runtime but may have
-    # project-local content. Standards files were moved to $templateOwned — see comment above.
+    # WHY: $advisoryCreate holds files that must exist at runtime but may legitimately carry
+    # project-local edits (unlike $templateOwned, which is pure governance substrate with no
+    # expected customization). Standards files were moved to $templateOwned — see comment above.
     $advisoryCreate = @()
 
     # WHY: Slash commands are auto-discovered from templates/claude-commands/ instead of hardcoded —
@@ -1880,10 +1906,20 @@ function Invoke-Upgrade {
     # and change-review.md shipped in 1.2.0 but were never added to the old hardcoded list, so
     # mb upgrade never copied them into existing projects). mb init already discovers commands this
     # way; this keeps upgrade and init on a single source of truth.
-    $templateCmdDir = Join-Path $TemplatesDir "claude-commands"
-    if (Test-Path $templateCmdDir) {
-        $templateOwned += (Get-ChildItem $templateCmdDir -File | ForEach-Object { ".claude/commands/$($_.Name)" })
-    }
+    $templateOwned += (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir "claude-commands" | ForEach-Object { ".claude/commands/$($_.Name)" })
+
+    # WHY: Guide docs (docs/CONTRACTS-GUIDE.md, docs/HOOKS-GUIDE.md, ...) are referenced from
+    # templates/CLAUDE.md but were never scaffolded into projects — mb init/upgrade had no
+    # mechanism to create them, so every downstream project shipped with dangling references.
+    # Auto-discovering from templates/docs/ (same fix pattern as claude-commands above) means
+    # any doc added there in the future is picked up automatically, no hardcoded list to forget.
+    # WHY $advisoryCreate, not $templateOwned: unlike hook scripts/settings, these are reference
+    # docs a project may reasonably annotate or trim locally — create if missing, diff-and-warn
+    # if customized, never silently overwrite. (Matches scripts/mb.sh's ADVISORY_CREATE treatment
+    # of the same two files — mb.ps1 previously used $templateOwned here, which unconditionally
+    # overwrites, so the same `mb upgrade` command clobbered local edits on Windows but preserved
+    # them on POSIX. Both shells now agree on create-if-missing/diff-if-customized semantics.)
+    $advisoryCreate += (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir "docs" | ForEach-Object { "docs/$($_.Name)" })
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X -> templates/cursor/rules/X (no dot prefix)

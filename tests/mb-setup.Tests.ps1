@@ -56,6 +56,12 @@ Describe "Get-MbUpgradeAnalysis" {
         $analysis = Get-MbUpgradeAnalysis -ProjectPath $script:TestProject -TemplatesDir (Join-Path $script:RepoRoot2 'templates')
         $analysis.Present | Should -Contain 'projectbrief.md'
     }
+
+    It "reports missing template docs as governance gaps" {
+        $analysis = Get-MbUpgradeAnalysis -ProjectPath $script:TestProject -TemplatesDir (Join-Path $script:RepoRoot2 'templates')
+        $analysis.GovMissing | Should -Contain 'docs/CONTRACTS-GUIDE.md'
+        $analysis.GovMissing | Should -Contain 'docs/HOOKS-GUIDE.md'
+    }
 }
 
 Describe "Invoke-MbVerify" {
@@ -88,5 +94,45 @@ Describe "Invoke-MbVerify" {
         $result = Invoke-MbVerify -ProjectPath $script:BadProject -TemplatesDir (Join-Path $script:RepoRoot3 'templates')
         $result.Passed | Should -Be $false
         $result.Missing.Count | Should -BeGreaterThan 0
+    }
+}
+
+# WHY: subprocess, not an in-process function call — Invoke-Upgrade calls `exit` on error
+# paths and mutates the process's current location, which would corrupt the Pester runner
+# if invoked directly in-process. This is the only test that exercises Invoke-Upgrade's
+# actual $advisoryCreate placement for docs/ (the fix for the mb.ps1-vs-mb.sh overwrite-
+# semantics divergence) — the bash suite covers the equivalent ADVISORY_CREATE path in
+# scripts/mb.sh, but nothing previously exercised the PowerShell side of that same fix.
+Describe "Invoke-Upgrade docs advisory-create (subprocess)" {
+    BeforeAll {
+        $script:RepoRoot4 = $RepoRoot
+        $script:UpgradeDocsProject = New-TestProject -Base $TestDrive -Name 'upgrade-docs-advisory'
+    }
+
+    It "creates missing docs/HOOKS-GUIDE.md, then preserves a local edit on re-upgrade instead of overwriting it" {
+        $mbScript = Join-Path $script:RepoRoot4 'scripts/mb.ps1'
+        Push-Location $script:UpgradeDocsProject
+        try {
+            git init -q 2>$null
+            git config user.email "test@test.com" 2>$null
+            git config user.name "Test" 2>$null
+            git commit -q --allow-empty -m "init" 2>$null
+
+            $env:MB_HOME = $script:RepoRoot4
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
+
+            $hooksGuidePath = Join-Path $script:UpgradeDocsProject 'docs\HOOKS-GUIDE.md'
+            Test-Path $hooksGuidePath | Should -Be $true
+
+            Add-Content $hooksGuidePath "`nuser customization"
+
+            $upgradeOutput = (& pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript upgrade 2>&1) -join "`n"
+
+            $upgradeOutput | Should -Match 'docs/HOOKS-GUIDE\.md \(differs from template'
+            (Get-Content $hooksGuidePath -Raw) | Should -Match 'user customization'
+        } finally {
+            Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            Pop-Location
+        }
     }
 }

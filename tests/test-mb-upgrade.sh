@@ -49,4 +49,15 @@ output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
 assert_exit_zero $? "mb upgrade exits 0 with missing standard"
 assert_file_exists "$TMPDIR_UP/standards/WORKFLOW.md" "upgrade restores missing WORKFLOW.md"
 
+# ── Missing doc: ADVISORY_CREATE restores it ─────────────────────────────────
+echo ""
+echo "--- missing doc: upgrade creates it ---"
+
+rm -f "$TMPDIR_UP/docs/HOOKS-GUIDE.md"
+assert_file_not_exists "$TMPDIR_UP/docs/HOOKS-GUIDE.md" "docs/HOOKS-GUIDE.md absent before upgrade"
+
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0 with missing doc"
+assert_file_exists "$TMPDIR_UP/docs/HOOKS-GUIDE.md" "upgrade restores missing docs/HOOKS-GUIDE.md"
+
 print_summary

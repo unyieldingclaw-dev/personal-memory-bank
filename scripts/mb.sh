@@ -467,6 +467,13 @@ invoke_init() {
         done
     fi
 
+    # docs/ files — guide docs referenced from CLAUDE.md (Task Contract Protocol, Tools section)
+    if [ -d "$TEMPLATES_DIR/docs" ]; then
+        for f in "$TEMPLATES_DIR/docs"/*; do
+            [ -f "$f" ] && copy_if_new "$f" "$TARGET/docs/$(basename "$f")" "docs/$(basename "$f")"
+        done
+    fi
+
     # .gitignore
     GITIGNORE="$TARGET/.gitignore"
     GITIGNORE_CONTENT=$(cat "$GITIGNORE" 2>/dev/null || echo "")
@@ -1586,6 +1593,11 @@ invoke_upgrade() {
         "standards/SECURITY-RULES.md"
         "standards/TRUST-CLASSIFICATION.md"
         "standards/PERFORMANCE-BUDGET.md"
+        # Guide docs referenced from CLAUDE.md (Task Contract Protocol, Tools section) —
+        # previously never scaffolded by init/upgrade, leaving dangling references in every
+        # downstream project's CLAUDE.md.
+        "docs/CONTRACTS-GUIDE.md"
+        "docs/HOOKS-GUIDE.md"
     )
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.

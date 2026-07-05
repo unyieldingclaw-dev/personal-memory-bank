@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.2.1] — 2026-07-04 (template scaffolding gap)
+
+### Fixed
+- `templates/CLAUDE.md` references `docs/CONTRACTS-GUIDE.md` and `docs/HOOKS-GUIDE.md`, but neither file existed anywhere under `templates/` — `mb init`/`mb upgrade`/`mb setup` never scaffolded them into downstream projects, leaving every project's `CLAUDE.md` pointing at docs that don't exist. Discovered via `mb-setup.bat` flagging governance gaps on an existing project.
+- Added `templates/docs/CONTRACTS-GUIDE.md` (verbatim copy of PMB's own guide, already generic) and `templates/docs/HOOKS-GUIDE.md` (trimmed — dropped PMB-repo-specific "bug found and fixed" postmortem prose, kept the reusable hook reference).
+- `scripts/mb.ps1`: `Invoke-Init`, `Invoke-Upgrade`'s `$templateOwned`, and `Get-MbUpgradeAnalysis`'s gap-detection now all auto-discover `templates/docs/*.md` (same pattern already used for `templates/claude-commands/*` — a hardcoded list of these went stale before, per the existing comment on that fix).
+- `scripts/mb.sh`: `invoke_init` now copies `templates/docs/*`; `invoke_upgrade`'s `ADVISORY_CREATE` now includes both doc files (create-if-missing, matching how `mb.sh` already handles other reference docs).
+
+### Remediation for already-scaffolded projects
+Any project that ran `mb init`/`mb setup` before this fix has a `CLAUDE.md` with dangling doc references. Re-running `mb upgrade` in that project after upgrading to PMB 1.2.1 will create the two missing files (now template-owned / advisory-create, so "create if missing" applies retroactively).
+
+## [1.2.0] — 2026-07-03 (review-gate hardening)
+
+### Fixed
+- `scripts/dangerous-commands.ps1/.sh`, `scripts/check-contract.ps1/.sh`: read the wrong JSON field path (flat `.command`/`.file_path` instead of nested `tool_input.command`/`tool_input.file_path`) and signaled denial via exit codes, which `settings.json`'s fail-open wrapper silently erased — both hooks were near-total no-ops. Fixed to use `hookSpecificOutput.permissionDecision: "deny"`.
+- `scripts/check-contract.ps1/.sh`: schema bug — read `scope.files` instead of the documented `scope: [{file, op}]` array. `.sh` version also had a Windows CRLF bug from Python's `print()` breaking exact-match comparisons.
+- `scripts/dangerous-commands.ps1/.sh`: pipe-to-shell BLOCK pattern collided with `sha256sum`/`shasum` — fixed with word-boundary matching.
+- Hash mismatch between documented review-gate commands and hook verification: PowerShell's pipeline re-tokenizes external-command output, so array-join hashing didn't reproduce the byte stream a raw shell pipe sees. Fixed by hashing a file written via redirection instead.
+- `.claude/settings.json` + `templates/.claude/settings.json`: stale `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` bumped to `65` to match current guidance.
+
+### Added
+- `scripts/review-reminders.ps1/.sh` + `-post.ps1/.sh`: `PreToolUse`/`PostToolUse` hook pair mechanically enforcing review-before-commit/push via a SHA-256 diff-hash marker (see ai-code-review-agent CHANGELOG for full design). Wired into PMB's own live `.claude/settings.json` (dogfooding) and added to `scripts/mb.ps1`'s `$templateOwned` list so `mb init`/`mb upgrade` distribute it to downstream projects.
+- `docs/HOOKS-GUIDE.md`: documented the fixed dangerous-commands/check-contract mechanisms and the review-gate hash-binding/atomic-consume/reissue design.
+
 ## [1.2.0] — 2026-06-26 (additional hardening)
 
 ### Fixed
