@@ -16,6 +16,26 @@ lineage: []
 
 # Progress
 
+## 2026-07-06 — CI Hardening Across PMB-Based Repos
+
+- Fixed red `main` on `Bowling-Tracker` (2 real logic bugs in `ScoreEngine.pinsRemaining`/
+  `StatsService.computeLeaveStats` + a mislabeled test fixture, masked for weeks by an unrelated
+  `flutter analyze` failure running first) and `gmail-organizer` (TS2367 dead comparison against
+  an impossible `ExecuteResult` value, masked by that + a later `electron-rebuild` ABI mismatch
+  that broke `npm test` under plain Node).
+- Applied a `continue-on-error: true` + `if: always()` gate pattern to every CI step in
+  `pmb-health.yml`, `Bowling-Tracker/ci.yml`, `Google-Organizer/ci.yml` so an early step's failure
+  can no longer hide a later real failure — root cause of both red mains above.
+- Created `AI-Code-Review-Agent/.github/workflows/ci.yml` — that repo had zero CI gate on
+  push/PR to `main` (only release-tag time ran the full check suite). New workflow runs
+  typecheck/format:check/lint:eslint/test/build independently, gated at the end. Fixed 6
+  pre-existing `format:check`-drifted files so the new gate starts green.
+- All memory-bank files updated in all 4 repos. Uncommitted changes in `Bowling-Tracker`,
+  `Google-Organizer`, `ai-code-review-agent` require the user to commit/push (cross-repo hook
+  limitation — this session's review-gate only binds to personal-memory-bank).
+- Deferred: branch protection rollout (personal-memory-bank + 8 downstream repos) per
+  `handoff-quiet-aho.md`, pending confirmation all of the above are green post-push.
+
 ## Status: Ready
 
 Personal fork of the enterprise Memory Bank standard — lifecycle management and provenance tracking implemented.

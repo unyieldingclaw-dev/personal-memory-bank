@@ -64,6 +64,8 @@ jobs:
       - uses: actions/checkout@v6.0.2
 
       - name: Credential grep
+        id: credential-grep
+        continue-on-error: true
         shell: bash
         run: |
           if git grep -P -i '(password|api_key|token|secret)\s*=\s*[A-Za-z0-9]{8,}' \
@@ -74,6 +76,8 @@ jobs:
           echo "OK: No literal credential assignments found"
 
       - name: Spec placeholder grep
+        id: spec-placeholder-grep
+        continue-on-error: true
         shell: bash
         run: |
           # Exclude *ci-governance* specs: they document the CI pattern itself
@@ -139,6 +143,8 @@ jobs:
           echo "OK: No placeholder markers in spec files"
 
       - name: Shellcheck
+        id: shellcheck
+        continue-on-error: true
         shell: bash
         run: |
           # Build directory list from those that actually exist
@@ -150,6 +156,23 @@ jobs:
               | xargs -r -0 shellcheck --severity=error
           fi
           echo "OK: Shellcheck passed"
+
+      # WHY continue-on-error + this gate, instead of letting each step fail
+      # the job immediately: with 3 sequential steps and no continue-on-error,
+      # the first failure stops the rest from ever running -- a fixed credential-
+      # grep false positive could mask a real shellcheck failure for months
+      # without anyone seeing it (this exact class of bug hit Bowling-Tracker
+      # and gmail-organizer's CI in 2026-07). Running all 3 unconditionally and
+      # gating at the end surfaces every problem in one run instead of one at a time.
+      - name: Gate on all forbidden-patterns checks
+        if: always()
+        shell: bash
+        run: |
+          FAIL=0
+          [ "${{ steps.credential-grep.outcome }}" != "success" ] && { echo "FAILED: Credential grep"; FAIL=1; }
+          [ "${{ steps.spec-placeholder-grep.outcome }}" != "success" ] && { echo "FAILED: Spec placeholder grep"; FAIL=1; }
+          [ "${{ steps.shellcheck.outcome }}" != "success" ] && { echo "FAILED: Shellcheck"; FAIL=1; }
+          exit $FAIL
 
   secret-scan:
     name: Secret Scan
@@ -200,6 +223,8 @@ jobs:
       - uses: actions/checkout@v6.0.2
 
       - name: Invisible Unicode characters
+        id: invisible-unicode
+        continue-on-error: true
         shell: bash
         run: |
           # Scan CLAUDE.md and standards/ for invisible Unicode chars that could
@@ -220,6 +245,8 @@ jobs:
           exit $FAIL
 
       - name: Hidden HTML comments in Markdown
+        id: hidden-html-comments
+        continue-on-error: true
         shell: bash
         run: |
           # HTML comments (<!-- -->) render invisibly in Markdown but are visible
@@ -281,6 +308,8 @@ jobs:
           exit $FAIL
 
       - name: LLM bypass phrases
+        id: llm-bypass-phrases
+        continue-on-error: true
         shell: bash
         run: |
           # Scan CLAUDE.md and templates/CLAUDE.md for known prompt-injection bypass
@@ -309,6 +338,19 @@ jobs:
             done
           done
           [ "$FAIL" -eq 0 ] && echo "OK: No bypass phrases found in CLAUDE.md files"
+          exit $FAIL
+
+      # WHY: same rationale as the forbidden-patterns job's gate step above --
+      # 3 sequential checks with no continue-on-error means the first failure
+      # hides the other two for as long as nobody happens to fix it.
+      - name: Gate on all rules-file-integrity checks
+        if: always()
+        shell: bash
+        run: |
+          FAIL=0
+          [ "${{ steps.invisible-unicode.outcome }}" != "success" ] && { echo "FAILED: Invisible Unicode characters"; FAIL=1; }
+          [ "${{ steps.hidden-html-comments.outcome }}" != "success" ] && { echo "FAILED: Hidden HTML comments in Markdown"; FAIL=1; }
+          [ "${{ steps.llm-bypass-phrases.outcome }}" != "success" ] && { echo "FAILED: LLM bypass phrases"; FAIL=1; }
           exit $FAIL
 
   template-integrity:

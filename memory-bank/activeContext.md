@@ -16,15 +16,26 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-07-04
+## Last Updated: 2026-07-06
 
 ## Current Focus
+
+**CI-hardening task contract complete (2026-07-06)**: fixed the two red mains found in the
+branch-protection planning pass (`Bowling-Tracker`, `gmail-organizer` — both green now), then
+applied a "continue-on-error + gate" pattern across all 4 PMB-based repos so a failing early CI
+step can never again mask a later real failure for weeks: `personal-memory-bank/pmb-health.yml`
+(2 jobs), `Bowling-Tracker/ci.yml`, `Google-Organizer/ci.yml` — all edited, uncommitted, must be
+committed/pushed by the user in their own repos (this session's review-gate hook only binds to
+personal-memory-bank, so Claude cannot self-satisfy it elsewhere). Also created
+`AI-Code-Review-Agent/.github/workflows/ci.yml` from scratch — that repo had no push/PR CI gate at
+all (typecheck/lint/test/build only ran at release-tag time); fixed 6 pre-existing `format:check`
+drifted files there so the new gate starts green.
 
 **PMB v1.2.1** — fixed `templates/docs/` scaffolding gap (see `progress.md`). Downstream `mb upgrade` reruns still pending.
 
 **Also completed (separate session, merged in):** PMB v1.2.0 CI infrastructure — doctor suite 35/35 passing, all 9 CI jobs confirmed green on PR #7 (`b1105e3`) as of 2026-07-04 (details: progress.md); `/change-review` now includes a Baseline Repo Health spot-check.
 
-Also in progress: fix CI-red mains on `Bowling-Tracker`/`gmail-organizer`, then branch-protect `personal-memory-bank` + 8 downstream repos (approved, not yet executed).
+Next (deferred, not started): branch-protect `personal-memory-bank` + 8 downstream repos per the plan at `handoff-quiet-aho.md`, once all CI-hardening commits above are pushed and confirmed green.
 
 ## Architecture Constraints to Remember
 
