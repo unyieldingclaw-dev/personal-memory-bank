@@ -63,7 +63,7 @@ function Get-MbMode {
 # call site (Get-MbUpgradeAnalysis, Invoke-Init, Invoke-Upgrade). A shared helper removes the
 # duplicated guard+enumerate boilerplate; each call site keeps its own target-path mapping,
 # since that part legitimately differs (.claude/commands/ vs docs/).
-function Get-TemplateDirFiles {
+function Get-TemplateDirFile {
     param([string]$TemplatesDir, [string]$Subdir)
     $dir = Join-Path $TemplatesDir $Subdir
     if (-not (Test-Path $dir)) { return @() }
@@ -103,7 +103,7 @@ function Get-MbUpgradeAnalysis {
     # WHY: templates/claude-commands/ holds slash commands that are governance artifacts
     # (change-review, accessibility-review, etc.) installed alongside hook scripts.
     # Projects initialized before these commands existed won't have them — detect that here.
-    foreach ($f in (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir 'claude-commands')) {
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir 'claude-commands')) {
         if (-not (Test-Path (Join-Path $ProjectPath ".claude\commands\$($f.Name)"))) {
             $govMissing += ".claude/commands/$($f.Name)"
         }
@@ -113,7 +113,7 @@ function Get-MbUpgradeAnalysis {
     # from CLAUDE.md's Task Contract Protocol and Tools sections. Projects scaffolded before
     # this existed have a CLAUDE.md pointing at docs that were never created — detect that here
     # the same way missing slash commands are detected above.
-    foreach ($f in (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir 'docs')) {
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir 'docs')) {
         if (-not (Test-Path (Join-Path $ProjectPath "docs\$($f.Name)"))) {
             $govMissing += "docs/$($f.Name)"
         }
@@ -690,7 +690,7 @@ function Invoke-Init {
     }
 
     # .claude/commands/
-    foreach ($f in (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir "claude-commands")) {
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "claude-commands")) {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"
     }
 
@@ -703,7 +703,7 @@ function Invoke-Init {
     }
 
     # docs/ files — guide docs referenced from CLAUDE.md (Task Contract Protocol, Tools section)
-    foreach ($f in (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir "docs")) {
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "docs")) {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target "docs\$($f.Name)") -Label "docs/$($f.Name)"
     }
 
@@ -1937,7 +1937,7 @@ function Invoke-Upgrade {
     # and change-review.md shipped in 1.2.0 but were never added to the old hardcoded list, so
     # mb upgrade never copied them into existing projects). mb init already discovers commands this
     # way; this keeps upgrade and init on a single source of truth.
-    $templateOwned += (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir "claude-commands" | ForEach-Object { ".claude/commands/$($_.Name)" })
+    $templateOwned += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "claude-commands" | ForEach-Object { ".claude/commands/$($_.Name)" })
 
     # WHY: Guide docs (docs/CONTRACTS-GUIDE.md, docs/HOOKS-GUIDE.md, ...) are referenced from
     # templates/CLAUDE.md but were never scaffolded into projects — mb init/upgrade had no
@@ -1950,7 +1950,7 @@ function Invoke-Upgrade {
     # of the same two files — mb.ps1 previously used $templateOwned here, which unconditionally
     # overwrites, so the same `mb upgrade` command clobbered local edits on Windows but preserved
     # them on POSIX. Both shells now agree on create-if-missing/diff-if-customized semantics.)
-    $advisoryCreate += (Get-TemplateDirFiles -TemplatesDir $TemplatesDir -Subdir "docs" | ForEach-Object { "docs/$($_.Name)" })
+    $advisoryCreate += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "docs" | ForEach-Object { "docs/$($_.Name)" })
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X -> templates/cursor/rules/X (no dot prefix)
