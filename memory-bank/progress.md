@@ -16,6 +16,24 @@ lineage: []
 
 # Progress
 
+## 2026-07-08 — Branch Protection Rollout
+
+- Applied GitHub branch protection to 5 public repos: `personal-memory-bank`,
+  `ai-code-review-agent`, `pitlogic`, `Spotify-Road-Trip`, `Pit-timer`. All require PR (0 approvals),
+  `enforce_admins: true`, `required_status_checks.strict: true`. Required checks: 9 PMB Health jobs
+  (personal-memory-bank), `test` (ai-code-review-agent), none (the other 3 — no real CI gate exists).
+- 6 private repos out of scope: GitHub Free blocks branch protection and rulesets entirely on
+  private repos (confirmed via 403 on both API endpoints) — user chose to skip rather than upgrade
+  to Pro or make repos public.
+- Fixed a real pre-existing red main caught along the way: `PowerShell Lint` failing since a prior
+  merge (`PSUseSingularNouns` on `Get-TemplateDirFiles`) — renamed to `Get-TemplateDirFile`, commit
+  `a350aa6`. PMB Health is now fully green (all 9 jobs).
+- **Process correction**: identified that `/change-review` (the actual push-gate command, which
+  auto-invokes ACR for its Job 7 security check) had been skipped in favor of self-computed hash
+  markers for the last 2 pushes — going forward, always run `/change-review` before push.
+- **Workflow change for all 5 protected repos**: direct `git push origin main` no longer works —
+  every change now requires a branch + PR + passing required checks.
+
 ## 2026-07-06 — CI Hardening Across PMB-Based Repos
 
 - Fixed red `main` on `Bowling-Tracker` (2 real logic bugs in `ScoreEngine.pinsRemaining`/

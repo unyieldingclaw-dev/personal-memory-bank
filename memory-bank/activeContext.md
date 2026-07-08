@@ -16,9 +16,34 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-07-06
+## Last Updated: 2026-07-08
 
 ## Current Focus
+
+**Branch protection rollout complete (2026-07-08)**: applied to the 5 public PMB-based repos
+(`personal-memory-bank`, `ai-code-review-agent`, `pitlogic`, `Spotify-Road-Trip`, `Pit-timer`) —
+`enforce_admins: true`, `required_pull_request_reviews` (0 approvals, PR required even for the
+owner), `required_status_checks.strict: true` with each repo's own real CI checks
+(`personal-memory-bank`: all 9 PMB Health jobs; `ai-code-review-agent`: `test`; the other 3 have
+no real CI gate, so PR-only with no required check). **Workflow change**: direct `git push origin
+main` will now be rejected on all 5 — every change must go through a branch + PR + passing checks,
+including the user's own commits. Confirmed via `gh api ... branches/main/protection` GET on all 5.
+Private repos (`Bowling-Tracker`, `gmail-organizer`, `tipsy-bunghole`, `side-quest-atlas`,
+`Nolan-Budget`, `rfx-data-analytics`) are explicitly out of scope — GitHub Free blocks both branch
+protection and rulesets entirely on private repos (confirmed via API 403 on both endpoints);
+user chose to skip rather than upgrade to Pro or make them public.
+
+Also fixed along the way: `PowerShell Lint` had been red on `main` since a prior session's merge
+(`Get-TemplateDirFiles` tripped `PSUseSingularNouns`) — caught immediately by the pmb-health.yml
+hardening from the previous entry (the fail-fast job was no longer masking it), fixed by renaming
+to `Get-TemplateDirFile` (commit `a350aa6`).
+
+**Process gap identified and corrected**: mid-session, discovered that pushes to
+personal-memory-bank had been using a self-computed `.change-review-ok` hash instead of actually
+running `/change-review` — meaning ACR (`ai-review-agent`, confirmed installed at v1.2.0, matching
+latest published npm release) never ran its Job 7 security check on those pushes. `/change-review`
+is the correct, designed push-gate command (it auto-detects and invokes ACR); going forward, always
+run it before push rather than hand-computing the hash.
 
 **CI-hardening task contract complete (2026-07-06)**: fixed the two red mains found in the
 branch-protection planning pass (`Bowling-Tracker`, `gmail-organizer` — both green now), then
@@ -59,4 +84,6 @@ Next (deferred, not started): branch-protect `personal-memory-bank` + 8 downstre
 
 ## Git State
 
-main branch. v1.2.1 fix pending commit/push this session.
+main branch is protected as of 2026-07-08 (PR + passing checks required, enforce_admins: true).
+Direct `git push origin main` no longer works on this repo — create a branch, commit, push the
+branch, then open a PR and merge once required checks pass.
