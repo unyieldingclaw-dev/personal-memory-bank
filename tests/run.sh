@@ -28,6 +28,7 @@ run_suite "mb clean"             "$REPO_ROOT/tests/test-mb-clean.sh"
 run_suite "mb commit"            "$REPO_ROOT/tests/test-mb-commit.sh"
 run_suite "mb upgrade"           "$REPO_ROOT/tests/test-mb-upgrade.sh"
 run_suite "mb doctor"            "$REPO_ROOT/tests/test-mb-doctor.sh"
+run_suite "review-reminders"     "$REPO_ROOT/tests/test-review-reminders.sh"
 
 echo ""
 echo "════════════════════════════════════"

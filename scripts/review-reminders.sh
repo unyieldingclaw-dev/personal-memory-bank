@@ -34,12 +34,25 @@
 # Windows' bundled coreutils, but macOS ships shasum instead. If neither is available,
 # fail open (skip the gate entirely) rather than deny everything -- matches this repo's
 # established "fail open on missing dependency" convention (see check-contract.sh/python3).
+#
+# WHY hash a file written via redirection, not piped/captured output: this hook is a
+# fallback that only runs when pwsh is unavailable (settings.json tries pwsh first), but
+# on any machine where BOTH pwsh and bash exist, a marker written by one must validate
+# under the other's hook -- whichever runs is a coin flip the writer can't control. Piping
+# `git diff | sha256sum` preserves the trailing newline; capturing via `$(git diff ...)`
+# strips it. review-reminders.ps1 redirects to a file (`>`), which also preserves it.
+# Hashing a redirected file here, instead of piping or capturing, makes this script's hash
+# byte-identical to review-reminders.ps1's for the same diff, regardless of which one
+# actually enforces the gate on a given machine. Empirically confirmed: command
+# substitution and redirect-to-file produced different SHA-256 hashes for the same diff
+# (differing by exactly the trailing newline byte) before this fix.
 
-sha256() {
+sha256_file() {
+    file="$1"
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum | cut -d' ' -f1
+        sha256sum "$file" | cut -d' ' -f1
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 | cut -d' ' -f1
+        shasum -a 256 "$file" | cut -d' ' -f1
     else
         printf ''
     fi
@@ -72,7 +85,10 @@ consume_marker() {
 
 case "$input" in
     *'git commit'*)
-        expected=$(git diff HEAD 2>/dev/null | sha256)
+        tmp=$(mktemp)
+        git diff HEAD > "$tmp" 2>/dev/null
+        expected=$(sha256_file "$tmp")
+        rm -f "$tmp"
         marker="$root/.claude/.code-review-ok"
         actual=$(consume_marker "$marker")
         if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then
@@ -83,11 +99,13 @@ case "$input" in
         fi
         ;;
     *'git push'*)
-        expected=$(git diff origin/main...HEAD 2>/dev/null)
+        tmp=$(mktemp)
+        git diff origin/main...HEAD > "$tmp" 2>/dev/null
         if [ $? -ne 0 ]; then
-            expected=$(git diff HEAD 2>/dev/null)
+            git diff HEAD > "$tmp" 2>/dev/null
         fi
-        expected=$(printf '%s' "$expected" | sha256)
+        expected=$(sha256_file "$tmp")
+        rm -f "$tmp"
         marker="$root/.claude/.change-review-ok"
         actual=$(consume_marker "$marker")
         if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then

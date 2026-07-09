@@ -241,13 +241,15 @@ _(This section is informational only — it never sets `Blocking: Yes` and never
 
 If no finding in the report has `Blocking: Yes` (including the "No findings" case), compute a hash of the reviewed diff and write it to `.claude/.change-review-ok` (create the `.claude` directory first if it doesn't exist). The marker is bound to this exact diff — a `PreToolUse` hook recomputes the same hash before the next `git push` and only allows it through if the diff hasn't changed since the review. Use the same diff command from Step 1 (`git diff origin/main...HEAD`, or `git diff HEAD` if no upstream):
 
-Bash (do NOT pipe `git diff` directly into `sha256sum` — the push-gate hook computes the hash via `$(git diff ...)` command substitution, which strips the trailing newline a direct pipe preserves; a raw pipe produces a different digest and the hook will reject a valid review. Also include the `git diff HEAD` fallback below even when Step 1 used `origin/main...HEAD` successfully — the hook always tries `origin/main...HEAD` first and only falls back if that command itself fails (no upstream), so the marker must be computed the same way to match in every branch, not just the common case):
+Bash (redirect `git diff` to a temp file and hash the file — do NOT capture it via `$(git diff ...)` command substitution, which strips the trailing newline a redirect preserves; on any machine with both bash and pwsh installed, `review-reminders.ps1` runs first and always hashes a redirected file, so a command-substitution-based hash won't match it. Also include the `git diff HEAD` fallback below even when Step 1 used `origin/main...HEAD` successfully — the hook always tries `origin/main...HEAD` first and only falls back if that command itself fails (no upstream), so the marker must be computed the same way to match in every branch, not just the common case):
 ```
-expected=$(git diff origin/main...HEAD 2>/dev/null)
+tmp=$(mktemp)
+git diff origin/main...HEAD > "$tmp" 2>/dev/null
 if [ $? -ne 0 ]; then
-  expected=$(git diff HEAD 2>/dev/null)
+  git diff HEAD > "$tmp" 2>/dev/null
 fi
-printf '%s' "$expected" | sha256sum | cut -d' ' -f1 > .claude/.change-review-ok
+sha256sum "$tmp" | cut -d' ' -f1 > .claude/.change-review-ok
+rm -f "$tmp"
 ```
 
 PowerShell (do NOT pipe `git diff` directly into a hash cmdlet — PowerShell's pipeline re-tokenizes external-command output and will not match the hash `review-reminders.ps1` recomputes; redirect to a file first so the hash covers the exact raw bytes. Include the `git diff HEAD` fallback below, matching `review-reminders.ps1`'s `Get-PushDiffHash`, so the marker matches in every branch, not just the common upstream-exists case):

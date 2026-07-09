@@ -9,11 +9,16 @@
 # truth instead -- if HEAD (for commit) or the upstream ref (for push) didn't move, the
 # command failed, full stop.
 
-sha256() {
+# WHY hash a file written via redirection: see the matching comment in review-reminders.sh
+# -- capturing `git diff` via `$(...)` strips its trailing newline, but a redirected file
+# preserves it, matching review-reminders.ps1's byte semantics exactly regardless of which
+# hook variant actually enforces the gate on a given machine.
+sha256_file() {
+    file="$1"
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum | cut -d' ' -f1
+        sha256sum "$file" | cut -d' ' -f1
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 | cut -d' ' -f1
+        shasum -a 256 "$file" | cut -d' ' -f1
     else
         printf ''
     fi
@@ -39,7 +44,10 @@ if [ "$cmd" = "commit" ]; then
         rm -f "$preshafile"
         postsha=$(git rev-parse HEAD 2>/dev/null)
         if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ]; then
-            git diff HEAD 2>/dev/null | sha256 > "$root/.claude/.code-review-ok"
+            tmp=$(mktemp)
+            git diff HEAD > "$tmp" 2>/dev/null
+            sha256_file "$tmp" > "$root/.claude/.code-review-ok"
+            rm -f "$tmp"
         fi
     fi
 elif [ "$cmd" = "push" ]; then
@@ -49,11 +57,13 @@ elif [ "$cmd" = "push" ]; then
         rm -f "$preshafile"
         postsha=$(git rev-parse '@{u}' 2>/dev/null)
         if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ]; then
-            diff=$(git diff origin/main...HEAD 2>/dev/null)
+            tmp=$(mktemp)
+            git diff origin/main...HEAD > "$tmp" 2>/dev/null
             if [ $? -ne 0 ]; then
-                diff=$(git diff HEAD 2>/dev/null)
+                git diff HEAD > "$tmp" 2>/dev/null
             fi
-            printf '%s' "$diff" | sha256 > "$root/.claude/.change-review-ok"
+            sha256_file "$tmp" > "$root/.claude/.change-review-ok"
+            rm -f "$tmp"
         fi
     fi
 fi
