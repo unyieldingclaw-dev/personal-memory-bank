@@ -87,4 +87,32 @@ rm -f "$tmp"
 resp=$(invoke_hook "review-reminders.sh" "git push origin main")
 assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh accepts a push-gate marker computed via the HEAD fallback (no origin/main ref exists)"
 
+# ── post-hook: reissues a marker after a failed commit attempt (diff_hash refactor) ─────────
+echo ""
+echo "--- post-hook: reissues marker via diff_hash() after a failed commit attempt ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha"
+presha=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+invoke_hook "review-reminders-post.sh" "git commit -m test5" >/dev/null
+expected=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
+assert_contains "$actual" "$expected" "review-reminders-post.sh reissues .code-review-ok with the correct diff_hash() output when HEAD didn't move (failed commit)"
+
+# ── post-hook: reissues a marker after a failed push attempt (origin/main path, not fallback) ─
+echo ""
+echo "--- post-hook: reissues marker via diff_hash() after a failed push attempt (origin/main exists) ---"
+BAREDIR_RR="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-bare)"
+git init -q --bare "$BAREDIR_RR"
+git -C "$TMPDIR_RR" remote add origin "$BAREDIR_RR" 2>/dev/null || git -C "$TMPDIR_RR" remote set-url origin "$BAREDIR_RR"
+git -C "$TMPDIR_RR" push -q -u origin main 2>/dev/null
+
+rm -f "$TMPDIR_RR/.claude/.change-review-ok" "$TMPDIR_RR/.claude/.pending-push-presha"
+presha=$(git -C "$TMPDIR_RR" rev-parse '@{u}')
+printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-push-presha"
+invoke_hook "review-reminders-post.sh" "git push origin main" >/dev/null
+expected=$(git -C "$TMPDIR_RR" diff origin/main...HEAD | sha256sum | cut -d' ' -f1)
+actual=$(cat "$TMPDIR_RR/.claude/.change-review-ok" 2>/dev/null)
+assert_contains "$actual" "$expected" "review-reminders-post.sh reissues .change-review-ok with the correct diff_hash() output when the upstream ref didn't move (failed push, origin/main path)"
+rm -rf "$BAREDIR_RR"
+
 print_summary

@@ -58,6 +58,33 @@ sha256_file() {
     fi
 }
 
+# WHY this helper: the commit and push cases below both need "redirect a git diff to a temp
+# file, hash it, clean up" -- inlining that 4 times (2 here, 2 more in the companion
+# review-reminders-post.sh) risked exactly the kind of copy-paste drift that caused the
+# original trailing-newline bug. One helper, one place to get it right.
+#
+# WHY return git diff's exit code, not the hash computation's: the push case needs to try
+# `origin/main...HEAD` and fall back to `HEAD` if that ref doesn't exist (no upstream). The
+# caller decides whether to fall back based on whether the underlying `git diff` succeeded,
+# not whether hashing succeeded (sha256_file degrades gracefully to an empty string on its
+# own, unrelated failure mode) -- so this returns git diff's own exit code via `$rc`,
+# captured before sha256_file has a chance to run and overwrite `$?`.
+#
+# WHY the trap: without it, a script exit between `mktemp` and the final `rm -f` (e.g. an
+# unexpected signal) leaks a temp file. `trap - EXIT` clears it again once this function
+# returns normally, since sh traps are shell-global, not function-scoped -- otherwise this
+# trap would still be armed (harmlessly, but confusingly) for the rest of the script.
+diff_hash() {
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    git diff "$@" > "$tmp" 2>/dev/null
+    rc=$?
+    sha256_file "$tmp"
+    rm -f "$tmp"
+    trap - EXIT
+    return $rc
+}
+
 input=$(cat 2>/dev/null)
 [ -z "$input" ] && exit 0
 
@@ -85,10 +112,7 @@ consume_marker() {
 
 case "$input" in
     *'git commit'*)
-        tmp=$(mktemp)
-        git diff HEAD > "$tmp" 2>/dev/null
-        expected=$(sha256_file "$tmp")
-        rm -f "$tmp"
+        expected=$(diff_hash HEAD)
         marker="$root/.claude/.code-review-ok"
         actual=$(consume_marker "$marker")
         if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then
@@ -99,13 +123,11 @@ case "$input" in
         fi
         ;;
     *'git push'*)
-        tmp=$(mktemp)
-        git diff origin/main...HEAD > "$tmp" 2>/dev/null
-        if [ $? -ne 0 ]; then
-            git diff HEAD > "$tmp" 2>/dev/null
+        expected=$(diff_hash origin/main...HEAD)
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+            expected=$(diff_hash HEAD)
         fi
-        expected=$(sha256_file "$tmp")
-        rm -f "$tmp"
         marker="$root/.claude/.change-review-ok"
         actual=$(consume_marker "$marker")
         if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then

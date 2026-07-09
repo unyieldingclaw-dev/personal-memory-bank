@@ -24,6 +24,20 @@ sha256_file() {
     fi
 }
 
+# WHY this helper: see the matching comment in review-reminders.sh -- collapses the
+# mktemp+redirect+hash+cleanup pattern that was previously inlined at both call sites below,
+# with a trap so an early exit between mktemp and cleanup can't leak a temp file.
+diff_hash() {
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    git diff "$@" > "$tmp" 2>/dev/null
+    rc=$?
+    sha256_file "$tmp"
+    rm -f "$tmp"
+    trap - EXIT
+    return $rc
+}
+
 input=$(cat 2>/dev/null)
 [ -z "$input" ] && exit 0
 
@@ -44,10 +58,7 @@ if [ "$cmd" = "commit" ]; then
         rm -f "$preshafile"
         postsha=$(git rev-parse HEAD 2>/dev/null)
         if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ]; then
-            tmp=$(mktemp)
-            git diff HEAD > "$tmp" 2>/dev/null
-            sha256_file "$tmp" > "$root/.claude/.code-review-ok"
-            rm -f "$tmp"
+            diff_hash HEAD > "$root/.claude/.code-review-ok"
         fi
     fi
 elif [ "$cmd" = "push" ]; then
@@ -57,13 +68,12 @@ elif [ "$cmd" = "push" ]; then
         rm -f "$preshafile"
         postsha=$(git rev-parse '@{u}' 2>/dev/null)
         if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ]; then
-            tmp=$(mktemp)
-            git diff origin/main...HEAD > "$tmp" 2>/dev/null
-            if [ $? -ne 0 ]; then
-                git diff HEAD > "$tmp" 2>/dev/null
+            hash=$(diff_hash origin/main...HEAD)
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+                hash=$(diff_hash HEAD)
             fi
-            sha256_file "$tmp" > "$root/.claude/.change-review-ok"
-            rm -f "$tmp"
+            printf '%s' "$hash" > "$root/.claude/.change-review-ok"
         fi
     fi
 fi
