@@ -140,7 +140,7 @@ Fires before every `Agent` tool call. Tracks nested agent delegation depth and e
 
 ### 7. Review Gate (`PreToolUse` — Bash tool)
 
-Fires before every Bash tool call and pattern-matches `git commit` / `git push` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
+Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is denied unconditionally — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
 
 **Marker files (single-use per diff, gitignored):**
 
@@ -157,6 +157,8 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 2. **Anchored regex missed real command shapes.** The original matcher required `git commit`/`git push` to follow the start of the command or a `;`/`&`/`|` operator. Since `$cmd` is already the exact, JSON-parsed command text (not raw payload noise), this anchoring bought little safety while missing multi-line Bash tool commands, a bare single `&`, and nested subshells. Simplified to an unanchored match — the only cost is an occasional unnecessary re-review if "git commit" appears as a substring elsewhere, the safe failure direction for a security gate.
 
 The `.sh` version matches against the raw stdin payload rather than extracting the `command` field with `grep`/`sed`, because that extraction breaks on any JSON-escaped quote inside the command (e.g. `git commit -m "wip"`), silently truncating the match and letting anything after it — including a chained `&& git push` — through unchecked.
+
+**`gh pr merge` — unconditional deny, no marker (added 2026-07-09):** unlike commit/push, this is not a diff-bound hash check — it always denies, full stop, with no override. By the time a PR is mergeable, its diff has already passed the commit gate, the push gate, and (assuming branch protection's `required_status_checks.strict: true`) CI on the current head; a third hash gate here would mostly re-verify what's already verified, while adding real fragility (PR-number/`--repo` parsing, a `gh pr diff` API call inside a hook). The actual gap at merge time isn't diff integrity, it's authorization: merging changes shared history and should never happen without the user deciding to do it in that moment — a hash can't encode "the user meant this right now," only an explicit human action can. This hook only ever sees commands the agent itself runs (a human's own terminal usage is invisible to it), so an unconditional deny is total: if this hook fires at all, it's the agent attempting the merge, never the user, so there's no legitimate case to let through — not even an explicit in-conversation instruction from the user, since honoring that would mean the agent still performs the merge action itself. The user always runs `gh pr merge` directly.
 
 ### 8. Review Gate Failure Recovery (`PostToolUse` — Bash tool)
 

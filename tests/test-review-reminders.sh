@@ -115,4 +115,30 @@ actual=$(cat "$TMPDIR_RR/.claude/.change-review-ok" 2>/dev/null)
 assert_contains "$actual" "$expected" "review-reminders-post.sh reissues .change-review-ok with the correct diff_hash() output when the upstream ref didn't move (failed push, origin/main path)"
 rm -rf "$BAREDIR_RR"
 
+# ── merge gate: gh pr merge is unconditionally denied ────────────────────────────────────────
+echo ""
+echo "--- merge gate: gh pr merge is always denied (review-reminders.sh) ---"
+resp=$(invoke_hook "review-reminders.sh" "gh pr merge 8 --repo owner/repo --squash")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies gh pr merge unconditionally"
+
+echo ""
+echo "--- merge gate: plain git merge is NOT caught by the gh pr merge pattern ---"
+resp=$(invoke_hook "review-reminders.sh" "git merge feature-branch")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny a plain git merge"
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- merge gate: gh pr merge is always denied (review-reminders.ps1) ---"
+  resp=$(invoke_hook_ps1 "gh pr merge 8 --repo owner/repo --squash")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies gh pr merge unconditionally"
+
+  echo ""
+  echo "--- merge gate: plain git merge is NOT caught (review-reminders.ps1) ---"
+  resp=$(invoke_hook_ps1 "git merge feature-branch")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 does not deny a plain git merge"
+else
+  echo ""
+  echo "--- merge gate PowerShell tests: SKIPPED (pwsh not installed on this machine) ---"
+fi
+
 print_summary

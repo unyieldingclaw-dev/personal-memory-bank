@@ -125,7 +125,7 @@ Fires before every `Agent` tool call. Tracks nested agent delegation depth and e
 
 ### 7. Review Gate (`PreToolUse` — Bash tool)
 
-Fires before every Bash tool call and pattern-matches `git commit` / `git push` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
+Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is denied unconditionally — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
 
 **Marker files (single-use per diff, gitignored):**
 
@@ -135,6 +135,8 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 **Why a hash, not an empty marker:** an empty marker is trivially fakeable with `touch` — anyone, or a rushed agent, can satisfy the gate without reviewing anything. Binding the marker to a hash of the exact diff means it only authorizes committing/pushing that specific diff; if the working tree changes after the review, the hash no longer matches and the gate re-engages. The hook recomputes the same hash fresh and compares it to the marker's stored value before allowing the commit/push through.
 
 **Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps. The marker is consumed (renamed away and deleted) whether or not its hash matches — a stale marker from a diff that has since changed doesn't linger; a fresh review is required either way.
+
+**`gh pr merge` — unconditional deny, no marker:** unlike commit/push, this isn't a hash check — it always denies, no override, not even an explicit user instruction in the conversation. By merge time the diff already passed the commit gate, push gate, and CI; the remaining gap is authorization, not diff integrity, and a hash can't encode "the user meant this right now." This hook only ever sees commands the agent itself runs, so an unconditional deny is total: the user always runs `gh pr merge` directly.
 
 ### 8. Review Gate Failure Recovery (`PostToolUse` — Bash tool)
 
