@@ -75,12 +75,18 @@ Next (deferred, not started): branch-protect `personal-memory-bank` + 8 downstre
 
 ## Next Steps
 
-1. Fix red CI on `Bowling-Tracker`/`gmail-organizer`, then branch-protect `personal-memory-bank` + 8 downstream repos using each repo's own CI (not PMB's 9-job workflow).
-2. Re-run `mb upgrade` on downstream projects (Nolan-Budget + 8 repos) once 1.2.1 lands, to pick up `templates/docs/`.
-3. Port `mb.ps1`'s command auto-discovery fix to `mb.sh` (still hardcodes a stale list — see CHANGELOG).
-4. **Monitor PMB CI** — all 9 jobs confirmed green on PR #7 as of 2026-07-04, PSScriptAnalyzer at Warning severity; watch for genuinely new lint categories in future `.ps1` changes (Write-Host is now excluded project-wide; comment-only catch blocks still count as "empty").
-5. **mb plan workflow** — `/feature-dev` Phase 3 now drafts plans to `.claude/plans/` and promotes via `mb plan promote`. Ensure new projects use this workflow.
-6. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
+1. **Merge two pending worktree branches:** `worktree-cross-repo-write-boundary` (new `check-repo-boundary.ps1`/`.sh` hook, 8 commits, tests green, docs done — needs a PR + user-run merge) and `worktree-fix-workflow-doc-paths` (single-commit `WORKFLOW.md` path fix, `b52f63d`). Both sit under `.claude/worktrees/` untouched pending PR creation.
+2. PR #8 (`docs/branch-protection-rollout`) still open, CI-green, unmerged — this session's own `gh pr merge` gate means it can never merge this itself; user needs to run `gh pr merge` directly.
+3. Fix red CI on `Bowling-Tracker`/`gmail-organizer`, then branch-protect `personal-memory-bank` + 8 downstream repos using each repo's own CI (not PMB's 9-job workflow).
+4. Re-run `mb upgrade` on downstream projects (Nolan-Budget + 8 repos) once 1.2.1 lands, to pick up `templates/docs/`.
+5. Port `mb.ps1`'s command auto-discovery fix to `mb.sh` (still hardcodes a stale list — see CHANGELOG).
+6. **Monitor PMB CI** — all 9 jobs confirmed green on PR #7 as of 2026-07-04, PSScriptAnalyzer at Warning severity; watch for genuinely new lint categories in future `.ps1` changes (Write-Host is now excluded project-wide; comment-only catch blocks still count as "empty").
+7. **mb plan workflow, revisited (2026-07-12):** confirmed `/feature-dev` Phase 3 is designed to use `.claude/plans/` → `mb plan promote` → `docs/plans/`, but `/superpowers:writing-plans` (used for all of this session's planning work, and 21 of 22 prior plans) is not wired to it and writes directly to `docs/superpowers/plans/` instead. Investigated retrofitting frontmatter + an `mb doctor` check to reconcile this — declined (see `progress.md` 2026-07-12 entry): no actual incident behind it, and `activeContext.md`/`progress.md` + the `PreCompact` gate already cover the real risk (silent staleness). Not planned as future work unless a concrete need surfaces.
+8. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
+
+## Cross-Repo Write Boundary Gate — Governance Note
+
+`memory-bank/` is tracked (not gitignored) and per-branch — editing it from a worktree would diverge that branch's copy from main's. Per this file's own rule ("Never update or commit memory-bank/ from a subworktree"), this update was made from the main checkout after exiting the `cross-repo-write-boundary` worktree (kept intact, not removed) rather than from within it.
 
 ## Git State
 
