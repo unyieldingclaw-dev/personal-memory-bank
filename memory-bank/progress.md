@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-07-04
+last-reviewed: 2026-07-13
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -182,3 +182,12 @@ Full history: CHANGELOG.md
   game, bottle tracking) are complete and committed — nothing code-risky pending for a real event. Separately,
   PMB-wise: push the pending docs first, then run `mb upgrade` from that repo's own session to close its
   `1.1.1`→`1.2.1` drift and wire in the `review-reminders` hook.
+- ✅ **Found and fixed a real bug while investigating why `mb doctor`'s staleness WARN wasn't clearing**:
+  `update-reviewed.ps1`/`.sh` (the `PostToolUse` hook meant to auto-stamp `last-reviewed:` after memory-bank
+  edits) had the identical flat-vs-nested `tool_input.file_path` bug that `bd47244` (2026-07-03) already found
+  and fixed in `check-contract.ps1/.sh` and `dangerous-commands.ps1/.sh` — but `update-reviewed` was never
+  included in that fix. `$file_path`/`FILE_PATH` was always empty, so the hook silently exited 0 on every
+  call, every session, since its introduction (`5702aea`) — the "Hook suite" entry for auto-last-reviewed in
+  this file has never actually been true. Fixed in `scripts/update-reviewed.ps1`/`.sh` and their
+  `templates/scripts/` mirrors (byte-identical, confirmed after fix); verified via direct functional test
+  (scratch `memory-bank/` file, synthetic hook payload) on both platforms before committing.

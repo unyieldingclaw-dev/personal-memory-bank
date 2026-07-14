@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-07-04
+last-reviewed: 2026-07-13
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -100,6 +100,12 @@ write boundary regardless (any such sync must run from that repo's own session).
 but blocked: this session's `gh` auth lacks the `delete_repo` OAuth scope (needs an interactive browser grant
 this session can't complete). **User must delete it manually** (GitHub UI Danger Zone, or
 `gh auth refresh -h github.com -s delete_repo` then ask this session to retry).
+
+**`update-reviewed` hook fixed:** `scripts/update-reviewed.ps1`/`.sh` (+ `templates/scripts/` mirrors) had the
+same flat-vs-nested `tool_input.file_path` bug `bd47244` already fixed elsewhere, just never applied here —
+`last-reviewed:` auto-stamping has silently never worked, on either platform, since introduction. Fixed and
+live-confirmed: this very edit's `PostToolUse` hook fired and stamped `progress.md`'s `last-reviewed` to
+today for the first time all session. See `progress.md` for full detail.
 
 ## Next Steps
 
