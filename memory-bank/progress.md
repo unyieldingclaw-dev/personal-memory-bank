@@ -152,3 +152,33 @@ Full history: CHANGELOG.md
 - ✅ Fixed `standards/WORKFLOW.md`: it stated specs/plans go to `docs/specs/`/`docs/plans/` (via `mb plan promote`), but all 46 actual specs+plans in this repo's history live under `docs/superpowers/specs/`/`docs/superpowers/plans/` instead, written directly by the brainstorming/writing-plans skills. Fixed on worktree branch `worktree-fix-workflow-doc-paths`, commit `b52f63d`.
 - 🔍 **Investigated, then declined:** retrofitting all 46 existing specs/plans with the `status`/`created`/`approved`/`related_spec`/`scope`/`risk`/`source` frontmatter schema `docs/plans/README.md` documents, plus a new `mb doctor` check enforcing it on `docs/superpowers/`. Verified the actual precedent is thin (4/25 specs, 0/21 plans ever used it — all 4 by coincidence, right after the schema was documented on 2026-06-22, never repeated). Declined because the risk it would guard against (silent plan staleness) is already covered by the actively-enforced `memory-bank/activeContext.md`/`progress.md` + `PreCompact` gate, and there's no actual incident behind it — unlike the cross-repo-write-boundary gate above, which was built in direct response to a real failure.
 - 📝 **Noted for later, not acted on:** `activeContext.md`'s existing Next Steps item ("`/feature-dev` Phase 3 drafts plans to `.claude/plans/` and promotes via `mb plan promote`") means a *different*, project-native skill (`/feature-dev`) is apparently designed to use the `mb plan promote` lifecycle — while `/superpowers:writing-plans` (used for this entire session's planning work, and 21 of 22 prior plans) is not wired to it at all. Two competing planning skills exist in this repo; only one is reconciled with the durable-plan tooling.
+
+## Review-Flow Fleet Audit + install.bat Fix (2026-07-13)
+
+- ✅ Asked "do we have a proper review flow advising all projects" — audited all 11 repos via GitHub API
+  (branch protection, required checks, `.pmb-version`, `.gitignore`, hook wiring) instead of estimating. Real
+  finding: full enforcement (hook + required CI check + current template) exists in exactly 2 of 11
+  (`personal-memory-bank`, `ai-code-review-agent`). Full per-repo table given to user in-conversation.
+- ✅ Root-caused why `mb upgrade`/`install.bat` don't close these gaps: (1) real bug — `install.bat` told users
+  to double-click `mb-new-project.bat`, renamed to `mb-setup.bat` in a past commit and never updated in
+  `install.bat`'s two `echo` lines; fixed, commit `949b052`. (2) `mb.ps1`'s full command dispatch confirmed:
+  every command operates on exactly one project, no fleet-wide command or project registry exists anywhere —
+  drift is structural, not accidental. (3) CI-workflow generation is deliberately out of `templates/` scope
+  (zero workflow YAML ships) — `pitlogic`/`Spotify-Road-Trip`/`Pit-timer` lacking a required check is
+  unfixable by `mb upgrade` regardless of scope 1/2 fixes.
+- ⚠️ **GitHub-only audit was incomplete** — checking local `git status` on every repo surfaced real drift the
+  API view missed: `Nolan-Budget`'s local `.pmb-version` is `1.2.1` (current) but never committed/pushed
+  (GitHub shows zero PMB footprint for what's actually the most up-to-date repo locally). Most other local
+  repos (`AI-Code-Review-Agent`, `Bowling-Tracker`, `Side-Quest-Atlas`, `Tipsy-Bunghole`) have real
+  uncommitted/unpushed work in progress. Deliberately did not run `mb upgrade` against any of them — that
+  requires confirming each is actually idle, and even then belongs in that repo's own session per the
+  cross-repo write boundary, not this one.
+- 🗑️ `rfx-data-analytics` (empty, 0 commits since 2026-04-14, confirmed superseded by `pitlogic`) — deletion
+  requested and attempted, blocked: this session's `gh` auth lacks the `delete_repo` OAuth scope (needs an
+  interactive browser grant this session can't complete). User must delete manually (GitHub UI or
+  `gh auth refresh -h github.com -s delete_repo`).
+- ✅ Gave user Saturday-specific guidance on `Tipsy-Bunghole`: confirmed via git log that its 4 unpushed
+  commits are pure Sprint 4 planning docs (zero app code), and Sprints 1–3 (auth, the core tasting/voting
+  game, bottle tracking) are complete and committed — nothing code-risky pending for a real event. Separately,
+  PMB-wise: push the pending docs first, then run `mb upgrade` from that repo's own session to close its
+  `1.1.1`→`1.2.1` drift and wire in the `review-reminders` hook.

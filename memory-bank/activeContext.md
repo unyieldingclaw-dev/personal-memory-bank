@@ -73,16 +73,52 @@ Next (deferred, not started): branch-protect `personal-memory-bank` + 8 downstre
 - `mb status` = state ("can I work?"); `mb doctor`/`/health-check` = validation ("is it correct?")
 - Doctor test renames use single subdirectory + conditional restore (not whole-dir rename) to prevent data loss
 
+## Review-Flow Fleet Audit (2026-07-13)
+
+Audited all 11 repos' actual review-flow coverage (GitHub API + local `git status`, not estimates) after being
+asked "do we have a proper review flow advising all projects." Findings: real enforcement (hook wired +
+required CI check + current template) exists in exactly 2 of 11 — `personal-memory-bank`,
+`ai-code-review-agent`. Everything else has at most a PR-required wrapper with no content gate. Root causes,
+confirmed by reading `Invoke-Upgrade` in `scripts/mb.ps1`: (1) `install.bat` pointed users at
+`mb-new-project.bat` for onboarding/upgrading future projects — renamed to `mb-setup.bat` in a past commit,
+never updated in `install.bat`'s two `echo` lines, so the one documented on-ramp was dead. Fixed, commit
+`949b052`. (2) No fleet-wide command exists anywhere in `mb.ps1` (`init`/`upgrade`/`doctor`/etc. all operate
+on exactly one project) and no manifest tracks which local repos are PMB-managed — nothing pushes updates
+outward or reminds a stale repo to resync, so drift is structural, not accidental. (3) CI-workflow generation
+is deliberately out of `templates/` scope (zero workflow YAML ships), so `pitlogic`/`Spotify-Road-Trip`/
+`Pit-timer` lacking a required status check is unfixable by `mb upgrade` regardless.
+
+Also found real **local-vs-GitHub drift** that the GitHub-only audit missed: `Nolan-Budget`'s local
+`.pmb-version` reads `1.2.1` (current) but was never committed/pushed (last real commit only reached
+`1.1.1`) — GitHub shows zero PMB footprint for a repo that's actually the most up-to-date one locally. Most
+other local repos (`AI-Code-Review-Agent`, `Bowling-Tracker`, `Side-Quest-Atlas`, `Tipsy-Bunghole`) have real
+uncommitted/unpushed work in progress — deliberately did NOT run `mb upgrade` against any of them from this
+session; that requires confirming each is actually idle first, and stays out of scope per the cross-repo
+write boundary regardless (any such sync must run from that repo's own session).
+
+`rfx-data-analytics` (empty repo, 0 commits since 2026-04-14, superseded by `pitlogic`) — deletion attempted
+but blocked: this session's `gh` auth lacks the `delete_repo` OAuth scope (needs an interactive browser grant
+this session can't complete). **User must delete it manually** (GitHub UI Danger Zone, or
+`gh auth refresh -h github.com -s delete_repo` then ask this session to retry).
+
 ## Next Steps
 
 1. **Merge two pending worktree branches:** `worktree-cross-repo-write-boundary` (new `check-repo-boundary.ps1`/`.sh` hook, 8 commits, tests green, docs done — needs a PR + user-run merge) and `worktree-fix-workflow-doc-paths` (single-commit `WORKFLOW.md` path fix, `b52f63d`). Both sit under `.claude/worktrees/` untouched pending PR creation.
 2. PR #8 (`docs/branch-protection-rollout`) still open, CI-green, unmerged — this session's own `gh pr merge` gate means it can never merge this itself; user needs to run `gh pr merge` directly.
-3. Fix red CI on `Bowling-Tracker`/`gmail-organizer`, then branch-protect `personal-memory-bank` + 8 downstream repos using each repo's own CI (not PMB's 9-job workflow).
-4. Re-run `mb upgrade` on downstream projects (Nolan-Budget + 8 repos) once 1.2.1 lands, to pick up `templates/docs/`.
-5. Port `mb.ps1`'s command auto-discovery fix to `mb.sh` (still hardcodes a stale list — see CHANGELOG).
-6. **Monitor PMB CI** — all 9 jobs confirmed green on PR #7 as of 2026-07-04, PSScriptAnalyzer at Warning severity; watch for genuinely new lint categories in future `.ps1` changes (Write-Host is now excluded project-wide; comment-only catch blocks still count as "empty").
-7. **mb plan workflow, revisited (2026-07-12):** confirmed `/feature-dev` Phase 3 is designed to use `.claude/plans/` → `mb plan promote` → `docs/plans/`, but `/superpowers:writing-plans` (used for all of this session's planning work, and 21 of 22 prior plans) is not wired to it and writes directly to `docs/superpowers/plans/` instead. Investigated retrofitting frontmatter + an `mb doctor` check to reconcile this — declined (see `progress.md` 2026-07-12 entry): no actual incident behind it, and `activeContext.md`/`progress.md` + the `PreCompact` gate already cover the real risk (silent staleness). Not planned as future work unless a concrete need surfaces.
-8. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
+3. Delete `rfx-data-analytics` manually (blocked on missing `gh` OAuth scope — see Fleet Audit above).
+4. **Tipsy-Bunghole, before syncing:** commit + push its 4 pending Sprint 4 planning-doc commits first (clean
+   working tree), then run `mb upgrade` from inside that repo's own session to close its `1.1.1`→`1.2.1` drift
+   and wire in the `review-reminders` hook. `Nolan-Budget` needs the opposite: its already-current local state
+   just needs committing and pushing, not another upgrade.
+5. Fix red CI on `Bowling-Tracker`/`gmail-organizer` (confirm still red — last checked 2026-07-06), then write
+   real CI workflows for `pitlogic`/`Spotify-Road-Trip`/`Pit-timer` so their branch protection has an actual
+   required check behind it — this matters more than closing the remaining hook-wiring gaps, since CI can't
+   be bypassed by a plain `git push` the way local Claude Code hooks can.
+6. Port `mb.ps1`'s command auto-discovery fix to `mb.sh` (still hardcodes a stale list — see CHANGELOG).
+7. **Monitor PMB CI** — all 9 jobs confirmed green on PR #7 as of 2026-07-04, PSScriptAnalyzer at Warning severity; watch for genuinely new lint categories in future `.ps1` changes (Write-Host is now excluded project-wide; comment-only catch blocks still count as "empty").
+8. **mb plan workflow, revisited (2026-07-12):** confirmed `/feature-dev` Phase 3 is designed to use `.claude/plans/` → `mb plan promote` → `docs/plans/`, but `/superpowers:writing-plans` (used for all of this session's planning work, and 21 of 22 prior plans) is not wired to it and writes directly to `docs/superpowers/plans/` instead. Investigated retrofitting frontmatter + an `mb doctor` check to reconcile this — declined (see `progress.md` 2026-07-12 entry): no actual incident behind it, and `activeContext.md`/`progress.md` + the `PreCompact` gate already cover the real risk (silent staleness). Not planned as future work unless a concrete need surfaces.
+9. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
+10. **Fleet-wide `mb` command gap (2026-07-13):** no `mb upgrade-all`/project registry exists — confirmed while auditing the fleet (see above). Worth a real design pass if drift like this recurs, but not building it speculatively off one audit; matches this file's existing "no incident, no proactive build" stance on the plan-promote item above.
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 
