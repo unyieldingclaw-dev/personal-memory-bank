@@ -38,6 +38,92 @@ ARG="${2:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${MB_HOME:-$(dirname "$SCRIPT_DIR")}"
 
+# get_cached_pmb_version — sets LOCAL_VERSION and REMOTE_VERSION.
+#
+# WHY a shared helper instead of inlining in invoke_upgrade: the same check now
+# also runs once after every command (see the notifier block near the end of
+# this file), not just inside `mb upgrade`. One helper, one cache, one place to
+# get the TTL/fail-open logic right.
+#
+# WHY cached with a TTL instead of a live fetch every call: a live network call
+# on every single mb invocation would be slow and flaky. Caching for
+# CACHE_TTL_SECONDS means the check is nearly free on every call except
+# roughly once per TTL window.
+#
+# WHY MB_VERSION_CACHE_DIR / MB_VERSION_CHECK_URL env var overrides: lets tests
+# point this at a temp dir and a local/unreachable URL instead of the real
+# user cache and the real GitHub URL. Production code paths never need to set
+# these; they default to the real values.
+#
+# WHY sed instead of python3 to parse the cache: the cache file is written by
+# this same function via a fixed printf format, never arbitrary/user-supplied
+# JSON, so a targeted sed extraction is sufficient and safe. This matters more
+# here than it would have for a one-off `mb upgrade` check: the notifier below
+# now runs get_cached_pmb_version after EVERY command, so requiring python3
+# just to *read* the cache would mean any python3-less machine never gets a
+# cache hit and pays a live curl fetch on every single invocation — silently
+# defeating the whole point of caching. sed is a POSIX baseline tool with no
+# such gap.
+#
+# WHY fail open (leave REMOTE_VERSION empty) on any error — unreachable
+# network, malformed cache: this is an optional notice, never a gate. A broken
+# check must never block or slow down real work.
+CACHE_TTL_SECONDS=604800  # 7 days
+
+get_cached_pmb_version() {
+    local cache_dir cache_file check_url now_epoch cached_epoch cached_remote age_seconds
+    LOCAL_VERSION=""
+    REMOTE_VERSION=""
+    [ -f "$REPO_ROOT/VERSION" ] || return 0
+    LOCAL_VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
+
+    cache_dir="${MB_VERSION_CACHE_DIR:-$HOME/.mb}"
+    cache_file="$cache_dir/version-check-cache.json"
+    check_url="${MB_VERSION_CHECK_URL:-https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION}"
+    now_epoch=$(date +%s)
+
+    if [ -f "$cache_file" ]; then
+        cached_epoch=$(sed -n 's/.*"checkedAtEpoch":\([0-9]*\).*/\1/p' "$cache_file" 2>/dev/null)
+        cached_remote=$(sed -n 's/.*"remoteVersion":"\([^"]*\)".*/\1/p' "$cache_file" 2>/dev/null)
+        # WHY validate cached_epoch before arithmetic: it comes straight from the
+        # on-disk cache file. An unsanitized value reaching `$(( ))` either aborts
+        # the whole script under `set -e` (non-numeric input is a hard error in
+        # bash arithmetic) or, worse, executes anything shaped like `$(...)` inside
+        # it — undermining the fail-open guarantee this whole function exists for.
+        # A malformed/corrupted cache must degrade to "treat as stale", not crash.
+        case "$cached_epoch" in
+            ''|*[!0-9]*) cached_epoch=0 ;;
+        esac
+        age_seconds=$(( now_epoch - cached_epoch ))
+        # WHY require age_seconds >= 0: a future checkedAtEpoch (clock skew, or a
+        # cache written once under a wrong system clock) would otherwise satisfy
+        # "-lt CACHE_TTL_SECONDS" forever, keeping a stale cache "fresh" indefinitely.
+        if [ -n "$cached_remote" ] && [ "$age_seconds" -ge 0 ] && [ "$age_seconds" -lt "$CACHE_TTL_SECONDS" ]; then
+            REMOTE_VERSION="$cached_remote"
+            return 0
+        fi
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        REMOTE_VERSION=$(curl -sf --max-time 2 "$check_url" 2>/dev/null | tr -d '[:space:]' || true)
+        if [ -n "$REMOTE_VERSION" ]; then
+            mkdir -p "$cache_dir" 2>/dev/null || true
+            printf '{"checkedAtEpoch":%s,"remoteVersion":"%s"}' "$now_epoch" "$REMOTE_VERSION" > "$cache_file" 2>/dev/null || true
+        fi
+    fi
+}
+
+# pmb_version_is_stale — true when REMOTE_VERSION/LOCAL_VERSION (as set by
+# get_cached_pmb_version) show a real, non-empty version mismatch.
+#
+# WHY a helper instead of repeating this condition: the same three-clause
+# check appears at both call sites (invoke_upgrade's WARN and the end-of-
+# script NOTICE below) — a shared predicate means a future fix only needs to
+# be made once.
+pmb_version_is_stale() {
+    [ -n "$REMOTE_VERSION" ] && [ -n "$LOCAL_VERSION" ] && [ "$REMOTE_VERSION" != "$LOCAL_VERSION" ]
+}
+
 show_help() {
     echo ""
     echo -e "${CYAN}Memory Bank Utility Commands${NC}"
@@ -1573,20 +1659,13 @@ invoke_upgrade() {
     fi
 
     # Remote version check — soft warning, never blocks upgrade
-    if [ -f "$REPO_ROOT/VERSION" ]; then
-        LOCAL_VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
-        if command -v curl >/dev/null 2>&1; then
-            REMOTE_VERSION=$(curl -sf --max-time 3 \
-                "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" \
-                2>/dev/null | tr -d '[:space:]' || true)
-            if [ -n "$REMOTE_VERSION" ] && [ "$REMOTE_VERSION" != "$LOCAL_VERSION" ]; then
-                echo -e "${YELLOW}[WARN] PMB $LOCAL_VERSION installed locally, $REMOTE_VERSION available${NC}"
-                echo -e "${YELLOW}       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank${NC}"
-                echo ""
-            elif [ -z "$REMOTE_VERSION" ]; then
-                echo -e "${GRAY}[INFO] Remote version check skipped (unreachable)${NC}"
-            fi
-        fi
+    get_cached_pmb_version
+    if pmb_version_is_stale; then
+        echo -e "${YELLOW}[WARN] PMB $LOCAL_VERSION installed locally, $REMOTE_VERSION available${NC}"
+        echo -e "${YELLOW}       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank${NC}"
+        echo ""
+    elif [ -n "$LOCAL_VERSION" ] && [ -z "$REMOTE_VERSION" ]; then
+        echo -e "${GRAY}[INFO] Remote version check skipped (unreachable)${NC}"
     fi
 
     # WHY: Ownership is hardcoded as explicit arrays — NOT a config file.
@@ -2216,3 +2295,13 @@ case "$COMMAND" in
         exit 1
         ;;
 esac
+
+# Update notifier — runs after every command except upgrade (has its own WARN
+# above) and help (no need to nag on a bare help lookup). Cached/fail-open via
+# get_cached_pmb_version — see that function's WHY comments for the reasoning.
+if [ "$COMMAND" != "upgrade" ] && [ "$COMMAND" != "help" ]; then
+    get_cached_pmb_version
+    if pmb_version_is_stale; then
+        echo -e "${YELLOW}[NOTICE] PMB $LOCAL_VERSION installed, $REMOTE_VERSION available — run: mb upgrade${NC}"
+    fi
+fi
