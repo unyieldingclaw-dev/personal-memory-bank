@@ -144,4 +144,35 @@ else
   echo "--- live fetch test: SKIPPED (python3 not installed on this machine) ---"
 fi
 
+# ── cross-shell parity (PowerShell) ──────────────────────────────────────────
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- cross-shell parity: mb.ps1 cache hit shows [NOTICE] ---"
+  TMPDIR_PS1="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-ps1)"
+  trap 'rm -rf "$TMPDIR_PS1"' EXIT
+  setup_test_project "$TMPDIR_PS1"
+  mkdir -p "$TMPDIR_PS1/.mb"
+  printf '{"checkedAtEpoch":%s,"remoteVersion":"9.9.9"}' "$(date +%s)" > "$TMPDIR_PS1/.mb/version-check-cache.json"
+  cd "$TMPDIR_PS1" || exit 1
+  output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_PS1/.mb" pwsh -NoLogo -File "$REPO_ROOT/scripts/mb.ps1" status 2>&1)
+  cd - > /dev/null || exit 1
+  assert_contains "$output" "\[NOTICE\]" "mb.ps1: cache hit with differing version prints [NOTICE]"
+  assert_contains "$output" "9.9.9" "mb.ps1: [NOTICE] mentions the cached remote version"
+
+  echo ""
+  echo "--- cross-shell parity: mb.ps1 upgrade suppresses the generic [NOTICE] ---"
+  TMPDIR_PS1U="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-ps1u)"
+  trap 'rm -rf "$TMPDIR_PS1U"' EXIT
+  setup_test_project "$TMPDIR_PS1U"
+  mkdir -p "$TMPDIR_PS1U/.mb"
+  printf '{"checkedAtEpoch":%s,"remoteVersion":"9.9.9"}' "$(date +%s)" > "$TMPDIR_PS1U/.mb/version-check-cache.json"
+  cd "$TMPDIR_PS1U" || exit 1
+  output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_PS1U/.mb" pwsh -NoLogo -File "$REPO_ROOT/scripts/mb.ps1" upgrade 2>&1)
+  cd - > /dev/null || exit 1
+  assert_not_contains "$output" "\[NOTICE\]" "mb.ps1: mb upgrade suppresses the generic [NOTICE]"
+else
+  echo ""
+  echo "--- mb.ps1 tests: SKIPPED (pwsh not installed on this machine) ---"
+fi
+
 print_summary
