@@ -2297,9 +2297,13 @@ case "$COMMAND" in
 esac
 
 # Update notifier — runs after every command except upgrade (has its own WARN
-# above) and help (no need to nag on a bare help lookup). Cached/fail-open via
-# get_cached_pmb_version — see that function's WHY comments for the reasoning.
-if [ "$COMMAND" != "upgrade" ] && [ "$COMMAND" != "help" ]; then
+# above) and help (no need to nag on a bare help lookup). Also excludes
+# "update" -- a deprecated alias that still dispatches to invoke_upgrade
+# (line ~2274), so without this exclusion it would double-print: invoke_upgrade's
+# own [WARN] followed immediately by this generic [NOTICE]. Cached/fail-open
+# via get_cached_pmb_version — see that function's WHY comments for the
+# reasoning.
+if [ "$COMMAND" != "upgrade" ] && [ "$COMMAND" != "update" ] && [ "$COMMAND" != "help" ]; then
     get_cached_pmb_version
     if pmb_version_is_stale; then
         echo -e "${YELLOW}[NOTICE] PMB $LOCAL_VERSION installed, $REMOTE_VERSION available — run: mb upgrade${NC}"

@@ -95,6 +95,19 @@ output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_UPG/.mb" bash "$MB" 
 cd - > /dev/null || exit 1
 assert_not_contains "$output" "\[NOTICE\]" "mb.sh: mb upgrade suppresses the generic [NOTICE] (it has its own WARN)"
 
+# ── mb update (deprecated alias for upgrade) never double-prints ────────────
+echo ""
+echo "--- mb update suppresses the generic [NOTICE] ---"
+TMPDIR_UPD="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-test)"
+trap 'rm -rf "$TMPDIR_UPD"' EXIT
+setup_test_project "$TMPDIR_UPD"
+mkdir -p "$TMPDIR_UPD/.mb"
+printf '{"checkedAtEpoch":%s,"remoteVersion":"9.9.9"}' "$NOW_EPOCH" > "$TMPDIR_UPD/.mb/version-check-cache.json"
+cd "$TMPDIR_UPD" || exit 1
+output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_UPD/.mb" bash "$MB" update 2>&1)
+cd - > /dev/null || exit 1
+assert_not_contains "$output" "\[NOTICE\]" "mb.sh: mb update (deprecated alias, still dispatches to invoke_upgrade) suppresses the generic [NOTICE]"
+
 # ── mb help suppresses the generic [NOTICE] ──────────────────────────────────
 echo ""
 echo "--- mb help suppresses the generic [NOTICE] ---"
