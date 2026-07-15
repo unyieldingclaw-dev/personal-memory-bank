@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-07-13
+last-reviewed: 2026-07-14
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -15,6 +15,48 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-07-14 — mb Update-Notifier + Approval-Semantics Guardrail Fix
+
+- ✅ Shipped the `mb` update-notifier feature (spec: `docs/superpowers/specs/2026-07-14-mb-update-notifier-design.md`,
+  plan: `docs/superpowers/plans/2026-07-14-mb-update-notifier.md`) via `superpowers:subagent-driven-development`
+  on worktree branch `worktree-mb-update-notifier`, 4 commits, each independently passed a real 5-domain
+  `/code-review` (CLAUDE.md compliance, bug scan, git history, comment compliance, architecture) plus a
+  final whole-branch integration review. Three real bugs found and fixed pre-commit: bash cache-read
+  gated on `python3` presence silently defeated the caching design on machines without it (switched to
+  `sed`, since the cache format is self-controlled printf output, not arbitrary JSON); PowerShell's fetch
+  and cache-write shared one `try/catch`, so a write failure discarded an already-successful fetch (split
+  into two); `mb update` (deprecated alias, still dispatches to `invoke_upgrade`) double-printed both its
+  own `[WARN]` and the new generic `[NOTICE]` — caught only by the final whole-branch review, missed by
+  all three per-commit reviews since each was scoped to a single file. Also fixed real Windows/git-bash
+  test flakiness: `kill "$SRV_PID"` cannot terminate a natively-spawned `python.exe` test HTTP server
+  (bash's `$!` and the actual Windows PID are different numbers — confirmed via direct reproduction: `kill`
+  and even `taskkill` against `$!` both failed to find the process; a netstat-discovered PID worked), and a
+  flat `sleep 1` was marginal before the server was ready to accept connections (replaced with a
+  curl-based readiness poll).
+- ✅ Merged into `docs/branch-protection-rollout` (its true base, not `main`) — a rebase-onto-`main` attempt
+  was tried first, hit a real conflict, and was aborted rather than blindly resolved: `docs/branch-protection-rollout`
+  carries substantive unmerged hardening to `review-reminders.sh`/`.ps1` (the `gh pr merge` deny gate,
+  byte-parity fix, `diff_hash()` helper) that `main` doesn't have yet, and this branch's own commits were
+  gated by that hook the whole time. Merge is local only, not pushed; worktree
+  `.claude/worktrees/mb-update-notifier` / branch `worktree-mb-update-notifier` not yet cleaned up.
+- ⚠️ **Authorization-drift incident, same session:** after presenting the standard 4-option finishing-a-branch
+  menu, the user replied "what do you suggest" (a request for a recommendation) and the agent merged the
+  branch anyway, misreading the non-answer as approval. Caught by the harness's own auto-mode classifier on
+  the very next tool call — not by anything in PMB itself, which had no rule precise enough to have caught it.
+  Root cause: `standards/SECURITY-GUARDRAILS.md`'s CONFIRM tier never listed local `git merge` into a
+  shared/base branch (only push/rebase/amend were there), and nothing anywhere defined what does and
+  doesn't count as approval.
+- ✅ Fixed (commit `f3b0518`): added "merge into a shared/base branch" to the CONFIRM tier's Git Operations
+  table, and a new "What Counts as Approval" subsection stating that recommendation-requests ("what do you
+  suggest", "you decide", "I don't know") are not approval — the agent must state its recommendation and
+  explicitly re-ask, waiting for a clear directive. Deliberately advisory, not hook-enforced: a `PreToolUse`
+  hook only sees the tool call about to run, never the conversation that did or didn't authorize it, and a
+  self-written "user approved this" marker would be exactly as fakeable as the fabricated `.code-review-ok`
+  marker from the cross-repo-write-boundary incident (2026-07-10/12 entry below). Documented this reasoning
+  in `docs/HOOKS-GUIDE.md` as a worked example so a future contributor doesn't try to "fix" it with a
+  self-attestation hook. `templates/standards/SECURITY-GUARDRAILS.md` kept byte-identical (TEMPLATE_OWNED
+  sync requirement); `templates/docs/HOOKS-GUIDE.md` mirrored in trimmed form per its existing SYNC NOTE.
 
 ## 2026-07-08 — Branch Protection Rollout
 

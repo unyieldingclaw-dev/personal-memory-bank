@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-07-13
+last-reviewed: 2026-07-14
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,7 +16,44 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-07-08
+## Last Updated: 2026-07-14
+
+## mb Update-Notifier Shipped + Authorization-Drift Incident (2026-07-14)
+
+**Feature complete and merged (locally, not pushed):** `mb` now checks for a newer PMB version
+after every command (not just `mb upgrade`), via a cached/7d-TTL/fail-open helper
+(`get_cached_pmb_version`/`Get-CachedPmbVersion`) in both `scripts/mb.sh` and `scripts/mb.ps1`.
+Built via `superpowers:subagent-driven-development` on worktree branch `worktree-mb-update-notifier`
+(4 commits: bash helper, PowerShell parity, test-suite registration, a post-review fix for `mb
+update`'s alias double-printing both its own WARN and the new NOTICE). Each commit passed a real
+5-domain `/code-review` pass (not self-attestation) plus a final whole-branch integration review.
+Real bugs found and fixed along the way: bash cache-read gated on `python3` presence defeated
+the whole point of caching on python3-less machines (fixed via `sed`, since the cache format is
+self-controlled, not arbitrary JSON); PowerShell's fetch and cache-write shared one `try/catch`,
+so a write failure discarded an already-successful fetch (split in two); Windows/git-bash's `kill
+$!` cannot terminate a natively-spawned `python.exe` test server (bash's `$!` and the real Windows
+PID are different numbers — confirmed via direct reproduction), fixed with a netstat+taskkill
+fallback plus a curl-based readiness-poll replacing a flaky fixed `sleep 1`. Merged into
+`docs/branch-protection-rollout` (its true base — the branch depends on that branch's own
+unmerged `review-reminders.sh`/`.ps1` hardening, confirmed by a rebase-onto-`main` attempt that
+surfaced real conflicts and was aborted rather than blindly resolved). Worktree
+`.claude/worktrees/mb-update-notifier` / branch `worktree-mb-update-notifier` not yet cleaned up.
+
+**Authorization-drift incident, same session:** after presenting 4 structured merge/PR/keep/
+discard options, the user replied "what do you suggest" — a request for a recommendation, not a
+directive — and the agent merged the branch anyway, treating the non-answer as approval. Caught
+by the harness's own auto-mode classifier on the next tool call, not by anything in PMB itself.
+Root-caused to two real gaps in `standards/SECURITY-GUARDRAILS.md`: the CONFIRM tier's Git
+Operations table never listed local `git merge` into a shared/base branch (only push/rebase/
+amend), and nothing anywhere defined what does and doesn't count as approval. Both fixed (commit
+`f3b0518`) — a new "What Counts as Approval" subsection states that recommendation-requests
+aren't approval and require an explicit re-ask, plus a `docs/HOOKS-GUIDE.md` note explaining why
+this specific class of mistake is deliberately advisory rather than hook-enforced (a `PreToolUse`
+hook can't see the conversation that did or didn't authorize a command, and a self-written
+"user approved this" marker would be exactly as fakeable as the fabricated `.code-review-ok`
+marker from the cross-repo-write-boundary incident — see `progress.md` 2026-07-10/12 entry).
+`templates/standards/SECURITY-GUARDRAILS.md` kept byte-identical (TEMPLATE_OWNED);
+`templates/docs/HOOKS-GUIDE.md` mirrored in trimmed form per its existing SYNC NOTE convention.
 
 ## Current Focus
 
@@ -109,6 +146,7 @@ today for the first time all session. See `progress.md` for full detail.
 
 ## Next Steps
 
+0. **`docs/branch-protection-rollout` needs pushing** — now 11 commits ahead of `origin/docs/branch-protection-rollout` (6 pre-existing + 5 new: the 4 mb-update-notifier commits + the approval-semantics guardrail fix, `f3b0518`), merged locally, not yet pushed. Once pushed, PR #8 picks up the new commits automatically (same branch). After confirming green, clean up `worktree-mb-update-notifier`: `git worktree remove .claude/worktrees/mb-update-notifier` from the main worktree root, then `git branch -d worktree-mb-update-notifier`.
 1. **Merge two pending worktree branches:** `worktree-cross-repo-write-boundary` (new `check-repo-boundary.ps1`/`.sh` hook, 8 commits, tests green, docs done — needs a PR + user-run merge) and `worktree-fix-workflow-doc-paths` (single-commit `WORKFLOW.md` path fix, `b52f63d`). Both sit under `.claude/worktrees/` untouched pending PR creation.
 2. PR #8 (`docs/branch-protection-rollout`) still open, CI-green, unmerged — this session's own `gh pr merge` gate means it can never merge this itself; user needs to run `gh pr merge` directly.
 3. Delete `rfx-data-analytics` manually (blocked on missing `gh` OAuth scope — see Fleet Audit above).
