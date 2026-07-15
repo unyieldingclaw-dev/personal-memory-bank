@@ -28,6 +28,8 @@ Hooks are one layer in a four-layer enforcement stack. Understanding which layer
 
 **Design rule:** Don't duplicate concerns across layers. If a check belongs in CI, adding it to hooks creates two places to update when patterns change. If a check is semantic, adding it to hooks creates false confidence (simple pattern matching misses context). Each layer does its job; the stack as a whole provides defense in depth.
 
+**Why "was this authorized?" stays advisory, not a hook:** A `PreToolUse` hook sees only the tool call about to run, never the chat turn that did or didn't authorize it — so it can't tell a genuine "yes" from an ambiguous non-answer being misread as one. The tempting fix, a marker file the agent writes after concluding "the user approved this," is exactly as fakeable as a self-written code-review marker, which is why `/code-review` and `/change-review` bind their markers to a SHA-256 of the actual reviewed diff instead of an unverifiable claim. There's no equivalent artifact to hash for "the user meant this right now," so this stays a `standards/SECURITY-GUARDRAILS.md` rule (see "What Counts as Approval") — caught by discipline, not a gate that always fires.
+
 ## Default Hooks in This Standard
 
 Configured in `.claude/settings.json`:
