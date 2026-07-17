@@ -1,3 +1,8 @@
+---
+allowed-tools:
+  - Agent
+---
+
 # /change-review
 
 Review the current branch, PR, or diff as a complete change package using 9 parallel review jobs.
@@ -173,15 +178,75 @@ Cross-reference job 2 claims against the test changes:
 
 ---
 
-### Job 9 — Opposition
+### Job 9 — Opposition, Verdict, and Marker Write
 
-Play devil's advocate against the entire change:
+Spawn one subagent, dispatched with a capable model (e.g. `sonnet` or higher — never a
+cost-optimized/cheap model, since this subagent is the sole authority on whether the change ships).
 
-- What assumptions does this change make that could be wrong?
-- What edge cases does it not handle?
-- Are there performance implications at scale that the change doesn't address?
-- Are any findings from jobs 1–8 overstated — flag false positives explicitly
-- Cross-domain risks: a correctness issue that also has security implications, or a test gap that also affects a claim
+Give it:
+- The full findings tables from Jobs 1–8 (not the Step 3.5 Baseline Repo Health results — that
+  section is informational only and never affects Blocking)
+- The finding schema (Domain, Severity, Location, Evidence, Basis, Impact, Recommendation, Blocking,
+  Confidence)
+- The diff being reviewed (same scope as Step 1) — needed to produce genuine counter-evidence when
+  answering the opposition questions, not just react to the findings tables
+- Read and Bash tool access
+
+Instruct it to, in order:
+
+1. Play devil's advocate against the entire change:
+   - What assumptions does this change make that could be wrong?
+   - What edge cases does it not handle?
+   - Are there performance implications at scale that the change doesn't address?
+   - Are any findings from jobs 1–8 overstated — flag false positives explicitly, with specific
+     counter-evidence from the diff
+   - Cross-domain risks: a correctness issue that also has security implications, or a test gap
+     that also affects a claim
+
+2. Before scanning, revise the `Blocking` field on any finding from Jobs 1–8 you conclude above is
+   overstated or a false positive, backed by specific counter-evidence from the diff — per
+   `standards/CODE-REVIEW.md`'s exception, evidence that risk is contained downgrades it to
+   `Blocking: No`. Then scan every finding — Jobs 1–8's findings (with any revisions from this step
+   applied) plus anything you surface yourself during the opposition pass — for any `Blocking: Yes`.
+   This determines whether the change package is clean.
+
+3. If, and only if, no finding (from Jobs 1–8 as revised, or your own opposition pass) has
+   `Blocking: Yes` (including the case where there are no findings at all): independently recompute
+   a hash of the reviewed diff and write it to `.claude/.change-review-ok` (create the `.claude`
+   directory first if it doesn't exist). Do not accept this hash from the orchestrator — recompute
+   it from the actual git state, always via this exact command regardless of which flag (if any)
+   Step 1 used to gather findings:
+
+   Bash (redirect `git diff` to a temp file and hash the file — do NOT capture it via
+   `$(git diff ...)` command substitution, which strips the trailing newline a redirect preserves;
+   on any machine with both bash and pwsh installed, `review-reminders.ps1` runs first and always
+   hashes a redirected file, so a command-substitution-based hash won't match it):
+   ```
+   tmp=$(mktemp)
+   git diff origin/main...HEAD > "$tmp" 2>/dev/null
+   if [ $? -ne 0 ]; then
+     git diff HEAD > "$tmp" 2>/dev/null
+   fi
+   sha256sum "$tmp" | cut -d' ' -f1 > .claude/.change-review-ok
+   rm -f "$tmp"
+   ```
+
+   PowerShell (do NOT pipe `git diff` directly into a hash cmdlet — PowerShell's pipeline
+   re-tokenizes external-command output and will not match the hash `review-reminders.ps1`
+   recomputes; redirect to a file first so the hash covers the exact raw bytes):
+   ```
+   git diff origin/main...HEAD > "$env:TEMP\pmb-diff-hash.tmp" 2>$null
+   if ($LASTEXITCODE -ne 0) {
+     git diff HEAD > "$env:TEMP\pmb-diff-hash.tmp" 2>$null
+   }
+   (Get-FileHash "$env:TEMP\pmb-diff-hash.tmp" -Algorithm SHA256).Hash.ToLower() | Set-Content .claude/.change-review-ok
+   Remove-Item "$env:TEMP\pmb-diff-hash.tmp" -Force
+   ```
+
+4. Return to the orchestrator: its opposition answers; the full findings list with any `Blocking`
+   revisions from step 2 applied (for each revised finding, note the original value, the new value,
+   and the counter-evidence that justified the change) plus any findings it surfaced itself during
+   the opposition pass; and whether it wrote the marker.
 
 ---
 
@@ -237,33 +302,13 @@ _(This section is informational only — it never sets `Blocking: Yes` and never
 - **Baseline repo health:** all checks pass | N check(s) failing (pre-existing)
 ```
 
-## Step 6: Record Review Completion
-
-If no finding in the report has `Blocking: Yes` (including the "No findings" case), compute a hash of the reviewed diff and write it to `.claude/.change-review-ok` (create the `.claude` directory first if it doesn't exist). The marker is bound to this exact diff — a `PreToolUse` hook recomputes the same hash before the next `git push` and only allows it through if the diff hasn't changed since the review. Use the same diff command from Step 1 (`git diff origin/main...HEAD`, or `git diff HEAD` if no upstream):
-
-Bash (redirect `git diff` to a temp file and hash the file — do NOT capture it via `$(git diff ...)` command substitution, which strips the trailing newline a redirect preserves; on any machine with both bash and pwsh installed, `review-reminders.ps1` runs first and always hashes a redirected file, so a command-substitution-based hash won't match it. Also include the `git diff HEAD` fallback below even when Step 1 used `origin/main...HEAD` successfully — the hook always tries `origin/main...HEAD` first and only falls back if that command itself fails (no upstream), so the marker must be computed the same way to match in every branch, not just the common case):
-```
-tmp=$(mktemp)
-git diff origin/main...HEAD > "$tmp" 2>/dev/null
-if [ $? -ne 0 ]; then
-  git diff HEAD > "$tmp" 2>/dev/null
-fi
-sha256sum "$tmp" | cut -d' ' -f1 > .claude/.change-review-ok
-rm -f "$tmp"
-```
-
-PowerShell (do NOT pipe `git diff` directly into a hash cmdlet — PowerShell's pipeline re-tokenizes external-command output and will not match the hash `review-reminders.ps1` recomputes; redirect to a file first so the hash covers the exact raw bytes. Include the `git diff HEAD` fallback below, matching `review-reminders.ps1`'s `Get-PushDiffHash`, so the marker matches in every branch, not just the common upstream-exists case):
-```
-git diff origin/main...HEAD > "$env:TEMP\pmb-diff-hash.tmp" 2>$null
-if ($LASTEXITCODE -ne 0) {
-  git diff HEAD > "$env:TEMP\pmb-diff-hash.tmp" 2>$null
-}
-(Get-FileHash "$env:TEMP\pmb-diff-hash.tmp" -Algorithm SHA256).Hash.ToLower() | Set-Content .claude/.change-review-ok
-Remove-Item "$env:TEMP\pmb-diff-hash.tmp" -Force
-```
-
-If any finding has `Blocking: Yes`, do not write the marker.
+_(Render the Findings table above using the findings list returned by Job 9's subagent — which
+reflects any `Blocking` revisions made during its opposition pass — do not use the original,
+unrevised Jobs 1–8 output. The `.claude/.change-review-ok` marker was already written — or correctly
+not written — by Job 9 above. Do not write it, or overwrite it, in this step.)_
 
 ## Final instruction
 
-Stop after displaying the report. Do NOT edit files, push commits, or post PR comments unless the user explicitly asks — writing the `.claude/.change-review-ok` marker per Step 6 is the sole exception.
+Stop after displaying the report. Do NOT edit files, push commits, or post PR comments unless the
+user explicitly asks — writing the `.claude/.change-review-ok` marker per Job 9 is the sole
+exception.
