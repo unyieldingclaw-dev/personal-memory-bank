@@ -94,8 +94,13 @@ Footer (which job ran which way, ACR used/not/disabled, Accessibility reviewed/s
 comes from the orchestrator's own `Step 1`–`3.5` execution, not from Job 9's output, so this step
 isn't a pure rubber stamp.
 
-A new `allowed-tools` frontmatter block is added to `change-review.md` granting `Agent` and `Bash`
-(it currently has none), matching `code-review.md`'s existing pattern.
+A new `allowed-tools` frontmatter block is added to `change-review.md` (it currently has none)
+granting `Agent` plus scoped `Bash` patterns for the specific commands Job 9's relocated hash-and-write
+logic needs (`git diff`, temp-file creation/cleanup, `sha256sum`) — not a blanket `Bash` grant.
+`code-review.md`'s own `allowed-tools` already follows this scoping principle (`Bash(git diff *)`,
+`Bash(git log *)`, `Bash(git status *)`, never unrestricted `Bash`); this design matches that
+principle, not a literal copy of its pattern list, since Job 9's subagent needs different commands
+than `code-review.md`'s domain subagents do. Exact patterns are an implementation-plan detail.
 
 ### Model selection
 
@@ -113,6 +118,16 @@ verified work, in one continuous transcript, rather than as a separate assertion
 context. If a legitimate write is still denied, the existing fallback applies unchanged: stop,
 explain to the user, let them decide (write it themselves, or grant scoped permission for that one
 case) — same as was done earlier this session, not a new escape hatch introduced by this design.
+
+Two residual risks are accepted rather than solved here, since both predate this design and aren't
+made categorically worse by it: (1) the marker-writing subagent's verdict is still ultimately derived
+from LLM reasoning over content that includes the reviewed diff itself, so a sufficiently crafted
+prompt-injection attempt embedded in reviewed code is a theoretical risk today and remains one after
+this change — consolidating verdict authority into one subagent concentrates it somewhat, but doesn't
+introduce a new attack class; (2) this session exercised the manual-override fallback three times in
+one sitting, which is more than "rare escape hatch" — if that frequency continues after this fix
+ships, it's a signal the fix isn't actually closing the classifier-denial pattern and is worth
+revisiting, not something to route around again.
 
 ## Files Changed
 
