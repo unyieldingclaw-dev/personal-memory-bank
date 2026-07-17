@@ -70,20 +70,72 @@ For each subagent, provide:
 Domains to spawn (always): Security, Correctness, Maintainability, Testing, Architecture Drift
 Domains to spawn (if applicable): Performance, Accessibility
 
-## Step 5 — Opposition Review
+## Step 5 — Opposition Review, Verdict, and Marker Write
 
-Spawn one final subagent as the opposition reviewer. Give it all domain findings. It must answer all four questions from the standard's Opposition Review section:
+Spawn one final subagent as the opposition reviewer, dispatched with a capable model (e.g. `sonnet`
+or higher — never a cost-optimized/cheap model, since this subagent is the sole authority on whether
+the change ships).
 
-1. Is any Critical/High finding overstated? Provide counter-evidence.
-2. What was not reviewed that could matter?
-3. Which findings might be false positives in this codebase's context?
-4. What cross-domain risk did no single domain agent catch?
+Give it:
+- All domain findings collected in Step 4
+- The full text of the Severity, Blocking, and Basis field definitions from `standards/CODE-REVIEW.md`, verbatim
+- Read and Bash tool access
 
-A general statement that none apply is a failure — all four must be explicitly answered.
+Instruct it to, in order:
+
+1. Answer all four questions from the standard's Opposition Review section:
+   - Is any Critical/High finding overstated? Provide counter-evidence.
+   - What was not reviewed that could matter?
+   - Which findings might be false positives in this codebase's context?
+   - What cross-domain risk did no single domain agent catch?
+   A general statement that none apply is a failure — all four must be explicitly answered.
+
+2. Determine the final verdict: before scanning, revise the `Blocking` field on any finding you
+   concluded above is overstated or a false positive with specific counter-evidence — per the
+   standard's exception, evidence that risk is contained downgrades it to `Blocking: false`. Then
+   scan every finding — the Step 4 domain findings (with any revisions from this step applied) plus
+   anything you surfaced yourself while answering the opposition questions — for any `Blocking:
+   true`. If none survive, the verdict is **Approve**. Otherwise the verdict is **Request Changes**
+   (if concrete fixes were identified) or **Needs Discussion** (if the disagreement itself needs a
+   human call).
+
+3. If, and only if, the verdict is **Approve**: independently compute a hash of the reviewed diff
+   and write it to `.claude/.code-review-ok` (create the `.claude` directory first if it doesn't
+   exist). Do not accept a hash from the orchestrator — recompute it from the actual diff via
+   `git diff HEAD`, run from the same working directory as the rest of the review.
+
+   Bash (redirect to a temp file and hash the file — do NOT capture via `$(git diff ...)` command
+   substitution, which strips the trailing newline a redirect preserves; on any machine with both
+   bash and pwsh installed, `review-reminders.ps1` runs first and always hashes a redirected file,
+   so this must match its byte semantics exactly):
+   ```
+   tmp=$(mktemp)
+   git diff HEAD > "$tmp" 2>/dev/null
+   sha256sum "$tmp" | cut -d' ' -f1 > .claude/.code-review-ok
+   rm -f "$tmp"
+   ```
+
+   PowerShell (do NOT pipe `git diff` directly into a hash cmdlet — PowerShell's pipeline
+   re-tokenizes external-command output and will not match the hash `review-reminders.ps1`
+   recomputes; redirect to a file first so the hash covers the exact raw bytes):
+   ```
+   git diff HEAD > "$env:TEMP\pmb-diff-hash.tmp"
+   (Get-FileHash "$env:TEMP\pmb-diff-hash.tmp" -Algorithm SHA256).Hash.ToLower() | Set-Content .claude/.code-review-ok
+   Remove-Item "$env:TEMP\pmb-diff-hash.tmp" -Force
+   ```
+
+   If the verdict is **Request Changes** or **Needs Discussion**, do not write the marker.
+
+4. Return to the orchestrator: its answers to the four opposition questions, the verdict, and
+   whether it wrote the marker.
 
 ## Step 6 — Assemble Report
 
-Produce the report using the required sections from the standard:
+Using the domain findings from Step 4 and the opposition answers/verdict returned by Step 5's
+subagent, produce the report using the required sections from the standard. The Verdict and
+Opposition Review answers are Step 5's subagent's determination — do not recompute or override them
+here, and do not write or overwrite `.claude/.code-review-ok` in this step; it was already written
+(or correctly not written) by Step 5's subagent.
 
 **Scope:** [git diff HEAD or filename]
 **Files reviewed:** N
@@ -119,36 +171,18 @@ _(SPECULATIVE findings only. Omit this entire section if none exist.)_
 List any missing tests identified by the Testing domain subagent.
 
 **Opposition Review:**
-[Answers to all four opposition review questions]
+[Step 5 subagent's answers to all four opposition review questions]
 
-**Verdict:** Approve / Request Changes / Needs Discussion
+**Verdict:** [Step 5 subagent's verdict — Approve / Request Changes / Needs Discussion]
 
 One paragraph summary of the most important confirmed findings.
 
-## Step 7 — Record Review Completion
-
-If the Verdict above is **Approve** (no unresolved finding with `Blocking: true`), compute a hash of the reviewed diff and write it to `.claude/.code-review-ok` (create the `.claude` directory first if it doesn't exist). The marker is bound to this exact diff — a `PreToolUse` hook recomputes the same hash before the next `git commit` and only allows it through if the working tree hasn't changed since the review.
-
-Bash (redirect to a temp file and hash the file — do NOT capture via `$(git diff ...)` command substitution, which strips the trailing newline a redirect preserves; on any machine with both bash and pwsh installed, `review-reminders.ps1` runs first and always hashes a redirected file, so this must match its byte semantics exactly):
-```
-tmp=$(mktemp)
-git diff HEAD > "$tmp" 2>/dev/null
-sha256sum "$tmp" | cut -d' ' -f1 > .claude/.code-review-ok
-rm -f "$tmp"
-```
-
-PowerShell (do NOT pipe `git diff` directly into a hash cmdlet — PowerShell's pipeline re-tokenizes external-command output and will not match the hash `review-reminders.ps1` recomputes; redirect to a file first so the hash covers the exact raw bytes):
-```
-git diff HEAD > "$env:TEMP\pmb-diff-hash.tmp"
-(Get-FileHash "$env:TEMP\pmb-diff-hash.tmp" -Algorithm SHA256).Hash.ToLower() | Set-Content .claude/.code-review-ok
-Remove-Item "$env:TEMP\pmb-diff-hash.tmp" -Force
-```
-
-If the Verdict is **Request Changes** or **Needs Discussion**, do not write the marker.
-
 ---
 
-Do NOT edit files, generate tests, or apply fixes during this review — writing the `.claude/.code-review-ok` marker per Step 7 is the sole exception. If the user wants remediation after seeing findings, they will ask explicitly.
+Do NOT edit files, generate tests, or apply fixes during this review — the `.claude/.code-review-ok`
+marker is written (or correctly not written) by Step 5's subagent as its own last action, never by
+this orchestrating step. If the user wants remediation after seeing findings, they will ask
+explicitly.
 
 ---
 
