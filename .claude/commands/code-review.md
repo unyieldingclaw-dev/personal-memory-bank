@@ -78,6 +78,8 @@ the change ships).
 
 Give it:
 - All domain findings collected in Step 4
+- The diff being reviewed (same scope as Step 4) — needed to produce genuine counter-evidence when
+  answering the opposition questions, not just react to the findings table
 - The full text of the Severity, Blocking, and Basis field definitions from `standards/CODE-REVIEW.md`, verbatim
 - Read and Bash tool access
 
@@ -126,16 +128,19 @@ Instruct it to, in order:
 
    If the verdict is **Request Changes** or **Needs Discussion**, do not write the marker.
 
-4. Return to the orchestrator: its answers to the four opposition questions, the verdict, and
-   whether it wrote the marker.
+4. Return to the orchestrator: its answers to the four opposition questions, the verdict, whether it
+   wrote the marker, and the full findings list with any `Blocking` revisions from step 2 applied
+   (for each revised finding, note the original value, the new value, and the counter-evidence that
+   justified the change).
 
 ## Step 6 — Assemble Report
 
-Using the domain findings from Step 4 and the opposition answers/verdict returned by Step 5's
-subagent, produce the report using the required sections from the standard. The Verdict and
-Opposition Review answers are Step 5's subagent's determination — do not recompute or override them
-here, and do not write or overwrite `.claude/.code-review-ok` in this step; it was already written
-(or correctly not written) by Step 5's subagent.
+Using the findings list returned by Step 5's subagent (which reflects any `Blocking` revisions made
+during its opposition review — do not use the original, unrevised Step 4 output) and the opposition
+answers/verdict it also returned, produce the report using the required sections from the standard.
+The Verdict and Opposition Review answers are Step 5's subagent's determination — do not recompute or
+override them here, and do not write or overwrite `.claude/.code-review-ok` in this step; it was
+already written (or correctly not written) by Step 5's subagent.
 
 **Scope:** [git diff HEAD or filename]
 **Files reviewed:** N
