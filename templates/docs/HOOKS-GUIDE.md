@@ -131,8 +131,8 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 
 **Marker files (single-use per diff, gitignored):**
 
-- `.claude/.code-review-ok` — written by `/code-review` (Step 7) when the Verdict is **Approve**. Contains a SHA-256 hash of `git diff HEAD` at review time, not an empty file.
-- `.claude/.change-review-ok` — written by `/change-review` (Step 6) when no finding has `Blocking: Yes`. Contains a SHA-256 hash of `git diff origin/main...HEAD` (or `git diff HEAD` with no upstream).
+- `.claude/.code-review-ok` — written by `/code-review`'s Opposition-review subagent (Step 5) when the Verdict is **Approve**. Contains a SHA-256 hash of `git diff HEAD` at review time, not an empty file.
+- `.claude/.change-review-ok` — written by `/change-review`'s Job 9 (Opposition) subagent when no finding has `Blocking: Yes`. Contains a SHA-256 hash of `git diff origin/main...HEAD` (or `git diff HEAD` with no upstream).
 
 **Why a hash, not an empty marker:** an empty marker is trivially fakeable with `touch` — anyone, or a rushed agent, can satisfy the gate without reviewing anything. Binding the marker to a hash of the exact diff means it only authorizes committing/pushing that specific diff; if the working tree changes after the review, the hash no longer matches and the gate re-engages. The hook recomputes the same hash fresh and compares it to the marker's stored value before allowing the commit/push through.
 
