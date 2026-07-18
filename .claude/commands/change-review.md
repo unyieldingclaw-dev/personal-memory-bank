@@ -1,6 +1,12 @@
 ---
 allowed-tools:
   - Agent
+  - Bash(git diff *)
+  - Bash(gh pr diff *)
+  - Bash(which *)
+  - Bash(grep *)
+  - Bash(find *)
+  - Bash(ai-review-agent *)
 ---
 
 # /change-review
