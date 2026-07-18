@@ -204,9 +204,9 @@ Instruct it to, in order:
      that also affects a claim
 
 2. Before scanning, revise the `Blocking` field on any finding from Jobs 1–8 you conclude above is
-   overstated or a false positive, backed by specific counter-evidence from the diff — per
-   `standards/CODE-REVIEW.md`'s exception, evidence that risk is contained downgrades it to
-   `Blocking: No`. Then scan every finding — Jobs 1–8's findings (with any revisions from this step
+   overstated or a false positive, backed by specific counter-evidence from the diff — specific
+   evidence that risk is contained downgrades it to `Blocking: No`. Then scan every finding —
+   Jobs 1–8's findings (with any revisions from this step
    applied) plus anything you surface yourself during the opposition pass — for any `Blocking: Yes`.
    This determines whether the change package is clean.
 
