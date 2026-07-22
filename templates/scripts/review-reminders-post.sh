@@ -48,8 +48,43 @@ case "$input" in
 esac
 [ -z "$cmd" ] && exit 0
 
-root=$(git rev-parse --show-toplevel 2>/dev/null)
+# WHY this exists: see the matching comment in review-reminders.sh -- root=$(git rev-parse
+# --show-toplevel) trusts the hook process's own ambient cwd, which is empirically wrong for
+# some dispatched-subagent sessions. Deriving root from the gated command's own leading `cd`
+# fixes this regardless of the underlying cause.
+resolve_cd_root() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    cd_cmd=$(printf '%s' "$input" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('tool_input', {}).get('command', ''))
+except Exception:
+    print('')
+" 2>/dev/null | tr -d '\r')
+    [ -z "$cd_cmd" ] && return 1
+    cd_path=""
+    case "$cd_cmd" in
+        'cd "'*)
+            cd_path=$(printf '%s' "$cd_cmd" | sed -n 's/^cd "\([^"]*\)" &&.*/\1/p')
+            ;;
+        "cd '"*)
+            cd_path=$(printf '%s' "$cd_cmd" | sed -n "s/^cd '\([^']*\)' &&.*/\1/p")
+            ;;
+    esac
+    [ -z "$cd_path" ] && return 1
+    cd_root_result=$(git -C "$cd_path" rev-parse --show-toplevel 2>/dev/null)
+    [ -z "$cd_root_result" ] && return 1
+    printf '%s' "$cd_root_result"
+}
+
+root=$(resolve_cd_root)
+[ -z "$root" ] && root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$root" ] && exit 0
+
+# WHY cd here: see the matching comment in review-reminders.sh -- diff_hash() and the
+# postsha rev-parse calls below still run bare git commands with no directory anchor.
+cd "$root" 2>/dev/null || exit 0
 
 if [ "$cmd" = "commit" ]; then
     preshafile="$root/.claude/.pending-commit-presha"

@@ -40,6 +40,15 @@ invoke_hook_ps1() {
     | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null)
 }
 
+invoke_hook_from() {
+  # invoke_hook_from <script> <spawn-dir> <command-text> — like invoke_hook, but spawns the
+  # hook process from <spawn-dir> instead of $TMPDIR_RR, so <command-text> can carry its own
+  # leading `cd "$TMPDIR_RR" && ...` to test root-resolution independent of ambient cwd.
+  local script="$1" spawn_dir="$2" command="$3"
+  printf '{"tool_input":{"command":"%s"}}' "$command" \
+    | (cd "$spawn_dir" && bash "$REPO_ROOT/scripts/$script" 2>/dev/null)
+}
+
 write_marker_bash_recipe() {
   # matches code-review.md's / change-review.md's documented Bash recipe exactly
   local marker="$1"
@@ -139,6 +148,34 @@ if command -v pwsh >/dev/null 2>&1; then
 else
   echo ""
   echo "--- merge gate PowerShell tests: SKIPPED (pwsh not installed on this machine) ---"
+fi
+
+# ── worktree-root fix: hook resolves root from the command's own leading cd ─────────────────
+echo ""
+echo "--- worktree-root fix: correct marker found via leading cd, even when spawned elsewhere ---"
+if command -v python3 >/dev/null 2>&1; then
+  TMPDIR_WRONG_RR="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-wrong)"
+  git init -q -b main "$TMPDIR_WRONG_RR"
+
+  echo "line five" >> "$TMPDIR_RR/file.txt"
+  write_marker_bash_recipe ".code-review-ok"
+  resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_WRONG_RR" "cd \\\"$TMPDIR_RR\\\" && git commit -m test6")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh resolves root from the command's leading cd, finding the correct marker, even though the hook process itself was spawned from an unrelated directory"
+
+  echo ""
+  echo "--- worktree-root fix: negative control (wrong marker at the cd-derived root still denies) ---"
+  echo "line six" >> "$TMPDIR_RR/file.txt"
+  # Explicitly write a marker that does NOT match the current diff (rather than relying on
+  # the previous test's marker having been consumed) -- this specifically proves a *wrong*
+  # marker at the cd-derived root is rejected, not just an *absent* one (already covered by
+  # the existing "marker is single-use" test earlier in this file).
+  printf '%s' "0000000000000000000000000000000000000000000000000000000000000000" > "$TMPDIR_RR/.claude/.code-review-ok"
+  resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_WRONG_RR" "cd \\\"$TMPDIR_RR\\\" && git commit -m test7")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still denies via the cd-derived root when the marker there doesn't match the diff, proving the fix doesn't weaken hash validation"
+
+  rm -rf "$TMPDIR_WRONG_RR"
+else
+  echo "SKIPPED (python3 not installed on this machine — resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
 fi
 
 print_summary

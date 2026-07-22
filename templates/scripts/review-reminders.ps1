@@ -53,8 +53,30 @@ try {
 
 if (-not $cmd) { exit 0 }
 
-$root = git rev-parse --show-toplevel 2>$null
+# WHY this exists: `git rev-parse --show-toplevel` below trusts the hook process's own
+# ambient cwd, which is empirically wrong for some dispatched-subagent sessions. $cmd is
+# already the parsed command string (via ConvertFrom-Json above), so extracting a leading cd
+# path is a plain regex, no new dependency needed. Falls back to the ambient resolution on
+# any failure -- a session where ambient cwd is already correct is completely unaffected.
+$cdRoot = $null
+if ($cmd -match '^cd\s+"([^"]+)"\s*&&') {
+    $candidate = git -C $Matches[1] rev-parse --show-toplevel 2>$null
+    if ($candidate) { $cdRoot = $candidate }
+} elseif ($cmd -match "^cd\s+'([^']+)'\s*&&") {
+    $candidate = git -C $Matches[1] rev-parse --show-toplevel 2>$null
+    if ($candidate) { $cdRoot = $candidate }
+}
+
+$root = if ($cdRoot) { $cdRoot } else { git rev-parse --show-toplevel 2>$null }
 if (-not $root) { exit 0 }
+
+# WHY Set-Location here, not -C $root on every git call below: resolving $root fixes where
+# the marker is looked FOR, but the diff-hash functions and $preSha rev-parse call further
+# down still run bare git commands with no directory anchor -- the same ambient-cwd
+# assumption just fixed above, at different call sites. Anchoring the rest of this script to
+# $root once, here, means every git call downstream is correct by construction instead of
+# needing -C $root at each individual site.
+try { Set-Location $root } catch { exit 0 }
 
 # WHY hash a file written via redirection, not a piped/captured string: PowerShell's
 # pipeline re-tokenizes external-command output into a line-object array and back, which

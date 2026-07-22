@@ -16,8 +16,21 @@ try {
 
 if (-not $cmd) { exit 0 }
 
-$root = git rev-parse --show-toplevel 2>$null
+# WHY this exists: see the matching comment in review-reminders.ps1.
+$cdRoot = $null
+if ($cmd -match '^cd\s+"([^"]+)"\s*&&') {
+    $candidate = git -C $Matches[1] rev-parse --show-toplevel 2>$null
+    if ($candidate) { $cdRoot = $candidate }
+} elseif ($cmd -match "^cd\s+'([^']+)'\s*&&") {
+    $candidate = git -C $Matches[1] rev-parse --show-toplevel 2>$null
+    if ($candidate) { $cdRoot = $candidate }
+}
+
+$root = if ($cdRoot) { $cdRoot } else { git rev-parse --show-toplevel 2>$null }
 if (-not $root) { exit 0 }
+
+# WHY Set-Location here: see the matching comment in review-reminders.ps1.
+try { Set-Location $root } catch { exit 0 }
 
 # WHY hash a file written via redirection: see the matching comment in review-reminders.ps1
 # -- PowerShell's pipeline re-tokenizes piped/captured external-command output, which does
