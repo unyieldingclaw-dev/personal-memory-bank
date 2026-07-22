@@ -71,6 +71,28 @@ command without a leading `cd`, are completely unaffected.
 5. Any failure in steps 2–3 (no python3, malformed JSON, no leading `cd`, extracted path isn't a git
    repo) falls back to `ambient_root` — the *new* logic fails open, not the whole hook.
 
+### Propagating `root` to every subsequent git call (correction, added after implementation review)
+
+Resolving `root` correctly is necessary but not sufficient: everything downstream of that point —
+`diff_hash()`'s `git diff` call, and every bare `git rev-parse HEAD` / `git rev-parse '@{u}'` used to
+record pre-commit/pre-push SHAs for the `PostToolUse` companion — was still relying on the hook
+process's own ambient cwd, the exact same assumption being fixed for the marker-lookup path. Found
+during Task 1's implementation (its own mandated manual verification step caught the gap directly:
+root resolved correctly, the marker was found, but the *hash comparison* still mismatched because
+`diff_hash` computed against the wrong repo). This was a real gap in the original version of this
+spec, which incorrectly scoped hash-verification logic as untouched — see the corrected Out of Scope
+section below.
+
+**Fix:** immediately after `root` is resolved (by either path above), `cd "$root"` (bash) /
+`Set-Location $root` (PowerShell) once, before any of the existing commit/push logic runs. Every
+subsequent bare `git diff`/`git rev-parse` call in the script — `diff_hash()`, the pre-commit/pre-push
+SHA capture, and their `review-reminders-post` companions — becomes correct by construction, not by
+each call site individually remembering to pass `-C "$root"`. This was chosen over patching each of
+the ~10 individual call sites across the 4 files with an explicit `-C "$root"`: fewer places to get
+wrong, and any git call added to these files in the future is correct by default rather than silently
+reintroducing this bug. Fails open the same way as root-resolution itself: if `cd`/`Set-Location`
+fails (e.g. `root` no longer exists), exit 0 rather than proceeding with a mismatched cwd.
+
 ### Scope
 
 Both hook pairs: `scripts/review-reminders.sh`/`.ps1` (`PreToolUse` — the one that actually broke
@@ -102,6 +124,22 @@ Extend `tests/test-review-reminders.sh` with:
 Exact test structure (temp directory setup, worktree creation/cleanup) is an implementation-plan
 detail, following this file's existing test-scaffolding patterns.
 
+**A real constraint on how verification must be performed, found during implementation:** any test
+of the commit/push gate necessarily needs the literal text "git commit" or "git push" to exist
+*somewhere*, to simulate the command being gated. If that text appears directly in a live Bash tool
+call (rather than inside a file), it triggers this repo's own governing `PreToolUse` hook on the
+*testing* agent's own tool call, before the test under construction ever runs — the test collides
+with the exact mechanism it's exercising. `tests/test-review-reminders.sh` already solves this
+correctly: the trigger text lives inside the test script file (written via a file-writing tool), and
+the Bash call that *executes* the file doesn't contain the trigger text in its own command string.
+Any manual verification during implementation must use this same pattern — write the test scenario to
+a script file first, then run that file via a clean Bash call. Splitting, concatenating, or otherwise
+obfuscating the trigger text specifically to prevent the governing hook from recognizing a live Bash
+command is not an acceptable workaround, regardless of how benign the underlying test is: it defeats
+the detection mechanism itself rather than avoiding an unnecessary collision with it, and this
+distinction matters more than usual in a file whose entire purpose is closing gaps in that same
+detection layer.
+
 ## Out of Scope
 
 - `check-repo-boundary.sh`/`.ps1` — different hook, different intentional semantics (see above).
@@ -109,15 +147,17 @@ detail, following this file's existing test-scaffolding patterns.
   harness-level behavior outside this repo's control or visibility. This fix works regardless of the
   underlying cause, by deriving root from the gated command itself rather than depending on ambient
   session state.
-- Any change to the marker-write/hash-verification logic itself — untouched; this fix only changes
-  how `root` (the directory the marker is looked for in) gets computed.
+- *What* the hash-verification logic computes (the algorithm, the diff commands used, the marker
+  schema) — unchanged. *Where* it computes it now consistently follows the resolved `root` (see
+  "Propagating `root`" above) rather than ambient cwd — this is a correction to the original version
+  of this scope statement, which incorrectly claimed no hash-verification code would be touched.
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `scripts/review-reminders.sh` | New python3-based `cd`-prefix extraction + root override, fails open to current behavior |
-| `scripts/review-reminders.ps1` | New regex-based `cd`-prefix extraction (from already-parsed `$cmd`) + root override |
+| `scripts/review-reminders.sh` | New python3-based `cd`-prefix extraction + root override, fails open to current behavior; `cd "$root"` once root is resolved so `diff_hash()` and the pre-commit/pre-push SHA capture are anchored to it too |
+| `scripts/review-reminders.ps1` | New regex-based `cd`-prefix extraction (from already-parsed `$cmd`) + root override; `Set-Location $root` for the same reason |
 | `scripts/review-reminders-post.sh` | Same fix as the `.sh` pair |
 | `scripts/review-reminders-post.ps1` | Same fix as the `.ps1` pair |
 | `templates/scripts/review-reminders.sh` / `.ps1` / `-post.sh` / `-post.ps1` | Byte-identical mirrors |
