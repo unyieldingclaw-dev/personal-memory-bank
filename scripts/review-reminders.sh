@@ -104,17 +104,18 @@ input=$(cat 2>/dev/null)
 # WHY this exists: `git rev-parse --show-toplevel` below trusts the hook process's own
 # ambient cwd. That's correct for a session whose Bash tool cwd persists across calls, but
 # empirically false for some dispatched-subagent sessions -- confirmed via direct
-# reproduction during the 2026-07-16 review-gate self-attestation fix: a bare `pwd` with no
-# `cd` kept returning the wrong directory even after many prior `cd "<path>" && ...` calls
-# in the same subagent conversation. Every gated commit from inside a worktree was denied
-# even with a correct, matching marker present, because root resolved to the wrong
-# directory. Deriving root from the gated command's own leading `cd` instead of the hook's
-# ambient state fixes this regardless of the underlying cause -- see
-# docs/superpowers/specs/2026-07-22-review-hook-worktree-root-fix-design.md.
+# reproduction during the 2026-07-16 review-gate self-attestation fix session (see
+# memory-bank/progress.md's 2026-07-16 entry -- that fix's own design spec explicitly scoped
+# this hook as untouched): a bare `pwd` with no `cd` kept returning the wrong directory even
+# after many prior `cd "<path>" && ...` calls in the same subagent conversation. Every gated
+# commit from inside a worktree was denied even with a correct, matching marker present,
+# because root resolved to the wrong directory. Deriving root from the gated command's own
+# leading `cd` instead of the hook's ambient state fixes this regardless of the underlying
+# cause -- see docs/superpowers/specs/2026-07-22-review-hook-worktree-root-fix-design.md.
 #
 # WHY python3, not a regex on raw stdin: the raw-text matching in the case statement below
 # only needs to detect presence ("git commit" appears somewhere"). This needs the actual
-# VALUE of tool_input.command to check its prefix. Matches check-repo-boundary.sh's existing
+# VALUE of tool_input.command to check its prefix. Matches check-contract.sh's existing
 # precedent in this repo for the same class of need (extracting an actual field value, not
 # just detecting presence).
 #

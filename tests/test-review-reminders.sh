@@ -173,6 +173,16 @@ if command -v python3 >/dev/null 2>&1; then
   resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_WRONG_RR" "cd \\\"$TMPDIR_RR\\\" && git commit -m test7")
   assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still denies via the cd-derived root when the marker there doesn't match the diff, proving the fix doesn't weaken hash validation"
 
+  # The deny above is ambiguous by itself: it looks identical whether root resolution correctly
+  # found $TMPDIR_RR and rejected its stale marker, OR silently fell back to $TMPDIR_WRONG_RR
+  # (which has no .claude/ directory at all) and denied for finding no marker whatsoever --
+  # confirmed by direct reproduction that this test previously couldn't tell the two apart.
+  # consume_marker()'s atomic mv only removes the marker file it actually operates on, so
+  # checking that the marker at $TMPDIR_RR/.claude/.code-review-ok is gone afterward proves the
+  # hook really did resolve root to $TMPDIR_RR (not fall back), and denied because its content
+  # didn't match -- not for the wrong reason.
+  assert_file_not_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders.sh consumed the marker at the cd-derived root (not a wrong fallback directory), confirming the prior deny was a real hash mismatch rather than root-resolution silently failing"
+
   rm -rf "$TMPDIR_WRONG_RR"
 else
   echo "SKIPPED (python3 not installed on this machine — resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"

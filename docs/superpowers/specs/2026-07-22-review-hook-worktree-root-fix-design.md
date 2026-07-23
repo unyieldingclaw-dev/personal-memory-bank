@@ -16,8 +16,9 @@ root=$(git rev-parse --show-toplevel 2>/dev/null)
 This is correct when the calling session's Bash tool cwd tracks the agent's own `cd` history — true
 for top-level sessions, where the working directory genuinely persists across tool calls. It is wrong
 for subagent-dispatched Bash sessions: empirically confirmed three separate times during the
-2026-07-16 review-gate self-attestation fix (`docs/superpowers/specs/2026-07-16-review-gate-self-
-attestation-fix-design.md`), a subagent's own Bash tool session did not persist `cd` across calls —
+2026-07-16 review-gate self-attestation fix session (documented in `memory-bank/progress.md`'s
+2026-07-16 entry, not that fix's own design spec, which explicitly scoped `review-reminders.sh`/
+`.ps1` as untouched), a subagent's own Bash tool session did not persist `cd` across calls —
 a bare `pwd` with no `cd` prefix kept returning the main repo root even after many prior
 `cd "<worktree>" && ...` commands in the same subagent conversation. Every gated commit the subagent
 attempted from inside a worktree was denied, even with a correct, matching review-ok marker present
@@ -58,8 +59,9 @@ command without a leading `cd`, are completely unaffected.
   cases that a fragile field-extraction regex could break on). Getting the `cd` path's actual *value*
   does need real parsing, so bash gains a new python3-based extraction step, used only for this new
   check — the existing raw-text matching for gate detection is untouched. This mirrors
-  `check-repo-boundary.sh`'s existing precedent in this repo: python3 for extracting an actual field
-  value, with the same fail-open-if-python3-missing convention already established there.
+  `check-contract.sh`'s existing precedent in this repo (already cited in `review-reminders.sh`'s
+  own sha256sum-fallback comment): python3 for extracting an actual field value, with the same
+  fail-open-if-python3-missing convention already established there.
 
 ### Fallback / fail-open order
 
