@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-07-14
+last-reviewed: 2026-07-24
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,7 +16,115 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-07-14
+## Last Updated: 2026-07-23
+
+## Review-Hook Worktree Root-Resolution Fix — Shipped and Merged (2026-07-23)
+
+Implemented the fix designed to close the 2026-07-16 worktree-root-resolution gap (see below):
+`review-reminders.sh`/`.ps1` and their `-post` companions now derive repo root from a gated
+command's own leading `cd "<path>" && ...` prefix first, falling back to ambient
+`git rev-parse --show-toplevel` only on failure. Built via `superpowers:subagent-driven-development`
+on worktree branch `worktree-review-hook-worktree-root-fix`, 4 commits (`4d33b6c`, `298c6a7`,
+`5cac245`, `9b8c590`), plus a same-session follow-up commit (`e3d553f`) fixing two review-driven
+issues: dangling citations in the new WHY-comments (cited a nonexistent file and a spec that
+disclaims the cited content — corrected to the real precedent `check-contract.sh` and the real
+source `memory-bank/progress.md`'s 2026-07-16 entry), and a negative-control test that couldn't
+distinguish "correct root, stale marker" from "root resolution silently failed" (fixed by asserting
+the marker was actually consumed). Merged into `docs/branch-protection-rollout` (`1a6691f..e3d553f`,
+fast-forward), worktree removed, branch deleted. Full suite: 169 passed, 0 failed at merge time.
+
+**Validated live, not just synthetically**: resumed the paused `backlog-feature` work specifically
+to exercise this fix under real dispatched-subagent conditions (the original bug scenario). Across
+Task 1's full implementation/review/commit cycle — including multiple resumed subagent sessions
+running real `git commit`/`git diff` from inside that worktree — the worktree-root-resolution denial
+never recurred. This is real signal the fix holds for genuine subagent sessions, not just the
+top-level controller (whose own commit attempts hit a *different*, self-inflicted issue during
+testing: a manual reproduction script consumed the one-time marker, not a fix failure — see
+`progress.md` for the full forensics).
+
+**Also found and left uncommitted**: an unrelated, undocumented but coherent piece of prior WIP
+sitting in the main repo's working tree — an `/ai-review` nudge added to the merge-gate deny message
+(`scripts/review-reminders.sh`/`.ps1` + template mirrors) plus a new "The Hook-Enforced Review Gate"
+section in `standards/WORKFLOW.md` documenting the full pre-commit/post-commit/pre-push/post-push/
+pre-merge flow. No matching commit, branch, or memory-bank entry exists for it — most likely a prior
+session's work that got cut off before committing. Stashed before the merge above, popped back after
+(clean auto-merge, no conflicts), verified compatible (15/15 tests). **Still uncommitted** — needs
+review and a commit decision on its own terms, not bundled into this fix.
+
+## `mb backlog` Feature — Task 1 Shipped, Tasks 2-5 Not Started (2026-07-23)
+
+Resumed the paused `backlog-feature` worktree (plan: `docs/superpowers/plans/2026-07-14-backlog-feature.md`,
+5 tasks) under an active task contract. Task 1 (bash `mb backlog add/list/show/promote/dismiss` +
+`tests/test-mb-backlog.sh`) was already implemented from a prior session but had no live review
+marker, so it went through a fresh full review cycle. **Two real Critical/High security bugs found
+and fixed**: `show`/`promote`/`dismiss` took the `slug` CLI argument raw with no sanitization (unlike
+`add`, which always slugifies) — path traversal (`../../etc/passwd`) and, more seriously, a
+sed-delimiter-injection in `promote`'s `sed -i` call that a reviewer directly reproduced (a crafted
+slug containing `#` + newline + `w <path>` writes attacker-chosen content to an attacker-chosen
+file). Fixed with a single `backlog_validate_slug()` gate (rejects anything outside `[a-z0-9-]`)
+called before path construction in all three functions. Also fixed: an all-symbol title silently
+produced an invisible, unlistable `docs/backlog/.md`; a malformed-frontmatter `promote` silently
+produced an empty plan stub while still marking the item `promoted`; a new regression test that
+claimed to prove path-traversal-disclosure-prevention but actually checked the wrong path depth
+(`../secret` vs. the needed `../../secret`); and `tests/test-mb-backlog.sh` was never wired into
+`tests/run.sh`'s `run_suite` list, meaning CI would have shown green with zero backlog coverage —
+caught by cross-referencing `.github/workflows/*.yml`'s actual test gate, not by any single domain
+review alone. Committed `3c6cb3d`. Live end-to-end verification (real `add`/`list`/`show` calls plus
+both attack payloads against the actual running command, not just the test harness) confirmed
+correct behavior after the fix.
+
+**Process note, worth reading before resuming Tasks 2-5**: Task 1 took roughly 30 minutes of actual
+subagent compute (summed from reported durations) but the wall-clock gap the user experienced was
+far larger (they left it running ~11am, checked back ~6:30pm) — cause unconfirmed, not visible in
+any subagent's reported timing, flagged here rather than guessed at. Separately, the review process
+itself (full 5-domain + Opposition, repeated across three resume cycles as fixes were made) was
+heavier than the task warranted for a ~300-line bash diff — worth scoping review depth to change
+size more deliberately next time rather than defaulting to the heaviest cycle every round. The final
+marker-write also tripped the safety classifier's self-attestation SECURITY WARNING **twice** in one
+session — once when the parent implementer subagent tried, once when a second, independently-
+dispatched, narrowly-scoped subagent tried — even though genuine multi-round review substance existed
+both times. User made the call to proceed after reviewing the specifics each time; this recurring
+friction is now tracked as its own backlog item (see below) rather than treated as fully resolved by
+the 2026-07-16 self-attestation fix.
+
+**A new backlog item was added** (`mb backlog add`, in the `backlog-feature` worktree, uncommitted):
+`docs/backlog/harden-the-pre-commit-pre-push-pre-merge-review-ga.md` — documents the review-gate
+hardening need (self-attestation warnings still firing on independently-dispatched writers, no
+post-hoc audit that what's committed matches what was reviewed, pre-merge relying entirely on the
+human with `/ai-review` only ever suggested). This is itself the first real dogfood use of the
+feature being built.
+
+**Tasks 2-5 not started**: PowerShell `mb backlog` parity (Task 2), `mb doctor`/`mb status`
+integration (Task 3), `/backlog` command wrapper (Task 4), docs + `tests/run.sh` registration +
+final verification (Task 5). Full specs in the plan file. Worktree `.claude/worktrees/backlog-feature`
+/ branch `worktree-backlog-feature` is clean and current (merged up through `e3d553f`). Task contract
+active at `.claude/contracts/active-task.json` in that worktree, expires 2026-07-24T00:59:18Z —
+**likely expired by the time Tasks 2-5 resume; re-propose/rewrite it rather than assuming it's
+still valid.**
+
+## Review-Gate Self-Attestation Fix — Shipped and Merged (2026-07-16)
+
+Root-caused and fixed why the backlog-feature Task 1 marker write (below) kept getting denied:
+`/code-review`/`/change-review` both used to have the orchestrator write the gate marker itself,
+right after running the review it's attesting to — structurally identical, from outside that
+context, to fabricating one. Fix: verdict-determination + marker-write now happen inside the last
+dispatched review subagent (`/code-review`'s Opposition step, Step 5; `/change-review`'s Job 9,
+given its first-ever subagent dispatch) as that subagent's own closing action, immediately after its
+own genuine review work. Full detail (design spec, plan, 6-commit build via
+`superpowers:subagent-driven-development`, review findings, a live classifier-denial demonstration
+mid-build) in `progress.md`. Merged into this branch (`58f7795`), worktree cleaned up, branch
+deleted. **`/code-review` and `/change-review` now both write their own gate markers via subagent —
+this is how they behave going forward.**
+
+**Backlog-feature work is paused mid-implementation, ready to resume:** Task 1 (bash `mb backlog`
+command family) is fully implemented, twice-reviewed, Approved — sitting uncommitted in worktree
+`.claude/worktrees/backlog-feature` / branch `worktree-backlog-feature`, blocked on the same
+marker-write denial — now fixed (above), so this should no longer recur. Resume via
+`superpowers:subagent-driven-development` from that worktree's existing state.
+
+*(Correction, 2026-07-23: it recurred anyway — see the "mb backlog Feature" entry above. The fix
+moved *who* writes the marker but didn't fully resolve the classifier's structural read of the
+pattern; tracked as its own backlog item rather than assumed resolved.)*
 
 ## mb Update-Notifier Shipped + Authorization-Drift Incident (2026-07-14)
 
@@ -146,23 +254,25 @@ today for the first time all session. See `progress.md` for full detail.
 
 ## Next Steps
 
-0. **`docs/branch-protection-rollout` needs pushing** — now 11 commits ahead of `origin/docs/branch-protection-rollout` (6 pre-existing + 5 new: the 4 mb-update-notifier commits + the approval-semantics guardrail fix, `f3b0518`), merged locally, not yet pushed. Once pushed, PR #8 picks up the new commits automatically (same branch). After confirming green, clean up `worktree-mb-update-notifier`: `git worktree remove .claude/worktrees/mb-update-notifier` from the main worktree root, then `git branch -d worktree-mb-update-notifier`.
-1. **Merge two pending worktree branches:** `worktree-cross-repo-write-boundary` (new `check-repo-boundary.ps1`/`.sh` hook, 8 commits, tests green, docs done — needs a PR + user-run merge) and `worktree-fix-workflow-doc-paths` (single-commit `WORKFLOW.md` path fix, `b52f63d`). Both sit under `.claude/worktrees/` untouched pending PR creation.
-2. PR #8 (`docs/branch-protection-rollout`) still open, CI-green, unmerged — this session's own `gh pr merge` gate means it can never merge this itself; user needs to run `gh pr merge` directly.
-3. Delete `rfx-data-analytics` manually (blocked on missing `gh` OAuth scope — see Fleet Audit above).
-4. **Tipsy-Bunghole, before syncing:** commit + push its 4 pending Sprint 4 planning-doc commits first (clean
+0. **Resume `mb backlog` Tasks 2-5** from `.claude/worktrees/backlog-feature` (branch `worktree-backlog-feature`, clean, current through `e3d553f`, Task 1 committed at `3c6cb3d`) — recommended to start this as its own fresh session rather than continuing an already-long one. The task contract there (`.claude/contracts/active-task.json`) expires 2026-07-24T00:59:18Z — check first, re-propose if expired. Full task specs: `docs/superpowers/plans/2026-07-14-backlog-feature.md`. Consider scoping the review cycle to the actual size of each task's diff rather than defaulting to the full 5-domain-plus-Opposition cycle every round — Task 1 (a ~300-line diff) went through it three times across fix cycles and took far longer than the task warranted.
+1. **Decide what to do with the unrelated uncommitted WIP** sitting in the main repo (`/ai-review` merge-gate nudge in `scripts/review-reminders.sh`/`.ps1` + template mirrors, plus a new "Hook-Enforced Review Gate" section in `standards/WORKFLOW.md`) — stashed and restored intact during the 2026-07-23 worktree-root-fix merge, still uncommitted, no matching commit/branch/memory-bank entry found anywhere. Needs its own review + commit decision.
+2. **`docs/branch-protection-rollout` needs pushing** — now 28 commits ahead of `origin/docs/branch-protection-rollout` as of the 2026-07-23 worktree-root-fix merge (up from 11 pre-existing to 23, plus this session's 5: the design-spec-correction + 3 fix commits + the review-driven follow-up `e3d553f`), merged locally, not yet pushed. Once pushed, PR #8 picks up the new commits automatically (same branch).
+3. **Merge two pending worktree branches:** `worktree-cross-repo-write-boundary` (new `check-repo-boundary.ps1`/`.sh` hook, 8 commits, tests green, docs done — needs a PR + user-run merge) and `worktree-fix-workflow-doc-paths` (single-commit `WORKFLOW.md` path fix, `b52f63d`). Both sit under `.claude/worktrees/` untouched pending PR creation.
+4. PR #8 (`docs/branch-protection-rollout`) still open, CI-green, unmerged — this session's own `gh pr merge` gate means it can never merge this itself; user needs to run `gh pr merge` directly.
+5. Delete `rfx-data-analytics` manually (blocked on missing `gh` OAuth scope — see Fleet Audit above).
+6. **Tipsy-Bunghole, before syncing:** commit + push its 4 pending Sprint 4 planning-doc commits first (clean
    working tree), then run `mb upgrade` from inside that repo's own session to close its `1.1.1`→`1.2.1` drift
    and wire in the `review-reminders` hook. `Nolan-Budget` needs the opposite: its already-current local state
    just needs committing and pushing, not another upgrade.
-5. Fix red CI on `Bowling-Tracker`/`gmail-organizer` (confirm still red — last checked 2026-07-06), then write
+7. Fix red CI on `Bowling-Tracker`/`gmail-organizer` (confirm still red — last checked 2026-07-06), then write
    real CI workflows for `pitlogic`/`Spotify-Road-Trip`/`Pit-timer` so their branch protection has an actual
    required check behind it — this matters more than closing the remaining hook-wiring gaps, since CI can't
    be bypassed by a plain `git push` the way local Claude Code hooks can.
-6. Port `mb.ps1`'s command auto-discovery fix to `mb.sh` (still hardcodes a stale list — see CHANGELOG).
-7. **Monitor PMB CI** — all 9 jobs confirmed green on PR #7 as of 2026-07-04, PSScriptAnalyzer at Warning severity; watch for genuinely new lint categories in future `.ps1` changes (Write-Host is now excluded project-wide; comment-only catch blocks still count as "empty").
-8. **mb plan workflow, revisited (2026-07-12):** confirmed `/feature-dev` Phase 3 is designed to use `.claude/plans/` → `mb plan promote` → `docs/plans/`, but `/superpowers:writing-plans` (used for all of this session's planning work, and 21 of 22 prior plans) is not wired to it and writes directly to `docs/superpowers/plans/` instead. Investigated retrofitting frontmatter + an `mb doctor` check to reconcile this — declined (see `progress.md` 2026-07-12 entry): no actual incident behind it, and `activeContext.md`/`progress.md` + the `PreCompact` gate already cover the real risk (silent staleness). Not planned as future work unless a concrete need surfaces.
-9. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
-10. **Fleet-wide `mb` command gap (2026-07-13):** no `mb upgrade-all`/project registry exists — confirmed while auditing the fleet (see above). Worth a real design pass if drift like this recurs, but not building it speculatively off one audit; matches this file's existing "no incident, no proactive build" stance on the plan-promote item above.
+8. Port `mb.ps1`'s command auto-discovery fix to `mb.sh` (still hardcodes a stale list — see CHANGELOG).
+9. **Monitor PMB CI** — all 9 jobs confirmed green on PR #7 as of 2026-07-04, PSScriptAnalyzer at Warning severity; watch for genuinely new lint categories in future `.ps1` changes (Write-Host is now excluded project-wide; comment-only catch blocks still count as "empty").
+10. **mb plan workflow, revisited (2026-07-12):** confirmed `/feature-dev` Phase 3 is designed to use `.claude/plans/` → `mb plan promote` → `docs/plans/`, but `/superpowers:writing-plans` (used for all of this session's planning work, and 21 of 22 prior plans) is not wired to it and writes directly to `docs/superpowers/plans/` instead. Investigated retrofitting frontmatter + an `mb doctor` check to reconcile this — declined (see `progress.md` 2026-07-12 entry): no actual incident behind it, and `activeContext.md`/`progress.md` + the `PreCompact` gate already cover the real risk (silent staleness). Not planned as future work unless a concrete need surfaces.
+11. **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
+12. **Fleet-wide `mb` command gap (2026-07-13):** no `mb upgrade-all`/project registry exists — confirmed while auditing the fleet (see above). Worth a real design pass if drift like this recurs, but not building it speculatively off one audit; matches this file's existing "no incident, no proactive build" stance on the plan-promote item above.
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 
