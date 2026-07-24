@@ -30,6 +30,7 @@ run_suite "mb upgrade"           "$REPO_ROOT/tests/test-mb-upgrade.sh"
 run_suite "mb doctor"            "$REPO_ROOT/tests/test-mb-doctor.sh"
 run_suite "review-reminders"     "$REPO_ROOT/tests/test-review-reminders.sh"
 run_suite "mb-version-notifier"  "$REPO_ROOT/tests/test-mb-version-notifier.sh"
+run_suite "update-reviewed"      "$REPO_ROOT/tests/test-update-reviewed.sh"
 
 echo ""
 echo "════════════════════════════════════"
