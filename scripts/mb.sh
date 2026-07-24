@@ -105,7 +105,14 @@ get_cached_pmb_version() {
     fi
 
     if command -v curl >/dev/null 2>&1; then
-        REMOTE_VERSION=$(curl -sf --max-time 2 "$check_url" 2>/dev/null | tr -d '[:space:]' || true)
+        # WHY strip '"' here too, not just whitespace: REMOTE_VERSION is written into the
+        # cache file's JSON below via a plain printf, not a real JSON encoder -- a response
+        # containing a literal " would break the JSON structure (the cache reader above uses
+        # a bounded sed, not a parser, so a stray quote either truncates or corrupts the next
+        # read). A legitimate version string never contains a quote character, so stripping
+        # any that appear is a safe, minimal boundary sanitization rather than a real escaping
+        # scheme -- no different in spirit from the existing whitespace strip on this line.
+        REMOTE_VERSION=$(curl -sf --max-time 2 "$check_url" 2>/dev/null | tr -d '[:space:]"' || true)
         if [ -n "$REMOTE_VERSION" ]; then
             mkdir -p "$cache_dir" 2>/dev/null || true
             printf '{"checkedAtEpoch":%s,"remoteVersion":"%s"}' "$now_epoch" "$REMOTE_VERSION" > "$cache_file" 2>/dev/null || true

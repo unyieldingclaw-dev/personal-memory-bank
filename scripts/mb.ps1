@@ -2578,6 +2578,14 @@ switch ($Command) {
 # Update notifier — runs after every command except upgrade (has its own WARN
 # above) and help (no need to nag on a bare help lookup). Cached/fail-open via
 # Get-CachedPmbVersion — see that function's WHY comments for the reasoning.
+#
+# WHY "update" isn't excluded here the way mb.sh excludes it: mb.sh's "update" case still
+# dispatches to Invoke-Upgrade's bash equivalent, so without an exclusion it would
+# double-print that command's own [WARN] followed immediately by this [NOTICE]. This
+# PowerShell "update" case (~line 2573) only prints a one-line deprecation notice pointing at
+# `mb clean` — it never calls Invoke-Upgrade — so no double-print exists here and no exclusion
+# is needed. Documented explicitly so a future sync of this exclusion list between the two
+# scripts doesn't add "update" here by copy-paste assumption without re-checking this.
 if ($Command -ne "upgrade" -and $Command -ne "help") {
     Get-CachedPmbVersion
     if (Test-PmbVersionStale) {
