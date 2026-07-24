@@ -24,8 +24,10 @@ suite silently skipped because Pester wasn't installed, discovered only by accid
 
 Not "always fail loud" universally — that would break this repo's own deliberate, already-
 correct fail-open convention for **blocking hooks** (`review-reminders.sh`,
-`check-repo-boundary.sh`, `dangerous-commands.sh` — failing closed there would block all work,
-worse than missing one check). The real distinction:
+`dangerous-commands.sh` — failing closed there would block all work, worse than missing one
+check; `check-repo-boundary.sh` follows the same convention but lives only on the separate,
+unmerged `worktree-cross-repo-write-boundary` branch as of this writing, not on this one). The
+real distinction:
 
 - **Blocking gates** (stop an action) → fail open is correct, unchanged by this design.
 - **Coverage/review checks** (produce findings someone relies on as "this was verified") →

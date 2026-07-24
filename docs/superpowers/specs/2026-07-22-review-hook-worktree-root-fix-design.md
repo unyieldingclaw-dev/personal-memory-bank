@@ -104,11 +104,12 @@ inside a worktree, e.g. reissuing a marker after a gated push fails). Plus their
 `templates/scripts/` mirrors (TEMPLATE_OWNED sync, matching this repo's existing convention for these
 files).
 
-`check-repo-boundary.sh`/`.ps1` is explicitly out of scope. It already resolves root via
-`$CLAUDE_PROJECT_DIR` instead of `git rev-parse --show-toplevel`, for a different reason: that hook's
-entire purpose is staying pinned to the session's *original* project root regardless of where the
-agent `cd`s, to prevent cross-repo writes — the opposite of what this fix wants. It is not the same
-bug and does not need the same fix.
+`check-repo-boundary.sh`/`.ps1` is explicitly out of scope. As of this writing it exists only on the
+separate, unmerged `worktree-cross-repo-write-boundary` branch, not on this one — but even once merged,
+it resolves root via `$CLAUDE_PROJECT_DIR` instead of `git rev-parse --show-toplevel`, for a different
+reason: that hook's entire purpose is staying pinned to the session's *original* project root
+regardless of where the agent `cd`s, to prevent cross-repo writes — the opposite of what this fix
+wants. It is not the same bug and does not need the same fix.
 
 ### Testing
 
@@ -144,7 +145,8 @@ detection layer.
 
 ## Out of Scope
 
-- `check-repo-boundary.sh`/`.ps1` — different hook, different intentional semantics (see above).
+- `check-repo-boundary.sh`/`.ps1` — different hook, different intentional semantics (see above); also
+  not present on this branch as of this writing (see Scope).
 - Root-causing *why* subagent Bash sessions don't persist `cd` the way top-level sessions do — that's
   harness-level behavior outside this repo's control or visibility. This fix works regardless of the
   underlying cause, by deriving root from the gated command itself rather than depending on ambient
