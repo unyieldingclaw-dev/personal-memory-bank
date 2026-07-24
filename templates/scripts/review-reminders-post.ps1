@@ -17,12 +17,27 @@ try {
 if (-not $cmd) { exit 0 }
 
 # WHY this exists: see the matching comment in review-reminders.ps1.
+#
+# WHY resolve the FULL leading cd chain: see the matching comment in review-reminders.ps1 --
+# both hooks share this exact logic.
 $cdRoot = $null
-if ($cmd -match '^cd\s+"([^"]+)"\s*&&') {
-    $candidate = git -C $Matches[1] rev-parse --show-toplevel 2>$null
-    if ($candidate) { $cdRoot = $candidate }
-} elseif ($cmd -match "^cd\s+'([^']+)'\s*&&") {
-    $candidate = git -C $Matches[1] rev-parse --show-toplevel 2>$null
+$chainPatternText = @'
+^cd\s+(?:"([^"]+)"|'([^']+)')\s*&&\s*
+'@
+$chainPattern = [regex]$chainPatternText
+$restCmd = $cmd
+$curDir = (Get-Location).Path
+$matchedAny = $false
+while ($true) {
+    $m = $chainPattern.Match($restCmd)
+    if (-not $m.Success) { break }
+    $matchedAny = $true
+    $p = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
+    $curDir = if ([System.IO.Path]::IsPathRooted($p)) { $p } else { [System.IO.Path]::GetFullPath((Join-Path $curDir $p)) }
+    $restCmd = $restCmd.Substring($m.Length)
+}
+if ($matchedAny) {
+    $candidate = git -C $curDir rev-parse --show-toplevel 2>$null
     if ($candidate) { $cdRoot = $candidate }
 }
 

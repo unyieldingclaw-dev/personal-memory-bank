@@ -58,12 +58,32 @@ if (-not $cmd) { exit 0 }
 # already the parsed command string (via ConvertFrom-Json above), so extracting a leading cd
 # path is a plain regex, no new dependency needed. Falls back to the ambient resolution on
 # any failure -- a session where ambient cwd is already correct is completely unaffected.
+#
+# WHY resolve the FULL leading cd chain, not just the first cd: see the matching comment in
+# review-reminders.sh -- a chained command (`cd "A" && cd "B" && git commit ...`) must
+# resolve to B's root, not A's, or a marker earned reviewing A wrongly authorizes a commit
+# that actually runs in B. Reproduced directly against the previous single-match regex: it
+# captured "A" and only "A" from that exact chained string. A single-quoted here-string
+# (@'...'@) holds the pattern so both `"` and `'` can appear in it with no escaping, matching
+# the bash fix's heredoc approach for the same reason.
 $cdRoot = $null
-if ($cmd -match '^cd\s+"([^"]+)"\s*&&') {
-    $candidate = git -C $Matches[1] rev-parse --show-toplevel 2>$null
-    if ($candidate) { $cdRoot = $candidate }
-} elseif ($cmd -match "^cd\s+'([^']+)'\s*&&") {
-    $candidate = git -C $Matches[1] rev-parse --show-toplevel 2>$null
+$chainPatternText = @'
+^cd\s+(?:"([^"]+)"|'([^']+)')\s*&&\s*
+'@
+$chainPattern = [regex]$chainPatternText
+$restCmd = $cmd
+$curDir = (Get-Location).Path
+$matchedAny = $false
+while ($true) {
+    $m = $chainPattern.Match($restCmd)
+    if (-not $m.Success) { break }
+    $matchedAny = $true
+    $p = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
+    $curDir = if ([System.IO.Path]::IsPathRooted($p)) { $p } else { [System.IO.Path]::GetFullPath((Join-Path $curDir $p)) }
+    $restCmd = $restCmd.Substring($m.Length)
+}
+if ($matchedAny) {
+    $candidate = git -C $curDir rev-parse --show-toplevel 2>$null
     if ($candidate) { $cdRoot = $candidate }
 }
 

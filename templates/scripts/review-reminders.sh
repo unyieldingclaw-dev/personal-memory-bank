@@ -119,30 +119,61 @@ input=$(cat 2>/dev/null)
 # precedent in this repo for the same class of need (extracting an actual field value, not
 # just detecting presence).
 #
+# WHY resolve the FULL leading cd chain, not just the first cd: a chained command like
+# `cd "A" && cd "B" && git commit ...` must resolve to B's root, not A's -- reproduced
+# directly against the OLD implementation (a sed pattern that only ever matched the first
+# `cd "X" &&` prefix): it extracted "A" from that exact string, so a chained command could
+# reuse a marker earned reviewing A to authorize a commit that actually runs in B. python3
+# walks every leading `cd "<path>" && ` / `cd '<path>' && ` segment in order, applying each
+# cd's relative-path semantics against the previously resolved directory (matching what a
+# real shell does with the same chain), so the git-root check below runs against the FINAL
+# directory, not the first one.
+#
+# WHY `[^"]+`/`[^']+` (one-or-more), not `*`: must match review-reminders.ps1's regex exactly
+# -- a `*` vs `+` mismatch between the two would make bash and PowerShell resolve the SAME
+# input differently (e.g. `cd "" && cd "/real/path" && ...`: `*` lets bash match the empty
+# segment and continue the chain; `+` would reject it on PowerShell and abandon the chain
+# entirely), defeating the point of a hook meant to behave identically on both platforms.
+#
+# WHY a single-quoted heredoc + argv instead of `python3 -c "..."` + stdin: the regex needs
+# to match BOTH `cd "X"` and `cd 'X'` forms, so its source must contain literal double-quote
+# AND single-quote characters together -- no shell quoting style for a `-c` argument avoids
+# colliding with one or the other. A single-quoted heredoc (<<'PYEOF') isn't interpreted by
+# the shell at all (no expansion, no quote handling), so both characters can appear freely;
+# $input moves to argv only because the heredoc already claims stdin.
+#
 # WHY fail open to the ambient root on any failure: this is a best-effort correction layered
 # on top of the existing resolution, not a replacement for it. No python3, malformed JSON, no
 # leading cd, or an extracted path that isn't a git repo all fall back to exactly today's
 # behavior -- a session where ambient cwd is already correct is completely unaffected.
 resolve_cd_root() {
     command -v python3 >/dev/null 2>&1 || return 1
-    cd_cmd=$(printf '%s' "$input" | python3 -c "
-import sys, json
+    cd_path=$(python3 - "$input" <<'PYEOF' 2>/dev/null | tr -d '\r'
+import sys, json, os, re
+
 try:
-    data = json.load(sys.stdin)
-    print(data.get('tool_input', {}).get('command', ''))
+    data = json.loads(sys.argv[1])
+    cmd = data.get("tool_input", {}).get("command", "")
 except Exception:
-    print('')
-" 2>/dev/null | tr -d '\r')
-    [ -z "$cd_cmd" ] && return 1
-    cd_path=""
-    case "$cd_cmd" in
-        'cd "'*)
-            cd_path=$(printf '%s' "$cd_cmd" | sed -n 's/^cd "\([^"]*\)" &&.*/\1/p')
-            ;;
-        "cd '"*)
-            cd_path=$(printf '%s' "$cd_cmd" | sed -n "s/^cd '\([^']*\)' &&.*/\1/p")
-            ;;
-    esac
+    cmd = ""
+
+dq = re.compile(r'^cd\s+"([^"]+)"\s*&&\s*')
+sq = re.compile(r"^cd\s+'([^']+)'\s*&&\s*")
+rest = cmd
+cur = os.getcwd()
+matched = False
+while True:
+    m = dq.match(rest) or sq.match(rest)
+    if not m:
+        break
+    matched = True
+    p = m.group(1)
+    cur = p if os.path.isabs(p) else os.path.normpath(os.path.join(cur, p))
+    rest = rest[m.end():]
+
+print(cur if matched else "")
+PYEOF
+)
     [ -z "$cd_path" ] && return 1
     cd_root_result=$(git -C "$cd_path" rev-parse --show-toplevel 2>/dev/null)
     [ -z "$cd_root_result" ] && return 1

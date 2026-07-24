@@ -188,4 +188,69 @@ else
   echo "SKIPPED (python3 not installed on this machine — resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
 fi
 
+# ── chained-cd fix: root resolves to the LAST cd, not the first ────────────────────────────
+# WHY this test exists: resolve_cd_root() used to extract only the FIRST leading `cd "X" &&`
+# from tool_input.command. For a chained command (`cd "A" && cd "B" && git commit ...`), that
+# meant root, marker lookup, and diff_hash all resolved against A while the actual git command
+# ran in B -- a decoy repo A with its own genuinely-valid marker could authorize a commit in a
+# completely different repo B whose diff was never reviewed. Reproduced directly before this
+# fix: the sed/regex extraction returned A's path from that exact chained string.
+echo ""
+echo "--- chained-cd fix: root resolves to the LAST cd in a multi-cd command, not the first ---"
+if command -v python3 >/dev/null 2>&1; then
+  TMPDIR_DECOY_A="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-decoy)"
+  git -C "$TMPDIR_DECOY_A" init -q -b main
+  git -C "$TMPDIR_DECOY_A" config user.email "test@example.com"
+  git -C "$TMPDIR_DECOY_A" config user.name "Test"
+  echo "decoy one" > "$TMPDIR_DECOY_A/file.txt"
+  git -C "$TMPDIR_DECOY_A" add file.txt
+  git -C "$TMPDIR_DECOY_A" commit -q -m "initial"
+  mkdir -p "$TMPDIR_DECOY_A/.claude"
+  echo "decoy two" >> "$TMPDIR_DECOY_A/file.txt"
+  # Decoy A gets its own genuinely-valid marker for ITS OWN diff -- proving this isn't just an
+  # absent/stale marker being rejected, but a real, currently-valid marker that must NOT be
+  # usable to authorize a commit actually happening in a different repo (RR).
+  tmp=$(mktemp)
+  git -C "$TMPDIR_DECOY_A" diff HEAD > "$tmp" 2>/dev/null
+  sha256sum "$tmp" | cut -d' ' -f1 > "$TMPDIR_DECOY_A/.claude/.code-review-ok"
+  rm -f "$tmp"
+
+  echo "line seven" >> "$TMPDIR_RR/file.txt"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+  resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_DECOY_A" "cd \\\"$TMPDIR_DECOY_A\\\" && cd \\\"$TMPDIR_RR\\\" && git commit -m test8")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh resolves root to the LAST cd (RR) in a chained command, not the first (decoy A) — denies because RR has no valid marker of its own, proving decoy A's valid-but-unrelated marker cannot be reused to authorize a commit actually happening in RR"
+
+  # If root had wrongly resolved to decoy A (the pre-fix bug), decoy A's marker would have
+  # been consumed and the commit allowed. Confirming it's still present proves root correctly
+  # resolved to RR, not A.
+  assert_file_exists "$TMPDIR_DECOY_A/.claude/.code-review-ok" "review-reminders.sh did not touch decoy A's marker — confirming root resolved to RR (the last cd), not A (the first)"
+
+  rm -rf "$TMPDIR_DECOY_A"
+else
+  echo "SKIPPED (python3 not installed on this machine — resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
+fi
+
+# ── whitespace-variant fix: bash and PowerShell now accept the same cd-prefix shapes ────────
+# WHY this test exists: bash's original sed pattern required exactly one space before `&&`
+# (`cd "path" &&`); review-reminders.ps1's regex was more permissive (`\s+`/`\s*`). A command
+# like `cd "path"&&git commit` (no space before `&&`) resolved correctly on PowerShell but
+# silently fell back to ambient cwd on bash -- an unstated cross-platform divergence. The
+# chained-cd fix above unified both hooks on the same permissive `\s+`/`\s*` shape; this proves
+# bash now accepts a tight-whitespace variant it previously rejected.
+echo ""
+echo "--- whitespace-variant fix: review-reminders.sh accepts a cd prefix with no space before && ---"
+if command -v python3 >/dev/null 2>&1; then
+  TMPDIR_WRONG_WS="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-wrongws)"
+  git init -q -b main "$TMPDIR_WRONG_WS"
+
+  echo "line eight" >> "$TMPDIR_RR/file.txt"
+  write_marker_bash_recipe ".code-review-ok"
+  resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_WRONG_WS" "cd \\\"$TMPDIR_RR\\\"&&git commit -m test9")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh resolves root from a cd prefix with no space before && (tight-whitespace variant), even though the hook process was spawned from an unrelated directory"
+
+  rm -rf "$TMPDIR_WRONG_WS"
+else
+  echo "SKIPPED (python3 not installed on this machine — resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
+fi
+
 print_summary

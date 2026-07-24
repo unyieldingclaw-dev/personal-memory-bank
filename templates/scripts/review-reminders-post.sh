@@ -52,26 +52,37 @@ esac
 # --show-toplevel) trusts the hook process's own ambient cwd, which is empirically wrong for
 # some dispatched-subagent sessions. Deriving root from the gated command's own leading `cd`
 # fixes this regardless of the underlying cause.
+#
+# WHY resolve the FULL leading cd chain, and WHY a heredoc+argv instead of `-c "..."`+stdin:
+# see the matching comment in review-reminders.sh -- both hooks share this exact function.
 resolve_cd_root() {
     command -v python3 >/dev/null 2>&1 || return 1
-    cd_cmd=$(printf '%s' "$input" | python3 -c "
-import sys, json
+    cd_path=$(python3 - "$input" <<'PYEOF' 2>/dev/null | tr -d '\r'
+import sys, json, os, re
+
 try:
-    data = json.load(sys.stdin)
-    print(data.get('tool_input', {}).get('command', ''))
+    data = json.loads(sys.argv[1])
+    cmd = data.get("tool_input", {}).get("command", "")
 except Exception:
-    print('')
-" 2>/dev/null | tr -d '\r')
-    [ -z "$cd_cmd" ] && return 1
-    cd_path=""
-    case "$cd_cmd" in
-        'cd "'*)
-            cd_path=$(printf '%s' "$cd_cmd" | sed -n 's/^cd "\([^"]*\)" &&.*/\1/p')
-            ;;
-        "cd '"*)
-            cd_path=$(printf '%s' "$cd_cmd" | sed -n "s/^cd '\([^']*\)' &&.*/\1/p")
-            ;;
-    esac
+    cmd = ""
+
+dq = re.compile(r'^cd\s+"([^"]+)"\s*&&\s*')
+sq = re.compile(r"^cd\s+'([^']+)'\s*&&\s*")
+rest = cmd
+cur = os.getcwd()
+matched = False
+while True:
+    m = dq.match(rest) or sq.match(rest)
+    if not m:
+        break
+    matched = True
+    p = m.group(1)
+    cur = p if os.path.isabs(p) else os.path.normpath(os.path.join(cur, p))
+    rest = rest[m.end():]
+
+print(cur if matched else "")
+PYEOF
+)
     [ -z "$cd_path" ] && return 1
     cd_root_result=$(git -C "$cd_path" rev-parse --show-toplevel 2>/dev/null)
     [ -z "$cd_root_result" ] && return 1
