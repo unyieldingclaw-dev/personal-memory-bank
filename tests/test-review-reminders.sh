@@ -312,4 +312,80 @@ actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
 assert_contains "$actual" "$expected" "review-reminders-post.sh falls back to raw-stdin matching and still reissues .code-review-ok correctly when stdin isn't valid JSON"
 rm -f "$TMPDIR_RR/.claude/.pending-commit-presha"
 
+# ── empty-command fix: a legitimately empty tool_input.command must not fall back to raw stdin ─
+# WHY this test exists: extract_command() used to print an empty string both when parsing
+# genuinely failed AND when tool_input.command legitimately parsed to "" -- the caller
+# couldn't tell those apart, so BOTH cases fell back to raw-stdin matching. That reintroduced
+# the exact false-positive this whole fix targets: a well-formed payload with an empty
+# command but a description mentioning "git commit" would still match via the fallback, even
+# though parsing succeeded and correctly reported "there's no command here." extract_command()
+# now signals success/failure via its own exit code (an explicit tool_input.command presence
+# check), so a genuinely empty command is distinguishable from a failed parse even though
+# both print nothing -- this proves the empty-but-successfully-parsed case does NOT fall back.
+if command -v python3 >/dev/null 2>&1; then
+  echo ""
+  echo "--- empty-command fix: review-reminders.sh does not gate on a legitimately empty tool_input.command, even with a trigger phrase in description ---"
+  resp=$(invoke_hook_with_description "review-reminders.sh" "" "remember to git commit these staged changes later")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny when tool_input.command is legitimately empty, even though description mentions 'git commit'"
+
+  echo ""
+  echo "--- empty-command fix: review-reminders-post.sh does not falsely reissue a marker for a legitimately empty tool_input.command ---"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+  presha=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+  printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+  invoke_hook_with_description "review-reminders-post.sh" "" "remember to git commit these staged changes later" >/dev/null
+  assert_file_not_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders-post.sh does not reissue .code-review-ok when tool_input.command is legitimately empty, even though description mentions 'git commit'"
+  assert_file_exists "$TMPDIR_RR/.claude/.pending-commit-presha" "review-reminders-post.sh leaves the pending-commit-presha file untouched for a legitimately empty command"
+  rm -f "$TMPDIR_RR/.claude/.pending-commit-presha"
+else
+  echo "SKIPPED (python3 not installed on this machine -- extract_command() fails open to raw-stdin matching, already covered by the fallback-fix tests above)"
+fi
+
+# ── post-hook root resolution: worktree-root and chained-cd fixes apply to the reissue path too ─
+# WHY these tests exist: the worktree-root and chained-cd tests earlier in this file only
+# exercise review-reminders.sh (the PreToolUse gate). review-reminders-post.sh has its own
+# copy of resolve_cd_root() plus a new `extracted` flag (added so resolve_cd_root() is skipped
+# entirely when extract_command() fails, rather than being called with unparsed input) --
+# neither was previously exercised with a leading `cd` in the reissue path, only in the gate
+# path. A broken plain-string handoff here would silently reissue markers into the wrong
+# directory (the ambient cwd) instead of the one the actual git command ran in.
+if command -v python3 >/dev/null 2>&1; then
+  echo ""
+  echo "--- post-hook root resolution: reissues into the cd-derived root, not the ambient (wrong) spawn directory ---"
+  TMPDIR_WRONG_POST="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-wrongpost)"
+  git init -q -b main "$TMPDIR_WRONG_POST"
+
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha"
+  echo "line nine" >> "$TMPDIR_RR/file.txt"
+  presha=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+  printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+  invoke_hook_from "review-reminders-post.sh" "$TMPDIR_WRONG_POST" "cd \\\"$TMPDIR_RR\\\" && git commit -m test10" >/dev/null
+  expected=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+  actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
+  assert_contains "$actual" "$expected" "review-reminders-post.sh reissues .code-review-ok into the cd-derived root ($TMPDIR_RR), not the ambient spawn directory, even with the new plain-string resolve_cd_root() handoff"
+  assert_file_not_exists "$TMPDIR_WRONG_POST/.claude/.code-review-ok" "review-reminders-post.sh did not write the marker into the wrong (ambient) directory"
+
+  echo ""
+  echo "--- post-hook root resolution: chained cd resolves to the LAST directory, not the first (decoy) ---"
+  TMPDIR_DECOY_POST="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-decoypost)"
+  git -C "$TMPDIR_DECOY_POST" init -q -b main
+  mkdir -p "$TMPDIR_DECOY_POST/.claude"
+  presha_decoy="0000000000000000000000000000000000000000000000000000000000000000"
+  printf '%s' "$presha_decoy" > "$TMPDIR_DECOY_POST/.claude/.pending-commit-presha"
+
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha"
+  echo "line ten" >> "$TMPDIR_RR/file.txt"
+  presha=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+  printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+  invoke_hook_from "review-reminders-post.sh" "$TMPDIR_DECOY_POST" "cd \\\"$TMPDIR_DECOY_POST\\\" && cd \\\"$TMPDIR_RR\\\" && git commit -m test11" >/dev/null
+  expected=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+  actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
+  assert_contains "$actual" "$expected" "review-reminders-post.sh resolves root to the LAST cd (RR) in a chained command, reissuing the marker there, not into the first (decoy) directory"
+  assert_file_exists "$TMPDIR_DECOY_POST/.claude/.pending-commit-presha" "review-reminders-post.sh did not touch decoy's unrelated pending-commit-presha file, confirming root resolved to RR (the last cd), not the decoy (the first)"
+
+  rm -rf "$TMPDIR_WRONG_POST" "$TMPDIR_DECOY_POST"
+else
+  echo "SKIPPED (python3 not installed on this machine -- resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
+fi
+
 print_summary

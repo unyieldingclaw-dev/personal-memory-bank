@@ -49,28 +49,31 @@ input=$(cat 2>/dev/null)
 # parsed command value instead (falling back to raw stdin only when python3 is missing or
 # JSON parsing fails) fixes this while keeping the same fail-open-to-over-triggering safety
 # direction as the rest of this file.
+#
+# WHY extract_command() parses the JSON once and resolve_cd_root() takes the already-
+# extracted command as a plain-string argument instead of re-parsing JSON itself, and WHY
+# extract_command() distinguishes "parsing failed" from "tool_input.command legitimately
+# parsed to an empty string" via an explicit presence check and exit code: see the matching
+# comments in review-reminders.sh -- both hooks share this exact design.
 extract_command() {
     command -v python3 >/dev/null 2>&1 || return 1
-    python3 - "$input" <<'PYEOF' 2>/dev/null | tr -d '\r'
+    result=$(python3 - "$input" 2>/dev/null <<'PYEOF'
 import sys, json
 
 try:
     data = json.loads(sys.argv[1])
-    print(data.get("tool_input", {}).get("command", ""))
+    tool_input = data.get("tool_input", {})
+    if "command" not in tool_input:
+        sys.exit(1)
+    sys.stdout.write(tool_input["command"])
 except Exception:
-    pass
+    sys.exit(1)
 PYEOF
+)
+    rc=$?
+    [ "$rc" -ne 0 ] && return 1
+    printf '%s' "$result" | tr -d '\r'
 }
-
-match_target=$(extract_command)
-[ -z "$match_target" ] && match_target="$input"
-
-cmd=""
-case "$match_target" in
-    *'git commit'*) cmd="commit" ;;
-    *'git push'*) cmd="push" ;;
-esac
-[ -z "$cmd" ] && exit 0
 
 # WHY this exists: see the matching comment in review-reminders.sh -- root=$(git rev-parse
 # --show-toplevel) trusts the hook process's own ambient cwd, which is empirically wrong for
@@ -80,16 +83,13 @@ esac
 # WHY resolve the FULL leading cd chain, and WHY a heredoc+argv instead of `-c "..."`+stdin:
 # see the matching comment in review-reminders.sh -- both hooks share this exact function.
 resolve_cd_root() {
+    # $1: the already-extracted tool_input.command value (a plain string, not JSON) -- see
+    # extract_command() above. This function no longer parses JSON at all.
     command -v python3 >/dev/null 2>&1 || return 1
-    cd_path=$(python3 - "$input" <<'PYEOF' 2>/dev/null | tr -d '\r'
-import sys, json, os, re
+    cd_path=$(python3 - "$1" <<'PYEOF' 2>/dev/null | tr -d '\r'
+import sys, os, re
 
-try:
-    data = json.loads(sys.argv[1])
-    cmd = data.get("tool_input", {}).get("command", "")
-except Exception:
-    cmd = ""
-
+cmd = sys.argv[1]
 dq = re.compile(r'^cd\s+"([^"]+)"\s*&&\s*')
 sq = re.compile(r"^cd\s+'([^']+)'\s*&&\s*")
 rest = cmd
@@ -113,7 +113,28 @@ PYEOF
     printf '%s' "$cd_root_result"
 }
 
-root=$(resolve_cd_root)
+if match_target=$(extract_command); then
+    extracted=1
+else
+    match_target="$input"
+    extracted=0
+fi
+
+# WHY the cmd check runs before resolve_cd_root(), not after: this hook has matcher "Bash" in
+# .claude/settings.json, so it fires on EVERY Bash tool call, not just git commit/push --
+# resolve_cd_root() (a second python3 fork) and the git rev-parse fallback below are wasted
+# work for the overwhelming majority of calls that aren't a commit/push attempt at all.
+# Checking cmd first and exiting early preserves the cheap common case; only real commit/push
+# attempts pay for root resolution below.
+cmd=""
+case "$match_target" in
+    *'git commit'*) cmd="commit" ;;
+    *'git push'*) cmd="push" ;;
+esac
+[ -z "$cmd" ] && exit 0
+
+root=""
+[ "$extracted" = "1" ] && root=$(resolve_cd_root "$match_target")
 [ -z "$root" ] && root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$root" ] && exit 0
 

@@ -39,9 +39,10 @@
 # git commit history"}}) -- matching raw stdin means that description text alone can trigger
 # the gate on a command that never touches git commit/push at all. review-reminders.ps1
 # already parses JSON properly (ConvertFrom-Json) and matches on the extracted command value
-# only; extract_command() brings this hook to the same behavior using python3 -- the same
-# proper JSON parser resolve_cd_root() already depends on, so this carries no new dependency.
-# Falls back to matching raw stdin (today's behavior) only when python3 is missing or the
+# only; extract_command() brings this hook to the same behavior using python3, already a
+# dependency in this file (resolve_cd_root() below reuses extract_command()'s parsed command
+# instead of re-parsing JSON itself), so this carries no new dependency. Falls back to
+# matching raw stdin (today's behavior) only when python3 is missing or the
 # JSON fails to parse -- the safe failure direction for a security gate is to over-trigger an
 # occasional unnecessary re-review, not to silently stop gating commits/pushes altogether.
 #
@@ -119,14 +120,46 @@ input=$(cat 2>/dev/null)
 # leading `cd` instead of the hook's ambient state fixes this regardless of the underlying
 # cause -- see docs/superpowers/specs/2026-07-22-review-hook-worktree-root-fix-design.md.
 #
-# WHY python3, not a regex on raw stdin: resolving a leading cd chain needs the actual VALUE
-# of tool_input.command to walk its segments and resolve relative paths in order -- no
-# substring/presence check could do that. Matches check-contract.sh's existing precedent in
-# this repo for the same class of need (extracting an actual field value, not just detecting
-# presence). extract_command() (below) uses the same json.loads() technique for a different
-# job -- getting the whole command string so the commit/push/merge match below can check its
-# actual value too, instead of scanning raw stdin (see that match's own WHY comment above).
+# WHY extract_command() parses the JSON once, and resolve_cd_root() takes the already-
+# extracted command as a plain-string argument instead of re-parsing JSON itself: these two
+# used to run separate python3 subprocesses each doing their own identical
+# `json.loads(...).get("tool_input", {}).get("command", "")` extraction, for two different
+# downstream uses (walking a leading cd chain vs. matching the whole command against git
+# commit/push/gh pr merge). Parsing once and threading the plain string through removes that
+# duplication -- resolve_cd_root()'s own python3 call becomes pure string/path logic with no
+# JSON involved at all, while extract_command() remains the single place tool_input.command
+# is ever pulled out of the payload.
 #
+# WHY extract_command() distinguishes "parsing failed" from "tool_input.command legitimately
+# parsed to an empty string" via an explicit presence check and exit code, not an empty-
+# string default: a default made both cases produce empty output, which the caller could only
+# treat identically -- falling back to raw-stdin matching even when the command genuinely
+# WAS empty (which should mean "nothing to gate," not "fall back to scanning raw stdin for a
+# stray trigger phrase"). Reproduced directly: {"tool_input":{"command":"","description":
+# "remember to git commit these staged changes later"}} would otherwise still match the gate
+# via the raw-stdin fallback, defeating the point of matching the parsed command at all. The
+# exit code (not the printed string) is what the caller branches on, so a genuinely empty
+# command is distinguishable from a failed parse even though both print nothing.
+extract_command() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    result=$(python3 - "$input" 2>/dev/null <<'PYEOF'
+import sys, json
+
+try:
+    data = json.loads(sys.argv[1])
+    tool_input = data.get("tool_input", {})
+    if "command" not in tool_input:
+        sys.exit(1)
+    sys.stdout.write(tool_input["command"])
+except Exception:
+    sys.exit(1)
+PYEOF
+)
+    rc=$?
+    [ "$rc" -ne 0 ] && return 1
+    printf '%s' "$result" | tr -d '\r'
+}
+
 # WHY resolve the FULL leading cd chain, not just the first cd: a chained command like
 # `cd "A" && cd "B" && git commit ...` must resolve to B's root, not A's -- reproduced
 # directly against the OLD implementation (a sed pattern that only ever matched the first
@@ -148,23 +181,20 @@ input=$(cat 2>/dev/null)
 # AND single-quote characters together -- no shell quoting style for a `-c` argument avoids
 # colliding with one or the other. A single-quoted heredoc (<<'PYEOF') isn't interpreted by
 # the shell at all (no expansion, no quote handling), so both characters can appear freely;
-# $input moves to argv only because the heredoc already claims stdin.
+# the command string moves to argv only because the heredoc already claims stdin.
 #
 # WHY fail open to the ambient root on any failure: this is a best-effort correction layered
-# on top of the existing resolution, not a replacement for it. No python3, malformed JSON, no
-# leading cd, or an extracted path that isn't a git repo all fall back to exactly today's
-# behavior -- a session where ambient cwd is already correct is completely unaffected.
+# on top of the existing resolution, not a replacement for it. No python3, no leading cd, or
+# an extracted path that isn't a git repo all fall back to exactly today's behavior -- a
+# session where ambient cwd is already correct is completely unaffected.
 resolve_cd_root() {
+    # $1: the already-extracted tool_input.command value (a plain string, not JSON) -- see
+    # extract_command() above. This function no longer parses JSON at all.
     command -v python3 >/dev/null 2>&1 || return 1
-    cd_path=$(python3 - "$input" <<'PYEOF' 2>/dev/null | tr -d '\r'
-import sys, json, os, re
+    cd_path=$(python3 - "$1" <<'PYEOF' 2>/dev/null | tr -d '\r'
+import sys, os, re
 
-try:
-    data = json.loads(sys.argv[1])
-    cmd = data.get("tool_input", {}).get("command", "")
-except Exception:
-    cmd = ""
-
+cmd = sys.argv[1]
 dq = re.compile(r'^cd\s+"([^"]+)"\s*&&\s*')
 sq = re.compile(r"^cd\s+'([^']+)'\s*&&\s*")
 rest = cmd
@@ -188,25 +218,35 @@ PYEOF
     printf '%s' "$cd_root_result"
 }
 
-# WHY a separate function from resolve_cd_root(), not a shared parse: resolve_cd_root() only
-# needs the leading `cd` chain, extract_command() needs the whole command string -- keeping
-# them as two single-purpose functions (each with its own python3 call) matches this file's
-# existing convention of small helpers with one job apiece, rather than one function serving
-# two different call sites' different needs.
-extract_command() {
-    command -v python3 >/dev/null 2>&1 || return 1
-    python3 - "$input" <<'PYEOF' 2>/dev/null | tr -d '\r'
-import sys, json
+if match_target=$(extract_command); then
+    extracted=1
+else
+    match_target="$input"
+    extracted=0
+fi
 
-try:
-    data = json.loads(sys.argv[1])
-    print(data.get("tool_input", {}).get("command", ""))
-except Exception:
-    pass
-PYEOF
+deny() {
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
 }
 
-root=$(resolve_cd_root)
+# WHY classify before resolving root, and WHY gh pr merge is denied here rather than in the
+# case statement further down: this hook has matcher "Bash" in .claude/settings.json, so it
+# fires -- and blocks synchronously -- on every single Bash tool call, not just git commit/
+# push/merge attempts. resolve_cd_root() (a second python3 fork) and the git rev-parse
+# fallback below are wasted latency for the overwhelming majority of calls that need neither:
+# gh pr merge is an unconditional deny with no marker/root access at all, and anything else
+# (ls, npm test, ...) isn't gated at all. Only git commit/push actually need root.
+case "$match_target" in
+    *'gh pr merge'*)
+        deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
+        exit 0
+        ;;
+    *'git commit'*|*'git push'*) ;;
+    *) exit 0 ;;
+esac
+
+root=""
+[ "$extracted" = "1" ] && root=$(resolve_cd_root "$match_target")
 [ -z "$root" ] && root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$root" ] && exit 0
 
@@ -218,10 +258,6 @@ root=$(resolve_cd_root)
 # instead of each one needing to remember -C "$root" individually (and any git call added to
 # this file later inherits correctness for free instead of silently reintroducing the bug).
 cd "$root" 2>/dev/null || exit 0
-
-deny() {
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
-}
 
 # Attempt an atomic claim: rename the marker to a private name. Fails harmlessly if the
 # marker doesn't exist. Prints the claimed marker's content (a hash) on success, empty on
@@ -237,9 +273,6 @@ consume_marker() {
     rm -f "$claimed"
     printf '%s' "$content"
 }
-
-match_target=$(extract_command)
-[ -z "$match_target" ] && match_target="$input"
 
 case "$match_target" in
     *'git commit'*)
@@ -267,9 +300,6 @@ case "$match_target" in
         else
             deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
         fi
-        ;;
-    *'gh pr merge'*)
-        deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
         ;;
 esac
 exit 0
