@@ -40,6 +40,16 @@ invoke_hook_ps1() {
     | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null)
 }
 
+invoke_hook_with_description() {
+  # invoke_hook_with_description <script> <command-text> <description-text> — builds a
+  # tool_input payload carrying BOTH command and description, mirroring the real Bash tool's
+  # PreToolUse/PostToolUse JSON shape, to test that matching keys off tool_input.command alone
+  # and not the raw stdin payload (which also contains description).
+  local script="$1" command="$2" description="$3"
+  printf '{"tool_input":{"command":"%s","description":"%s"}}' "$command" "$description" \
+    | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/$script" 2>/dev/null)
+}
+
 invoke_hook_from() {
   # invoke_hook_from <script> <spawn-dir> <command-text> — like invoke_hook, but spawns the
   # hook process from <spawn-dir> instead of $TMPDIR_RR, so <command-text> can carry its own
@@ -252,5 +262,54 @@ if command -v python3 >/dev/null 2>&1; then
 else
   echo "SKIPPED (python3 not installed on this machine — resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
 fi
+
+# ── false-positive fix: a trigger phrase in an unrelated field must not gate/reissue ────────
+# WHY this test exists: both hooks used to match `*'git commit'*`/`*'git push'*` against the
+# RAW stdin JSON payload, not just tool_input.command. The real Bash tool's PreToolUse/
+# PostToolUse payload also carries tool_input.description alongside command -- a read-only
+# command like `git log --oneline` with a description mentioning "git commit" (e.g. "Show git
+# commit history") would falsely match the raw payload, even though the actual command being
+# run isn't a commit at all. Matching against the parsed tool_input.command value instead
+# (mirroring review-reminders.ps1, which already does this) fixes this.
+echo ""
+echo "--- false-positive fix: review-reminders.sh does not gate a read-only command whose description mentions a trigger phrase ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+resp=$(invoke_hook_with_description "review-reminders.sh" "git log --oneline -5" "Show git commit history")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny a plain git log whose description field happens to contain the phrase 'git commit'"
+
+echo ""
+echo "--- false-positive fix: review-reminders-post.sh does not falsely reissue a marker for a read-only command whose description mentions a trigger phrase ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+presha=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+invoke_hook_with_description "review-reminders-post.sh" "git log --oneline -5" "Show git commit history" >/dev/null
+assert_file_not_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders-post.sh does not reissue .code-review-ok for a git log command whose description field happens to contain 'git commit'"
+assert_file_exists "$TMPDIR_RR/.claude/.pending-commit-presha" "review-reminders-post.sh leaves the pending-commit-presha file untouched when the actual command isn't a commit, since it belongs to a still-pending real commit attempt"
+rm -f "$TMPDIR_RR/.claude/.pending-commit-presha"
+
+# ── fallback fix: malformed JSON on stdin still falls back to raw-stdin matching ────────────
+# WHY this test exists: extract_command() falls back to raw-stdin matching whenever its
+# python3 parse fails (json.loads throws) or python3 itself is unavailable -- but nothing in
+# this suite exercised the "parse failed" branch specifically. Faking "python3 missing"
+# portably across test machines is impractical (its install location varies), but feeding
+# genuinely malformed JSON is cheap and exercises the same fallback branch: json.loads raises,
+# extract_command() prints nothing, match_target falls back to $input. This proves the
+# fallback doesn't silently disable the gate on bad input -- it degrades to exactly the
+# pre-fix raw-stdin behavior, which still catches a real "git commit" substring.
+echo ""
+echo "--- fallback fix: review-reminders.sh still gates on malformed (non-JSON) stdin via the raw-stdin fallback ---"
+resp=$(printf 'not valid json but contains git commit anyway' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh falls back to raw-stdin matching (and still denies, no marker present) when stdin isn't valid JSON, instead of silently letting the gate go unmatched"
+
+echo ""
+echo "--- fallback fix: review-reminders-post.sh still reissues via the raw-stdin fallback on malformed (non-JSON) stdin ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+presha=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+printf 'not valid json but contains git commit anyway' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders-post.sh" 2>/dev/null) >/dev/null
+expected=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
+assert_contains "$actual" "$expected" "review-reminders-post.sh falls back to raw-stdin matching and still reissues .code-review-ok correctly when stdin isn't valid JSON"
+rm -f "$TMPDIR_RR/.claude/.pending-commit-presha"
 
 print_summary

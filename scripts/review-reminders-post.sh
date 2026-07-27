@@ -41,8 +41,32 @@ diff_hash() {
 input=$(cat 2>/dev/null)
 [ -z "$input" ] && exit 0
 
+# WHY match against extract_command()'s parsed tool_input.command, not the raw stdin
+# payload: see the matching comment in review-reminders.sh -- the real Bash tool's payload
+# also carries tool_input.description alongside command, so raw-stdin matching can trigger
+# on a read-only command whose description merely mentions "git commit"/"git push", falsely
+# reissuing a review-ok marker for a commit/push that never actually happened. Matching the
+# parsed command value instead (falling back to raw stdin only when python3 is missing or
+# JSON parsing fails) fixes this while keeping the same fail-open-to-over-triggering safety
+# direction as the rest of this file.
+extract_command() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 - "$input" <<'PYEOF' 2>/dev/null | tr -d '\r'
+import sys, json
+
+try:
+    data = json.loads(sys.argv[1])
+    print(data.get("tool_input", {}).get("command", ""))
+except Exception:
+    pass
+PYEOF
+}
+
+match_target=$(extract_command)
+[ -z "$match_target" ] && match_target="$input"
+
 cmd=""
-case "$input" in
+case "$match_target" in
     *'git commit'*) cmd="commit" ;;
     *'git push'*) cmd="push" ;;
 esac

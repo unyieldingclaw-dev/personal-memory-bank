@@ -33,11 +33,17 @@
 # hook detects the relevant git ref didn't move and reissues the marker, so a rejected
 # attempt (e.g. a separate pre-commit hook) doesn't force a pointless re-review.
 #
-# WHY match raw stdin instead of extracting the "command" field: a `grep -o
-# '"command":"[^"]*"'` extraction breaks on any JSON-escaped quote inside the command,
-# silently truncating the match and letting anything after it through unchecked. Since
-# "git commit"/"git push" only plausibly appear in this hook's stdin inside the command
-# field, matching the raw payload directly is robust to that escaping edge case.
+# WHY match against extract_command()'s parsed tool_input.command, not the raw stdin
+# payload: the real Bash tool's PreToolUse payload also carries tool_input.description
+# alongside command (e.g. {"tool_input":{"command":"git log --oneline","description":"Show
+# git commit history"}}) -- matching raw stdin means that description text alone can trigger
+# the gate on a command that never touches git commit/push at all. review-reminders.ps1
+# already parses JSON properly (ConvertFrom-Json) and matches on the extracted command value
+# only; extract_command() brings this hook to the same behavior using python3 -- the same
+# proper JSON parser resolve_cd_root() already depends on, so this carries no new dependency.
+# Falls back to matching raw stdin (today's behavior) only when python3 is missing or the
+# JSON fails to parse -- the safe failure direction for a security gate is to over-trigger an
+# occasional unnecessary re-review, not to silently stop gating commits/pushes altogether.
 #
 # WHY hookSpecificOutput.permissionDecision, not top-level "continue": top-level
 # {"continue": false} only stops the agent's turn *after* the tool call has already run --
@@ -113,11 +119,13 @@ input=$(cat 2>/dev/null)
 # leading `cd` instead of the hook's ambient state fixes this regardless of the underlying
 # cause -- see docs/superpowers/specs/2026-07-22-review-hook-worktree-root-fix-design.md.
 #
-# WHY python3, not a regex on raw stdin: the raw-text matching in the case statement below
-# only needs to detect presence ("git commit" appears somewhere"). This needs the actual
-# VALUE of tool_input.command to check its prefix. Matches check-contract.sh's existing
-# precedent in this repo for the same class of need (extracting an actual field value, not
-# just detecting presence).
+# WHY python3, not a regex on raw stdin: resolving a leading cd chain needs the actual VALUE
+# of tool_input.command to walk its segments and resolve relative paths in order -- no
+# substring/presence check could do that. Matches check-contract.sh's existing precedent in
+# this repo for the same class of need (extracting an actual field value, not just detecting
+# presence). extract_command() (below) uses the same json.loads() technique for a different
+# job -- getting the whole command string so the commit/push/merge match below can check its
+# actual value too, instead of scanning raw stdin (see that match's own WHY comment above).
 #
 # WHY resolve the FULL leading cd chain, not just the first cd: a chained command like
 # `cd "A" && cd "B" && git commit ...` must resolve to B's root, not A's -- reproduced
@@ -180,6 +188,24 @@ PYEOF
     printf '%s' "$cd_root_result"
 }
 
+# WHY a separate function from resolve_cd_root(), not a shared parse: resolve_cd_root() only
+# needs the leading `cd` chain, extract_command() needs the whole command string -- keeping
+# them as two single-purpose functions (each with its own python3 call) matches this file's
+# existing convention of small helpers with one job apiece, rather than one function serving
+# two different call sites' different needs.
+extract_command() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 - "$input" <<'PYEOF' 2>/dev/null | tr -d '\r'
+import sys, json
+
+try:
+    data = json.loads(sys.argv[1])
+    print(data.get("tool_input", {}).get("command", ""))
+except Exception:
+    pass
+PYEOF
+}
+
 root=$(resolve_cd_root)
 [ -z "$root" ] && root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$root" ] && exit 0
@@ -212,7 +238,10 @@ consume_marker() {
     printf '%s' "$content"
 }
 
-case "$input" in
+match_target=$(extract_command)
+[ -z "$match_target" ] && match_target="$input"
+
+case "$match_target" in
     *'git commit'*)
         expected=$(diff_hash HEAD)
         marker="$root/.claude/.code-review-ok"
