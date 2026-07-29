@@ -72,9 +72,11 @@ NOW_EPOCH=$(date +%s)
 printf '{"checkedAtEpoch":%s,"remoteVersion":"9.9.9"}' "$NOW_EPOCH" > "$TMPDIR_HIT/.mb/version-check-cache.json"
 cd "$TMPDIR_HIT" || exit 1
 output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_HIT/.mb" bash "$MB" status 2>&1)
+exit_code=$?
 cd - > /dev/null || exit 1
 assert_contains "$output" "\[NOTICE\]" "mb.sh: cache hit with differing version prints [NOTICE]"
 assert_contains "$output" "9.9.9" "mb.sh: [NOTICE] mentions the cached remote version"
+assert_exit_zero "$exit_code" "mb.sh: cache hit with differing version does not fail the command"
 
 # ── cache hit, versions match → no NOTICE ────────────────────────────────────
 echo ""
@@ -87,8 +89,10 @@ LOCAL_VER=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
 printf '{"checkedAtEpoch":%s,"remoteVersion":"%s"}' "$NOW_EPOCH" "$LOCAL_VER" > "$TMPDIR_MATCH/.mb/version-check-cache.json"
 cd "$TMPDIR_MATCH" || exit 1
 output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_MATCH/.mb" bash "$MB" status 2>&1)
+exit_code=$?
 cd - > /dev/null || exit 1
 assert_not_contains "$output" "\[NOTICE\]" "mb.sh: cache hit with matching version prints no [NOTICE]"
+assert_exit_zero "$exit_code" "mb.sh: cache hit with matching version does not fail the command"
 
 # ── unreachable remote → fails open silently ─────────────────────────────────
 echo ""
@@ -113,8 +117,10 @@ mkdir -p "$TMPDIR_UPG/.mb"
 printf '{"checkedAtEpoch":%s,"remoteVersion":"9.9.9"}' "$NOW_EPOCH" > "$TMPDIR_UPG/.mb/version-check-cache.json"
 cd "$TMPDIR_UPG" || exit 1
 output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_UPG/.mb" bash "$MB" upgrade 2>&1)
+exit_code=$?
 cd - > /dev/null || exit 1
 assert_not_contains "$output" "\[NOTICE\]" "mb.sh: mb upgrade suppresses the generic [NOTICE] (it has its own WARN)"
+assert_exit_zero "$exit_code" "mb.sh: mb upgrade does not fail the command"
 
 # ── mb update (deprecated alias for upgrade) never double-prints ────────────
 echo ""
@@ -126,8 +132,10 @@ mkdir -p "$TMPDIR_UPD/.mb"
 printf '{"checkedAtEpoch":%s,"remoteVersion":"9.9.9"}' "$NOW_EPOCH" > "$TMPDIR_UPD/.mb/version-check-cache.json"
 cd "$TMPDIR_UPD" || exit 1
 output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_UPD/.mb" bash "$MB" update 2>&1)
+exit_code=$?
 cd - > /dev/null || exit 1
 assert_not_contains "$output" "\[NOTICE\]" "mb.sh: mb update (deprecated alias, still dispatches to invoke_upgrade) suppresses the generic [NOTICE]"
+assert_exit_zero "$exit_code" "mb.sh: mb update (deprecated alias) does not fail the command"
 
 # ── mb help suppresses the generic [NOTICE] ──────────────────────────────────
 echo ""
@@ -139,8 +147,10 @@ mkdir -p "$TMPDIR_HELP/.mb"
 printf '{"checkedAtEpoch":%s,"remoteVersion":"9.9.9"}' "$NOW_EPOCH" > "$TMPDIR_HELP/.mb/version-check-cache.json"
 cd "$TMPDIR_HELP" || exit 1
 output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_HELP/.mb" bash "$MB" help 2>&1)
+exit_code=$?
 cd - > /dev/null || exit 1
 assert_not_contains "$output" "\[NOTICE\]" "mb.sh: mb help suppresses the generic [NOTICE]"
+assert_exit_zero "$exit_code" "mb.sh: mb help does not fail the command"
 
 # ── real fetch populates the cache correctly ─────────────────────────────────
 echo ""
@@ -178,6 +188,25 @@ if command -v python3 >/dev/null 2>&1; then
   assert_file_exists "$TMPDIR_FETCH/.mb/version-check-cache.json" "mb.sh: live fetch writes the cache file"
   cache_content=$(cat "$TMPDIR_FETCH/.mb/version-check-cache.json")
   assert_contains "$cache_content" "7.7.7" "mb.sh: cache file contains the fetched version"
+
+  # ── live fetch: quoted VERSION content has its quotes stripped ────────────────────────────
+  # WHY this test exists: get_cached_pmb_version's fetch pipes the served content through
+  # `tr -d '[:space:]"'`, stripping literal `"` characters as well as whitespace. Nothing
+  # previously exercised that stripping -- the live-fetch test above serves a bare, unquoted
+  # version, so a regression that dropped the `"` from the tr charset would go unnoticed.
+  echo ""
+  echo "--- live fetch: quoted VERSION content has its quotes stripped ---"
+  TMPDIR_QUOTE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-test)"
+  CLEANUP_DIRS+=("$TMPDIR_QUOTE")
+  setup_test_project "$TMPDIR_QUOTE"
+  printf '"6.6.6"' > "$SRVDIR/VERSION"
+  cd "$TMPDIR_QUOTE" || exit 1
+  output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_QUOTE/.mb" MB_VERSION_CHECK_URL="http://127.0.0.1:$PORT/VERSION" bash "$MB" status 2>&1)
+  cd - > /dev/null || exit 1
+  assert_contains "$output" "6.6.6" "mb.sh: quoted VERSION content is stripped of its quotes in the [NOTICE]"
+  cache_content=$(cat "$TMPDIR_QUOTE/.mb/version-check-cache.json")
+  assert_contains "$cache_content" '"remoteVersion":"6.6.6"' "mb.sh: cache file stores the quote-stripped version, not the raw quoted content"
+  echo "7.7.7" > "$SRVDIR/VERSION"
 
   # ── expired cache (older than CACHE_TTL_SECONDS) triggers a fresh fetch ────────────────────
   # WHY this test exists: every prior cache-hit test used a fresh (now) checkedAtEpoch, so
@@ -251,6 +280,58 @@ if command -v pwsh >/dev/null 2>&1; then
   output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_PS1U/.mb" pwsh -NoLogo -File "$REPO_ROOT/scripts/mb.ps1" upgrade 2>&1)
   cd - > /dev/null || exit 1
   assert_not_contains "$output" "\[NOTICE\]" "mb.ps1: mb upgrade suppresses the generic [NOTICE]"
+
+  # ── cross-shell parity: PS TTL / clock-skew ──────────────────────────────────
+  # WHY these mirror the bash TTL/clock-skew tests above: Get-CachedPmbVersion has the same
+  # age_seconds -ge 0 -and age_seconds -lt TTL guard as get_cached_pmb_version, but nothing had
+  # exercised either boundary on the PowerShell side -- only bash's had live-server-backed
+  # coverage for expired/skewed caches.
+  echo ""
+  if command -v python3 >/dev/null 2>&1; then
+    echo "--- cross-shell parity: mb.ps1 expired cache triggers a live re-fetch, not stale cache ---"
+    TMPDIR_PS1_TTL="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-ps1ttl)"
+    CLEANUP_DIRS+=("$TMPDIR_PS1_TTL")
+    setup_test_project "$TMPDIR_PS1_TTL"
+    SRVDIR_PS1="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-ps1srv)"
+    CLEANUP_DIRS+=("$SRVDIR_PS1")
+    echo "7.7.7" > "$SRVDIR_PS1/VERSION"
+    PS1_PORT=$((20000 + RANDOM % 10000))
+    (cd "$SRVDIR_PS1" && python3 -m http.server "$PS1_PORT" >/dev/null 2>&1) &
+    SRV_PID=$!
+    SRV_PORT="$PS1_PORT"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      curl -sf --max-time 1 "http://127.0.0.1:$PS1_PORT/VERSION" >/dev/null 2>&1 && break
+      sleep 0.3
+    done
+    mkdir -p "$TMPDIR_PS1_TTL/.mb"
+    EXPIRED_EPOCH_PS1=$(( $(date +%s) - 604800 - 3600 ))  # 1 hour past the 7-day TTL
+    printf '{"checkedAtEpoch":%s,"remoteVersion":"8.8.8"}' "$EXPIRED_EPOCH_PS1" > "$TMPDIR_PS1_TTL/.mb/version-check-cache.json"
+    cd "$TMPDIR_PS1_TTL" || exit 1
+    output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_PS1_TTL/.mb" MB_VERSION_CHECK_URL="http://127.0.0.1:$PS1_PORT/VERSION" pwsh -NoLogo -File "$REPO_ROOT/scripts/mb.ps1" status 2>&1)
+    cd - > /dev/null || exit 1
+    assert_contains "$output" "7.7.7" "mb.ps1: expired cache triggers a live re-fetch, reflecting the freshly-served version"
+    assert_not_contains "$output" "8.8.8" "mb.ps1: expired cache's stale remoteVersion is not used once past CACHE_TTL_SECONDS"
+
+    echo ""
+    echo "--- cross-shell parity: mb.ps1 clock-skewed cache triggers a live re-fetch, not stale cache ---"
+    TMPDIR_PS1_SKEW="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-ps1skew)"
+    CLEANUP_DIRS+=("$TMPDIR_PS1_SKEW")
+    setup_test_project "$TMPDIR_PS1_SKEW"
+    mkdir -p "$TMPDIR_PS1_SKEW/.mb"
+    FUTURE_EPOCH_PS1=$(( $(date +%s) + 31536000 ))  # 1 year in the future
+    printf '{"checkedAtEpoch":%s,"remoteVersion":"8.8.8"}' "$FUTURE_EPOCH_PS1" > "$TMPDIR_PS1_SKEW/.mb/version-check-cache.json"
+    cd "$TMPDIR_PS1_SKEW" || exit 1
+    output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_PS1_SKEW/.mb" MB_VERSION_CHECK_URL="http://127.0.0.1:$PS1_PORT/VERSION" pwsh -NoLogo -File "$REPO_ROOT/scripts/mb.ps1" status 2>&1)
+    cd - > /dev/null || exit 1
+    assert_contains "$output" "7.7.7" "mb.ps1: clock-skewed (future) cache triggers a live re-fetch, reflecting the freshly-served version"
+    assert_not_contains "$output" "8.8.8" "mb.ps1: clock-skewed cache's stale remoteVersion is not trusted just because age_seconds went negative"
+
+    kill_server_on_port "$SRV_PID" "$PS1_PORT"
+    SRV_PID=""
+    SRV_PORT=""
+  else
+    echo "--- mb.ps1 TTL/clock-skew tests: SKIPPED (python3 not installed on this machine) ---"
+  fi
 else
   echo ""
   echo "--- mb.ps1 tests: SKIPPED (pwsh not installed on this machine) ---"

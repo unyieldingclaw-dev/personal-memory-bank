@@ -108,7 +108,16 @@ function Get-CachedPmbVersion {
 
     try {
         $response = Invoke-WebRequest -Uri $checkUrl -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
-        $script:PmbRemoteVersion = $response.Content.Trim()
+        $content = $response.Content
+        # WHY: Invoke-WebRequest -UseBasicParsing returns .Content as a raw byte[] instead of a
+        # string whenever the server's response doesn't declare a text charset (e.g. Python's
+        # http.server, used by this repo's own tests) -- byte[] has no .Trim(), so that would
+        # throw here and get swallowed by the catch below, silently failing the whole check open
+        # even though the server answered fine. Decoding explicitly handles both cases.
+        if ($content -isnot [string]) {
+            $content = [System.Text.Encoding]::UTF8.GetString($content)
+        }
+        $script:PmbRemoteVersion = $content.Trim()
     } catch {
         $script:PmbRemoteVersion = $null
     }
@@ -805,6 +814,8 @@ function Invoke-Init {
     if ($gitignoreContent -notmatch "\.claude/\.change-review-ok\.claimed") { $gitignoreAdded += ".claude/.change-review-ok.claimed*" }
     if ($gitignoreContent -notmatch "\.claude/\.pending-commit-presha") { $gitignoreAdded += ".claude/.pending-commit-presha" }
     if ($gitignoreContent -notmatch "\.claude/\.pending-push-presha") { $gitignoreAdded += ".claude/.pending-push-presha" }
+    if ($gitignoreContent -notmatch "\.claude/\.pending-commit-hash") { $gitignoreAdded += ".claude/.pending-commit-hash" }
+    if ($gitignoreContent -notmatch "\.claude/\.pending-push-hash") { $gitignoreAdded += ".claude/.pending-push-hash" }
     if ($gitignoreAdded.Count -gt 0) {
         if (-not (Test-Path $gitignore)) {
             Set-Content -Path $gitignore -Value "# Memory Bank"

@@ -8,13 +8,25 @@
 # question can be answered from ground truth instead -- if HEAD (for commit) or the
 # upstream ref (for push) didn't move, the command failed, full stop, regardless of what
 # any response field says.
+$raw = [Console]::In.ReadToEnd()
+if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
+$cmd = $null
 try {
-    $raw = [Console]::In.ReadToEnd()
-    if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
-    $cmd = ($raw | ConvertFrom-Json).tool_input.command
-} catch { exit 0 }
+    $parsed = $raw | ConvertFrom-Json
+    if ($null -ne $parsed.tool_input.PSObject.Properties['command']) {
+        $cmd = $parsed.tool_input.command
+    }
+} catch { }
+if ($null -eq $cmd) { $cmd = $raw }
 
-if (-not $cmd) { exit 0 }
+# WHY needsCommit/needsPush (two independent checks), not one if/elseif: see the matching
+# comment in review-reminders.ps1 -- a compound `git commit -m x && git push origin main`
+# matches both regexes. An if/elseif only reissues whichever marker matches first, silently
+# leaving the OTHER action's presha file unprocessed even though the compound command may have
+# genuinely failed on both halves.
+$needsCommit = $cmd -match 'git\s+commit\b'
+$needsPush = $cmd -match 'git\s+push\b'
+if (-not $needsCommit -and -not $needsPush) { exit 0 }
 
 # WHY this exists: see the matching comment in review-reminders.ps1.
 #
@@ -47,50 +59,50 @@ if (-not $root) { exit 0 }
 # WHY Set-Location here: see the matching comment in review-reminders.ps1.
 try { Set-Location $root } catch { exit 0 }
 
-# WHY hash a file written via redirection: see the matching comment in review-reminders.ps1
-# -- PowerShell's pipeline re-tokenizes piped/captured external-command output, which does
-# not reproduce the exact byte stream `git diff | sha256sum` (bash) produces. Redirecting
-# to a file preserves raw bytes identically on both platforms.
-function Get-FileHashHex {
-    param([string]$Path)
-    return (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLower()
-}
-
-if ($cmd -match 'git\s+commit\b') {
+# WHY replay the persisted .pending-*-hash instead of recomputing a fresh hash here, and WHY
+# fail CLOSED (skip reissuing) when the hash file is missing/torn: see the matching comment in
+# review-reminders-post.sh -- recomputing fresh assumed "a failed commit/push can't have
+# altered the working tree," which is false whenever a downstream project's own pre-commit
+# hook mutates files and then rejects the commit (e.g. an auto-formatter). Replaying the hash
+# review-reminders.ps1 persisted at validation time means the reissued marker always
+# corresponds to a diff that was genuinely reviewed; falling back to a fresh recompute when
+# the hash file is missing would silently reintroduce that exact bug for that one case.
+if ($needsCommit) {
     $preShaFile = Join-Path $root '.claude/.pending-commit-presha'
+    $hashFile = Join-Path $root '.claude/.pending-commit-hash'
     if (Test-Path $preShaFile) {
         $preSha = (Get-Content $preShaFile -Raw -ErrorAction SilentlyContinue)
-        Remove-Item $preShaFile -Force -ErrorAction SilentlyContinue
         $preSha = if ($preSha) { $preSha.Trim() } else { $null }
+        $origHash = $null
+        if (Test-Path $hashFile) {
+            $origHash = (Get-Content $hashFile -Raw -ErrorAction SilentlyContinue)
+            $origHash = if ($origHash) { $origHash.Trim() } else { $null }
+        }
+        Remove-Item $preShaFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $hashFile -Force -ErrorAction SilentlyContinue
         $postSha = git rev-parse HEAD 2>$null
-        if ($preSha -and $postSha -and $postSha -eq $preSha) {
-            # HEAD didn't move — commit failed. A failed commit can't have altered the
-            # working tree, so recomputing the hash fresh reproduces the same value.
-            $tmp = [System.IO.Path]::GetTempFileName()
-            try {
-                git diff HEAD > $tmp 2>$null
-                Get-FileHashHex $tmp | Set-Content (Join-Path $root '.claude/.code-review-ok')
-            } finally {
-                Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-            }
+        if ($preSha -and $postSha -and $postSha -eq $preSha -and $origHash) {
+            $origHash | Set-Content (Join-Path $root '.claude/.code-review-ok')
         }
     }
-} elseif ($cmd -match 'git\s+push\b') {
+}
+
+if ($needsPush) {
     $preShaFile = Join-Path $root '.claude/.pending-push-presha'
+    $hashFile = Join-Path $root '.claude/.pending-push-hash'
     if (Test-Path $preShaFile) {
         $preSha = (Get-Content $preShaFile -Raw -ErrorAction SilentlyContinue)
-        Remove-Item $preShaFile -Force -ErrorAction SilentlyContinue
         $preSha = if ($preSha) { $preSha.Trim() } else { $null }
+        $origHash = $null
+        if (Test-Path $hashFile) {
+            $origHash = (Get-Content $hashFile -Raw -ErrorAction SilentlyContinue)
+            $origHash = if ($origHash) { $origHash.Trim() } else { $null }
+        }
+        Remove-Item $preShaFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $hashFile -Force -ErrorAction SilentlyContinue
         $postSha = git rev-parse '@{u}' 2>$null
-        if ($preSha -and $postSha -and $postSha -eq $preSha) {
-            $tmp = [System.IO.Path]::GetTempFileName()
-            try {
-                git diff origin/main...HEAD > $tmp 2>$null
-                if ($LASTEXITCODE -ne 0) { git diff HEAD > $tmp 2>$null }
-                Get-FileHashHex $tmp | Set-Content (Join-Path $root '.claude/.change-review-ok')
-            } finally {
-                Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-            }
+        if ($preSha -and $postSha -and $postSha -eq $preSha -and $origHash) {
+            $origHash | Set-Content (Join-Path $root '.claude/.change-review-ok')
         }
     }
 }

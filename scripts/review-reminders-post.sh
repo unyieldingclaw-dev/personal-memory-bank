@@ -9,35 +9,6 @@
 # truth instead -- if HEAD (for commit) or the upstream ref (for push) didn't move, the
 # command failed, full stop.
 
-# WHY hash a file written via redirection: see the matching comment in review-reminders.sh
-# -- capturing `git diff` via `$(...)` strips its trailing newline, but a redirected file
-# preserves it, matching review-reminders.ps1's byte semantics exactly regardless of which
-# hook variant actually enforces the gate on a given machine.
-sha256_file() {
-    file="$1"
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$file" | cut -d' ' -f1
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$file" | cut -d' ' -f1
-    else
-        printf ''
-    fi
-}
-
-# WHY this helper: see the matching comment in review-reminders.sh -- collapses the
-# mktemp+redirect+hash+cleanup pattern that was previously inlined at both call sites below,
-# with a trap so an early exit between mktemp and cleanup can't leak a temp file.
-diff_hash() {
-    tmp=$(mktemp)
-    trap 'rm -f "$tmp"' EXIT
-    git diff "$@" > "$tmp" 2>/dev/null
-    rc=$?
-    sha256_file "$tmp"
-    rm -f "$tmp"
-    trap - EXIT
-    return $rc
-}
-
 input=$(cat 2>/dev/null)
 [ -z "$input" ] && exit 0
 
@@ -126,45 +97,76 @@ fi
 # work for the overwhelming majority of calls that aren't a commit/push attempt at all.
 # Checking cmd first and exiting early preserves the cheap common case; only real commit/push
 # attempts pay for root resolution below.
-cmd=""
-case "$match_target" in
-    *'git commit'*) cmd="commit" ;;
-    *'git push'*) cmd="push" ;;
-esac
-[ -z "$cmd" ] && exit 0
+#
+# WHY needs_commit/needs_push (two independent checks), not one first-match case/esac: see the
+# matching comment in review-reminders.sh -- a compound `git commit -m x && git push origin
+# main` contains both substrings. A single case/esac only reissues whichever marker matches
+# first, silently leaving the OTHER action's presha file unprocessed (and therefore never
+# reissued, and never cleaned up) even though the compound command may have genuinely failed
+# on both halves. Checking both independently means a compound command's commit and push
+# outcomes are each reconciled on their own.
+needs_commit=0
+needs_push=0
+case "$match_target" in *'git commit'*) needs_commit=1 ;; esac
+case "$match_target" in *'git push'*) needs_push=1 ;; esac
+[ "$needs_commit" = "0" ] && [ "$needs_push" = "0" ] && exit 0
 
 root=""
 [ "$extracted" = "1" ] && root=$(resolve_cd_root "$match_target")
 [ -z "$root" ] && root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$root" ] && exit 0
 
-# WHY cd here: see the matching comment in review-reminders.sh -- diff_hash() and the
-# postsha rev-parse calls below still run bare git commands with no directory anchor.
+# WHY cd here: see the matching comment in review-reminders.sh -- the postsha rev-parse
+# calls below still run bare git commands with no directory anchor.
 cd "$root" 2>/dev/null || exit 0
 
-if [ "$cmd" = "commit" ]; then
+# WHY replay the persisted .pending-*-hash instead of recomputing diff_hash fresh here: this
+# used to recompute the hash fresh on the assumption "a failed commit/push can't have altered
+# the working tree" -- false whenever a downstream project's OWN pre-commit hook mutates files
+# and then rejects the commit (e.g. an auto-formatter running `black --check`/`prettier
+# --check`, a common and unexceptional pattern). HEAD doesn't move in that case, but the diff
+# does -- recomputing fresh would reissue a marker for a diff /code-review or /change-review
+# never actually saw. Replaying the hash review-reminders.sh persisted at validation time means
+# the reissued marker always corresponds to a diff that was genuinely reviewed.
+#
+# WHY fail CLOSED (skip reissuing) rather than falling back to a fresh recompute when the hash
+# file is missing/torn: falling back to fresh-recompute would silently reintroduce the exact
+# bug this fix closes for that one anomalous case. A missing hash file (presha exists without
+# its paired hash, or vice versa) means the pending state doesn't fully describe a validated
+# attempt this hook can safely vouch for -- the safe direction is no reissue, forcing an
+# explicit re-review. This pairing also bounds the impact of overlapping commit/push attempts
+# racing on these unkeyed files (e.g. two subagent sessions, or a retry while a prior attempt's
+# hooks are still running): even if one attempt's presha/hash pair gets clobbered by another's,
+# whatever pair survives is still SOME genuinely-validated hash from a real prior review, never
+# an arbitrary freshly-derived value reflecting whatever the tree happens to look like right
+# now -- the race can misattribute which attempt's marker gets reissued, but can't manufacture
+# an unreviewed one.
+if [ "$needs_commit" = "1" ]; then
     preshafile="$root/.claude/.pending-commit-presha"
+    hashfile="$root/.claude/.pending-commit-hash"
     if [ -f "$preshafile" ]; then
         presha=$(cat "$preshafile" 2>/dev/null | tr -d '[:space:]')
-        rm -f "$preshafile"
+        orighash=""
+        [ -f "$hashfile" ] && orighash=$(cat "$hashfile" 2>/dev/null | tr -d '[:space:]')
+        rm -f "$preshafile" "$hashfile"
         postsha=$(git rev-parse HEAD 2>/dev/null)
-        if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ]; then
-            diff_hash HEAD > "$root/.claude/.code-review-ok"
+        if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ] && [ -n "$orighash" ]; then
+            printf '%s' "$orighash" > "$root/.claude/.code-review-ok"
         fi
     fi
-elif [ "$cmd" = "push" ]; then
+fi
+
+if [ "$needs_push" = "1" ]; then
     preshafile="$root/.claude/.pending-push-presha"
+    hashfile="$root/.claude/.pending-push-hash"
     if [ -f "$preshafile" ]; then
         presha=$(cat "$preshafile" 2>/dev/null | tr -d '[:space:]')
-        rm -f "$preshafile"
+        orighash=""
+        [ -f "$hashfile" ] && orighash=$(cat "$hashfile" 2>/dev/null | tr -d '[:space:]')
+        rm -f "$preshafile" "$hashfile"
         postsha=$(git rev-parse '@{u}' 2>/dev/null)
-        if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ]; then
-            hash=$(diff_hash origin/main...HEAD)
-            rc=$?
-            if [ "$rc" -ne 0 ]; then
-                hash=$(diff_hash HEAD)
-            fi
-            printf '%s' "$hash" > "$root/.claude/.change-review-ok"
+        if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ] && [ -n "$orighash" ]; then
+            printf '%s' "$orighash" > "$root/.claude/.change-review-ok"
         fi
     fi
 fi

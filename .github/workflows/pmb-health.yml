@@ -381,6 +381,39 @@ jobs:
           [ "$FAIL" -eq 0 ] && echo "template-integrity: PASS" || echo "template-integrity: FAIL"
           exit $FAIL
 
+      - name: Verify scripts/ and templates/scripts/ mirror pairs are byte-identical
+        shell: bash
+        run: |
+          # WHY this check exists: the previous step only confirms a referenced script FILE
+          # EXISTS under templates/ -- it never compares CONTENT. scripts/review-reminders*
+          # and scripts/mb.sh are meant to be exact 1:1 mirrors of their templates/scripts/
+          # counterparts (this repo has explicit "mirror the fix to templates" commits in its
+          # history proving that convention), but nothing previously caught the two drifting
+          # apart after a future edit to only one side. scripts/mb.ps1 is deliberately excluded
+          # here -- it has no templates/scripts/mb.ps1 counterpart to mirror against at all
+          # (a pre-existing asymmetry with mb.sh, not something this check is meant to paper
+          # over).
+          FAIL=0
+          MIRROR_PAIRS="review-reminders.sh review-reminders-post.sh review-reminders.ps1 review-reminders-post.ps1 mb.sh"
+          for f in $MIRROR_PAIRS; do
+            src="scripts/$f"
+            dst="templates/scripts/$f"
+            if [ ! -f "$src" ] || [ ! -f "$dst" ]; then
+              echo "ERROR: expected both $src and $dst to exist"
+              FAIL=1
+              continue
+            fi
+            if ! diff -q "$src" "$dst" >/dev/null 2>&1; then
+              echo "ERROR: $src and $dst have diverged -- diff:"
+              diff "$src" "$dst" || true
+              FAIL=1
+            else
+              echo "OK:   $src matches $dst"
+            fi
+          done
+          [ "$FAIL" -eq 0 ] && echo "mirror-parity: PASS" || echo "mirror-parity: FAIL"
+          exit $FAIL
+
   mb-command-tests:
     name: MB Command Tests
     runs-on: ubuntu-latest

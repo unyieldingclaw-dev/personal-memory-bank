@@ -28,10 +28,11 @@
 # filesystem operation -- if the source doesn't exist, the move simply fails, collapsing
 # "does it exist" and "claim it" into one step.
 #
-# WHY this also records a pre-state SHA before consuming the marker: see the companion
-# PostToolUse hook (review-reminders-post.sh) -- if the gated commit/push then fails, that
-# hook detects the relevant git ref didn't move and reissues the marker, so a rejected
-# attempt (e.g. a separate pre-commit hook) doesn't force a pointless re-review.
+# WHY this also records a pre-state ref once validation succeeds, before the gated command
+# itself runs: see the companion PostToolUse hook (review-reminders-post.sh) -- if the gated
+# commit/push then fails, that hook detects the relevant git ref didn't move and reissues the
+# marker, so a rejected attempt (e.g. a separate pre-commit hook) doesn't force a pointless
+# re-review.
 #
 # WHY match against extract_command()'s parsed tool_input.command, not the raw stdin
 # payload: the real Bash tool's PreToolUse payload also carries tool_input.description
@@ -94,8 +95,16 @@ sha256_file() {
 # unexpected signal) leaks a temp file. `trap - EXIT` clears it again once this function
 # returns normally, since sh traps are shell-global, not function-scoped -- otherwise this
 # trap would still be armed (harmlessly, but confusingly) for the rest of the script.
+#
+# WHY bail out immediately if mktemp fails or returns empty: without this, `git diff "$@" >
+# "$tmp"` would redirect to an empty-string filename when `$tmp` is empty (mktemp failed,
+# e.g. a full disk or unwritable TMPDIR) -- an ambiguous/invalid redirect whose behavior
+# depends on the shell rather than failing predictably. Returning early here means a
+# mktemp failure degrades the same way any other diff_hash failure does (empty expected hash,
+# fails closed) instead of hitting an undefined redirect error.
 diff_hash() {
-    tmp=$(mktemp)
+    tmp=$(mktemp) || return 1
+    [ -z "$tmp" ] && return 1
     trap 'rm -f "$tmp"' EXIT
     git diff "$@" > "$tmp" 2>/dev/null
     rc=$?
@@ -236,11 +245,27 @@ deny() {
 # fallback below are wasted latency for the overwhelming majority of calls that need neither:
 # gh pr merge is an unconditional deny with no marker/root access at all, and anything else
 # (ls, npm test, ...) isn't gated at all. Only git commit/push actually need root.
+#
+# WHY the gh pr merge check runs against $match_target regardless of $extracted, unlike the
+# gh-pr-merge-only skip this file used to apply on the raw-stdin fallback: that skip was found,
+# on review, to reopen exactly the "no legitimate case to allow through" gap the unconditional
+# deny exists to close -- if python3 is missing (or JSON parsing otherwise fails), extraction
+# fails, and a REAL `gh pr merge` command would fall straight through unchecked, silently
+# disabling the one control in this file explicitly designed to have zero override. The
+# false-positive risk this used to guard against (an unrelated command whose raw payload merely
+# mentions "gh pr merge", e.g. in tool_input.description) is real but is the SAME failure
+# direction commit/push already accept on this exact fallback path -- an extra, unnecessary
+# deny, not a security hole. There is no asymmetry to preserve: matching unconditionally is
+# both simpler and consistent with the "over-trigger, never under-gate" rule used everywhere
+# else in this file.
 case "$match_target" in
     *'gh pr merge'*)
         deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
         exit 0
         ;;
+esac
+
+case "$match_target" in
     *'git commit'*|*'git push'*) ;;
     *) exit 0 ;;
 esac
@@ -274,32 +299,80 @@ consume_marker() {
     printf '%s' "$content"
 }
 
-case "$match_target" in
-    *'git commit'*)
-        expected=$(diff_hash HEAD)
-        marker="$root/.claude/.code-review-ok"
-        actual=$(consume_marker "$marker")
-        if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then
-            presha=$(git rev-parse HEAD 2>/dev/null)
-            [ -n "$presha" ] && printf '%s' "$presha" > "$root/.claude/.pending-commit-presha"
-        else
-            deny "Run /code-review before committing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the working tree changed since then; re-run /code-review."
+# WHY commit and push are classified and validated INDEPENDENTLY, not via one first-match
+# case/esac: a compound Bash tool call chaining both -- `git commit -m x && git push origin
+# main` -- contains BOTH substrings. A single case/esac only ever runs its FIRST matching arm,
+# so the old code validated the commit half and never even looked at push's marker at all,
+# letting an unreviewed push ride through on the strength of a valid commit marker alone.
+# Reproduced directly: seeding only a valid .code-review-ok marker (no .change-review-ok) let
+# a compound commit+push through untouched. Two independent `case` presence checks below
+# (not one branching case) mean a compound command must satisfy BOTH markers.
+#
+# WHY consume_marker() (atomic rename) is still called directly per-branch, not via a peek-
+# then-consume-later split: an atomic single-step consume avoids reintroducing the TOCTOU
+# window this file already went out of its way to close (see consume_marker()'s own comment).
+# The tradeoff: if a compound command needs both markers and only one is valid, the valid one
+# still gets consumed even though the whole command is ultimately denied -- forcing an
+# unnecessary re-review for that half. That's the same "safe failure direction: occasional
+# unnecessary re-review, never silently under-gate" tradeoff this file already makes elsewhere
+# (see the unanchored-match WHY comment above), not a new risk.
+needs_commit=0
+needs_push=0
+case "$match_target" in *'git commit'*) needs_commit=1 ;; esac
+case "$match_target" in *'git push'*) needs_push=1 ;; esac
+
+commit_ok=1
+push_ok=1
+
+if [ "$needs_commit" = "1" ]; then
+    commit_expected=$(diff_hash HEAD)
+    marker="$root/.claude/.code-review-ok"
+    actual=$(consume_marker "$marker")
+    if [ -z "$commit_expected" ] || [ "$actual" != "$commit_expected" ]; then
+        commit_ok=0
+    fi
+fi
+
+if [ "$needs_push" = "1" ]; then
+    push_expected=$(diff_hash origin/main...HEAD)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        push_expected=$(diff_hash HEAD)
+    fi
+    marker="$root/.claude/.change-review-ok"
+    actual=$(consume_marker "$marker")
+    if [ -z "$push_expected" ] || [ "$actual" != "$push_expected" ]; then
+        push_ok=0
+    fi
+fi
+
+if [ "$needs_commit" = "1" ] && [ "$commit_ok" = "0" ] && [ "$needs_push" = "1" ] && [ "$push_ok" = "0" ]; then
+    deny "Run /code-review before committing and /change-review before pushing -- this is a combined commit+push command and both diff-bound review-ok markers are required. Neither is present/valid."
+elif [ "$needs_commit" = "1" ] && [ "$commit_ok" = "0" ]; then
+    deny "Run /code-review before committing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the working tree changed since then; re-run /code-review."
+elif [ "$needs_push" = "1" ] && [ "$push_ok" = "0" ]; then
+    deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
+else
+    # WHY also persist the just-validated expected hash (.pending-commit-hash/.pending-push-
+    # hash), not just the presha ref: see review-reminders-post.sh's matching comment -- the
+    # post-hook used to recompute a fresh diff_hash at reissue time on the (false, in the
+    # common case of a mutating downstream pre-commit hook) assumption that a failed commit/
+    # push can't have altered the tree. Persisting the ORIGINAL hash here lets the post-hook
+    # replay exactly what was actually reviewed, instead of re-deriving a value that may now
+    # reflect a tree /code-review or /change-review never saw.
+    if [ "$needs_commit" = "1" ]; then
+        presha=$(git rev-parse HEAD 2>/dev/null)
+        if [ -n "$presha" ]; then
+            printf '%s' "$presha" > "$root/.claude/.pending-commit-presha"
+            printf '%s' "$commit_expected" > "$root/.claude/.pending-commit-hash"
         fi
-        ;;
-    *'git push'*)
-        expected=$(diff_hash origin/main...HEAD)
-        rc=$?
-        if [ "$rc" -ne 0 ]; then
-            expected=$(diff_hash HEAD)
+    fi
+    if [ "$needs_push" = "1" ]; then
+        presha=$(git rev-parse '@{u}' 2>/dev/null)
+        if [ -n "$presha" ]; then
+            printf '%s' "$presha" > "$root/.claude/.pending-push-presha"
+            printf '%s' "$push_expected" > "$root/.claude/.pending-push-hash"
         fi
-        marker="$root/.claude/.change-review-ok"
-        actual=$(consume_marker "$marker")
-        if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then
-            presha=$(git rev-parse '@{u}' 2>/dev/null)
-            [ -n "$presha" ] && printf '%s' "$presha" > "$root/.claude/.pending-push-presha"
-        else
-            deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
-        fi
-        ;;
-esac
+    fi
+fi
 exit 0

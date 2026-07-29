@@ -14,10 +14,11 @@
 # Move-Item's underlying rename is a single filesystem operation -- if the source doesn't
 # exist, the move simply fails, collapsing "does it exist" and "claim it" into one step.
 #
-# WHY this also records a pre-state SHA before consuming the marker: see the companion
-# PostToolUse hook (review-reminders-post.ps1/.sh) -- if the gated commit/push then fails,
-# that hook detects the relevant git ref didn't move and reissues the marker, so a rejected
-# attempt (e.g. a separate pre-commit hook) doesn't force a pointless re-review.
+# WHY this also records a pre-state ref once validation succeeds, before the gated command
+# itself runs: see the companion PostToolUse hook (review-reminders-post.ps1/.sh) -- if the
+# gated commit/push then fails, that hook detects the relevant git ref didn't move and
+# reissues the marker, so a rejected attempt (e.g. a separate pre-commit hook) doesn't force
+# a pointless re-review.
 #
 # WHY match "git\s+commit\b" anywhere in $cmd instead of anchoring to command start/operators:
 # an anchored regex (^|[;&|]\s*)git\s+commit\b misses real shapes -- multi-line Bash tool
@@ -26,6 +27,15 @@
 # match is safe: the only real risk is a false positive if "git commit" appears as a substring
 # elsewhere in the command, which just means an occasional unnecessary re-review -- the safe
 # failure direction for a security gate.
+#
+# WHY fall back to matching $raw (the raw stdin payload) instead of exiting on a JSON parse
+# failure: this used to just `exit 0` on any parse failure -- silently disabling the gate
+# entirely on malformed input, on the PREFERRED runtime (settings.json tries pwsh first). The
+# bash sibling's extract_command() already falls back to raw-stdin matching in the equivalent
+# case (over-triggering an occasional unnecessary re-review is the safe failure direction for a
+# security gate; silently not gating at all is not). Matching this behavior here closes that
+# asymmetry -- pwsh being the preferred runtime is exactly why it needs the same fallback, not
+# less of one.
 #
 # WHY `gh pr merge` gets an unconditional deny instead of a third diff-bound marker: by the
 # time a PR is mergeable, its diff already passed the commit gate, the push gate, and (per
@@ -45,13 +55,17 @@
 # {"continue": false} let a real `git commit` through untouched, then interrupted the next
 # turn. hookSpecificOutput.permissionDecision = "deny" is the mechanism that actually denies
 # the tool call before it executes.
+$raw = [Console]::In.ReadToEnd()
+if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
+$cmd = $null
 try {
-    $raw = [Console]::In.ReadToEnd()
-    if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
-    $cmd = ($raw | ConvertFrom-Json).tool_input.command
-} catch { exit 0 }
-
-if (-not $cmd) { exit 0 }
+    $parsed = $raw | ConvertFrom-Json
+    if ($null -ne $parsed.tool_input.PSObject.Properties['command']) {
+        $cmd = $parsed.tool_input.command
+    }
+} catch { }
+$extracted = ($null -ne $cmd)
+if ($null -eq $cmd) { $cmd = $raw }
 
 # WHY this exists: `git rev-parse --show-toplevel` below trusts the hook process's own
 # ambient cwd, which is empirically wrong for some dispatched-subagent sessions. $cmd is
@@ -162,24 +176,73 @@ function Test-AndConsumeMarker {
     return ($content -and $content -eq $ExpectedHash)
 }
 
-if ($cmd -match 'git\s+commit\b') {
-    $expected = Get-CommitDiffHash
-    $marker = Join-Path $root '.claude/.code-review-ok'
-    if (Test-AndConsumeMarker $marker $expected) {
-        $preSha = git rev-parse HEAD 2>$null
-        if ($preSha) { $preSha | Set-Content (Join-Path $root '.claude/.pending-commit-presha') }
-    } else {
-        Deny "Run /code-review before committing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the working tree changed since then; re-run /code-review."
-    }
-} elseif ($cmd -match 'git\s+push\b') {
-    $expected = Get-PushDiffHash
-    $marker = Join-Path $root '.claude/.change-review-ok'
-    if (Test-AndConsumeMarker $marker $expected) {
-        $preSha = git rev-parse '@{u}' 2>$null
-        if ($preSha) { $preSha | Set-Content (Join-Path $root '.claude/.pending-push-presha') }
-    } else {
-        Deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
-    }
-} elseif ($cmd -match 'gh\s+pr\s+merge\b') {
+# WHY gh pr merge is checked first, unconditionally, before commit/push classification: matches
+# this file's pre-existing priority (gh pr merge was already checked as its own branch ahead of
+# push in the old if/elseif chain) -- an unconditional deny needs no root/marker access, and
+# checking it first means it can never coexist with a commit/push allow-path in a way that
+# would try to emit two separate JSON responses for one hook invocation.
+#
+# WHY this check runs against $cmd regardless of $extracted, unlike the extracted-only skip
+# this file used to apply here: that skip was found, on review, to reopen exactly the "no
+# legitimate case to allow through" gap the unconditional deny exists to close -- if
+# ConvertFrom-Json fails (malformed/unexpected payload), extraction fails, and a REAL
+# `gh pr merge` command would fall straight through unchecked, silently disabling the one
+# control in this file explicitly designed to have zero override. The false-positive risk this
+# used to guard against (an unrelated command whose raw payload merely mentions "gh pr merge",
+# e.g. in tool_input.description) is real but is the SAME failure direction commit/push already
+# accept on this exact fallback path -- an extra, unnecessary deny, not a security hole.
+if ($cmd -match 'gh\s+pr\s+merge\b') {
     Deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
+    exit 0
+}
+
+# WHY commit and push are classified and validated INDEPENDENTLY, not via one if/elseif
+# chain: see the matching comment in review-reminders.sh -- a compound Bash tool call chaining
+# both (`git commit -m x && git push origin main`) matches BOTH regexes. An if/elseif only ever
+# runs its first matching branch, so the old code validated the commit half and never even
+# checked push's marker, letting an unreviewed push ride through on a valid commit marker
+# alone. Reproduced directly against this exact file: seeding only a valid .code-review-ok
+# marker let a compound commit+push through untouched, on pwsh -- the PREFERRED runtime.
+$needsCommit = $cmd -match 'git\s+commit\b'
+$needsPush = $cmd -match 'git\s+push\b'
+$commitOk = $true
+$pushOk = $true
+
+if ($needsCommit) {
+    $commitExpected = Get-CommitDiffHash
+    $marker = Join-Path $root '.claude/.code-review-ok'
+    if (-not (Test-AndConsumeMarker $marker $commitExpected)) { $commitOk = $false }
+}
+
+if ($needsPush) {
+    $pushExpected = Get-PushDiffHash
+    $marker = Join-Path $root '.claude/.change-review-ok'
+    if (-not (Test-AndConsumeMarker $marker $pushExpected)) { $pushOk = $false }
+}
+
+if ($needsCommit -and -not $commitOk -and $needsPush -and -not $pushOk) {
+    Deny "Run /code-review before committing and /change-review before pushing -- this is a combined commit+push command and both diff-bound review-ok markers are required. Neither is present/valid."
+} elseif ($needsCommit -and -not $commitOk) {
+    Deny "Run /code-review before committing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the working tree changed since then; re-run /code-review."
+} elseif ($needsPush -and -not $pushOk) {
+    Deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
+} else {
+    # WHY also persist the just-validated expected hash (.pending-commit-hash/.pending-push-
+    # hash): see review-reminders-post.ps1's matching comment -- lets the post-hook replay the
+    # ORIGINAL validated hash on reissue instead of recomputing a fresh one that may reflect a
+    # tree mutated by a downstream project's own pre-commit hook after this validation ran.
+    if ($needsCommit) {
+        $preSha = git rev-parse HEAD 2>$null
+        if ($preSha) {
+            $preSha | Set-Content (Join-Path $root '.claude/.pending-commit-presha')
+            $commitExpected | Set-Content (Join-Path $root '.claude/.pending-commit-hash')
+        }
+    }
+    if ($needsPush) {
+        $preSha = git rev-parse '@{u}' 2>$null
+        if ($preSha) {
+            $preSha | Set-Content (Join-Path $root '.claude/.pending-push-presha')
+            $pushExpected | Set-Content (Join-Path $root '.claude/.pending-push-hash')
+        }
+    }
 }

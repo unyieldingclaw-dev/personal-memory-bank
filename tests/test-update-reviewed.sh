@@ -73,8 +73,10 @@ CLEANUP_DIRS+=("$TMPDIR_FLAT")
 mkdir -p "$TMPDIR_FLAT/memory-bank"
 make_reviewed_file "$TMPDIR_FLAT" "activeContext.md" "$OLD_DATE"
 invoke_hook_flat "update-reviewed.sh" "$TMPDIR_FLAT/memory-bank/activeContext.md" >/dev/null
+flat_exit_code=$?
 content=$(cat "$TMPDIR_FLAT/memory-bank/activeContext.md")
 assert_contains "$content" "last-reviewed: $OLD_DATE" "update-reviewed.sh: a flat (pre-fix-shape) payload leaves last-reviewed untouched — confirms the update above came from reading the nested field, not some other path"
+assert_exit_zero "$flat_exit_code" "update-reviewed.sh: a flat (pre-fix-shape) payload exits 0 (silent no-op, not a crash)"
 
 # ── file outside memory-bank/ is never touched ──────────────────────────────────────────────
 echo ""

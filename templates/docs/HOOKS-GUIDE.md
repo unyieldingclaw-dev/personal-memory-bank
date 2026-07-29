@@ -125,9 +125,9 @@ Fires before every `Agent` tool call. Tracks nested agent delegation depth and e
 
 **Hook error logging:** Unexpected errors are logged to `.pmb-hook-errors.log`.
 
-### 7. Review Gate (`PreToolUse` — Bash tool)
+### 7. Review Gate (`PreToolUse` — Bash + PowerShell tools)
 
-Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is denied unconditionally — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
+Fires before every Bash *and* PowerShell tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is denied unconditionally — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`, wired into both the `Bash` and `PowerShell` tool matchers so a commit/push run either way is gated the same.
 
 **Marker files (single-use per diff, gitignored):**
 
@@ -138,15 +138,19 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 
 **Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps. The marker is consumed (renamed away and deleted) whether or not its hash matches — a stale marker from a diff that has since changed doesn't linger; a fresh review is required either way.
 
+**Commit and push are validated independently:** a compound command like `git commit -m x && git push origin main` contains both trigger substrings, so both `.sh` and `.ps1` check each against its own marker rather than branching on whichever matches first — otherwise a valid commit marker alone could let an unreviewed push ride through.
+
+Both scripts extract `tool_input.command` via real JSON parsing rather than matching raw stdin, falling back to raw-stdin matching only when parsing genuinely fails — matching raw stdin risks both false triggers (a read-only command whose `tool_input.description` happens to mention "git commit") and false negatives (a JSON-escaped quote inside the command silently truncating a naive text match).
+
 **`gh pr merge` — unconditional deny, no marker:** unlike commit/push, this isn't a hash check — it always denies, no override, not even an explicit user instruction in the conversation. By merge time the diff already passed the commit gate, push gate, and CI; the remaining gap is authorization, not diff integrity, and a hash can't encode "the user meant this right now." This hook only ever sees commands the agent itself runs, so an unconditional deny is total: the user always runs `gh pr merge` directly.
 
-### 8. Review Gate Failure Recovery (`PostToolUse` — Bash tool)
+### 8. Review Gate Failure Recovery (`PostToolUse` — Bash + PowerShell tools)
 
-Companion to the Review Gate above. If a gated `git commit`/`git push` consumes a marker and then the command itself fails (a separate pre-commit hook rejects it, nothing is staged, a merge conflict), this hook reissues the marker so the rejected attempt doesn't force a pointless re-review — the diff hasn't changed, so the same review still applies. Implemented in `scripts/review-reminders-post.ps1` and `scripts/review-reminders-post.sh`.
+Companion to the Review Gate above. If a gated `git commit`/`git push` consumes a marker and then the command itself fails (a separate pre-commit hook rejects it, nothing is staged, a merge conflict), this hook reissues the marker so the rejected attempt doesn't force a pointless re-review — the diff hasn't changed, so the same review still applies. Implemented in `scripts/review-reminders-post.ps1` and `scripts/review-reminders-post.sh`, wired into both the `Bash` and `PowerShell` tool matchers.
 
 **How it detects failure:** the `PreToolUse` hook records the current git ref (`HEAD` for commit, `@{u}` for push) to a temp file immediately after consuming a marker. This `PostToolUse` hook compares that recorded ref to the ref's current value — if it didn't move, the command failed, regardless of what any tool-response field says.
 
-On detected failure, the hook recomputes the diff hash fresh (a failed commit/push can't have altered the working tree, so this reproduces the same value) and rewrites the marker.
+**On detected failure, the hook replays the exact hash the `PreToolUse` hook persisted at validation time (`.pending-commit-hash`/`.pending-push-hash`) — it does not recompute a fresh diff hash.** A failed commit/push can still have altered the working tree (e.g. a downstream pre-commit hook that auto-formats files and then rejects the commit), so a fresh recompute could reissue a marker for a diff that was never actually reviewed. If the persisted hash file is missing, the hook fails closed and skips reissuing rather than falling back to a fresh recompute.
 
 ## Git Hooks (versioned)
 
