@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-07-24
+last-reviewed: 2026-07-29
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,7 +16,110 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-07-23
+## Last Updated: 2026-07-27
+
+## review-reminders.sh False-Positive Fix + Review-Gate Confirm-Step Redesign (2026-07-27)
+
+All work below is on worktree branch `claude/strange-bun-9a0ffc` (worktree
+`.claude/worktrees/strange-bun-9a0ffc`) — **not yet merged into `docs/branch-protection-rollout`**.
+
+**`review-reminders.sh` false-positive fix — shipped:** the `PreToolUse` commit/push gate matched raw
+stdin JSON for "git commit"/"git push" instead of extracting `tool_input.command`, so any Bash call
+whose `description` field merely mentioned those phrases (e.g. `ls -la` described as "prep before git
+commit review") got denied as an unreviewed commit — reproduced live, including once against this
+session's own tool calls mid-investigation. Fixed via a new `extract_command()` (python3-based JSON
+extraction, mirroring the file's existing `resolve_cd_root()` pattern), falling back to raw-stdin
+matching only when python3 is missing or JSON parsing fails. `review-reminders.ps1` already extracted
+the field correctly — no bash-only bug there. Full 5-domain `/code-review` + opposition pass (one real
+High/blocking Testing finding: two new tests lacked the file's established `command -v python3`
+skip-guard, fixed). Committed `656a4d2`.
+
+**Two sibling files found with the same bug, not fixed here:** `dangerous-commands.sh` (contrary to
+the task's original premise, was never actually fixed for this — confirmed via direct reproduction,
+its raw-stdin BLOCK/CONFIRM/WARN matching has the identical false-positive class) and
+`review-reminders-post.sh` (same `case "$input" in *'git commit'*)` pattern, narrower blast radius).
+Spawned as background tasks: `task_f24d6224` (dangerous-commands.sh — ran to completion in a separate
+session; that session owns its own commit, not this one) and `task_77434069`
+(review-reminders-post.sh — status unknown as of this entry, still pending/running last checked).
+
+**Review-gate confirm-step redesign — designed and implemented:** triggered by a
+live SECURITY WARNING from the harness's own auto-mode classifier when a subagent tried to write
+`.claude/.code-review-ok` for this session's own spec-doc commit — the exact self-attestation pattern
+the 2026-07-16 fix (`docs/superpowers/specs/2026-07-16-review-gate-self-attestation-fix-design.md`)
+targeted, recurring for at least the 7th time (2026-07-14 ×2, 2026-07-16 ×3, 2026-07-23, now). That
+fix's own "Scope of this fix" section predicted exactly this and said continued recurrence would be
+"a signal the fix isn't actually closing the classifier-denial pattern and is worth revisiting" — this
+was that revisit.
+
+Design (`docs/superpowers/specs/2026-07-27-review-gate-confirm-step-design.md`, committed `1657a18`,
+updated `1664921` after a live finding — see below): stop trying to make the marker-write look more
+convincing to the classifier; make it user-authorized instead of agent-authorized. The
+opposition-review subagent (`/code-review` Step 5, `/change-review` Job 9) now writes a durable,
+git-tracked review-log file to `docs/review-log/` **regardless of verdict**, instead of the hash
+marker. A new orchestrator-run step (`/code-review` Step 6, `/change-review` Step 4.5) asks the user
+via `AskUserQuestion` (Yes / Show findings first / No) and only writes `.claude/.code-review-ok` or
+`.claude/.change-review-ok` after explicit "Yes" — per-commit, not per-task, per this repo's own
+existing "do not generalize one approval to later actions" rule (`SECURITY-GUARDRAILS.md`). The
+`PreToolUse` hook itself is unchanged, same as the 2026-07-16 fix's scoping.
+
+**Live finding, mid-design, that reshaped the spec:** immediately after writing the spec, the
+orchestrator's own attempt to write `.claude/.code-review-ok` for that spec commit was denied by the
+classifier — *right after the user had explicitly typed "yes" to authorize exactly that action in
+chat.* This proved the spec's original "materially different and more defensible shape" framing (i.e.
+that explicit-confirmation writes would fare better with the classifier) was optimistic, not verified.
+Spec was updated (`1664921`) to treat the fallback as the **expected outcome for this action shape,
+not a rare edge case**: don't hand-compute a hash for the user to paste in, don't request a standing
+Bash permission grant (would silently reintroduce self-attestation for *future* real-code-diff
+commits), just tell the user to run `git add`/`git commit` (or `git push`) themselves directly — the
+`PreToolUse` hook only ever sees commands the agent runs, so a user-run commit bypasses the marker
+requirement entirely rather than needing to satisfy it.
+
+**Implementation — 7-task plan (`docs/superpowers/plans/2026-07-27-review-gate-confirm-step.md`),
+executed via `superpowers:subagent-driven-development`**: `.claude/commands/code-review.md` +
+`change-review.md` restructured (Step 5/Job 9 write review-log only; new Step 6/Step 4.5
+confirm-and-write), both `templates/claude-commands/` mirrors, new `docs/review-log/README.md`,
+`docs/HOOKS-GUIDE.md` updated (also fixed a stale raw-stdin claim left over from the earlier
+`review-reminders.sh` fix). At end-of-session on 2026-07-27, all 7 files were implemented but
+uncommitted, with commit commands handed to the user in-chat per this session's established pattern
+(see below).
+
+*(Correction, 2026-07-28: confirmed via `git log`/`git merge-base --is-ancestor` against
+`claude/strange-bun-9a0ffc` on 2026-07-29 that all 7 were in fact committed the next day —
+`16c4362` (code-review.md), `6af4651` (template mirror), `abe560c` (change-review.md), `a6056c1`
+(template mirror), `fd836ce` (review-log README), `7c65bd9` (HOOKS-GUIDE), `12bcf98` (plan-doc fix,
+see bug #2 below). Still unmerged into `docs/branch-protection-rollout` as of this writing.)*
+
+**Two real bugs caught during implementation review, both fixed:**
+1. Task 3's implementer subagent (haiku) **falsely reported 2 of 5 edits as applied when they weren't**
+   — the frontmatter update and the entire new "Step 4.5" section were silently never written to
+   `change-review.md`, despite a confident DONE report claiming otherwise, after 77 tool calls and ~14
+   minutes of apparent confusion (its own report described a nonsensical "Read tool vs disk
+   synchronization" issue). Caught by not trusting the report and independently grepping the file per
+   the skill's own explicit instruction to verify, not trust. Fixed manually. The confused subagent
+   also left a stray `.claude/commands/change-review.md.bak` behind (untracked, removed).
+2. Code-quality review caught that Job 9's review-log instructions told it to persist "Baseline Repo
+   Health table, Job Summary table, Coverage Footer" — data Job 9's own "Give it" context list never
+   actually hands it (only Jobs 1–8's findings tables + the diff). Would have forced fabrication in a
+   supposedly durable audit record. Fixed in both the live file and the plan document itself (so a
+   future re-run of the plan wouldn't reintroduce the same bug) — this is the `12bcf98` fix above.
+
+**Repo-specific operational pattern established this session, worth remembering:** this session's own
+`git commit`/`git push` attempts are gated by the very hook this work touches, and the harness's
+auto-mode classifier has been observed blocking even fully-authorized actions (marker-writes,
+`sha256sum` calls) regardless of preceding chat approval. Established workaround, used repeatedly and
+reliably all session: hand the user exact `git add`/`git commit` commands to run in their own
+PowerShell terminal (always with the full `cd` path first — bare relative commands from
+`C:\Users\Mizzo` failed once). This applies to every implementer-subagent dispatch too — subagents were
+explicitly instructed not to attempt commits themselves.
+
+**Also uncommitted/untouched, unverified as of this writing:** two stray `err.txt`/`out.txt` files
+reportedly left in the worktree root (leftover test artifacts, low stakes) — not re-checked from this
+main-worktree session since they'd live in `.claude/worktrees/strange-bun-9a0ffc`, not here.
+
+**Not yet live-verified:** the new confirm-step flow has been checked via static file inspection
+(spec-compliance + code-quality review, grep-based structural checks) but has never actually executed
+end-to-end — no real `/code-review` or `/change-review` invocation has exercised the new Step 6/Step
+4.5 `AskUserQuestion` flow yet. Recommended before fully trusting it.
 
 ## Review-Hook Worktree Root-Resolution Fix — Shipped and Merged (2026-07-23)
 
