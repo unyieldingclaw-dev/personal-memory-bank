@@ -456,4 +456,9 @@ jobs:
 
       - name: Run mb doctor on this repo
         shell: bash
-        run: MB_HOME="$(pwd)" bash scripts/mb.sh doctor
+        # WHY MB_VERSION_CHECK_URL points at an unreachable host: `doctor` isn't in the
+        # version-notifier's command-exclusion list, so without this it performs a live network
+        # fetch on every run -- a non-deterministic, network-dependent step in an otherwise fully
+        # local CI job. Pointing the check at an address that fails fast keeps the notifier's
+        # existing fail-open behavior (no crash, no [NOTICE]) without an external dependency.
+        run: MB_HOME="$(pwd)" MB_VERSION_CHECK_URL="http://127.0.0.1:1/VERSION" bash scripts/mb.sh doctor

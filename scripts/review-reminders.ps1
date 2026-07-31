@@ -67,6 +67,19 @@ try {
 $extracted = ($null -ne $cmd)
 if ($null -eq $cmd) { $cmd = $raw }
 
+# WHY match against a quote/backslash-stripped copy, not $cmd itself: a command like
+# `git c"o"mmit -m "x"` executes, after the real shell's own quote removal, as a genuine
+# `git commit -m x` -- but the parsed (or raw-fallback) command TEXT never contains "git commit"
+# as a contiguous match for the regexes below, so every -match check would silently miss it.
+# Reproduced directly: that exact payload previously exited 0 with no deny even though bash
+# executes it as a real, unreviewed commit -- true even on origin/main, predating this file's
+# other fixes. Stripping quote/backslash characters before matching (never from $cmd itself,
+# which still needs its real quoting intact for the leading-cd-chain parsing below) can only
+# ever make a match MORE likely to fire, matching this file's established "over-trigger, never
+# under-gate" safety direction -- it cannot introduce a new bypass, only new (already-accepted)
+# false-positive risk.
+$cmdStripped = $cmd -replace '["''\\]', ''
+
 # WHY this exists: `git rev-parse --show-toplevel` below trusts the hook process's own
 # ambient cwd, which is empirically wrong for some dispatched-subagent sessions. $cmd is
 # already the parsed command string (via ConvertFrom-Json above), so extracting a leading cd
@@ -164,7 +177,12 @@ function Deny {
 
 function Test-AndConsumeMarker {
     param([string]$Marker, [string]$ExpectedHash)
-    $claimed = "$Marker.claimed"
+    # WHY suffix with $PID, matching review-reminders.sh's consume_marker() ($marker.claimed.$$):
+    # without a per-process uniquifier, two concurrent claim attempts (or a claim racing a
+    # crashed prior attempt's leftover claimed file) could both target the same destination
+    # name -- Move-Item -Force below would silently overwrite one attempt's claimed content
+    # with another's before it's ever read, corrupting or misattributing a hash comparison.
+    $claimed = "$Marker.claimed.$PID"
     try {
         Move-Item -Path $Marker -Destination $claimed -Force -ErrorAction Stop
     } catch {
@@ -182,8 +200,8 @@ function Test-AndConsumeMarker {
 # checking it first means it can never coexist with a commit/push allow-path in a way that
 # would try to emit two separate JSON responses for one hook invocation.
 #
-# WHY this check runs against $cmd regardless of $extracted, unlike the extracted-only skip
-# this file used to apply here: that skip was found, on review, to reopen exactly the "no
+# WHY this check runs against $cmdStripped regardless of $extracted, unlike the extracted-only
+# skip this file used to apply here: that skip was found, on review, to reopen exactly the "no
 # legitimate case to allow through" gap the unconditional deny exists to close -- if
 # ConvertFrom-Json fails (malformed/unexpected payload), extraction fails, and a REAL
 # `gh pr merge` command would fall straight through unchecked, silently disabling the one
@@ -191,7 +209,7 @@ function Test-AndConsumeMarker {
 # used to guard against (an unrelated command whose raw payload merely mentions "gh pr merge",
 # e.g. in tool_input.description) is real but is the SAME failure direction commit/push already
 # accept on this exact fallback path -- an extra, unnecessary deny, not a security hole.
-if ($cmd -match 'gh\s+pr\s+merge\b') {
+if ($cmdStripped -match 'gh\s+pr\s+merge\b') {
     Deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
     exit 0
 }
@@ -203,8 +221,8 @@ if ($cmd -match 'gh\s+pr\s+merge\b') {
 # checked push's marker, letting an unreviewed push ride through on a valid commit marker
 # alone. Reproduced directly against this exact file: seeding only a valid .code-review-ok
 # marker let a compound commit+push through untouched, on pwsh -- the PREFERRED runtime.
-$needsCommit = $cmd -match 'git\s+commit\b'
-$needsPush = $cmd -match 'git\s+push\b'
+$needsCommit = $cmdStripped -match 'git\s+commit\b'
+$needsPush = $cmdStripped -match 'git\s+push\b'
 $commitOk = $true
 $pushOk = $true
 

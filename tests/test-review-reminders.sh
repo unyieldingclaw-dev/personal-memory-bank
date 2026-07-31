@@ -40,6 +40,14 @@ invoke_hook_ps1() {
     | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null)
 }
 
+invoke_hook_ps1_post() {
+  # invoke_hook_ps1_post <command-text> — like invoke_hook_ps1, but for the PostToolUse
+  # companion script (review-reminders-post.ps1) instead of the PreToolUse gate.
+  local command="$1"
+  printf '{"tool_input":{"command":"%s"}}' "$command" \
+    | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders-post.ps1" 2>/dev/null)
+}
+
 invoke_hook_with_description() {
   # invoke_hook_with_description <script> <command-text> <description-text> — builds a
   # tool_input payload carrying BOTH command and description, mirroring the real Bash tool's
@@ -175,6 +183,46 @@ if command -v pwsh >/dev/null 2>&1; then
   rc=$?
   assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 accepts a marker written via the bash-documented recipe (regression test for the trailing-newline hash mismatch)"
   assert_exit_zero "$rc" "hook exited 0 (not a crash) for: review-reminders.ps1 accepts a marker written via the bash-documented recipe (regression test for the trailing-newline hash mismatch)"
+
+  # ── compound-command fix (PowerShell): git commit && git push requires BOTH markers ────────
+  # WHY this test exists: review-reminders.ps1 had the identical if/elseif-stops-at-first-match
+  # bug as review-reminders.sh's old case/esac, and this file's own comments elsewhere call
+  # PowerShell "the PREFERRED runtime" -- yet only review-reminders.sh had compound-command
+  # regression coverage. Mirrors the bash compound-command tests above.
+  echo ""
+  echo "--- compound-command fix (PS1): commit+push chained via && is denied when only .code-review-ok is valid ---"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.change-review-ok"
+  echo "ps1 compound line one" >> "$TMPDIR_RR/file.txt"
+  write_marker_bash_recipe ".code-review-ok"
+  resp=$(invoke_hook_ps1 "git commit -m ps1compound1 && git push origin main")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies a compound 'git commit && git push' when only .code-review-ok is valid and .change-review-ok is missing"
+
+  echo ""
+  echo "--- compound-command fix (PS1): reverse case -- denied when only .change-review-ok is valid ---"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.change-review-ok"
+  tmp=$(mktemp)
+  git -C "$TMPDIR_RR" diff HEAD > "$tmp" 2>/dev/null
+  sha256sum "$tmp" | cut -d' ' -f1 > "$TMPDIR_RR/.claude/.change-review-ok"
+  rm -f "$tmp"
+  resp=$(invoke_hook_ps1 "git commit -m ps1compound2 && git push origin main")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies a compound 'git commit && git push' when only .change-review-ok is valid and .code-review-ok is missing"
+
+  echo ""
+  echo "--- compound-command fix (PS1): both markers valid allows the compound command through and consumes both ---"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.change-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha" "$TMPDIR_RR/.claude/.pending-push-presha" "$TMPDIR_RR/.claude/.pending-commit-hash" "$TMPDIR_RR/.claude/.pending-push-hash"
+  echo "ps1 compound line two" >> "$TMPDIR_RR/file.txt"
+  write_marker_bash_recipe ".code-review-ok"
+  tmp=$(mktemp)
+  git -C "$TMPDIR_RR" diff HEAD > "$tmp" 2>/dev/null
+  sha256sum "$tmp" | cut -d' ' -f1 > "$TMPDIR_RR/.claude/.change-review-ok"
+  rm -f "$tmp"
+  resp=$(invoke_hook_ps1 "git commit -m ps1compound3 && git push origin main")
+  rc=$?
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 allows a compound git commit && git push when BOTH .code-review-ok and .change-review-ok are valid"
+  assert_exit_zero "$rc" "hook exited 0 (not a crash) for: review-reminders.ps1 allows a compound git commit && git push when BOTH .code-review-ok and .change-review-ok are valid"
+  assert_file_not_exists "$TMPDIR_RR/.claude/.code-review-ok" "the PS1 compound command consumed .code-review-ok"
+  assert_file_not_exists "$TMPDIR_RR/.claude/.change-review-ok" "the PS1 compound command consumed .change-review-ok"
+  rm -f "$TMPDIR_RR/.claude/.pending-commit-presha" "$TMPDIR_RR/.claude/.pending-push-presha" "$TMPDIR_RR/.claude/.pending-commit-hash" "$TMPDIR_RR/.claude/.pending-push-hash"
 else
   echo ""
   echo "--- cross-shell parity: SKIPPED (pwsh not installed on this machine) ---"
@@ -260,6 +308,37 @@ assert_not_contains "$actual" "$freshhash" "the reissued marker does NOT match t
 git -C "$TMPDIR_RR" checkout -- file.txt
 rm -f "$TMPDIR_RR/.claude/.code-review-ok"
 
+# ── reissue-hash fix (PowerShell): reissued marker is the ORIGINAL hash, not a fresh recompute ─
+# WHY this test exists: review-reminders-post.ps1 has the identical persist-and-replay /
+# fail-closed logic as review-reminders-post.sh, but nothing in this suite ever invoked
+# review-reminders-post.ps1 at all -- the PowerShell reissue path (including its own
+# fail-closed guard) was completely unexercised. Mirrors the bash mutation test above.
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- reissue-hash fix (PS1): reissued marker matches the ORIGINAL pre-mutation hash, not a fresh post-mutation recompute ---"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha" "$TMPDIR_RR/.claude/.pending-commit-hash"
+  echo "ps1 pre-mutation line" >> "$TMPDIR_RR/file.txt"
+  presha=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+  printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+  orighash=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+  printf '%s' "$orighash" > "$TMPDIR_RR/.claude/.pending-commit-hash"
+  # Simulate a mutating pre-commit hook (e.g. an auto-formatter) that changed the tree further
+  # and then rejected the commit -- HEAD still hasn't moved, but the diff is now different.
+  echo "ps1 post-mutation line (simulates an auto-formatter)" >> "$TMPDIR_RR/file.txt"
+  freshhash=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+  [ "$orighash" != "$freshhash" ] || { echo "TEST SETUP BUG: orighash and freshhash should differ"; exit 1; }
+  invoke_hook_ps1_post "git commit -m ps1-test-mutation" >/dev/null
+  actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
+  assert_contains "$actual" "$orighash" "review-reminders-post.ps1 reissues the ORIGINAL pre-mutation hash, not a fresh recompute of the now-mutated tree"
+  assert_not_contains "$actual" "$freshhash" "the PS1-reissued marker does NOT match the mutated tree's fresh hash -- proving the mutated diff was never actually authorized"
+  assert_file_not_exists "$TMPDIR_RR/.claude/.pending-commit-hash" "review-reminders-post.ps1 cleans up .pending-commit-hash after reissuing"
+  git -C "$TMPDIR_RR" checkout -- file.txt
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+else
+  echo ""
+  echo "--- reissue-hash fix (PS1) test: SKIPPED (pwsh not installed on this machine) ---"
+fi
+
 # ── merge gate: gh pr merge is unconditionally denied ────────────────────────────────────────
 echo ""
 echo "--- merge gate: gh pr merge is always denied (review-reminders.sh) ---"
@@ -285,6 +364,15 @@ if command -v pwsh >/dev/null 2>&1; then
   rc=$?
   assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 does not deny a plain git merge"
   assert_exit_zero "$rc" "hook exited 0 (not a crash) for: review-reminders.ps1 does not deny a plain git merge"
+
+  # WHY this test exists: mirrors the bash "fallback fix: denies gh pr merge via the raw-stdin
+  # fallback" test above -- review-reminders.ps1 dropped its own $extracted-only guard on the
+  # merge check, but nothing had exercised malformed (non-JSON) stdin specifically for the
+  # merge case on the PowerShell side, only the well-formed-JSON path.
+  echo ""
+  echo "--- fallback fix: review-reminders.ps1 still denies gh pr merge via the raw-stdin fallback on malformed (non-JSON) stdin ---"
+  resp=$(printf 'not valid json but contains gh pr merge anyway' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies gh pr merge via the raw-stdin fallback, not just the extracted-JSON path"
 else
   echo ""
   echo "--- merge gate PowerShell tests: SKIPPED (pwsh not installed on this machine) ---"
@@ -546,6 +634,40 @@ printf 'not valid json but contains git commit anyway' | (cd "$TMPDIR_RR" && bas
 actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
 assert_contains "$actual" "$expected" "review-reminders-post.sh falls back to raw-stdin matching and still reissues .code-review-ok correctly when stdin isn't valid JSON"
 rm -f "$TMPDIR_RR/.claude/.pending-commit-presha"
+
+# ── quote-split fix: a quote-split "git commit" still gates, even though the raw command text
+# never contains "git commit" as a contiguous substring ────────────────────────────────────
+# WHY this test exists: a command like `git c"o"mmit -m "x"` executes, after the real shell's
+# own quote removal, as a genuine `git commit -m x` -- but matching the UN-stripped command
+# text (whether via extracted JSON or the raw-stdin fallback) never finds "git commit" as a
+# contiguous run of characters, so the gate silently missed it. Reproduced directly and
+# empirically against this exact file, confirmed present even on origin/main (predating every
+# other fix here): piping {"tool_input":{"command":"git c\"o\"mmit -m \"x\""}} in previously
+# exited 0 with no deny at all -- a real, unreviewed commit would have gone through untouched.
+echo ""
+echo "--- quote-split fix: a quote-split 'git c\"o\"mmit' is still denied (review-reminders.sh) ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+resp=$(printf '{"tool_input":{"command":"git c\\"o\\"mmit -m \\"x\\""}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+rc=$?
+assert_contains "$resp" '"permissionDecision":"deny"' 'review-reminders.sh denies a quote-split git c"o"mmit even though the raw text never contains "git commit" as a contiguous substring'
+assert_exit_zero "$rc" "hook exited 0 (not a crash) for: review-reminders.sh denies a quote-split git commit"
+
+echo ""
+echo "--- quote-split fix: case-folding also closes 'Git Commit' (mixed case), matching review-reminders.ps1's case-insensitive default ---"
+resp=$(printf '{"tool_input":{"command":"Git Commit -m x"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies 'Git Commit' (mixed case) -- bash's case/esac was case-sensitive before this fix while review-reminders.ps1's -match already wasn't"
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- quote-split fix: a quote-split 'git c\"o\"mmit' is still denied (review-reminders.ps1) ---"
+  resp=$(printf '{"tool_input":{"command":"git c\\"o\\"mmit -m \\"x\\""}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  rc=$?
+  assert_contains "$resp" '"permissionDecision":"deny"' 'review-reminders.ps1 denies a quote-split git c"o"mmit even though the raw text never contains "git commit" as a contiguous match'
+  assert_exit_zero "$rc" "hook exited 0 (not a crash) for: review-reminders.ps1 denies a quote-split git commit"
+else
+  echo ""
+  echo "--- quote-split fix PS1 test: SKIPPED (pwsh not installed on this machine) ---"
+fi
 
 # ── empty-command fix: a legitimately empty tool_input.command must not fall back to raw stdin ─
 # WHY this test exists: extract_command() used to print an empty string both when parsing

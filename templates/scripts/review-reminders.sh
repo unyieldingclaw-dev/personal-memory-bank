@@ -234,6 +234,25 @@ else
     extracted=0
 fi
 
+# WHY match against a quote/backslash-stripped, lowercased copy, not $match_target itself: a
+# command like `git c"o"mmit -m "x"` executes, after the real shell's own quote removal, as a
+# genuine `git commit -m x` -- but the parsed (or raw-fallback) command TEXT never contains "git
+# commit" as a contiguous substring, so every case/esac match below would silently miss it.
+# Reproduced directly: that exact payload previously exited 0 with no deny even though bash
+# executes it as a real, unreviewed commit -- true even on origin/main, predating this file's
+# other fixes. The lowercasing closes a parallel gap: review-reminders.ps1's `-match` is
+# case-insensitive by default, but this file's `case`/esac is case-sensitive, so `Git Commit`
+# passed through unmatched here while its .ps1 counterpart would have caught it -- on a
+# case-insensitive filesystem (default Windows/macOS), `Git`/`GIT` can resolve to the same git
+# binary as `git`, so this wasn't just a cosmetic mismatch. Neither transform touches
+# $match_target itself, which still needs its real quoting and casing intact for
+# resolve_cd_root()'s cd-chain parsing below (a `cd "Path"` argument is case-sensitive on most
+# filesystems this hook actually resolves against). Both transforms can only ever make a match
+# MORE likely to fire, matching this file's established "over-trigger, never under-gate" safety
+# direction -- neither can introduce a new bypass, only new (already-accepted) false-positive
+# risk.
+match_target_stripped=$(printf '%s' "$match_target" | tr -d "\"'\\\\" | tr 'A-Z' 'a-z')
+
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
 }
@@ -246,26 +265,26 @@ deny() {
 # gh pr merge is an unconditional deny with no marker/root access at all, and anything else
 # (ls, npm test, ...) isn't gated at all. Only git commit/push actually need root.
 #
-# WHY the gh pr merge check runs against $match_target regardless of $extracted, unlike the
-# gh-pr-merge-only skip this file used to apply on the raw-stdin fallback: that skip was found,
-# on review, to reopen exactly the "no legitimate case to allow through" gap the unconditional
-# deny exists to close -- if python3 is missing (or JSON parsing otherwise fails), extraction
-# fails, and a REAL `gh pr merge` command would fall straight through unchecked, silently
-# disabling the one control in this file explicitly designed to have zero override. The
+# WHY the gh pr merge check runs against $match_target_stripped regardless of $extracted,
+# unlike the gh-pr-merge-only skip this file used to apply on the raw-stdin fallback: that skip
+# was found, on review, to reopen exactly the "no legitimate case to allow through" gap the
+# unconditional deny exists to close -- if python3 is missing (or JSON parsing otherwise fails),
+# extraction fails, and a REAL `gh pr merge` command would fall straight through unchecked,
+# silently disabling the one control in this file explicitly designed to have zero override. The
 # false-positive risk this used to guard against (an unrelated command whose raw payload merely
 # mentions "gh pr merge", e.g. in tool_input.description) is real but is the SAME failure
 # direction commit/push already accept on this exact fallback path -- an extra, unnecessary
 # deny, not a security hole. There is no asymmetry to preserve: matching unconditionally is
 # both simpler and consistent with the "over-trigger, never under-gate" rule used everywhere
 # else in this file.
-case "$match_target" in
+case "$match_target_stripped" in
     *'gh pr merge'*)
         deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
         exit 0
         ;;
 esac
 
-case "$match_target" in
+case "$match_target_stripped" in
     *'git commit'*|*'git push'*) ;;
     *) exit 0 ;;
 esac
@@ -318,8 +337,8 @@ consume_marker() {
 # (see the unanchored-match WHY comment above), not a new risk.
 needs_commit=0
 needs_push=0
-case "$match_target" in *'git commit'*) needs_commit=1 ;; esac
-case "$match_target" in *'git push'*) needs_push=1 ;; esac
+case "$match_target_stripped" in *'git commit'*) needs_commit=1 ;; esac
+case "$match_target_stripped" in *'git push'*) needs_push=1 ;; esac
 
 commit_ok=1
 push_ok=1

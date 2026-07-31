@@ -91,6 +91,17 @@ else
     extracted=0
 fi
 
+# WHY match against a quote/backslash-stripped, lowercased copy, not $match_target itself: see
+# the matching comment in review-reminders.sh -- a command like `git c"o"mmit -m "x"` executes,
+# after real shell quote removal, as a genuine `git commit -m x`, but the command TEXT never
+# contains "git commit" as a contiguous substring; and review-reminders.ps1's `-match` is
+# case-insensitive by default while this file's `case`/esac isn't, so `Git Commit` would pass
+# through unmatched here even though its .ps1 counterpart would catch it. Neither transform
+# touches $match_target itself, which resolve_cd_root() below still needs with real quoting and
+# casing intact. Both can only make a match MORE likely to fire -- the same safe direction as
+# everywhere else here.
+match_target_stripped=$(printf '%s' "$match_target" | tr -d "\"'\\\\" | tr 'A-Z' 'a-z')
+
 # WHY the cmd check runs before resolve_cd_root(), not after: this hook has matcher "Bash" in
 # .claude/settings.json, so it fires on EVERY Bash tool call, not just git commit/push --
 # resolve_cd_root() (a second python3 fork) and the git rev-parse fallback below are wasted
@@ -107,8 +118,8 @@ fi
 # outcomes are each reconciled on their own.
 needs_commit=0
 needs_push=0
-case "$match_target" in *'git commit'*) needs_commit=1 ;; esac
-case "$match_target" in *'git push'*) needs_push=1 ;; esac
+case "$match_target_stripped" in *'git commit'*) needs_commit=1 ;; esac
+case "$match_target_stripped" in *'git push'*) needs_push=1 ;; esac
 [ "$needs_commit" = "0" ] && [ "$needs_push" = "0" ] && exit 0
 
 root=""

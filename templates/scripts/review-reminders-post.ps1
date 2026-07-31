@@ -19,13 +19,22 @@ try {
 } catch { }
 if ($null -eq $cmd) { $cmd = $raw }
 
+# WHY match against a quote/backslash-stripped copy, not $cmd itself: see the matching comment
+# in review-reminders.ps1 -- a command like `git c"o"mmit -m "x"` executes, after real shell
+# quote removal, as a genuine `git commit -m x`, but the command TEXT never contains "git
+# commit" as a contiguous match for the regexes below. Stripping quote/backslash characters
+# before matching (never from $cmd itself, which the leading-cd-chain parsing below still needs
+# with real quoting intact) can only make a match MORE likely to fire -- the same safe
+# direction as everywhere else in this file.
+$cmdStripped = $cmd -replace '["''\\]', ''
+
 # WHY needsCommit/needsPush (two independent checks), not one if/elseif: see the matching
 # comment in review-reminders.ps1 -- a compound `git commit -m x && git push origin main`
 # matches both regexes. An if/elseif only reissues whichever marker matches first, silently
 # leaving the OTHER action's presha file unprocessed even though the compound command may have
 # genuinely failed on both halves.
-$needsCommit = $cmd -match 'git\s+commit\b'
-$needsPush = $cmd -match 'git\s+push\b'
+$needsCommit = $cmdStripped -match 'git\s+commit\b'
+$needsPush = $cmdStripped -match 'git\s+push\b'
 if (-not $needsCommit -and -not $needsPush) { exit 0 }
 
 # WHY this exists: see the matching comment in review-reminders.ps1.

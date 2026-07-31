@@ -1676,7 +1676,13 @@ invoke_upgrade() {
     # Remote version check — soft warning, never blocks upgrade
     get_cached_pmb_version
     if pmb_version_is_stale; then
-        echo -e "${YELLOW}[WARN] PMB $LOCAL_VERSION installed locally, $REMOTE_VERSION available${NC}"
+        # WHY printf '%b'/%s here, not echo -e on the whole interpolated string: REMOTE_VERSION
+        # is fetched from an external HTTPS source and only stripped of whitespace/quotes, not
+        # backslashes -- echo -e would interpret any escape sequence (e.g. ANSI codes) smuggled
+        # in a compromised/MITM'd VERSION response. %b interprets escapes only in $YELLOW/$NC
+        # (which this script itself controls); %s never interprets escapes in its argument, so
+        # REMOTE_VERSION's content is displayed literally regardless of what it contains.
+        printf '%b[WARN] PMB %s installed locally, %s available%b\n' "$YELLOW" "$LOCAL_VERSION" "$REMOTE_VERSION" "$NC"
         echo -e "${YELLOW}       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank${NC}"
         echo ""
     elif [ -n "$LOCAL_VERSION" ] && [ -z "$REMOTE_VERSION" ]; then
@@ -2321,6 +2327,9 @@ esac
 if [ "$COMMAND" != "upgrade" ] && [ "$COMMAND" != "update" ] && [ "$COMMAND" != "help" ]; then
     get_cached_pmb_version
     if pmb_version_is_stale; then
-        echo -e "${YELLOW}[NOTICE] PMB $LOCAL_VERSION installed, $REMOTE_VERSION available — run: mb upgrade${NC}"
+        # WHY printf '%b'/%s, not echo -e: see the matching comment in invoke_upgrade() above --
+        # REMOTE_VERSION comes from an external source and must never have its content
+        # escape-interpreted.
+        printf '%b[NOTICE] PMB %s installed, %s available — run: mb upgrade%b\n' "$YELLOW" "$LOCAL_VERSION" "$REMOTE_VERSION" "$NC"
     fi
 fi
