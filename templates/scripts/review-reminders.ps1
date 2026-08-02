@@ -64,7 +64,6 @@ try {
         $cmd = $parsed.tool_input.command
     }
 } catch { }
-$extracted = ($null -ne $cmd)
 if ($null -eq $cmd) { $cmd = $raw }
 
 # WHY match against a quote/backslash-stripped copy, not $cmd itself: a command like
@@ -79,6 +78,83 @@ if ($null -eq $cmd) { $cmd = $raw }
 # under-gate" safety direction -- it cannot introduce a new bypass, only new (already-accepted)
 # false-positive risk.
 $cmdStripped = $cmd -replace '["''\\]', ''
+
+# Get-NextSubcommand — walks $Tokens from $Start, skipping recognized flag tokens (an
+# --opt=value attached form, a recognized value-taking flag plus its following token, or any
+# other single flag token), and returns the first remaining non-flag token plus the index just
+# past it. Returns $null if the tokens run out without finding one.
+function Get-NextSubcommand {
+    param([string[]]$Tokens, [int]$Start, [string[]]$OptsWithValue)
+    $i = $Start
+    while ($i -lt $Tokens.Count) {
+        $t = $Tokens[$i]
+        if ($t.StartsWith('--') -and $t.Contains('=')) { $i++; continue }
+        if ($OptsWithValue -contains $t.ToLower()) { $i += 2; continue }
+        if ($t.StartsWith('-')) { $i++; continue }
+        return @($t, ($i + 1))
+    }
+    return @($null, $i)
+}
+
+# Get-CommandTargets — an ADDITIONAL commit/push/merge detector, layered on TOP of
+# $cmdStripped's regex check below, never a replacement for it; native-PowerShell counterpart
+# to review-reminders.sh's classify_targets(): splits $Command on shell control operators
+# (&&/||/;/|) into simple commands, tokenizes each by whitespace (so multi-space/tab/newline
+# variants that `-match`'s `\s+` already handled continue to work, and any variant bash's
+# tr-based approach couldn't), and for each git/gh invocation skips recognized global options
+# (-C <path>, -c <name>=<value>, --opt=value forms, -R/--repo, etc.) to find the REAL
+# subcommand -- not just whatever text happens to follow the literal substring "git "/"gh ".
+#
+# WHY this exists, beyond $cmdStripped above: `git -C /path commit -m x` and
+# `git -c user.name=z commit -m x` are ordinary, idiomatic git invocations -- not adversarial
+# obfuscation, an agent naturally reaches for `-C` when working across directories -- whose
+# text never matches 'git\s+commit\b' as a contiguous run, so $cmdStripped's regex missed them
+# entirely. Found via this session's opposition-review pass: the same underlying class of gap
+# as the quote-split bug, just in git's own argument syntax instead of shell quoting.
+#
+# WHY additive (OR'd with $cmdStripped's regex), not a primary detector that can suppress the
+# regex check: an earlier version of this fix treated "Get-CommandTargets ran and returned a
+# non-null result" as authoritative and skipped $cmdStripped's regex whenever that happened --
+# but a recognized head token of exactly "git"/"gh" does NOT match `/usr/bin/git commit`,
+# `env git commit`, or any other perfectly ordinary indirect invocation. That version silently
+# allowed those through with no deny at all -- a real regression, since $cmdStripped's regex
+# alone (still active pre-this-fix) already caught them. Running both checks and OR'ing the
+# results means Get-CommandTargets can only ever ADD detection (the -C/-c/whitespace-variant
+# forms it understands), never remove coverage $cmdStripped's regex already had.
+#
+# WHY only the realistic, commonly-used global options are recognized, not a complete
+# reimplementation of git's/gh's argument grammar: an unrecognized flag just means
+# Get-CommandTargets might miss detecting that specific invocation shape -- harmless given
+# $cmdStripped's regex underneath still covers the literal-substring case, and the safe
+# direction for an unknown flag is to still treat the next token as a possible subcommand
+# (more likely to trigger, never less). No dependency added: this is native PowerShell, unlike
+# review-reminders.sh's python3-based classify_targets(), since this file is the PREFERRED
+# runtime and shouldn't need a non-native dependency for this detection path.
+function Get-CommandTargets {
+    param([string]$Command)
+    $gitOptsWithValue = @('-c', '-C', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--exec-path', '--attr-source')
+    $ghOptsWithValue = @('-R', '--repo', '--hostname')
+
+    $found = [System.Collections.Generic.HashSet[string]]::new()
+    $segments = [regex]::Split($Command, '(?:&&|\|\||;|\|)')
+    foreach ($seg in $segments) {
+        $tokens = @($seg.Trim() -split '\s+' | Where-Object { $_ -ne '' })
+        if ($tokens.Count -eq 0) { continue }
+        $head = $tokens[0].ToLower()
+        if ($head -eq 'git') {
+            $gitSub, $null1 = Get-NextSubcommand -Tokens $tokens -Start 1 -OptsWithValue $gitOptsWithValue
+            if ($gitSub -and $gitSub.ToLower() -eq 'commit') { [void]$found.Add('commit') }
+            elseif ($gitSub -and $gitSub.ToLower() -eq 'push') { [void]$found.Add('push') }
+        } elseif ($head -eq 'gh') {
+            $sub1, $nextIdx = Get-NextSubcommand -Tokens $tokens -Start 1 -OptsWithValue $ghOptsWithValue
+            if ($sub1 -and $sub1.ToLower() -eq 'pr') {
+                $sub2, $null2 = Get-NextSubcommand -Tokens $tokens -Start $nextIdx -OptsWithValue $ghOptsWithValue
+                if ($sub2 -and $sub2.ToLower() -eq 'merge') { [void]$found.Add('merge') }
+            }
+        }
+    }
+    return $found
+}
 
 # WHY this exists: `git rev-parse --show-toplevel` below trusts the hook process's own
 # ambient cwd, which is empirically wrong for some dispatched-subagent sessions. $cmd is
@@ -194,35 +270,61 @@ function Test-AndConsumeMarker {
     return ($content -and $content -eq $ExpectedHash)
 }
 
+# WHY $cmdStripped's regex runs unconditionally first, with Get-CommandTargets's result OR'd
+# in afterward, rather than Get-CommandTargets running as the primary detector whenever it can:
+# an earlier version made Get-CommandTargets authoritative on the $extracted path and skipped
+# the regex whenever it ran without error -- but "ran without error" only means the head token
+# was recognized as exactly "git"/"gh"; it does NOT match `/usr/bin/git commit`, `env git
+# commit`, or any other perfectly ordinary indirect invocation. Reproduced directly: that
+# version silently allowed `/usr/bin/git commit -m x` through with no deny at all, even though
+# $cmdStripped's regex alone (still active pre-this-fix) already caught it. Running both checks
+# and OR'ing the results means Get-CommandTargets can only ever ADD detection, never remove
+# coverage the regex already had -- the same "over-trigger, never under-gate" safety direction
+# this file commits to everywhere else. Wrapped in try/catch so an unexpected exception from a
+# pathological $cmd just means no additional detection, never a lost regex match. $targets may
+# be $null (Get-CommandTargets threw, or PowerShell's pipeline unwrapped an empty HashSet to
+# $null) -- both are treated identically to "no additional targets found" via the $null -ne
+# guards below, never as a signal to skip the regex check.
+$targets = $null
+try {
+    $targets = Get-CommandTargets -Command $cmd
+} catch { }
+
+$mergeHit = $cmdStripped -match 'gh\s+pr\s+merge\b'
+$needsCommit = $cmdStripped -match 'git\s+commit\b'
+$needsPush = $cmdStripped -match 'git\s+push\b'
+if ($null -ne $targets) {
+    if ($targets.Contains('merge')) { $mergeHit = $true }
+    if ($targets.Contains('commit')) { $needsCommit = $true }
+    if ($targets.Contains('push')) { $needsPush = $true }
+}
+
 # WHY gh pr merge is checked first, unconditionally, before commit/push classification: matches
 # this file's pre-existing priority (gh pr merge was already checked as its own branch ahead of
 # push in the old if/elseif chain) -- an unconditional deny needs no root/marker access, and
 # checking it first means it can never coexist with a commit/push allow-path in a way that
 # would try to emit two separate JSON responses for one hook invocation.
 #
-# WHY this check runs against $cmdStripped regardless of $extracted, unlike the extracted-only
-# skip this file used to apply here: that skip was found, on review, to reopen exactly the "no
-# legitimate case to allow through" gap the unconditional deny exists to close -- if
-# ConvertFrom-Json fails (malformed/unexpected payload), extraction fails, and a REAL
-# `gh pr merge` command would fall straight through unchecked, silently disabling the one
-# control in this file explicitly designed to have zero override. The false-positive risk this
-# used to guard against (an unrelated command whose raw payload merely mentions "gh pr merge",
-# e.g. in tool_input.description) is real but is the SAME failure direction commit/push already
-# accept on this exact fallback path -- an extra, unnecessary deny, not a security hole.
-if ($cmdStripped -match 'gh\s+pr\s+merge\b') {
+# WHY this check runs against $mergeHit regardless of whether $cmd came from a successful
+# JSON parse or the raw-stdin fallback: an earlier version skipped this check on the fallback
+# path, which reopened exactly the "no legitimate case to allow through" gap the unconditional
+# deny exists to close -- a REAL `gh pr merge` command would fall straight through unchecked
+# whenever JSON parsing failed. The false-positive risk of checking unconditionally (an
+# unrelated command whose raw payload merely mentions "gh pr merge", e.g. in
+# tool_input.description) is real but is the SAME failure direction commit/push already accept
+# on this exact fallback path -- an extra, unnecessary deny, not a security hole.
+if ($mergeHit) {
     Deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
     exit 0
 }
 
-# WHY commit and push are classified and validated INDEPENDENTLY, not via one if/elseif
-# chain: see the matching comment in review-reminders.sh -- a compound Bash tool call chaining
-# both (`git commit -m x && git push origin main`) matches BOTH regexes. An if/elseif only ever
-# runs its first matching branch, so the old code validated the commit half and never even
-# checked push's marker, letting an unreviewed push ride through on a valid commit marker
-# alone. Reproduced directly against this exact file: seeding only a valid .code-review-ok
-# marker let a compound commit+push through untouched, on pwsh -- the PREFERRED runtime.
-$needsCommit = $cmdStripped -match 'git\s+commit\b'
-$needsPush = $cmdStripped -match 'git\s+push\b'
+# WHY commit and push were classified INDEPENDENTLY above, not via one if/elseif chain: see
+# the matching comment in review-reminders.sh -- a compound Bash tool call chaining both
+# (`git commit -m x && git push origin main`) matches both. An if/elseif would only ever run
+# its first matching branch, so the old code validated the commit half and never even checked
+# push's marker, letting an unreviewed push ride through on a valid commit marker alone.
+# Reproduced directly against this exact file: seeding only a valid .code-review-ok marker let
+# a compound commit+push through untouched, on pwsh -- the PREFERRED runtime.
 $commitOk = $true
 $pushOk = $true
 

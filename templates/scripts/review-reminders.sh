@@ -253,41 +253,173 @@ fi
 # risk.
 match_target_stripped=$(printf '%s' "$match_target" | tr -d "\"'\\\\" | tr 'A-Z' 'a-z')
 
+# classify_targets — an ADDITIONAL commit/push/merge detector, layered on TOP of
+# match_target_stripped's substring check below, never a replacement for it: tokenizes $1
+# with a real shell-like tokenizer (python3's shlex, POSIX mode: correctly implements quote-
+# removal and backslash-escape semantics -- `git c"o"mmit`'s quotes are properly removed
+# rather than merely deleted, and punctuation_chars mode recognizes &&/||/;/| as their own
+# tokens, splitting compound commands correctly) and walks each resulting simple command's
+# tokens, skipping git's/gh's own documented global options (-C <path>, -c <name>=<value>,
+# --opt=value forms, etc.) to find the REAL subcommand -- not just whatever text happens to
+# follow the literal substring "git " or "gh ". Prints one line per detected trigger
+# (commit/push/merge). Returns 1 with no output if python3 is unavailable or the input can't
+# be tokenized at all (e.g. genuinely unbalanced quoting); the caller simply doesn't gain the
+# extra detection in that case, since the substring check underneath is never bypassed.
+#
+# WHY this exists, beyond the quote-stripping/lowercasing above: `git -C /path commit -m x`
+# and `git -c user.name=z commit -m x` are ordinary, idiomatic git invocations -- not
+# adversarial obfuscation, an agent naturally reaches for `-C` when working across
+# directories -- whose text never contains "git commit" as a contiguous substring, so
+# match_target_stripped's plain substring match missed them entirely. Found via this
+# session's opposition-review pass: the same underlying class of gap as the quote-split bug,
+# just in git's own argument syntax instead of shell quoting.
+#
+# WHY additive (OR'd with match_target_stripped), not a primary detector that can suppress
+# the substring check: an earlier version of this fix treated "classify_targets ran
+# successfully" as authoritative and skipped the substring check whenever it succeeded --
+# but "ran successfully" only means the head token was recognized as exactly the string
+# "git"/"gh"; it does NOT match `/usr/bin/git commit`, `env git commit`, or any other
+# perfectly ordinary indirect invocation. Reproduced directly: that version silently allowed
+# `/usr/bin/git commit -m x` through with no deny at all -- a real regression, since the
+# substring check alone (still active pre-this-fix) already caught it. Running both checks
+# and OR'ing the results means classify_targets() can only ever ADD detection (the -C/-c/
+# whitespace-variant forms it understands), never remove coverage the substring check
+# already had -- the same "over-trigger, never under-gate" safety direction this file already
+# commits to everywhere else, now correctly applied to this fix too.
+#
+# WHY only the realistic, commonly-used global options are recognized, not a complete
+# reimplementation of git's/gh's argument grammar: an unrecognized flag just means
+# classify_targets() might miss detecting that specific invocation shape -- harmless given
+# the substring check underneath still covers the literal-substring case, and the safe
+# direction for an unknown flag is to still treat the next token as a possible subcommand
+# (more likely to trigger, never less).
+classify_targets() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    result=$(python3 - "$1" 2>/dev/null <<'PYEOF'
+import sys, shlex
+
+GIT_OPTS_WITH_VALUE = ('-c', '-C', '--git-dir', '--work-tree', '--namespace',
+                        '--super-prefix', '--exec-path', '--attr-source')
+GH_OPTS_WITH_VALUE = ('-R', '--repo', '--hostname')
+
+
+def next_subcommand(tokens, start, opts_with_value):
+    i = start
+    n = len(tokens)
+    while i < n:
+        t = tokens[i]
+        if t.startswith('--') and '=' in t:
+            i += 1
+            continue
+        if t in opts_with_value:
+            i += 2
+            continue
+        if t.startswith('-'):
+            i += 1
+            continue
+        return t, i + 1
+    return None, i
+
+
+def split_simple_commands(tokens):
+    ops = {'&&', '||', ';', '|', '|&', '&'}
+    cur, out = [], []
+    for t in tokens:
+        if t in ops:
+            if cur:
+                out.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        out.append(cur)
+    return out
+
+
+try:
+    cmd = sys.argv[1]
+except IndexError:
+    cmd = ""
+
+lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+lex.whitespace_split = True
+try:
+    tokens = list(lex)
+except ValueError:
+    sys.exit(1)
+
+found = set()
+for simple in split_simple_commands(tokens):
+    if not simple:
+        continue
+    head = simple[0].lower()
+    if head == 'git':
+        sub, _ = next_subcommand(simple, 1, GIT_OPTS_WITH_VALUE)
+        if sub and sub.lower() == 'commit':
+            found.add('commit')
+        elif sub and sub.lower() == 'push':
+            found.add('push')
+    elif head == 'gh':
+        sub1, nexti = next_subcommand(simple, 1, GH_OPTS_WITH_VALUE)
+        if sub1 and sub1.lower() == 'pr':
+            sub2, _ = next_subcommand(simple, nexti, GH_OPTS_WITH_VALUE)
+            if sub2 and sub2.lower() == 'merge':
+                found.add('merge')
+
+sys.stdout.write('\n'.join(sorted(found)))
+PYEOF
+)
+    rc=$?
+    [ "$rc" -ne 0 ] && return 1
+    printf '%s' "$result" | tr -d '\r'
+}
+
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
 }
 
-# WHY classify before resolving root, and WHY gh pr merge is denied here rather than in the
-# case statement further down: this hook has matcher "Bash" in .claude/settings.json, so it
-# fires -- and blocks synchronously -- on every single Bash tool call, not just git commit/
-# push/merge attempts. resolve_cd_root() (a second python3 fork) and the git rev-parse
-# fallback below are wasted latency for the overwhelming majority of calls that need neither:
-# gh pr merge is an unconditional deny with no marker/root access at all, and anything else
-# (ls, npm test, ...) isn't gated at all. Only git commit/push actually need root.
+# WHY classify before resolving root, and WHY gh pr merge is denied here rather than further
+# down: this hook has matcher "Bash" in .claude/settings.json, so it fires -- and blocks
+# synchronously -- on every single Bash tool call, not just git commit/push/merge attempts.
+# resolve_cd_root() (a second python3 fork) and the git rev-parse fallback below are wasted
+# latency for the overwhelming majority of calls that need neither: gh pr merge is an
+# unconditional deny with no marker/root access at all, and anything else (ls, npm test, ...)
+# isn't gated at all. Only git commit/push actually need root.
 #
-# WHY the gh pr merge check runs against $match_target_stripped regardless of $extracted,
-# unlike the gh-pr-merge-only skip this file used to apply on the raw-stdin fallback: that skip
-# was found, on review, to reopen exactly the "no legitimate case to allow through" gap the
-# unconditional deny exists to close -- if python3 is missing (or JSON parsing otherwise fails),
-# extraction fails, and a REAL `gh pr merge` command would fall straight through unchecked,
-# silently disabling the one control in this file explicitly designed to have zero override. The
-# false-positive risk this used to guard against (an unrelated command whose raw payload merely
-# mentions "gh pr merge", e.g. in tool_input.description) is real but is the SAME failure
-# direction commit/push already accept on this exact fallback path -- an extra, unnecessary
-# deny, not a security hole. There is no asymmetry to preserve: matching unconditionally is
-# both simpler and consistent with the "over-trigger, never under-gate" rule used everywhere
-# else in this file.
-case "$match_target_stripped" in
-    *'gh pr merge'*)
-        deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
-        exit 0
-        ;;
-esac
+# WHY match_target_stripped's substring check runs unconditionally first, with
+# classify_targets()'s result OR'd in afterward: see classify_targets()'s own WHY comment --
+# this ordering is what makes classify_targets() strictly additive rather than a replacement
+# that could accidentally suppress coverage the substring check already had.
+merge_hit=0
+needs_commit=0
+needs_push=0
+case "$match_target_stripped" in *'gh pr merge'*) merge_hit=1 ;; esac
+case "$match_target_stripped" in *'git commit'*) needs_commit=1 ;; esac
+case "$match_target_stripped" in *'git push'*) needs_push=1 ;; esac
 
-case "$match_target_stripped" in
-    *'git commit'*|*'git push'*) ;;
-    *) exit 0 ;;
-esac
+if targets=$(classify_targets "$match_target"); then
+    case "$targets" in *merge*) merge_hit=1 ;; esac
+    case "$targets" in *commit*) needs_commit=1 ;; esac
+    case "$targets" in *push*) needs_push=1 ;; esac
+fi
+
+# WHY this check runs against merge_hit regardless of how it was classified, unlike the
+# gh-pr-merge-only skip this file used to apply on the raw-stdin fallback: that skip was
+# found, on review, to reopen exactly the "no legitimate case to allow through" gap the
+# unconditional deny exists to close -- a REAL `gh pr merge` command would fall straight
+# through unchecked whenever classification degraded to the fallback path. The false-positive
+# risk this used to guard against (an unrelated command whose raw payload merely mentions
+# "gh pr merge", e.g. in tool_input.description) is real but is the SAME failure direction
+# commit/push already accept on this exact fallback path -- an extra, unnecessary deny, not a
+# security hole.
+if [ "$merge_hit" = "1" ]; then
+    deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
+    exit 0
+fi
+
+if [ "$needs_commit" = "0" ] && [ "$needs_push" = "0" ]; then
+    exit 0
+fi
 
 root=""
 [ "$extracted" = "1" ] && root=$(resolve_cd_root "$match_target")
@@ -318,14 +450,14 @@ consume_marker() {
     printf '%s' "$content"
 }
 
-# WHY commit and push are classified and validated INDEPENDENTLY, not via one first-match
-# case/esac: a compound Bash tool call chaining both -- `git commit -m x && git push origin
-# main` -- contains BOTH substrings. A single case/esac only ever runs its FIRST matching arm,
-# so the old code validated the commit half and never even looked at push's marker at all,
-# letting an unreviewed push ride through on the strength of a valid commit marker alone.
-# Reproduced directly: seeding only a valid .code-review-ok marker (no .change-review-ok) let
-# a compound commit+push through untouched. Two independent `case` presence checks below
-# (not one branching case) mean a compound command must satisfy BOTH markers.
+# WHY commit and push were classified and validated INDEPENDENTLY above (needs_commit/
+# needs_push), not via one first-match case/esac: a compound Bash tool call chaining both --
+# `git commit -m x && git push origin main` -- matches both. A single first-match case/esac
+# would only ever validate whichever half matched first, letting an unreviewed push ride
+# through on the strength of a valid commit marker alone. Reproduced directly: seeding only a
+# valid .code-review-ok marker (no .change-review-ok) let a compound commit+push through
+# untouched. Two independent presence checks (see needs_commit/needs_push above) mean a
+# compound command must satisfy BOTH markers.
 #
 # WHY consume_marker() (atomic rename) is still called directly per-branch, not via a peek-
 # then-consume-later split: an atomic single-step consume avoids reintroducing the TOCTOU
@@ -335,11 +467,6 @@ consume_marker() {
 # unnecessary re-review for that half. That's the same "safe failure direction: occasional
 # unnecessary re-review, never silently under-gate" tradeoff this file already makes elsewhere
 # (see the unanchored-match WHY comment above), not a new risk.
-needs_commit=0
-needs_push=0
-case "$match_target_stripped" in *'git commit'*) needs_commit=1 ;; esac
-case "$match_target_stripped" in *'git push'*) needs_push=1 ;; esac
-
 commit_ok=1
 push_ok=1
 

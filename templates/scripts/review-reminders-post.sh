@@ -102,6 +102,92 @@ fi
 # everywhere else here.
 match_target_stripped=$(printf '%s' "$match_target" | tr -d "\"'\\\\" | tr 'A-Z' 'a-z')
 
+# classify_targets — see the matching (much more extensively commented) definition in
+# review-reminders.sh: an ADDITIONAL commit/push detector, layered on TOP of
+# match_target_stripped's substring check below, never a replacement for it -- tokenizing $1
+# with python3's shlex (correct POSIX quote/backslash-escape removal, compound-command-aware
+# via punctuation_chars) and walking each simple command's tokens past git's own documented
+# global options (-C, -c, --opt=value, etc.) to find the REAL subcommand. Closes the same
+# `git -C <path> commit` / `git -c k=v commit` gap the quote-stripping/lowercasing above still
+# misses, since neither of those transforms understands git's own argument grammar. Returns 1
+# with no output if python3 is unavailable or the input can't be tokenized; the caller simply
+# doesn't gain the extra detection in that case, since the substring check underneath is never
+# bypassed -- see the WHY additive comment in review-reminders.sh's classify_targets() for why
+# this can only ever add coverage, never suppress it.
+classify_targets() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    result=$(python3 - "$1" 2>/dev/null <<'PYEOF'
+import sys, shlex
+
+GIT_OPTS_WITH_VALUE = ('-c', '-C', '--git-dir', '--work-tree', '--namespace',
+                        '--super-prefix', '--exec-path', '--attr-source')
+
+
+def next_subcommand(tokens, start, opts_with_value):
+    i = start
+    n = len(tokens)
+    while i < n:
+        t = tokens[i]
+        if t.startswith('--') and '=' in t:
+            i += 1
+            continue
+        if t in opts_with_value:
+            i += 2
+            continue
+        if t.startswith('-'):
+            i += 1
+            continue
+        return t, i + 1
+    return None, i
+
+
+def split_simple_commands(tokens):
+    ops = {'&&', '||', ';', '|', '|&', '&'}
+    cur, out = [], []
+    for t in tokens:
+        if t in ops:
+            if cur:
+                out.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        out.append(cur)
+    return out
+
+
+try:
+    cmd = sys.argv[1]
+except IndexError:
+    cmd = ""
+
+lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+lex.whitespace_split = True
+try:
+    tokens = list(lex)
+except ValueError:
+    sys.exit(1)
+
+found = set()
+for simple in split_simple_commands(tokens):
+    if not simple:
+        continue
+    if simple[0].lower() != 'git':
+        continue
+    sub, _ = next_subcommand(simple, 1, GIT_OPTS_WITH_VALUE)
+    if sub and sub.lower() == 'commit':
+        found.add('commit')
+    elif sub and sub.lower() == 'push':
+        found.add('push')
+
+sys.stdout.write('\n'.join(sorted(found)))
+PYEOF
+)
+    rc=$?
+    [ "$rc" -ne 0 ] && return 1
+    printf '%s' "$result" | tr -d '\r'
+}
+
 # WHY the cmd check runs before resolve_cd_root(), not after: this hook has matcher "Bash" in
 # .claude/settings.json, so it fires on EVERY Bash tool call, not just git commit/push --
 # resolve_cd_root() (a second python3 fork) and the git rev-parse fallback below are wasted
@@ -116,10 +202,22 @@ match_target_stripped=$(printf '%s' "$match_target" | tr -d "\"'\\\\" | tr 'A-Z'
 # reissued, and never cleaned up) even though the compound command may have genuinely failed
 # on both halves. Checking both independently means a compound command's commit and push
 # outcomes are each reconciled on their own.
+#
+# WHY match_target_stripped's substring check runs unconditionally first, with
+# classify_targets()'s result OR'd in afterward: see the matching WHY additive comment in
+# review-reminders.sh -- this ordering is what makes classify_targets() strictly additive
+# rather than a replacement that could accidentally suppress coverage the substring check
+# already had (e.g. `/usr/bin/git commit`/`env git commit`, whose head token isn't literally
+# "git" so classify_targets() finds nothing there even though the substring check still would).
 needs_commit=0
 needs_push=0
 case "$match_target_stripped" in *'git commit'*) needs_commit=1 ;; esac
 case "$match_target_stripped" in *'git push'*) needs_push=1 ;; esac
+
+if targets=$(classify_targets "$match_target"); then
+    case "$targets" in *commit*) needs_commit=1 ;; esac
+    case "$targets" in *push*) needs_push=1 ;; esac
+fi
 [ "$needs_commit" = "0" ] && [ "$needs_push" = "0" ] && exit 0
 
 root=""

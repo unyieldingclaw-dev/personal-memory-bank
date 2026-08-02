@@ -28,13 +28,68 @@ if ($null -eq $cmd) { $cmd = $raw }
 # direction as everywhere else in this file.
 $cmdStripped = $cmd -replace '["''\\]', ''
 
+# Get-NextSubcommand / Get-CommandTargets — see the matching (much more extensively
+# commented) definitions in review-reminders.ps1: an ADDITIONAL commit/push detector, layered
+# on TOP of $cmdStripped's regex check below, never a replacement for it -- splitting $Command
+# on shell control operators and tokenizing each simple command past git's own documented
+# global options (-C, -c, --opt=value, etc.) to find the REAL subcommand. Closes the same
+# `git -C <path> commit` / `git -c k=v commit` gap $cmdStripped's regex still misses, since
+# regex substring matching doesn't understand git's own argument grammar.
+function Get-NextSubcommand {
+    param([string[]]$Tokens, [int]$Start, [string[]]$OptsWithValue)
+    $i = $Start
+    while ($i -lt $Tokens.Count) {
+        $t = $Tokens[$i]
+        if ($t.StartsWith('--') -and $t.Contains('=')) { $i++; continue }
+        if ($OptsWithValue -contains $t.ToLower()) { $i += 2; continue }
+        if ($t.StartsWith('-')) { $i++; continue }
+        return @($t, ($i + 1))
+    }
+    return @($null, $i)
+}
+
+function Get-CommandTargets {
+    param([string]$Command)
+    $gitOptsWithValue = @('-c', '-C', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--exec-path', '--attr-source')
+
+    $found = [System.Collections.Generic.HashSet[string]]::new()
+    $segments = [regex]::Split($Command, '(?:&&|\|\||;|\|)')
+    foreach ($seg in $segments) {
+        $tokens = @($seg.Trim() -split '\s+' | Where-Object { $_ -ne '' })
+        if ($tokens.Count -eq 0) { continue }
+        if ($tokens[0].ToLower() -ne 'git') { continue }
+        $sub, $null1 = Get-NextSubcommand -Tokens $tokens -Start 1 -OptsWithValue $gitOptsWithValue
+        if ($sub -and $sub.ToLower() -eq 'commit') { [void]$found.Add('commit') }
+        elseif ($sub -and $sub.ToLower() -eq 'push') { [void]$found.Add('push') }
+    }
+    return $found
+}
+
 # WHY needsCommit/needsPush (two independent checks), not one if/elseif: see the matching
 # comment in review-reminders.ps1 -- a compound `git commit -m x && git push origin main`
-# matches both regexes. An if/elseif only reissues whichever marker matches first, silently
-# leaving the OTHER action's presha file unprocessed even though the compound command may have
+# matches both. An if/elseif only reissues whichever marker matches first, silently leaving
+# the OTHER action's presha file unprocessed even though the compound command may have
 # genuinely failed on both halves.
+#
+# WHY $cmdStripped's regex runs unconditionally first, with Get-CommandTargets's result OR'd
+# in afterward: see the matching WHY comment in review-reminders.ps1 -- a recognized head token
+# of exactly "git" does NOT match `/usr/bin/git commit`/`env git commit`, so treating
+# Get-CommandTargets as authoritative whenever it runs without error silently loses the
+# coverage $cmdStripped's regex already had for those ordinary indirect invocations. OR'ing the
+# two means Get-CommandTargets can only ever ADD detection, never remove it. $targets may be
+# $null (an exception, or PowerShell unwrapping an empty HashSet) -- both are treated as "no
+# additional targets found" via the $null -ne guard, never as a reason to skip the regex.
+$targets = $null
+try {
+    $targets = Get-CommandTargets -Command $cmd
+} catch { }
+
 $needsCommit = $cmdStripped -match 'git\s+commit\b'
 $needsPush = $cmdStripped -match 'git\s+push\b'
+if ($null -ne $targets) {
+    if ($targets.Contains('commit')) { $needsCommit = $true }
+    if ($targets.Contains('push')) { $needsPush = $true }
+}
 if (-not $needsCommit -and -not $needsPush) { exit 0 }
 
 # WHY this exists: see the matching comment in review-reminders.ps1.

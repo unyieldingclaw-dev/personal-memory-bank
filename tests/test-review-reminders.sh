@@ -260,6 +260,21 @@ actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
 assert_contains "$actual" "$orighash" "review-reminders-post.sh reissues .code-review-ok with the persisted original hash when HEAD didn't move (failed commit)"
 assert_file_not_exists "$TMPDIR_RR/.claude/.pending-commit-hash" "review-reminders-post.sh cleans up .pending-commit-hash after reissuing"
 
+# ── git-argument-aware fix: post-hook reissues for a 'git -C <path> commit' failed attempt ──
+# WHY this test exists: proves classify_targets() is wired into review-reminders-post.sh too,
+# not just the PreToolUse gate -- a failed 'git -C /path commit' attempt must still be
+# recognized as a commit attempt for the marker to be reissued.
+echo ""
+echo "--- git-argument-aware fix: post-hook reissues marker for a 'git -C <path> commit' failed attempt ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha" "$TMPDIR_RR/.claude/.pending-commit-hash"
+presha=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+orighash=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+printf '%s' "$orighash" > "$TMPDIR_RR/.claude/.pending-commit-hash"
+invoke_hook "review-reminders-post.sh" "git -C /some/repo commit -m testgitc" >/dev/null
+actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
+assert_contains "$actual" "$orighash" "review-reminders-post.sh reissues .code-review-ok for a 'git -C' form commit attempt"
+
 # ── post-hook: reissues a marker after a failed push attempt (origin/main path, not fallback) ─
 echo ""
 echo "--- post-hook: reissues marker via the persisted original hash after a failed push attempt (origin/main exists) ---"
@@ -667,6 +682,97 @@ if command -v pwsh >/dev/null 2>&1; then
 else
   echo ""
   echo "--- quote-split fix PS1 test: SKIPPED (pwsh not installed on this machine) ---"
+fi
+
+# ── git-argument-aware fix: `git -C <path> commit` / `git -c k=v commit` still gate ────────
+# WHY this test exists: found during this session's opposition-review pass as a follow-up to
+# the quote-split fix -- `git -C /path commit -m x` and `git -c user.name=z commit -m x` are
+# ordinary, idiomatic git invocations (an agent naturally reaches for `-C` when working across
+# directories, not adversarial obfuscation) whose text never contains "git commit" as a
+# contiguous substring, so even the quote-stripped/lowercased match still missed them. Fixed by
+# classify_targets()/Get-CommandTargets, a real tokenizer that skips git's own documented
+# global options to find the actual subcommand, layered ADDITIVELY on top of the substring
+# match (which always runs too, unconditionally -- see the CRITICAL-regression test below for
+# why the tokenizer can never be allowed to suppress it).
+echo ""
+echo "--- git-argument-aware fix: 'git -C <path> commit' is denied (review-reminders.sh) ---"
+resp=$(printf '{"tool_input":{"command":"git -C /some/repo commit -m x"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+rc=$?
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies 'git -C /some/repo commit -m x' even though the text never contains 'git commit' as a contiguous substring"
+assert_exit_zero "$rc" "hook exited 0 (not a crash) for: review-reminders.sh denies git -C form"
+
+echo ""
+echo "--- git-argument-aware fix: 'git -c key=val commit' is denied (review-reminders.sh) ---"
+resp=$(printf '{"tool_input":{"command":"git -c user.name=z commit -m x"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies 'git -c user.name=z commit -m x'"
+
+echo ""
+echo "--- git-argument-aware fix: 'gh -R owner/repo pr merge' is denied (review-reminders.sh) ---"
+resp=$(printf '{"tool_input":{"command":"gh -R owner/repo pr merge 8 --squash"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies 'gh -R owner/repo pr merge 8' -- the -R global option form"
+
+echo ""
+echo "--- git-argument-aware fix negative control: 'git log --grep=commit' is NOT denied (review-reminders.sh) ---"
+resp=$(printf '{"tool_input":{"command":"git log --grep=commit"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+rc=$?
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny a read-only 'git log --grep=commit' -- 'commit' here is an argument value, not the subcommand"
+assert_exit_zero "$rc" "hook exited 0 (not a crash) for: review-reminders.sh negative control git log --grep=commit"
+
+echo ""
+echo "--- git-argument-aware fix: multi-space/tab 'git   commit' still gates on bash (whitespace-variant gap) ---"
+resp=$(printf '{"tool_input":{"command":"git   commit -m x"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies 'git   commit' (multiple spaces) -- a real tokenizer splits on any whitespace run, unlike a literal single-space substring match"
+
+# ── CRITICAL regression: tokenizer must be additive, never an exclusive primary ─────────────
+# WHY this test exists: an earlier draft of the git-argument-aware fix treated
+# classify_targets()/Get-CommandTargets as authoritative whenever it ran without error,
+# skipping the substring/regex check entirely. `/usr/bin/git commit`/`env git commit` are
+# ordinary indirect invocations whose head token isn't literally "git", so the tokenizer
+# correctly-from-a-real-dispatch-standpoint finds nothing there -- but that silently suppressed
+# the substring check, which DOES contain "git commit" as a literal substring and would have
+# caught it. Reproduced directly against that draft: `/usr/bin/git commit -m x` was silently
+# allowed through with no deny at all. This test locks in the fix: substring/regex always runs
+# unconditionally as the coverage floor, and the tokenizer's findings are OR'd in on top, never
+# replacing it.
+echo ""
+echo "--- CRITICAL regression: '/usr/bin/git commit' is still denied (review-reminders.sh) ---"
+resp=$(printf '{"tool_input":{"command":"/usr/bin/git commit -m x"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies '/usr/bin/git commit -m x' via the substring floor even though the tokenizer's head-token check doesn't recognize '/usr/bin/git' as 'git'"
+
+echo ""
+echo "--- CRITICAL regression: 'env git commit' is still denied (review-reminders.sh) ---"
+resp=$(printf '{"tool_input":{"command":"env git commit -m x"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies 'env git commit -m x' via the substring floor"
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- CRITICAL regression: '/usr/bin/git commit' is still denied (review-reminders.ps1) ---"
+  resp=$(printf '{"tool_input":{"command":"/usr/bin/git commit -m x"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies '/usr/bin/git commit -m x' via the regex floor even though Get-CommandTargets's head-token check doesn't recognize '/usr/bin/git' as 'git'"
+fi
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- git-argument-aware fix: 'git -C <path> commit' is denied (review-reminders.ps1) ---"
+  resp=$(printf '{"tool_input":{"command":"git -C /some/repo commit -m x"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  rc=$?
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies 'git -C /some/repo commit -m x'"
+  assert_exit_zero "$rc" "hook exited 0 (not a crash) for: review-reminders.ps1 denies git -C form"
+
+  echo ""
+  echo "--- git-argument-aware fix: 'gh -R owner/repo pr merge' is denied (review-reminders.ps1) ---"
+  resp=$(printf '{"tool_input":{"command":"gh -R owner/repo pr merge 8 --squash"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies 'gh -R owner/repo pr merge 8'"
+
+  echo ""
+  echo "--- git-argument-aware fix negative control: 'git log --grep=commit' is NOT denied (review-reminders.ps1) ---"
+  resp=$(printf '{"tool_input":{"command":"git log --grep=commit"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  rc=$?
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 does not deny a read-only 'git log --grep=commit'"
+  assert_exit_zero "$rc" "hook exited 0 (not a crash) for: review-reminders.ps1 negative control git log --grep=commit"
+else
+  echo ""
+  echo "--- git-argument-aware fix PS1 tests: SKIPPED (pwsh not installed on this machine) ---"
 fi
 
 # ── empty-command fix: a legitimately empty tool_input.command must not fall back to raw stdin ─
