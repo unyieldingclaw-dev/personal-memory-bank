@@ -1,5 +1,7 @@
 # Changelog
 
+## [Unreleased]
+
 ## [1.2.1] — 2026-08-03 (mb.ps1 review-reminders export gap)
 
 ### Fixed
