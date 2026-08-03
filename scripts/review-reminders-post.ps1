@@ -35,13 +35,20 @@ $cmdStripped = $cmd -replace '["''\\]', ''
 # global options (-C, -c, --opt=value, etc.) to find the REAL subcommand. Closes the same
 # `git -C <path> commit` / `git -c k=v commit` gap $cmdStripped's regex still misses, since
 # regex substring matching doesn't understand git's own argument grammar.
+# WHY -ccontains (case-sensitive), not -contains against $t.ToLower(): see the matching WHY
+# comment in review-reminders.ps1 -- PowerShell's -contains is case-insensitive by default,
+# which would silently treat an unrecognized flag as a real value-taking option whenever it
+# happens to case-fold onto one that IS in the list (e.g. a hypothetical lowercase variant of
+# an uppercase-only entry), consuming a token it shouldn't and risking the real subcommand
+# being missed. Git's own flags are themselves case-sensitive (`-c`/`-C` are different
+# options), so case-sensitive matching here is also more accurate to what git actually accepts.
 function Get-NextSubcommand {
     param([string[]]$Tokens, [int]$Start, [string[]]$OptsWithValue)
     $i = $Start
     while ($i -lt $Tokens.Count) {
         $t = $Tokens[$i]
         if ($t.StartsWith('--') -and $t.Contains('=')) { $i++; continue }
-        if ($OptsWithValue -contains $t.ToLower()) { $i += 2; continue }
+        if ($OptsWithValue -ccontains $t) { $i += 2; continue }
         if ($t.StartsWith('-')) { $i++; continue }
         return @($t, ($i + 1))
     }

@@ -83,13 +83,24 @@ $cmdStripped = $cmd -replace '["''\\]', ''
 # --opt=value attached form, a recognized value-taking flag plus its following token, or any
 # other single flag token), and returns the first remaining non-flag token plus the index just
 # past it. Returns $null if the tokens run out without finding one.
+#
+# WHY -ccontains (case-sensitive) against the raw token, not -contains against $t.ToLower():
+# PowerShell's -contains does a case-INSENSITIVE comparison by default, so `-r` (not a real gh
+# global option) was silently matching the real `-R` entry in $OptsWithValue -- causing
+# `gh -r pr merge 8` to have `-r` misclassified as a value-consuming flag, which then consumed
+# `pr` as if it were `-r`'s value and left `merge` looking like the (wrong) subcommand,
+# silently defeating the `sub -eq 'pr'` check entirely. Reproduced directly: that exact payload
+# was NOT denied by the unconditional `gh pr merge` control -- a live bypass on this file, the
+# PREFERRED runtime. Real git/gh flags are themselves case-sensitive (`-c`/`-C` are different
+# git options; gh has no `-r` at all, only `-R`), so case-sensitive matching here is also more
+# accurate to what these tools actually accept, not just a security patch.
 function Get-NextSubcommand {
     param([string[]]$Tokens, [int]$Start, [string[]]$OptsWithValue)
     $i = $Start
     while ($i -lt $Tokens.Count) {
         $t = $Tokens[$i]
         if ($t.StartsWith('--') -and $t.Contains('=')) { $i++; continue }
-        if ($OptsWithValue -contains $t.ToLower()) { $i += 2; continue }
+        if ($OptsWithValue -ccontains $t) { $i += 2; continue }
         if ($t.StartsWith('-')) { $i++; continue }
         return @($t, ($i + 1))
     }

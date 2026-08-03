@@ -711,6 +711,16 @@ echo "--- git-argument-aware fix: 'gh -R owner/repo pr merge' is denied (review-
 resp=$(printf '{"tool_input":{"command":"gh -R owner/repo pr merge 8 --squash"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
 assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies 'gh -R owner/repo pr merge 8' -- the -R global option form"
 
+# WHY this test exists: found while writing a coverage-gap test for the bogus lowercase '-r' gh
+# entry removed from GH_OPTS_WITH_VALUE/$ghOptsWithValue. Bash's Python `in` check is inherently
+# case-sensitive so this was always fine here -- this test locks in that continued correctness.
+# The PowerShell equivalent below is the one that actually caught a real, previously-unknown bug:
+# see that test's WHY comment.
+echo ""
+echo "--- gh-flag case-sensitivity: 'gh -r pr merge' (lowercase, not a real gh global flag) is still denied (review-reminders.sh) ---"
+resp=$(printf '{"tool_input":{"command":"gh -r pr merge 8"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies 'gh -r pr merge 8' -- lowercase -r isn't a real gh global option, so it must be skipped as a bare flag, not misread as consuming 'pr' as its value"
+
 echo ""
 echo "--- git-argument-aware fix negative control: 'git log --grep=commit' is NOT denied (review-reminders.sh) ---"
 resp=$(printf '{"tool_input":{"command":"git log --grep=commit"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
@@ -749,6 +759,11 @@ if command -v pwsh >/dev/null 2>&1; then
   echo "--- CRITICAL regression: '/usr/bin/git commit' is still denied (review-reminders.ps1) ---"
   resp=$(printf '{"tool_input":{"command":"/usr/bin/git commit -m x"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
   assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies '/usr/bin/git commit -m x' via the regex floor even though Get-CommandTargets's head-token check doesn't recognize '/usr/bin/git' as 'git'"
+
+  echo ""
+  echo "--- CRITICAL regression: 'env git commit' is still denied (review-reminders.ps1) ---"
+  resp=$(printf '{"tool_input":{"command":"env git commit -m x"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies 'env git commit -m x' via the regex floor"
 fi
 
 if command -v pwsh >/dev/null 2>&1; then
@@ -763,6 +778,20 @@ if command -v pwsh >/dev/null 2>&1; then
   echo "--- git-argument-aware fix: 'gh -R owner/repo pr merge' is denied (review-reminders.ps1) ---"
   resp=$(printf '{"tool_input":{"command":"gh -R owner/repo pr merge 8 --squash"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
   assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies 'gh -R owner/repo pr merge 8'"
+
+  # WHY this test exists: PowerShell's -contains operator is case-INSENSITIVE by default, so
+  # Get-NextSubcommand's original `$OptsWithValue -contains $t.ToLower()` treated lowercase '-r'
+  # (not a real gh global flag) as matching the real '-R' entry in $ghOptsWithValue -- causing
+  # '-r' to be misclassified as a value-consuming flag, which then consumed 'pr' as its "value"
+  # and left 'merge' looking like the (wrong) subcommand, defeating the sub-eq-'pr' check.
+  # Reproduced directly: 'gh -r pr merge 8' was NOT denied at all before this fix -- a live
+  # bypass of the unconditional gh-pr-merge deny, on this file, the PREFERRED runtime. Fixed by
+  # switching to -ccontains (case-sensitive) against the raw token, matching bash's
+  # already-correct case-sensitive Python `in` check and real git/gh's own case-sensitive flags.
+  echo ""
+  echo "--- CRITICAL regression: 'gh -r pr merge' (lowercase, case-insensitive -contains bug) is denied (review-reminders.ps1) ---"
+  resp=$(printf '{"tool_input":{"command":"gh -r pr merge 8"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies 'gh -r pr merge 8' -- lowercase -r must not be misread, via case-insensitive matching, as the real -R flag consuming 'pr' as its value"
 
   echo ""
   echo "--- git-argument-aware fix negative control: 'git log --grep=commit' is NOT denied (review-reminders.ps1) ---"
