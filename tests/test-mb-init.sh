@@ -43,6 +43,14 @@ for f in review-reminders.sh review-reminders.ps1 review-reminders-post.sh revie
   assert_file_exists "$TMPDIR_INIT/scripts/$f" "mb init creates scripts/$f"
 done
 
+# _review-gate-lib.sh/.ps1 are dot-sourced by review-reminders*.sh/.ps1 but are never
+# referenced directly in settings.json -- they need their own explicit entry in mb init's
+# copy loop, or a project onboarded via mb init ships hook files that fail open (silently
+# skip the gate) because the lib they source doesn't exist.
+for f in _review-gate-lib.sh _review-gate-lib.ps1; do
+  assert_file_exists "$TMPDIR_INIT/scripts/$f" "mb init creates scripts/$f"
+done
+
 # ── Re-init: already initialized ─────────────────────────────────────────────
 echo ""
 echo "--- re-init: already initialized ---"

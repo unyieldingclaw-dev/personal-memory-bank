@@ -378,6 +378,7 @@ jobs:
               FAIL=1
             fi
           done
+          bash scripts/check-review-gate-lib-presence.sh templates/scripts || FAIL=1
           [ "$FAIL" -eq 0 ] && echo "template-integrity: PASS" || echo "template-integrity: FAIL"
           exit $FAIL
 

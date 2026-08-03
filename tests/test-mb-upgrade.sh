@@ -41,6 +41,18 @@ assert_exit_zero $? "mb upgrade exits 0"
 assert_file_exists "$TMPDIR_UP/scripts/review-reminders.sh" "upgrade restores TEMPLATE_OWNED review-reminders.sh"
 assert_file_exists "$TMPDIR_UP/scripts/review-reminders-post.sh" "upgrade restores TEMPLATE_OWNED review-reminders-post.sh"
 
+# ── Template sync: _review-gate-lib.sh/.ps1 are TEMPLATE_OWNED too ───────────
+echo ""
+echo "--- template sync: restores _review-gate-lib TEMPLATE_OWNED scripts ---"
+
+rm -f "$TMPDIR_UP/scripts/_review-gate-lib.sh" "$TMPDIR_UP/scripts/_review-gate-lib.ps1"
+assert_file_not_exists "$TMPDIR_UP/scripts/_review-gate-lib.sh" "_review-gate-lib.sh absent before upgrade"
+
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0"
+assert_file_exists "$TMPDIR_UP/scripts/_review-gate-lib.sh" "upgrade restores TEMPLATE_OWNED _review-gate-lib.sh"
+assert_file_exists "$TMPDIR_UP/scripts/_review-gate-lib.ps1" "upgrade restores TEMPLATE_OWNED _review-gate-lib.ps1"
+
 # ── Version tracking: .pmb-version updated ───────────────────────────────────
 echo ""
 echo "--- version tracking: .pmb-version matches repo VERSION ---"

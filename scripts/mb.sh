@@ -521,7 +521,8 @@ invoke_init() {
                   delegation-depth-check.sh delegation-depth-check.ps1 \
                   pre-compact-check.sh pre-compact-check.ps1 \
                   review-reminders.sh review-reminders.ps1 \
-                  review-reminders-post.sh review-reminders-post.ps1; do
+                  review-reminders-post.sh review-reminders-post.ps1 \
+                  _review-gate-lib.sh _review-gate-lib.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
 
@@ -745,6 +746,12 @@ show_doctor() {
         elif [ ${#MISSING_HOOKS[@]} -gt 0 ]; then
             for h in "${MISSING_HOOKS[@]}"; do
                 echo -e "${YELLOW}[WARN] Hook script missing: $h — run 'mb init' to install${NC}"
+            done
+        fi
+        LIB_CHECK_OUT=$(sh "$SCRIPT_DIR/check-review-gate-lib-presence.sh" "scripts" 2>&1) || true
+        if [ -n "$LIB_CHECK_OUT" ]; then
+            echo "$LIB_CHECK_OUT" | while IFS= read -r line; do
+                echo -e "${RED}[ERROR] $line${NC}"
             done
         fi
         # Git hooks — versioned via core.hooksPath
@@ -1707,6 +1714,8 @@ invoke_upgrade() {
         "scripts/review-reminders.ps1"
         "scripts/review-reminders-post.sh"
         "scripts/review-reminders-post.ps1"
+        "scripts/_review-gate-lib.sh"
+        "scripts/_review-gate-lib.ps1"
         # Slash commands — governance workflow commands from templates, not project-specific
         ".claude/commands/code-review.md"
         ".claude/commands/feature-dev.md"
