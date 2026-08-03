@@ -1,4 +1,4 @@
-﻿# PreToolUse hook — blocks git commit/push until the matching review slash command has run.
+# PreToolUse hook — blocks git commit/push until the matching review slash command has run.
 # /code-review writes .claude/.code-review-ok on an Approve verdict; /change-review writes
 # .claude/.change-review-ok when no finding is Blocking. Each marker authorizes exactly one
 # commit or push attempt for a SPECIFIC diff -- see below.
@@ -45,10 +45,16 @@
 # {"continue": false} let a real `git commit` through untouched, then interrupted the next
 # turn. hookSpecificOutput.permissionDecision = "deny" is the mechanism that actually denies
 # the tool call before it executes.
+#
+# Get-FileHashHex/Get-CommitDiffHash/Get-PushDiffHash/Resolve-CdRoot are defined in
+# _review-gate-lib.ps1 -- see that file for their WHY (byte-parity hashing, worktree-safe
+# root resolution). Dot-sourced inside this same try/catch so a missing/corrupt lib fails
+# open (exit 0, gate skipped) exactly like a malformed stdin payload does.
 try {
     $raw = [Console]::In.ReadToEnd()
     if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
     $cmd = ($raw | ConvertFrom-Json).tool_input.command
+    . (Join-Path $PSScriptRoot "_review-gate-lib.ps1")
 } catch { exit 0 }
 
 if (-not $cmd) { exit 0 }
@@ -58,35 +64,7 @@ if (-not $cmd) { exit 0 }
 # already the parsed command string (via ConvertFrom-Json above), so extracting a leading cd
 # path is a plain regex, no new dependency needed. Falls back to the ambient resolution on
 # any failure -- a session where ambient cwd is already correct is completely unaffected.
-#
-# WHY resolve the FULL leading cd chain, not just the first cd: see the matching comment in
-# review-reminders.sh -- a chained command (`cd "A" && cd "B" && git commit ...`) must
-# resolve to B's root, not A's, or a marker earned reviewing A wrongly authorizes a commit
-# that actually runs in B. Reproduced directly against the previous single-match regex: it
-# captured "A" and only "A" from that exact chained string. A single-quoted here-string
-# (@'...'@) holds the pattern so both `"` and `'` can appear in it with no escaping, matching
-# the bash fix's heredoc approach for the same reason.
-$cdRoot = $null
-$chainPatternText = @'
-^cd\s+(?:"([^"]+)"|'([^']+)')\s*&&\s*
-'@
-$chainPattern = [regex]$chainPatternText
-$restCmd = $cmd
-$curDir = (Get-Location).Path
-$matchedAny = $false
-while ($true) {
-    $m = $chainPattern.Match($restCmd)
-    if (-not $m.Success) { break }
-    $matchedAny = $true
-    $p = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
-    $curDir = if ([System.IO.Path]::IsPathRooted($p)) { $p } else { [System.IO.Path]::GetFullPath((Join-Path $curDir $p)) }
-    $restCmd = $restCmd.Substring($m.Length)
-}
-if ($matchedAny) {
-    $candidate = git -C $curDir rev-parse --show-toplevel 2>$null
-    if ($candidate) { $cdRoot = $candidate }
-}
-
+$cdRoot = Resolve-CdRoot -Cmd $cmd
 $root = if ($cdRoot) { $cdRoot } else { git rev-parse --show-toplevel 2>$null }
 if (-not $root) { exit 0 }
 
@@ -97,45 +75,6 @@ if (-not $root) { exit 0 }
 # $root once, here, means every git call downstream is correct by construction instead of
 # needing -C $root at each individual site.
 try { Set-Location $root } catch { exit 0 }
-
-# WHY hash a file written via redirection, not a piped/captured string: PowerShell's
-# pipeline re-tokenizes external-command output into a line-object array and back, which
-# does not reproduce the exact byte stream (trailing newline, line endings) that piping
-# the same command through bash produces. Empirically confirmed: (git diff HEAD) -join
-# "`n" then hashed did NOT match `git diff HEAD | sha256sum` for the identical diff.
-# Redirecting to a file (`>`) writes raw bytes with no such re-tokenization on either
-# platform -- confirmed empirically to produce byte-identical files (and therefore
-# identical hashes) whether written from PowerShell or from bash. This matters because
-# review-reminders.ps1 is the hook that actually runs on any machine with pwsh installed
-# (preferred over the .sh fallback), so its hash must match what /code-review's
-# instructions produce regardless of which shell the human or agent used to write it.
-function Get-FileHashHex {
-    param([string]$Path)
-    return (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLower()
-}
-
-function Get-CommitDiffHash {
-    $tmp = [System.IO.Path]::GetTempFileName()
-    try {
-        git diff HEAD > $tmp 2>$null
-        return Get-FileHashHex $tmp
-    } finally {
-        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-    }
-}
-
-function Get-PushDiffHash {
-    $tmp = [System.IO.Path]::GetTempFileName()
-    try {
-        git diff origin/main...HEAD > $tmp 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            git diff HEAD > $tmp 2>$null
-        }
-        return Get-FileHashHex $tmp
-    } finally {
-        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-    }
-}
 
 function Deny {
     param([string]$Reason)
