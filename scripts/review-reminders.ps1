@@ -64,6 +64,10 @@ try {
         $cmd = $parsed.tool_input.command
     }
 } catch { }
+# WHY $cmdExtracted is captured here, before the raw-stdin fallback below overwrites $cmd:
+# Test-TagOnlyPush() below needs to know whether $cmd is trustworthy, parsed command text or
+# untrustworthy raw stdin noise -- see its own gating check for why.
+$cmdExtracted = ($null -ne $cmd)
 if ($null -eq $cmd) { $cmd = $raw }
 
 # WHY match against a quote/backslash-stripped copy, not $cmd itself: a command like
@@ -251,6 +255,143 @@ function Get-PushDiffHash {
     }
 }
 
+# Test-TagOnlyPush — see the matching (much more extensively commented) tag_only_push() in
+# review-reminders.sh: exempts a detected $needsPush from the diff-bound marker requirement
+# when EVERY `git push` invocation in the (possibly compound) command targets only a tag,
+# never a branch -- either an already-existing tag, or one this SAME command creates via its
+# own `git tag <name> ...` half (the tag doesn't need to already exist locally, since creating
+# one is itself just labeling an existing commit, never introducing new code -- this is what
+# makes `git tag v1.8.0 origin/main && git push origin v1.8.0` exemptable even though the tag
+# genuinely doesn't exist yet when this hook fires, before either half of the compound command
+# has run). A tag push cannot introduce unreviewed code into origin the way a branch push can,
+# since it doesn't change any branch's content. See docs/superpowers/specs/2026-08-03-review-
+# gate-tag-push-exemption-design.md for the full writeup and rejected alternatives. Every
+# ambiguous or unrecognized shape (0/1/3+ positional args after `push`, --delete, --tags mixed
+# with an explicit refspec, a refspec that's neither an existing nor about-to-be-created tag)
+# falls through to "not exempt" -- an unrecognized shape only ever costs an unnecessary
+# re-review, never grants an unearned exemption. Native PowerShell, no new dependency,
+# matching this file's PREFERRED-runtime convention (review-reminders.sh's counterpart uses
+# python3, since bash has no equivalent built-in tokenizer).
+function Test-TagOnlyPush {
+    param([string]$Command)
+    $gitOptsWithValue = @('-c', '-C', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--exec-path', '--attr-source')
+    $pushOptsWithValue = @('-o')
+    $tagOptsWithValue = @('-m', '-F', '-u', '--local-user', '--cleanup')
+    $tagNoncreateFlags = @('-d', '--delete', '-l', '--list', '-v', '--verify')
+
+    $segments = [regex]::Split($Command, '(?:&&|\|\||;|\|)')
+    $simples = New-Object System.Collections.Generic.List[object]
+    foreach ($seg in $segments) {
+        $tokens = @($seg.Trim() -split '\s+' | Where-Object { $_ -ne '' })
+        if ($tokens.Count -gt 0) { $simples.Add($tokens) }
+    }
+
+    # WHY the bounds check happens BEFORE indexing with a range, not after: PowerShell's `..`
+    # range operator on a reversed range (e.g. `5..4`) produces a DESCENDING sequence (5,4)
+    # rather than an empty result or an error -- silently reading past the intended slice.
+    # Guarding first avoids ever constructing a reversed range at all.
+    #
+    # WHY BOTH this scriptblock's own return AND every call site below wrap the result in
+    # @(...): PowerShell unwraps a 1-element array to its bare scalar element at TWO separate
+    # points, and both had to be caught independently. First, `$Simple[2..2]` (a range that
+    # resolves to exactly one index) itself returns the single element unwrapped, not a
+    # 1-element array -- fixed by wrapping the range indexing here. Second, and separately:
+    # even after that fix, capturing this scriptblock's `return`ed 1-element array via plain
+    # assignment (`$x = & $restArgs ...`) unwraps it AGAIN at the call site, because any
+    # PowerShell function/scriptblock's output stream collapses a 1-item collection back to a
+    # scalar when captured -- confirmed by direct inspection: the value was still a proper
+    # `System.Object[]` of length 1 *inside* this scriptblock, right up until the `return`
+    # crossed back out to the caller. For a single-token push-args result like `--tags`, either
+    # unwrapping alone means the caller ends up iterating a bare STRING with `[$i]`, which
+    # yields individual [char]s, not [string] tokens -- `$t.StartsWith(...)` then fails
+    # outright ([char] has no such method). Reproduced directly: `git push --tags` (whose only
+    # push-arg is the single token `--tags`) threw exactly this error. Both wrap points are
+    # required; removing either one reintroduces the bug for exactly the 1-token case.
+    $restArgs = {
+        param($Simple, $StartIdx)
+        if ($StartIdx -ge $Simple.Count) { return @() }
+        return @($Simple[$StartIdx..($Simple.Count - 1)])
+    }
+
+    $createdTagNames = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($simple in $simples) {
+        if ($simple[0].ToLower() -ne 'git') { continue }
+        $sub, $nextIdx = Get-NextSubcommand -Tokens $simple -Start 1 -OptsWithValue $gitOptsWithValue
+        if (-not $sub -or $sub.ToLower() -ne 'tag') { continue }
+        $tagArgs = @(& $restArgs $simple $nextIdx)
+        $noncreate = $false
+        $positional = @()
+        $i = 0
+        while ($i -lt $tagArgs.Count) {
+            $t = $tagArgs[$i]
+            if ($tagNoncreateFlags -ccontains $t) { $noncreate = $true; $i++; continue }
+            if ($t.StartsWith('--') -and $t.Contains('=')) { $i++; continue }
+            if ($tagOptsWithValue -ccontains $t) { $i += 2; continue }
+            if ($t.StartsWith('-')) { $i++; continue }
+            $positional += $t
+            $i++
+        }
+        if ($noncreate -or $positional.Count -eq 0) { continue }
+        [void]$createdTagNames.Add($positional[0])
+    }
+
+    $pushInvocations = 0
+    $allExempt = $true
+    foreach ($simple in $simples) {
+        if ($simple[0].ToLower() -ne 'git') { continue }
+        $sub, $nextIdx = Get-NextSubcommand -Tokens $simple -Start 1 -OptsWithValue $gitOptsWithValue
+        if (-not $sub -or $sub.ToLower() -ne 'push') { continue }
+        $pushInvocations++
+        $pushArgs = @(& $restArgs $simple $nextIdx)
+        $positional = @()
+        $hasTagsFlag = $false
+        $hasDeleteFlag = $false
+        $i = 0
+        while ($i -lt $pushArgs.Count) {
+            $t = $pushArgs[$i]
+            if ($t -eq '--tags') { $hasTagsFlag = $true; $i++; continue }
+            if ($t -eq '-d' -or $t -eq '--delete') { $hasDeleteFlag = $true; $i++; continue }
+            if ($t.StartsWith('--') -and $t.Contains('=')) { $i++; continue }
+            if ($pushOptsWithValue -ccontains $t) { $i += 2; continue }
+            if ($t.StartsWith('-')) { $i++; continue }
+            $positional += $t
+            $i++
+        }
+
+        if ($hasDeleteFlag) { $allExempt = $false; continue }
+
+        if ($hasTagsFlag) {
+            if ($positional.Count -le 1) { continue }
+            $allExempt = $false
+            continue
+        }
+
+        if ($positional.Count -ne 2) { $allExempt = $false; continue }
+
+        $src = $positional[1].Split(':')[0]
+        if ($createdTagNames.Contains($src) -or (Test-ExistingTag $src)) { continue }
+        $allExempt = $false
+    }
+
+    return ($pushInvocations -gt 0 -and $allExempt)
+}
+
+# Test-ExistingTag — resolves $Name against ground truth (git show-ref), never a naming
+# heuristic: `git push origin v1.8.0` is syntactically identical whether v1.8.0 resolves
+# locally to a tag or a branch, so this asks git directly, and requires the tag to exist
+# WITHOUT a same-named branch also existing -- an ambiguous name (both a tag and a branch)
+# falls through to "not exempt", the safe direction.
+function Test-ExistingTag {
+    param([string]$Name)
+    if (-not $Name) { return $false }
+    if ($Name.StartsWith('refs/') -and -not $Name.StartsWith('refs/tags/')) { return $false }
+    $bare = if ($Name.StartsWith('refs/tags/')) { $Name.Substring(10) } else { $Name }
+    git show-ref --verify --quiet "refs/tags/$bare" 2>$null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    git show-ref --verify --quiet "refs/heads/$bare" 2>$null
+    return ($LASTEXITCODE -ne 0)
+}
+
 function Deny {
     param([string]$Reason)
     @{
@@ -308,6 +449,19 @@ if ($null -ne $targets) {
     if ($targets.Contains('merge')) { $mergeHit = $true }
     if ($targets.Contains('commit')) { $needsCommit = $true }
     if ($targets.Contains('push')) { $needsPush = $true }
+}
+
+# WHY Test-TagOnlyPush only runs when $needsPush is already true AND $cmdExtracted is true:
+# exemption LOOSENS the gate, so (like resolve-root's use of $extracted in review-reminders.sh)
+# it must only ever act on high-confidence, JSON-parsed command text. On the degraded
+# raw-stdin fallback path, $cmd may be noise that merely LOOKS like a tag push without "git"
+# actually being the invoked program -- granting an exemption from untrustworthy text would be
+# the one place in this file where a false read makes the gate LESS safe, not just an
+# unnecessary re-review. See Test-TagOnlyPush's own comment for the exemption logic itself.
+if ($needsPush -and $cmdExtracted) {
+    try {
+        if (Test-TagOnlyPush -Command $cmd) { $needsPush = $false }
+    } catch { }
 }
 
 # WHY gh pr merge is checked first, unconditionally, before commit/push classification: matches

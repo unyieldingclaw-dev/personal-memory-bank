@@ -378,6 +378,217 @@ deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
 }
 
+# tag_only_push — exempts a detected `needs_push` from the diff-bound marker requirement when
+# EVERY `git push` invocation in the (possibly compound) command targets only a tag, never a
+# branch. Prints "1" on exemption; prints nothing (or fails) otherwise, so the caller's
+# default is always "still require the marker" -- exemption is opt-in, never opt-out.
+#
+# WHY this exists: reported live by the ai-code-review-agent session cutting release v1.8.0 --
+# `git tag v1.8.0 origin/main && git push origin v1.8.0` was denied outright, including the
+# harmless `git tag` half, because needs_push detection only checks the git SUBCOMMAND (push),
+# never WHAT is being pushed. The gate's actual check -- a diff-hash between origin/main and
+# HEAD -- is a meaningful "was this code reviewed" proxy for a BRANCH push; a tag carries no
+# diff at all, so satisfying the gate for a tag push meant hashing whatever unrelated branch
+# happened to be locally checked out. See docs/superpowers/specs/2026-08-03-review-gate-tag-
+# push-exemption-design.md for the full writeup and rejected alternatives.
+#
+# WHY a tag is safe to exempt at all: unlike a branch push, a tag push cannot introduce
+# unreviewed code into origin -- it only labels a commit that either already went through its
+# own review (an existing merged commit) or is being explicitly, visibly tagged right here in
+# the command text (never smuggled in). This hook's job is preventing unreviewed CODE from
+# reaching a shared branch; a tag pointer doesn't change any branch's content.
+#
+# WHY a tag being CREATED in the same compound command counts as exempt too, not just a tag
+# that already exists: the reported scenario tags and pushes in one compound command --
+# `git tag v1.8.0 origin/main && git push origin v1.8.0` -- and the PreToolUse hook fires
+# BEFORE either half has run, so the tag genuinely doesn't exist in the local repo yet when
+# this check runs. Requiring `git show-ref` to already find it would mean this exemption could
+# never fire for the exact case it exists to fix. Recognizing "this same command's own
+# `git tag <name> ...` half declares intent to create <name>" is safe for the same reason
+# pushing an existing tag is safe: creating a tag is still just labeling some existing commit,
+# never introducing new code, regardless of whether the label already existed.
+#
+# WHY every other shape (0/1/3+ positional args after `push`, --delete, --tags mixed with an
+# explicit refspec, a refspec that isn't a recognized/about-to-be-created tag) falls through to
+# "not exempt": each of these is either genuinely ambiguous (could be a branch) or outside what
+# this function models -- e.g. `git push origin` (0 args, pushes the current branch via
+# upstream tracking) and `git push origin main` (a real branch) MUST keep requiring the marker.
+# An unrecognized shape only ever costs an unnecessary re-review, never grants an unearned
+# exemption -- the same "over-trigger, never under-gate" direction this file uses everywhere.
+tag_only_push() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    result=$(python3 - "$1" 2>/dev/null <<'PYEOF'
+import subprocess
+import sys, shlex
+
+GIT_OPTS_WITH_VALUE = ('-c', '-C', '--git-dir', '--work-tree', '--namespace',
+                        '--super-prefix', '--exec-path', '--attr-source')
+PUSH_OPTS_WITH_VALUE = ('-o',)
+TAG_OPTS_WITH_VALUE = ('-m', '-F', '-u', '--local-user', '--cleanup')
+TAG_NONCREATE_FLAGS = ('-d', '--delete', '-l', '--list', '-v', '--verify')
+
+
+def next_token_index(tokens, start, opts_with_value):
+    i = start
+    n = len(tokens)
+    while i < n:
+        t = tokens[i]
+        if t.startswith('--') and '=' in t:
+            i += 1
+            continue
+        if t in opts_with_value:
+            i += 2
+            continue
+        if t.startswith('-'):
+            i += 1
+            continue
+        return i
+    return i
+
+
+def split_simple_commands(tokens):
+    ops = {'&&', '||', ';', '|', '|&', '&'}
+    cur, out = [], []
+    for t in tokens:
+        if t in ops:
+            if cur:
+                out.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        out.append(cur)
+    return out
+
+
+def is_existing_tag(name):
+    if not name or (name.startswith('refs/') and not name.startswith('refs/tags/')):
+        return False
+    bare = name[len('refs/tags/'):] if name.startswith('refs/tags/') else name
+    tag_ok = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/tags/' + bare],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if not tag_ok:
+        return False
+    head_ok = subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/heads/' + bare],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    return not head_ok
+
+
+try:
+    cmd = sys.argv[1]
+except IndexError:
+    cmd = ""
+
+lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+lex.whitespace_split = True
+try:
+    tokens = list(lex)
+except ValueError:
+    sys.exit(1)
+
+simples = split_simple_commands(tokens)
+
+created_tag_names = set()
+for simple in simples:
+    if not simple or simple[0].lower() != 'git':
+        continue
+    idx = next_token_index(simple, 1, GIT_OPTS_WITH_VALUE)
+    if idx >= len(simple) or simple[idx].lower() != 'tag':
+        continue
+    args = simple[idx + 1:]
+    noncreate = False
+    positional = []
+    i = 0
+    n = len(args)
+    while i < n:
+        t = args[i]
+        if t in TAG_NONCREATE_FLAGS:
+            noncreate = True
+            i += 1
+            continue
+        if t.startswith('--') and '=' in t:
+            i += 1
+            continue
+        if t in TAG_OPTS_WITH_VALUE:
+            i += 2
+            continue
+        if t.startswith('-'):
+            i += 1
+            continue
+        positional.append(t)
+        i += 1
+    if noncreate or not positional:
+        continue
+    created_tag_names.add(positional[0])
+
+push_invocations = 0
+all_exempt = True
+
+for simple in simples:
+    if not simple or simple[0].lower() != 'git':
+        continue
+    idx = next_token_index(simple, 1, GIT_OPTS_WITH_VALUE)
+    if idx >= len(simple) or simple[idx].lower() != 'push':
+        continue
+    push_invocations += 1
+    args = simple[idx + 1:]
+    positional = []
+    has_tags_flag = False
+    has_delete_flag = False
+    i = 0
+    n = len(args)
+    while i < n:
+        t = args[i]
+        if t == '--tags':
+            has_tags_flag = True
+            i += 1
+            continue
+        if t in ('-d', '--delete'):
+            has_delete_flag = True
+            i += 1
+            continue
+        if t.startswith('--') and '=' in t:
+            i += 1
+            continue
+        if t in PUSH_OPTS_WITH_VALUE:
+            i += 2
+            continue
+        if t.startswith('-'):
+            i += 1
+            continue
+        positional.append(t)
+        i += 1
+
+    if has_delete_flag:
+        all_exempt = False
+        continue
+
+    if has_tags_flag:
+        if len(positional) <= 1:
+            continue
+        all_exempt = False
+        continue
+
+    if len(positional) != 2:
+        all_exempt = False
+        continue
+
+    src = positional[1].split(':', 1)[0]
+    if src in created_tag_names or is_existing_tag(src):
+        continue
+    all_exempt = False
+
+if push_invocations == 0 or not all_exempt:
+    sys.exit(1)
+
+sys.stdout.write('1')
+PYEOF
+)
+    rc=$?
+    [ "$rc" -ne 0 ] && return 1
+    printf '%s' "$result" | tr -d '\r'
+}
+
 # WHY classify before resolving root, and WHY gh pr merge is denied here rather than further
 # down: this hook has matcher "Bash" in .claude/settings.json, so it fires -- and blocks
 # synchronously -- on every single Bash tool call, not just git commit/push/merge attempts.
@@ -426,14 +637,39 @@ root=""
 [ -z "$root" ] && root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$root" ] && exit 0
 
-# WHY cd here, not -C "$root" on every git call below: resolving root fixes where the marker
-# is looked FOR, but diff_hash() and the pre-commit/pre-push SHA capture further down still
-# run bare `git diff`/`git rev-parse` calls with no directory anchor -- the exact same ambient-
-# cwd assumption just fixed above, just at different call sites. Anchoring the whole rest of
-# this script to $root once, here, means every git call downstream is correct by construction
-# instead of each one needing to remember -C "$root" individually (and any git call added to
-# this file later inherits correctness for free instead of silently reintroducing the bug).
+# WHY cd here, not -C "$root" on every git call below, and WHY this now happens BEFORE the
+# tag_only_push() check rather than after: resolving root fixes where the marker is looked
+# FOR, but diff_hash(), tag_only_push()'s internal `git show-ref` calls, and the pre-commit/
+# pre-push SHA capture further down all run bare git commands with no directory anchor -- the
+# exact same ambient-cwd assumption just fixed above, just at different call sites.
+# tag_only_push() specifically needs this to have already happened: it resolves refs against
+# whatever the CURRENT directory is, so if it ran before this cd, it could answer "is this a
+# tag" against the wrong repo entirely. Anchoring the whole rest of this script to $root once,
+# here, means every git call downstream -- including tag_only_push()'s -- is correct by
+# construction instead of each one needing to remember -C "$root" individually.
 cd "$root" 2>/dev/null || exit 0
+
+# WHY tag_only_push() only runs when $extracted = "1": exemption LOOSENS the gate, so it must
+# only ever act on high-confidence, JSON-parsed command text -- the same reasoning
+# resolve_cd_root() above already applies to root resolution. On the degraded raw-stdin
+# fallback path, $match_target may be noise (unparseable JSON, a payload with
+# tool_input.description concatenated in) that merely LOOKS like a tag push without "git"
+# actually being the invoked program; granting an exemption based on untrustworthy text would
+# be the one place in this file where a false read makes the gate LESS safe, not just an
+# unnecessary re-review. Requiring $extracted = "1" keeps exemption strictly opt-in.
+if [ "$needs_push" = "1" ] && [ "$extracted" = "1" ]; then
+    tag_check=$(tag_only_push "$match_target")
+    [ "$tag_check" = "1" ] && needs_push=0
+fi
+
+# WHY needs_commit/needs_push are re-checked here, after tag_only_push() may have cleared
+# needs_push: a compound command that's PURELY a tag creation+push (no commit chained) should
+# exit cleanly here with no marker consumed and no further work done -- the exact scenario
+# this fix exists for. A compound command that also chains a real commit (needs_commit still
+# 1) correctly falls through to have that half's marker checked independently, same as always.
+if [ "$needs_commit" = "0" ] && [ "$needs_push" = "0" ]; then
+    exit 0
+fi
 
 # Attempt an atomic claim: rename the marker to a private name. Fails harmlessly if the
 # marker doesn't exist. Prints the claimed marker's content (a hash) on success, empty on

@@ -884,4 +884,137 @@ else
   echo "SKIPPED (python3 not installed on this machine -- resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
 fi
 
+# ── tag-push exemption: a pure tag push (or tag-creation-and-push) needs no review marker ────
+# WHY this section exists: reported live by the ai-code-review-agent session cutting release
+# v1.8.0 -- `git tag v1.8.0 origin/main && git push origin v1.8.0` was denied outright,
+# including the harmless `git tag` half, because needs_push detection only checked the git
+# SUBCOMMAND (push), never WHAT ref was being pushed. See docs/superpowers/specs/2026-08-03-
+# review-gate-tag-push-exemption-design.md for the full writeup. tag_only_push()/
+# Test-TagOnlyPush() close this by resolving the pushed ref via git ground truth (never a
+# naming heuristic) before applying needs_push, recognizing both an already-existing tag and
+# one this SAME compound command is creating via its own `git tag <name> ...` half.
+echo ""
+echo "=== tag-push exemption tests ==="
+
+TMPDIR_TAG="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-tag-test)"
+trap 'rm -rf "$TMPDIR_TAG" "$TMPDIR_RR"' EXIT
+git -C "$TMPDIR_TAG" init -q -b main
+git -C "$TMPDIR_TAG" config user.email "test@example.com"
+git -C "$TMPDIR_TAG" config user.name "Test"
+echo "line one" > "$TMPDIR_TAG/file.txt"
+git -C "$TMPDIR_TAG" add file.txt
+git -C "$TMPDIR_TAG" commit -q -m "initial"
+mkdir -p "$TMPDIR_TAG/.claude"
+
+invoke_hook_tag() {
+  local script="$1" command="$2"
+  printf '{"tool_input":{"command":"%s"}}' "$command" \
+    | (cd "$TMPDIR_TAG" && bash "$REPO_ROOT/scripts/$script" 2>/dev/null)
+}
+
+invoke_hook_tag_ps1() {
+  local command="$1"
+  printf '{"tool_input":{"command":"%s"}}' "$command" \
+    | (cd "$TMPDIR_TAG" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null)
+}
+
+echo ""
+echo "--- bug report scenario: creating and pushing a tag in one compound command needs no marker (review-reminders.sh) ---"
+resp=$(invoke_hook_tag "review-reminders.sh" "git tag v1.8.0 origin/main && git push origin v1.8.0")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny 'git tag v1.8.0 origin/main && git push origin v1.8.0' even with no .change-review-ok marker present -- the tag doesn't exist yet when the hook fires, but this command's own 'git tag' half declares it's about to create v1.8.0"
+
+echo ""
+echo "--- pushing an already-existing tag alone needs no marker (review-reminders.sh) ---"
+git -C "$TMPDIR_TAG" tag existing-tag
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin existing-tag")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny pushing a tag that already exists locally, with no marker present"
+
+echo ""
+echo "--- 'git push --tags' and 'git push origin --tags' need no marker (review-reminders.sh) ---"
+resp=$(invoke_hook_tag "review-reminders.sh" "git push --tags")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny 'git push --tags' (pushes only local tags, no positional ref)"
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin --tags")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny 'git push origin --tags'"
+
+echo ""
+echo "--- negative control: a plain branch push still requires the marker (review-reminders.sh) ---"
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin main")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still denies a real branch push with no .change-review-ok marker present"
+
+echo ""
+echo "--- negative control: bare 'git push' (no args) and 'git push origin' (remote only) still require the marker (review-reminders.sh) ---"
+resp=$(invoke_hook_tag "review-reminders.sh" "git push")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still denies a bare 'git push' -- ambiguous, could push the current branch via upstream tracking"
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still denies 'git push origin' with no refspec -- pushes the current branch, not a tag"
+
+echo ""
+echo "--- negative control: a name that is BOTH a tag and a branch is never exempt (review-reminders.sh) ---"
+git -C "$TMPDIR_TAG" branch ambiguous-name
+git -C "$TMPDIR_TAG" tag ambiguous-name
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin ambiguous-name")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies pushing a ref that resolves to BOTH a tag and a branch of the same name -- ambiguity fails closed, not open"
+git -C "$TMPDIR_TAG" branch -D ambiguous-name >/dev/null 2>&1
+git -C "$TMPDIR_TAG" tag -d ambiguous-name >/dev/null 2>&1
+
+echo ""
+echo "--- negative control: a push with 3+ positional args (mixed branch+tag) is never exempt (review-reminders.sh) ---"
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin main v1.8.0")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies a push naming multiple refs in one invocation -- can't confirm every target is tag-only"
+
+echo ""
+echo "--- negative control: exemption must NOT apply on the raw-stdin fallback path (review-reminders.sh) ---"
+resp=$(printf 'not valid json but mentions git tag v1.8.0 origin/main and git push origin v1.8.0' | (cd "$TMPDIR_TAG" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still denies when the command text is untrustworthy raw-stdin fallback noise, even if it superficially resembles a tag push -- exemption is opt-in only on the high-confidence extracted path"
+
+echo ""
+echo "--- negative control: a compound commit+tag-push still gates the commit half independently (review-reminders.sh) ---"
+echo "line two" >> "$TMPDIR_TAG/file.txt"
+resp=$(invoke_hook_tag "review-reminders.sh" "git add file.txt && git commit -m x && git tag v2.0.0 && git push origin v2.0.0")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still denies a compound command chaining a real commit with a tag creation+push, since the commit half has no .code-review-ok marker -- tag exemption only ever clears needs_push, never needs_commit"
+assert_contains "$resp" "code-review" "review-reminders.sh's deny reason for the compound commit+tag-push cites the commit gate, not the push gate -- confirms needs_push was correctly cleared and only the commit half is still blocking"
+git -C "$TMPDIR_TAG" checkout -q -- file.txt
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- bug report scenario: creating and pushing a tag in one compound command needs no marker (review-reminders.ps1) ---"
+  resp=$(invoke_hook_tag_ps1 "git tag v1.8.0-ps1 origin/main && git push origin v1.8.0-ps1")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 does not deny 'git tag v1.8.0-ps1 origin/main && git push origin v1.8.0-ps1' with no marker present"
+
+  echo ""
+  echo "--- pushing an already-existing tag alone needs no marker (review-reminders.ps1) ---"
+  git -C "$TMPDIR_TAG" tag existing-tag-ps1
+  resp=$(invoke_hook_tag_ps1 "git push origin existing-tag-ps1")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 does not deny pushing a pre-existing tag, with no marker present"
+
+  echo ""
+  echo "--- 'git push --tags' needs no marker (review-reminders.ps1) ---"
+  resp=$(invoke_hook_tag_ps1 "git push --tags")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 does not deny 'git push --tags'"
+
+  echo ""
+  echo "--- negative control: a plain branch push still requires the marker (review-reminders.ps1) ---"
+  resp=$(invoke_hook_tag_ps1 "git push origin main")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 still denies a real branch push with no marker present"
+
+  echo ""
+  echo "--- negative control: a name that is BOTH a tag and a branch is never exempt (review-reminders.ps1) ---"
+  git -C "$TMPDIR_TAG" branch ambiguous-name-ps1
+  git -C "$TMPDIR_TAG" tag ambiguous-name-ps1
+  resp=$(invoke_hook_tag_ps1 "git push origin ambiguous-name-ps1")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies pushing a ref that resolves to BOTH a tag and a branch of the same name"
+  git -C "$TMPDIR_TAG" branch -D ambiguous-name-ps1 >/dev/null 2>&1
+  git -C "$TMPDIR_TAG" tag -d ambiguous-name-ps1 >/dev/null 2>&1
+
+  echo ""
+  echo "--- negative control: exemption must NOT apply on the raw-stdin fallback path (review-reminders.ps1) ---"
+  resp=$(printf 'not valid json but mentions git tag v1.8.0 origin/main and git push origin v1.8.0' | (cd "$TMPDIR_TAG" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 still denies when the command text is untrustworthy raw-stdin fallback noise, even if it superficially resembles a tag push"
+else
+  echo ""
+  echo "--- tag-push exemption PS1 tests: SKIPPED (pwsh not installed on this machine) ---"
+fi
+
+rm -rf "$TMPDIR_TAG"
+
 print_summary

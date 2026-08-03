@@ -1,8 +1,7 @@
 # Review-Gate Hook Tag-Push Exemption
 
 **Date:** 2026-08-03
-**Status:** Proposed — not started. Deferred to its own branch/session (`claude/tag-push-gate-fix`,
-worktree `.claude/worktrees/tag-push-gate-fix`), tracked so it isn't lost between sessions.
+**Status:** Implemented (Option 1 + 4, as recommended below).
 
 ## Problem
 
@@ -83,21 +82,48 @@ commit `e2fb87f` and earlier), on both bash and PowerShell.
    (isolate `git tag`, recompute `.change-review-ok`, then push) so future sessions don't have to
    rediscover it by trial and error. Lowest risk, doesn't fix the conceptual mismatch.
 
-## Recommendation (not decided — for the session that picks this up)
+## Recommendation (implemented)
 
-**Option 1, implemented via real git ref resolution (not name matching), plus option 4
-unconditionally.** Option 3 is more principled but doesn't actually cover the reported scenario;
-option 2 is already ruled out by precedent. Whichever direction is chosen, add the 3-step
-workaround to `docs/HOOKS-GUIDE.md` regardless, since it costs nothing and helps immediately.
+**Option 1, implemented via real git ref resolution (not name matching), plus option 4.**
+Option 3 was reconsidered during implementation and confirmed unworkable for the exact reported
+case: the tag doesn't exist yet when the hook fires, so there's nothing to check ancestry
+against. Option 2 was already ruled out by precedent.
 
-## Scope if implemented (estimate, not final)
+**One refinement found during implementation, not anticipated in the original triage:** ref
+resolution via `git show-ref` alone is insufficient for the reported scenario, because
+`git tag v1.8.0 origin/main && git push origin v1.8.0` fires the `PreToolUse` hook *before*
+either half of the compound command has run — the tag genuinely doesn't exist locally yet.
+The implementation additionally recognizes a tag as exempt when the *same compound command*
+creates it via its own `git tag <name> ...` half (regardless of whether that name already
+existed), since tag creation is safe for the identical reason a tag push is: it only labels an
+existing commit, never introduces new code, regardless of whether the label already existed.
+This is what actually closes the reported bug, not `show-ref` resolution alone.
 
-Same file set this session's tag-push-adjacent fixes have touched before: `scripts/review-reminders.sh`,
-`scripts/review-reminders.ps1` (only the `PreToolUse` hook needs the ref check — the `PostToolUse`
-companion only fires after a push already happened, so exempting there just changes which marker
-it reconciles, if any), their `templates/scripts/` mirrors, `tests/test-review-reminders.sh`,
-`docs/HOOKS-GUIDE.md` + template mirror. Likely warrants a Task Contract under this repo's own
-protocol (4+ files).
+## Scope (as implemented)
+
+`scripts/review-reminders.sh` (`tag_only_push()`, python3), `scripts/review-reminders.ps1`
+(`Test-TagOnlyPush`/`Test-ExistingTag`, native PowerShell — no new dependency), their
+`templates/scripts/` mirrors, `tests/test-review-reminders.sh` (18 new tests: bug-report
+scenario, existing-tag push, `--tags`, and negative controls for branch pushes, bare/remote-only
+pushes, tag/branch name collisions, mixed multi-ref pushes, the raw-stdin-fallback safety gate,
+and a compound commit+tag-push where only the push half is exempted), `docs/HOOKS-GUIDE.md` +
+template mirror. `review-reminders-post.sh`/`.ps1` needed no changes, confirming the original
+scope estimate: an exempted push never has `.pending-push-presha` written by the `PreToolUse`
+hook, so the `PostToolUse` companion's existing "reissue only if that file exists" check already
+no-ops correctly.
+
+**A PowerShell-specific bug found and fixed during implementation, unrelated to the design
+itself:** `Test-TagOnlyPush` initially threw `InvalidOperation: [System.Char] does not contain a
+method named 'StartsWith'` on any single-token push-args case (e.g. `git push --tags`).
+Root cause: PowerShell unwraps a 1-element array to its bare scalar element at TWO separate
+points — first, `$array[N..N]` (a range resolving to exactly one index) returns the element
+itself, not a 1-element array; second, and independently, capturing a scriptblock's `return`ed
+1-element array via plain assignment (`$x = & $scriptblock ...`) unwraps it *again* at the call
+site, even after the first point was fixed inside the scriptblock. Both had to be wrapped in
+`@(...)` independently — fixing only one reintroduced the bug for exactly the 1-token case.
+Reproduced and fixed via isolated debugging before it reached the real hook flow.
+
+Task Contract used per this repo's own protocol (7 files, security-sensitive domain).
 
 ## Source
 
