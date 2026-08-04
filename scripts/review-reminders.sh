@@ -474,6 +474,46 @@ def is_existing_tag(name):
     return not head_ok
 
 
+def resolve_tag_target(bare):
+    # Peels an existing tag to the commit it points at (handles annotated tags via ^{commit}).
+    # Returns None if the tag doesn't resolve to a commit at all.
+    result = subprocess.run(['git', 'rev-parse', '--verify', '--quiet', 'refs/tags/' + bare + '^{commit}'],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    if result.returncode != 0:
+        return None
+    return result.stdout.decode().strip()
+
+
+def is_ancestor_of_main(ref):
+    # WHY this check exists at all: found by a second opposition-review pass, after the
+    # src:dst refspec bypass above was already fixed. Tag creation/push was exempted purely
+    # on the TAG NAME resolving safely -- with zero check on WHAT COMMIT the tag actually
+    # points at. `git tag foo <any-local-commit> && git push origin foo` was exempted
+    # regardless of whether <any-local-commit> had ever been reviewed, which doesn't
+    # overwrite any branch (confirmed empirically -- a tag push alone never moves a branch
+    # ref), but DOES unconditionally upload that commit's objects to the remote's object
+    # store with zero review. Requiring the tagged commit to already be an ancestor of
+    # origin/main means it was already reviewed and already published via the ordinary
+    # commit+push gate before this tag-push exemption ever grants anything -- a tag can only
+    # ever re-label content that already passed review, never introduce new unreviewed
+    # content to the remote. This still exempts the originally reported bug's exact scenario
+    # (`git tag v1.8.0 origin/main && ...` tags origin/main itself, trivially its own
+    # ancestor) without reopening the "tag doesn't exist yet when this hook fires" problem
+    # that motivated recognizing same-command tag creation in the first place -- this checks
+    # the REF BEING TAGGED, not the tag itself, so it works whether or not the tag exists yet.
+    #
+    # WHY fail closed (not exempt) if origin/main doesn't resolve, rather than falling back to
+    # HEAD or some other ref: unlike diff_hash()'s origin/main-then-HEAD fallback (used to
+    # compute a hash that still gets independently validated against a marker either way),
+    # falling back here would WEAKEN the actual security property this check exists to
+    # enforce -- HEAD itself may contain unreviewed local commits. No fallback, just no
+    # exemption, consistent with this file's "unable to verify -> don't exempt" pattern.
+    if not ref:
+        return False
+    return subprocess.run(['git', 'merge-base', '--is-ancestor', ref, 'origin/main'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
 try:
     cmd = sys.argv[1]
 except IndexError:
@@ -488,7 +528,13 @@ except ValueError:
 
 simples = split_simple_commands(tokens)
 
-created_tag_names = set()
+# WHY a dict (name -> target ref), not a set of names: see is_ancestor_of_main()'s WHY
+# comment above -- trusting a same-command tag creation requires knowing WHAT COMMIT it's
+# creating the tag against, not just that a name was declared. `git tag <name> <ref>`'s
+# second positional argument (or HEAD, if omitted) is captured here specifically so the
+# push-check below can verify that ref is already-reviewed content, not just that a tag
+# with this name is being created.
+created_tag_names = {}
 for simple in simples:
     if not simple or simple[0].lower() != 'git':
         continue
@@ -519,7 +565,8 @@ for simple in simples:
         i += 1
     if noncreate or not positional:
         continue
-    created_tag_names.add(positional[0])
+    target_ref = positional[1] if len(positional) > 1 else 'HEAD'
+    created_tag_names[positional[0]] = target_ref
 
 push_invocations = 0
 all_exempt = True
@@ -573,8 +620,34 @@ for simple in simples:
         all_exempt = False
         continue
 
-    src = positional[1].split(':', 1)[0]
-    if src in created_tag_names or is_existing_tag(src):
+    refspec = positional[1]
+    if ':' in refspec:
+        # CRITICAL, found by opposition review: a src:dst refspec pushes the LOCAL ref
+        # named src to the REMOTE ref named dst -- the ref that actually gets updated on
+        # origin is dst, not src. An earlier version of this check validated src alone, so
+        # `git push origin <any-existing-tag>:main` (or :dst = any other branch, optionally
+        # with --force) was exempted because the pre-colon tag name checked out, while the
+        # actual effect was overwriting the DESTINATION branch with unreviewed content --
+        # confirmed empirically: this exact form landed an unreviewed commit on a scratch
+        # repo's main with the review-gate marker never checked at all. Correctly resolving
+        # dst would require knowing the REMOTE's own ref-name disambiguation (an unqualified
+        # dst can resolve differently depending on what already exists there), which this
+        # hook has no way to query without a network round-trip inside a PreToolUse hook.
+        # Rather than approximate that with a LOCAL heuristic (still fundamentally guessing
+        # at remote state), any refspec containing `:` is simply never exempt -- the same
+        # "unrecognized shape costs an unnecessary re-review, never grants an unearned
+        # exemption" rule this function already applies to every other ambiguous case.
+        all_exempt = False
+        continue
+
+    src = refspec
+    ok = False
+    if src in created_tag_names:
+        ok = is_ancestor_of_main(created_tag_names[src])
+    elif is_existing_tag(src):
+        target = resolve_tag_target(src)
+        ok = bool(target) and is_ancestor_of_main(target)
+    if ok:
         continue
     all_exempt = False
 

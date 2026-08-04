@@ -313,7 +313,13 @@ function Test-TagOnlyPush {
         return @($Simple[$StartIdx..($Simple.Count - 1)])
     }
 
-    $createdTagNames = [System.Collections.Generic.HashSet[string]]::new()
+    # WHY a Dictionary (name -> target ref), not a HashSet of names: see Test-AncestorOfMain's
+    # WHY comment below -- trusting a same-command tag creation requires knowing WHAT COMMIT
+    # it's creating the tag against, not just that a name was declared. `git tag <name> <ref>`'s
+    # second positional argument (or HEAD, if omitted) is captured here specifically so the
+    # push-check below can verify that ref is already-reviewed content, not just that a tag
+    # with this name is being created.
+    $createdTagNames = [System.Collections.Generic.Dictionary[string,string]]::new()
     foreach ($simple in $simples) {
         if ($simple[0].ToLower() -ne 'git') { continue }
         $sub, $nextIdx = Get-NextSubcommand -Tokens $simple -Start 1 -OptsWithValue $gitOptsWithValue
@@ -332,7 +338,8 @@ function Test-TagOnlyPush {
             $i++
         }
         if ($noncreate -or $positional.Count -eq 0) { continue }
-        [void]$createdTagNames.Add($positional[0])
+        $targetRef = if ($positional.Count -gt 1) { $positional[1] } else { 'HEAD' }
+        $createdTagNames[$positional[0]] = $targetRef
     }
 
     $pushInvocations = 0
@@ -368,8 +375,37 @@ function Test-TagOnlyPush {
 
         if ($positional.Count -ne 2) { $allExempt = $false; continue }
 
-        $src = $positional[1].Split(':')[0]
-        if ($createdTagNames.Contains($src) -or (Test-ExistingTag $src)) { continue }
+        $refspec = $positional[1]
+        if ($refspec.Contains(':')) {
+            # CRITICAL, found by opposition review: a src:dst refspec pushes the LOCAL ref
+            # named src to the REMOTE ref named dst -- the ref that actually gets updated on
+            # origin is dst, not src. An earlier version of this check validated src alone,
+            # so `git push origin <any-existing-tag>:main` (or :dst = any other branch,
+            # optionally with --force) was exempted because the pre-colon tag name checked
+            # out, while the actual effect was overwriting the DESTINATION branch with
+            # unreviewed content -- confirmed empirically: this exact form landed an
+            # unreviewed commit on a scratch repo's main with the review-gate marker never
+            # checked at all. Correctly resolving dst would require knowing the REMOTE's own
+            # ref-name disambiguation (an unqualified dst can resolve differently depending
+            # on what already exists there), which this hook has no way to query without a
+            # network round-trip inside a PreToolUse hook. Rather than approximate that with
+            # a LOCAL heuristic (still fundamentally guessing at remote state), any refspec
+            # containing `:` is simply never exempt -- the same "unrecognized shape costs an
+            # unnecessary re-review, never grants an unearned exemption" rule this function
+            # already applies to every other ambiguous case.
+            $allExempt = $false
+            continue
+        }
+
+        $src = $refspec
+        $ok = $false
+        if ($createdTagNames.ContainsKey($src)) {
+            $ok = Test-AncestorOfMain $createdTagNames[$src]
+        } elseif (Test-ExistingTag $src) {
+            $target = Resolve-TagTarget $src
+            $ok = [bool]$target -and (Test-AncestorOfMain $target)
+        }
+        if ($ok) { continue }
         $allExempt = $false
     }
 
@@ -390,6 +426,42 @@ function Test-ExistingTag {
     if ($LASTEXITCODE -ne 0) { return $false }
     git show-ref --verify --quiet "refs/heads/$bare" 2>$null
     return ($LASTEXITCODE -ne 0)
+}
+
+# Resolve-TagTarget — peels an existing tag to the commit it points at (handles annotated
+# tags via ^{commit}). Returns $null if the tag doesn't resolve to a commit at all.
+function Resolve-TagTarget {
+    param([string]$Bare)
+    $result = git rev-parse --verify --quiet "refs/tags/$Bare^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return $result
+}
+
+# Test-AncestorOfMain — see the matching (more extensively commented) is_ancestor_of_main() in
+# review-reminders.sh: found by a second opposition-review pass, after the src:dst refspec
+# bypass was already fixed. Tag creation/push was exempted purely on the TAG NAME resolving
+# safely, with zero check on WHAT COMMIT the tag actually points at -- `git tag foo
+# <any-local-commit> && git push origin foo` was exempted regardless of whether
+# <any-local-commit> had ever been reviewed. That doesn't overwrite any branch (confirmed
+# empirically), but DOES unconditionally upload that commit's objects to the remote's object
+# store with zero review. Requiring the tagged commit to already be an ancestor of
+# origin/main means it was already reviewed and published via the ordinary commit+push gate
+# before this tag-push exemption grants anything -- a tag can only ever re-label content that
+# already passed review, never introduce new unreviewed content to the remote. This still
+# exempts the originally reported bug's exact scenario (tagging origin/main itself, trivially
+# its own ancestor) without reopening the "tag doesn't exist yet when this hook fires"
+# problem -- this checks the REF BEING TAGGED, not the tag itself, so it works whether or not
+# the tag exists yet.
+#
+# WHY fail closed (not exempt) if origin/main doesn't resolve, rather than falling back to
+# HEAD or some other ref: falling back would WEAKEN the actual security property this check
+# exists to enforce -- HEAD itself may contain unreviewed local commits. No fallback, just no
+# exemption, consistent with this file's "unable to verify -> don't exempt" pattern.
+function Test-AncestorOfMain {
+    param([string]$Ref)
+    if (-not $Ref) { return $false }
+    git merge-base --is-ancestor $Ref origin/main 2>$null
+    return ($LASTEXITCODE -eq 0)
 }
 
 function Deny {

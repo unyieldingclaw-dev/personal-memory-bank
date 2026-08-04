@@ -897,7 +897,8 @@ echo ""
 echo "=== tag-push exemption tests ==="
 
 TMPDIR_TAG="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-tag-test)"
-trap 'rm -rf "$TMPDIR_TAG" "$TMPDIR_RR"' EXIT
+BAREDIR_TAG="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-tag-bare)"
+trap 'rm -rf "$TMPDIR_TAG" "$BAREDIR_TAG" "$TMPDIR_RR"' EXIT
 git -C "$TMPDIR_TAG" init -q -b main
 git -C "$TMPDIR_TAG" config user.email "test@example.com"
 git -C "$TMPDIR_TAG" config user.name "Test"
@@ -905,6 +906,16 @@ echo "line one" > "$TMPDIR_TAG/file.txt"
 git -C "$TMPDIR_TAG" add file.txt
 git -C "$TMPDIR_TAG" commit -q -m "initial"
 mkdir -p "$TMPDIR_TAG/.claude"
+
+# WHY origin/main is configured here (unlike the older TMPDIR_RR tests, most of which
+# deliberately test the no-upstream fallback): Test-AncestorOfMain()/is_ancestor_of_main()
+# require a resolvable origin/main to check ancestry against -- without one, every "should be
+# exempt" tag-push test below would wrongly fail, since there'd be nothing to be an ancestor
+# of. This mirrors the exact reported bug's own setup (a real release repo with a real
+# origin/main), not an edge case.
+git init -q --bare "$BAREDIR_TAG"
+git -C "$TMPDIR_TAG" remote add origin "$BAREDIR_TAG"
+git -C "$TMPDIR_TAG" push -q -u origin main
 
 invoke_hook_tag() {
   local script="$1" command="$2"
@@ -962,6 +973,93 @@ echo "--- negative control: a push with 3+ positional args (mixed branch+tag) is
 resp=$(invoke_hook_tag "review-reminders.sh" "git push origin main v1.8.0")
 assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies a push naming multiple refs in one invocation -- can't confirm every target is tag-only"
 
+# ── CRITICAL regression: a src:dst refspec must NEVER be exempt, regardless of src ──────────
+# WHY this test exists: found by opposition review, empirically confirmed as a live bypass
+# before this fix. For `git push <remote> <src>:<dst>`, git updates the REMOTE ref named
+# <dst> with whatever <src> resolves to locally -- the ref that actually changes on origin is
+# dst, not src. An earlier version of this exemption validated only src (the part before the
+# colon), so `git push origin <any-existing-tag>:main` was wrongly exempted: src checked out
+# as a real tag, while the actual effect was overwriting main with unreviewed content, no
+# marker required at all. Reproduced directly by the opposition review, including with
+# --force, landing an unreviewed commit on a scratch repo's main. Fixed by treating ANY
+# refspec containing a colon as never-exempt, regardless of what src resolves to -- this test
+# uses a tag that genuinely, unambiguously exists (so if this regressed back to checking src
+# alone, this exact test would start passing/allowing again).
+echo ""
+echo "--- CRITICAL regression: 'git push origin <existing-tag>:main' is NEVER exempt, even though the tag itself is real (review-reminders.sh) ---"
+git -C "$TMPDIR_TAG" tag refspec-victim-tag
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin refspec-victim-tag:main")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies 'git push origin refspec-victim-tag:main' -- the DESTINATION (main) is what actually changes on origin, not the source tag name"
+
+echo ""
+echo "--- CRITICAL regression: a force-pushed src:dst refspec is also never exempt (review-reminders.sh) ---"
+resp=$(invoke_hook_tag "review-reminders.sh" "git push --force origin refspec-victim-tag:main")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies a force-pushed src:dst refspec identically to a non-forced one"
+
+echo ""
+echo "--- sanity: a plain (no colon) push of that same tag IS still exempt -- confirms the fix didn't over-correct (review-reminders.sh) ---"
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin refspec-victim-tag")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still exempts the plain (no-colon) form of pushing the same existing tag -- the colon, not the tag's existence, is what must trigger the deny"
+
+# ── MEDIUM-HIGH regression: a tag must point at already-reviewed content to be exempt ───────
+# WHY this section exists: found by a SECOND opposition-review pass, after the src:dst
+# refspec bypass above was already fixed. `created_tag_names`/`is_existing_tag` were trusted
+# purely on the TAG NAME resolving safely, with zero check on WHAT COMMIT the tag actually
+# points at -- `git tag foo <any-unreviewed-local-commit> && git push origin foo` was
+# exempted regardless of whether that commit had ever been reviewed. This doesn't overwrite
+# any branch (a tag push alone never moves a branch ref), but DOES unconditionally upload
+# that commit's objects to the remote's object store with zero review -- a real, distinct
+# bypass of the same review-gate's core purpose (publishing unreviewed content), just not the
+# branch-overwrite flavor the first opposition pass found. Fixed by requiring the tagged
+# commit to already be an ancestor of origin/main (i.e., already reviewed and published via
+# the ordinary commit+push gate) before granting the exemption, for BOTH the same-command tag
+# creation case and the already-existing-tag case.
+TAG_REVIEWED_HEAD="$(git -C "$TMPDIR_TAG" rev-parse HEAD)"
+echo ""
+echo "--- MEDIUM-HIGH regression: a tag created against UNREVIEWED local content is never exempt (review-reminders.sh) ---"
+echo "unreviewed local content" > "$TMPDIR_TAG/secret.txt"
+git -C "$TMPDIR_TAG" add secret.txt
+git -C "$TMPDIR_TAG" commit -q -m "unreviewed local commit"
+resp=$(invoke_hook_tag "review-reminders.sh" "git tag sneaky-tag && git push origin sneaky-tag")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies tagging and pushing an unreviewed local commit -- the tag name alone being new/valid isn't enough, the TARGET must already be reviewed content"
+
+echo ""
+echo "--- MEDIUM-HIGH regression: an already-existing tag pointing at UNREVIEWED content is never exempt (review-reminders.sh) ---"
+git -C "$TMPDIR_TAG" tag preexisting-unreviewed-tag
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin preexisting-unreviewed-tag")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies pushing a pre-existing tag whose target was never reviewed, even though the tag itself unambiguously exists and isn't a branch"
+
+echo ""
+echo "--- sanity: an already-existing tag pointing at REVIEWED content (origin/main) IS still exempt (review-reminders.sh) ---"
+git -C "$TMPDIR_TAG" tag preexisting-reviewed-tag origin/main
+resp=$(invoke_hook_tag "review-reminders.sh" "git push origin preexisting-reviewed-tag")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still exempts a pre-existing tag whose target is already an ancestor of origin/main -- the ancestor check doesn't over-correct against genuinely reviewed content"
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- MEDIUM-HIGH regression: a tag created against UNREVIEWED local content is never exempt (review-reminders.ps1) ---"
+  resp=$(invoke_hook_tag_ps1 "git tag sneaky-tag-ps1 && git push origin sneaky-tag-ps1")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies tagging and pushing an unreviewed local commit"
+
+  echo ""
+  echo "--- MEDIUM-HIGH regression: an already-existing tag pointing at UNREVIEWED content is never exempt (review-reminders.ps1) ---"
+  git -C "$TMPDIR_TAG" tag preexisting-unreviewed-tag-ps1
+  resp=$(invoke_hook_tag_ps1 "git push origin preexisting-unreviewed-tag-ps1")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies pushing a pre-existing tag whose target was never reviewed"
+
+  echo ""
+  echo "--- sanity: an already-existing tag pointing at REVIEWED content (origin/main) IS still exempt (review-reminders.ps1) ---"
+  git -C "$TMPDIR_TAG" tag preexisting-reviewed-tag-ps1 origin/main
+  resp=$(invoke_hook_tag_ps1 "git push origin preexisting-reviewed-tag-ps1")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 still exempts a pre-existing tag whose target is already an ancestor of origin/main"
+fi
+# WHY reset HEAD back to the reviewed baseline here: the "unreviewed local commit" made above
+# (to exercise the ancestor check) moved HEAD off origin/main. The "compound commit+tag-push"
+# test further down relies on HEAD still being reviewed content when it tags at HEAD with no
+# explicit ref -- resetting here keeps that test's own assumptions intact rather than letting
+# this section's setup leak into a later, unrelated test.
+git -C "$TMPDIR_TAG" reset -q --hard "$TAG_REVIEWED_HEAD"
+
 echo ""
 echo "--- negative control: exemption must NOT apply on the raw-stdin fallback path (review-reminders.sh) ---"
 resp=$(printf 'not valid json but mentions git tag v1.8.0 origin/main and git push origin v1.8.0' | (cd "$TMPDIR_TAG" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
@@ -1005,6 +1103,21 @@ if command -v pwsh >/dev/null 2>&1; then
   assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies pushing a ref that resolves to BOTH a tag and a branch of the same name"
   git -C "$TMPDIR_TAG" branch -D ambiguous-name-ps1 >/dev/null 2>&1
   git -C "$TMPDIR_TAG" tag -d ambiguous-name-ps1 >/dev/null 2>&1
+
+  # WHY this test exists: see the matching (more extensively commented) CRITICAL regression
+  # test for review-reminders.sh -- for `git push <remote> <src>:<dst>`, git updates the
+  # REMOTE ref named dst, not src. An earlier version validated only src, so pushing an
+  # existing tag's name as src with :main as dst was wrongly exempted.
+  echo ""
+  echo "--- CRITICAL regression: 'git push origin <existing-tag>:main' is NEVER exempt (review-reminders.ps1) ---"
+  git -C "$TMPDIR_TAG" tag refspec-victim-tag-ps1
+  resp=$(invoke_hook_tag_ps1 "git push origin refspec-victim-tag-ps1:main")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies 'git push origin refspec-victim-tag-ps1:main' -- the DESTINATION (main) is what actually changes on origin, not the source tag name"
+
+  echo ""
+  echo "--- sanity: a plain (no colon) push of that same tag IS still exempt (review-reminders.ps1) ---"
+  resp=$(invoke_hook_tag_ps1 "git push origin refspec-victim-tag-ps1")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 still exempts the plain (no-colon) form of pushing the same existing tag"
 
   echo ""
   echo "--- negative control: exemption must NOT apply on the raw-stdin fallback path (review-reminders.ps1) ---"

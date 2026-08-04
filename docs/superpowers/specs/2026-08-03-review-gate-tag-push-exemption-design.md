@@ -125,6 +125,75 @@ Reproduced and fixed via isolated debugging before it reached the real hook flow
 
 Task Contract used per this repo's own protocol (7 files, security-sensitive domain).
 
+## MEDIUM-HIGH bypass found by a SECOND opposition-review pass, also fixed before push
+
+After the colon-refspec fix below was applied, a second, independent opposition-review pass
+(deliberately requested to hunt for a DIFFERENT bug, not just re-confirm the first fix) found
+that `created_tag_names`/`is_existing_tag` were trusted purely on the tag NAME resolving
+safely, with **zero check on what commit the tag actually pointed at**. `git tag foo
+<any-unreviewed-local-commit> && git push origin foo` was exempted regardless of whether that
+commit had ever gone through review. Confirmed empirically (both via raw git and via the real
+hook scripts) that this doesn't overwrite any branch — a tag push alone never moves a branch
+ref — but it DOES unconditionally upload the tagged commit's objects to the remote's object
+store with zero review. This is a real, distinct bypass of this review gate's core purpose
+(preventing unreviewed content from reaching the remote), just not the branch-overwrite flavor
+the first pass found — and it means the original "a tag pointer doesn't change any branch's
+content, so a tag push cannot introduce unreviewed code into origin" framing above was
+narrower than what was actually true: accurate for branch integrity, misleading for content
+publication.
+
+Fixed via `is_ancestor_of_main()` (`.sh`) / `Test-AncestorOfMain` (`.ps1`): the tagged commit
+must already be an ancestor of `origin/main` — i.e. already reviewed and published through the
+ordinary commit+push gate — before the exemption is granted, for both the same-command
+tag-creation case (now tracking `git tag <name> <ref>`'s target ref, not just the name) and the
+already-existing-tag case (peeling the tag to its target commit via `git rev-parse
+...^{commit}`). This still correctly exempts the original reported scenario — tagging
+`origin/main` itself is trivially its own ancestor — and doesn't reopen the "tag doesn't exist
+yet when this hook fires" problem, since the check resolves the ref BEING tagged, not the tag
+object itself. Fails closed if `origin/main` doesn't resolve at all, rather than falling back
+to `HEAD` — a fallback would weaken the exact property being enforced, since `HEAD` may itself
+be unreviewed local content.
+
+An operational incident occurred during this second review pass, unrelated to the code itself:
+the opposition subagent's sandbox setup had a `cd` silently fail inside a chained command
+that had actually already been denied by this very hook, causing a LATER command in a
+separate tool call to execute against the real project worktree instead of the intended
+scratch sandbox — resulting in an actual (harmless, since it pointed at an already-public
+commit) tag push to the live GitHub remote. The subagent correctly refused to bypass the
+review gate to clean it up itself (`git push origin --delete <tag>` was denied, as designed)
+and flagged it for manual cleanup instead, which the user then did directly.
+
+6 new regression tests lock in the ancestor-check fix (an unreviewed local commit tagged and
+pushed in one command; a pre-existing tag pointing at unreviewed content; and sanity checks
+for both `.sh` and `.ps1` that a tag pointing at genuinely reviewed content is still exempt).
+
+## CRITICAL bypass found by opposition review, fixed before push
+
+Before this feature was ever pushed, an opposition-review pass on the first implementation
+found a real, empirically-reproducible bypass: `src = positional[1].split(':', 1)[0]` validated
+only the SOURCE side of a `src:dst` refspec. For `git push <remote> <src>:<dst>`, git updates
+the REMOTE ref named `dst` with whatever `src` resolves to locally — the ref that actually
+changes on `origin` is `dst`, not `src`. Since the check only looked at `src`, any existing tag
+name satisfied it regardless of which side of the colon it appeared on: `git push origin
+<any-existing-tag>:main` was wrongly exempted, checking out as safe because the tag name was
+real, while the actual effect was overwriting `main` with unreviewed (or force-pushed,
+history-rewriting) content, no marker required, no deny at all. This required no adversarial
+crafting — it works with any tag a repository already has, which is nearly all of them.
+Reproduced end-to-end (bare remote + clone, unreviewed local commit, tag it, push
+`<tag>:main`, confirm the unreviewed content lands on `origin/main`) against both `.sh` and
+`.ps1`, including `--force` variants and arbitrary destination branches.
+
+Correctly resolving `dst` would require querying the REMOTE's own ref-name disambiguation
+(an unqualified `dst` can resolve differently depending on what already exists there) from
+inside a synchronous `PreToolUse` hook, with no network round-trip available. Rather than
+approximate that with a local heuristic still fundamentally guessing at remote state, the fix
+is simpler and safer: **any refspec containing a colon is never exempt**, regardless of what
+the source side resolves to — the same "unrecognized shape costs an unnecessary re-review,
+never grants an unearned exemption" rule the rest of this design already follows. 5 new
+regression tests lock this in (the exact `<tag>:main` PoC, a force-push variant, and a sanity
+check that the plain no-colon form of the same tag is still correctly exempted, so the fix
+didn't over-correct).
+
 ## Source
 
 Finding reported verbatim by the `ai-code-review-agent` session after hitting this live while
