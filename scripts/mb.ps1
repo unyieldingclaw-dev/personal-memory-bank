@@ -57,6 +57,99 @@ function Get-MbMode {
     return 'init'
 }
 
+# Get-CachedPmbVersion — sets $script:PmbLocalVersion and $script:PmbRemoteVersion.
+#
+# WHY a shared helper instead of inlining in Invoke-Upgrade: the same check now
+# also runs once after every command (see the notifier block near the end of
+# this file), not just inside `mb upgrade`. One helper, one cache, one place to
+# get the TTL/fail-open logic right.
+#
+# WHY cached with a TTL instead of a live fetch every call: a live network call
+# on every single mb invocation would be slow and flaky. Caching for
+# $script:PmbCacheTtlSeconds means the check is nearly free on every call
+# except roughly once per TTL window.
+#
+# WHY $env:MB_VERSION_CACHE_DIR / $env:MB_VERSION_CHECK_URL overrides: lets
+# tests point this at a temp dir and a local/unreachable URL instead of the
+# real user cache and the real GitHub URL. Production code paths never need to
+# set these; they default to the real values.
+#
+# WHY fail open (leave $script:PmbRemoteVersion empty) on any error — network
+# unreachable, malformed cache JSON: this is an optional notice, never a gate.
+# A broken check must never block or slow down real work.
+$script:PmbCacheTtlSeconds = 604800  # 7 days
+
+function Get-CachedPmbVersion {
+    $script:PmbLocalVersion = $null
+    $script:PmbRemoteVersion = $null
+
+    $versionFile = Join-Path $RepoRoot "VERSION"
+    if (-not (Test-Path $versionFile)) { return }
+    $script:PmbLocalVersion = (Get-Content $versionFile -Raw).Trim()
+
+    $cacheDir = if ($env:MB_VERSION_CACHE_DIR) { $env:MB_VERSION_CACHE_DIR } else { Join-Path $env:USERPROFILE ".mb" }
+    $cacheFile = Join-Path $cacheDir "version-check-cache.json"
+    $checkUrl = if ($env:MB_VERSION_CHECK_URL) { $env:MB_VERSION_CHECK_URL } else { "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" }
+    $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+    if (Test-Path $cacheFile) {
+        try {
+            $cache = Get-Content $cacheFile -Raw | ConvertFrom-Json -ErrorAction Stop
+            $ageSeconds = $nowEpoch - [int64]$cache.checkedAtEpoch
+            if ($ageSeconds -ge 0 -and $ageSeconds -lt $script:PmbCacheTtlSeconds -and $cache.remoteVersion) {
+                $script:PmbRemoteVersion = $cache.remoteVersion
+                return
+            }
+        } catch {
+            # WHY silent: a malformed cache file just means we fall through to
+            # a fresh fetch below, same as a missing cache file.
+        }
+    }
+
+    try {
+        $response = Invoke-WebRequest -Uri $checkUrl -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+        $content = $response.Content
+        # WHY: Invoke-WebRequest -UseBasicParsing returns .Content as a raw byte[] instead of a
+        # string whenever the server's response doesn't declare a text charset (e.g. Python's
+        # http.server, used by this repo's own tests) -- byte[] has no .Trim(), so that would
+        # throw here and get swallowed by the catch below, silently failing the whole check open
+        # even though the server answered fine. Decoding explicitly handles both cases.
+        if ($content -isnot [string]) {
+            $content = [System.Text.Encoding]::UTF8.GetString($content)
+        }
+        $script:PmbRemoteVersion = $content.Trim()
+    } catch {
+        $script:PmbRemoteVersion = $null
+    }
+
+    # WHY a separate try/catch for the cache write: a write failure here (disk
+    # full, locked file, permission error) must not discard an already-
+    # successful fetch above — folding the write into the fetch's try block
+    # meant a write error's catch would null out a good $script:PmbRemoteVersion.
+    # Mirrors mb.sh, where the write is a fire-and-forget `|| true` that never
+    # touches REMOTE_VERSION.
+    if ($script:PmbRemoteVersion) {
+        try {
+            if (-not (Test-Path $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
+            @{ checkedAtEpoch = $nowEpoch; remoteVersion = $script:PmbRemoteVersion } | ConvertTo-Json -Compress | Set-Content $cacheFile -Encoding utf8
+        } catch {
+            # WHY silent: caching is best-effort. A write failure just means
+            # the next invocation fetches live again — never a gate.
+        }
+    }
+}
+
+# Test-PmbVersionStale — $true when $script:PmbRemoteVersion/$script:PmbLocalVersion
+# (as set by Get-CachedPmbVersion) show a real, non-empty version mismatch.
+#
+# WHY a helper instead of repeating this condition: the same check appears at
+# both call sites (Invoke-Upgrade's WARN and the end-of-script NOTICE below) —
+# a shared predicate means a future fix only needs to be made once. Mirrors
+# pmb_version_is_stale() in scripts/mb.sh (Task 1) for cross-shell consistency.
+function Test-PmbVersionStale {
+    return [bool]($script:PmbRemoteVersion -and $script:PmbLocalVersion -and $script:PmbRemoteVersion -ne $script:PmbLocalVersion)
+}
+
 
 # WHY: Slash-commands and guide-docs are both discovered the same way — "list files under
 # templates/<subdir>, guarded by Test-Path" — and that shape was being hand-copied at every
@@ -721,6 +814,8 @@ function Invoke-Init {
     if ($gitignoreContent -notmatch "\.claude/\.change-review-ok\.claimed") { $gitignoreAdded += ".claude/.change-review-ok.claimed*" }
     if ($gitignoreContent -notmatch "\.claude/\.pending-commit-presha") { $gitignoreAdded += ".claude/.pending-commit-presha" }
     if ($gitignoreContent -notmatch "\.claude/\.pending-push-presha") { $gitignoreAdded += ".claude/.pending-push-presha" }
+    if ($gitignoreContent -notmatch "\.claude/\.pending-commit-hash") { $gitignoreAdded += ".claude/.pending-commit-hash" }
+    if ($gitignoreContent -notmatch "\.claude/\.pending-push-hash") { $gitignoreAdded += ".claude/.pending-push-hash" }
     if ($gitignoreAdded.Count -gt 0) {
         if (-not (Test-Path $gitignore)) {
             Set-Content -Path $gitignore -Value "# Memory Bank"
@@ -1849,22 +1944,13 @@ function Invoke-Upgrade {
     }
 
     # Remote version check — soft warning, never blocks upgrade
-    $versionFile = Join-Path $RepoRoot "VERSION"
-    if (Test-Path $versionFile) {
-        $localVersion = (Get-Content $versionFile -Raw).Trim()
-        try {
-            $response = Invoke-WebRequest `
-                -Uri "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" `
-                -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
-            $remoteVersion = $response.Content.Trim()
-            if ($remoteVersion -ne $localVersion) {
-                Write-Host "[WARN] PMB $localVersion installed locally, $remoteVersion available" -ForegroundColor Yellow
-                Write-Host "       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank" -ForegroundColor Yellow
-                Write-Host ""
-            }
-        } catch {
-            Write-Host "[INFO] Remote version check skipped (unreachable)" -ForegroundColor DarkGray
-        }
+    Get-CachedPmbVersion
+    if (Test-PmbVersionStale) {
+        Write-Host "[WARN] PMB $($script:PmbLocalVersion) installed locally, $($script:PmbRemoteVersion) available" -ForegroundColor Yellow
+        Write-Host "       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank" -ForegroundColor Yellow
+        Write-Host ""
+    } elseif ($script:PmbLocalVersion -and -not $script:PmbRemoteVersion) {
+        Write-Host "[INFO] Remote version check skipped (unreachable)" -ForegroundColor DarkGray
     }
 
     # WHY: Ownership is hardcoded as explicit arrays — NOT a config file.
@@ -2498,4 +2584,22 @@ switch ($Command) {
     "update"        { Write-Host "mb update is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
     "archive"       { Write-Host "mb archive is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
     "slim"          { Write-Host "mb slim is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
+}
+
+# Update notifier — runs after every command except upgrade (has its own WARN
+# above) and help (no need to nag on a bare help lookup). Cached/fail-open via
+# Get-CachedPmbVersion — see that function's WHY comments for the reasoning.
+#
+# WHY "update" isn't excluded here the way mb.sh excludes it: mb.sh's "update" case still
+# dispatches to Invoke-Upgrade's bash equivalent, so without an exclusion it would
+# double-print that command's own [WARN] followed immediately by this [NOTICE]. This
+# PowerShell "update" case (~line 2573) only prints a one-line deprecation notice pointing at
+# `mb clean` — it never calls Invoke-Upgrade — so no double-print exists here and no exclusion
+# is needed. Documented explicitly so a future sync of this exclusion list between the two
+# scripts doesn't add "update" here by copy-paste assumption without re-checking this.
+if ($Command -ne "upgrade" -and $Command -ne "help") {
+    Get-CachedPmbVersion
+    if (Test-PmbVersionStale) {
+        Write-Host "[NOTICE] PMB $($script:PmbLocalVersion) installed, $($script:PmbRemoteVersion) available — run: mb upgrade" -ForegroundColor Yellow
+    }
 }

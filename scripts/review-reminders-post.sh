@@ -9,51 +9,273 @@
 # truth instead -- if HEAD (for commit) or the upstream ref (for push) didn't move, the
 # command failed, full stop.
 
-sha256() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum | cut -d' ' -f1
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 | cut -d' ' -f1
-    else
-        printf ''
-    fi
-}
-
 input=$(cat 2>/dev/null)
 [ -z "$input" ] && exit 0
 
-cmd=""
-case "$input" in
-    *'git commit'*) cmd="commit" ;;
-    *'git push'*) cmd="push" ;;
-esac
-[ -z "$cmd" ] && exit 0
+# WHY match against extract_command()'s parsed tool_input.command, not the raw stdin
+# payload: see the matching comment in review-reminders.sh -- the real Bash tool's payload
+# also carries tool_input.description alongside command, so raw-stdin matching can trigger
+# on a read-only command whose description merely mentions "git commit"/"git push", falsely
+# reissuing a review-ok marker for a commit/push that never actually happened. Matching the
+# parsed command value instead (falling back to raw stdin only when python3 is missing or
+# JSON parsing fails) fixes this while keeping the same fail-open-to-over-triggering safety
+# direction as the rest of this file.
+#
+# WHY extract_command() parses the JSON once and resolve_cd_root() takes the already-
+# extracted command as a plain-string argument instead of re-parsing JSON itself, and WHY
+# extract_command() distinguishes "parsing failed" from "tool_input.command legitimately
+# parsed to an empty string" via an explicit presence check and exit code: see the matching
+# comments in review-reminders.sh -- both hooks share this exact design.
+extract_command() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    result=$(python3 - "$input" 2>/dev/null <<'PYEOF'
+import sys, json
 
-root=$(git rev-parse --show-toplevel 2>/dev/null)
+try:
+    data = json.loads(sys.argv[1])
+    tool_input = data.get("tool_input", {})
+    if "command" not in tool_input:
+        sys.exit(1)
+    sys.stdout.write(tool_input["command"])
+except Exception:
+    sys.exit(1)
+PYEOF
+)
+    rc=$?
+    [ "$rc" -ne 0 ] && return 1
+    printf '%s' "$result" | tr -d '\r'
+}
+
+# WHY this exists: see the matching comment in review-reminders.sh -- root=$(git rev-parse
+# --show-toplevel) trusts the hook process's own ambient cwd, which is empirically wrong for
+# some dispatched-subagent sessions. Deriving root from the gated command's own leading `cd`
+# fixes this regardless of the underlying cause.
+#
+# WHY resolve the FULL leading cd chain, and WHY a heredoc+argv instead of `-c "..."`+stdin:
+# see the matching comment in review-reminders.sh -- both hooks share this exact function.
+resolve_cd_root() {
+    # $1: the already-extracted tool_input.command value (a plain string, not JSON) -- see
+    # extract_command() above. This function no longer parses JSON at all.
+    command -v python3 >/dev/null 2>&1 || return 1
+    cd_path=$(python3 - "$1" <<'PYEOF' 2>/dev/null | tr -d '\r'
+import sys, os, re
+
+cmd = sys.argv[1]
+dq = re.compile(r'^cd\s+"([^"]+)"\s*&&\s*')
+sq = re.compile(r"^cd\s+'([^']+)'\s*&&\s*")
+rest = cmd
+cur = os.getcwd()
+matched = False
+while True:
+    m = dq.match(rest) or sq.match(rest)
+    if not m:
+        break
+    matched = True
+    p = m.group(1)
+    cur = p if os.path.isabs(p) else os.path.normpath(os.path.join(cur, p))
+    rest = rest[m.end():]
+
+print(cur if matched else "")
+PYEOF
+)
+    [ -z "$cd_path" ] && return 1
+    cd_root_result=$(git -C "$cd_path" rev-parse --show-toplevel 2>/dev/null)
+    [ -z "$cd_root_result" ] && return 1
+    printf '%s' "$cd_root_result"
+}
+
+if match_target=$(extract_command); then
+    extracted=1
+else
+    match_target="$input"
+    extracted=0
+fi
+
+# WHY match against a quote/backslash-stripped, lowercased copy, not $match_target itself: see
+# the matching comment in review-reminders.sh -- a command like `git c"o"mmit -m "x"` executes,
+# after real shell quote removal, as a genuine `git commit -m x`, but the command TEXT never
+# contains "git commit" as a contiguous substring; and review-reminders.ps1's `-match` is
+# case-insensitive by default while this file's `case`/esac isn't, so `Git Commit` would pass
+# through unmatched here even though its .ps1 counterpart would catch it. Neither transform
+# touches $match_target itself, which resolve_cd_root() below still needs with real quoting and
+# casing intact. Both can only make a match MORE likely to fire -- the same safe direction as
+# everywhere else here.
+match_target_stripped=$(printf '%s' "$match_target" | tr -d "\"'\\\\" | tr 'A-Z' 'a-z')
+
+# classify_targets — see the matching (much more extensively commented) definition in
+# review-reminders.sh: an ADDITIONAL commit/push detector, layered on TOP of
+# match_target_stripped's substring check below, never a replacement for it -- tokenizing $1
+# with python3's shlex (correct POSIX quote/backslash-escape removal, compound-command-aware
+# via punctuation_chars) and walking each simple command's tokens past git's own documented
+# global options (-C, -c, --opt=value, etc.) to find the REAL subcommand. Closes the same
+# `git -C <path> commit` / `git -c k=v commit` gap the quote-stripping/lowercasing above still
+# misses, since neither of those transforms understands git's own argument grammar. Returns 1
+# with no output if python3 is unavailable or the input can't be tokenized; the caller simply
+# doesn't gain the extra detection in that case, since the substring check underneath is never
+# bypassed -- see the WHY additive comment in review-reminders.sh's classify_targets() for why
+# this can only ever add coverage, never suppress it.
+classify_targets() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    result=$(python3 - "$1" 2>/dev/null <<'PYEOF'
+import sys, shlex
+
+GIT_OPTS_WITH_VALUE = ('-c', '-C', '--git-dir', '--work-tree', '--namespace',
+                        '--super-prefix', '--exec-path', '--attr-source')
+
+
+def next_subcommand(tokens, start, opts_with_value):
+    i = start
+    n = len(tokens)
+    while i < n:
+        t = tokens[i]
+        if t.startswith('--') and '=' in t:
+            i += 1
+            continue
+        if t in opts_with_value:
+            i += 2
+            continue
+        if t.startswith('-'):
+            i += 1
+            continue
+        return t, i + 1
+    return None, i
+
+
+def split_simple_commands(tokens):
+    ops = {'&&', '||', ';', '|', '|&', '&'}
+    cur, out = [], []
+    for t in tokens:
+        if t in ops:
+            if cur:
+                out.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        out.append(cur)
+    return out
+
+
+try:
+    cmd = sys.argv[1]
+except IndexError:
+    cmd = ""
+
+lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+lex.whitespace_split = True
+try:
+    tokens = list(lex)
+except ValueError:
+    sys.exit(1)
+
+found = set()
+for simple in split_simple_commands(tokens):
+    if not simple:
+        continue
+    if simple[0].lower() != 'git':
+        continue
+    sub, _ = next_subcommand(simple, 1, GIT_OPTS_WITH_VALUE)
+    if sub and sub.lower() == 'commit':
+        found.add('commit')
+    elif sub and sub.lower() == 'push':
+        found.add('push')
+
+sys.stdout.write('\n'.join(sorted(found)))
+PYEOF
+)
+    rc=$?
+    [ "$rc" -ne 0 ] && return 1
+    printf '%s' "$result" | tr -d '\r'
+}
+
+# WHY the cmd check runs before resolve_cd_root(), not after: this hook has matcher "Bash" in
+# .claude/settings.json, so it fires on EVERY Bash tool call, not just git commit/push --
+# resolve_cd_root() (a second python3 fork) and the git rev-parse fallback below are wasted
+# work for the overwhelming majority of calls that aren't a commit/push attempt at all.
+# Checking cmd first and exiting early preserves the cheap common case; only real commit/push
+# attempts pay for root resolution below.
+#
+# WHY needs_commit/needs_push (two independent checks), not one first-match case/esac: see the
+# matching comment in review-reminders.sh -- a compound `git commit -m x && git push origin
+# main` contains both substrings. A single case/esac only reissues whichever marker matches
+# first, silently leaving the OTHER action's presha file unprocessed (and therefore never
+# reissued, and never cleaned up) even though the compound command may have genuinely failed
+# on both halves. Checking both independently means a compound command's commit and push
+# outcomes are each reconciled on their own.
+#
+# WHY match_target_stripped's substring check runs unconditionally first, with
+# classify_targets()'s result OR'd in afterward: see the matching WHY additive comment in
+# review-reminders.sh -- this ordering is what makes classify_targets() strictly additive
+# rather than a replacement that could accidentally suppress coverage the substring check
+# already had (e.g. `/usr/bin/git commit`/`env git commit`, whose head token isn't literally
+# "git" so classify_targets() finds nothing there even though the substring check still would).
+needs_commit=0
+needs_push=0
+case "$match_target_stripped" in *'git commit'*) needs_commit=1 ;; esac
+case "$match_target_stripped" in *'git push'*) needs_push=1 ;; esac
+
+if targets=$(classify_targets "$match_target"); then
+    case "$targets" in *commit*) needs_commit=1 ;; esac
+    case "$targets" in *push*) needs_push=1 ;; esac
+fi
+[ "$needs_commit" = "0" ] && [ "$needs_push" = "0" ] && exit 0
+
+root=""
+[ "$extracted" = "1" ] && root=$(resolve_cd_root "$match_target")
+[ -z "$root" ] && root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$root" ] && exit 0
 
-if [ "$cmd" = "commit" ]; then
+# WHY cd here: see the matching comment in review-reminders.sh -- the postsha rev-parse
+# calls below still run bare git commands with no directory anchor.
+cd "$root" 2>/dev/null || exit 0
+
+# WHY replay the persisted .pending-*-hash instead of recomputing diff_hash fresh here: this
+# used to recompute the hash fresh on the assumption "a failed commit/push can't have altered
+# the working tree" -- false whenever a downstream project's OWN pre-commit hook mutates files
+# and then rejects the commit (e.g. an auto-formatter running `black --check`/`prettier
+# --check`, a common and unexceptional pattern). HEAD doesn't move in that case, but the diff
+# does -- recomputing fresh would reissue a marker for a diff /code-review or /change-review
+# never actually saw. Replaying the hash review-reminders.sh persisted at validation time means
+# the reissued marker always corresponds to a diff that was genuinely reviewed.
+#
+# WHY fail CLOSED (skip reissuing) rather than falling back to a fresh recompute when the hash
+# file is missing/torn: falling back to fresh-recompute would silently reintroduce the exact
+# bug this fix closes for that one anomalous case. A missing hash file (presha exists without
+# its paired hash, or vice versa) means the pending state doesn't fully describe a validated
+# attempt this hook can safely vouch for -- the safe direction is no reissue, forcing an
+# explicit re-review. This pairing also bounds the impact of overlapping commit/push attempts
+# racing on these unkeyed files (e.g. two subagent sessions, or a retry while a prior attempt's
+# hooks are still running): even if one attempt's presha/hash pair gets clobbered by another's,
+# whatever pair survives is still SOME genuinely-validated hash from a real prior review, never
+# an arbitrary freshly-derived value reflecting whatever the tree happens to look like right
+# now -- the race can misattribute which attempt's marker gets reissued, but can't manufacture
+# an unreviewed one.
+if [ "$needs_commit" = "1" ]; then
     preshafile="$root/.claude/.pending-commit-presha"
+    hashfile="$root/.claude/.pending-commit-hash"
     if [ -f "$preshafile" ]; then
         presha=$(cat "$preshafile" 2>/dev/null | tr -d '[:space:]')
-        rm -f "$preshafile"
+        orighash=""
+        [ -f "$hashfile" ] && orighash=$(cat "$hashfile" 2>/dev/null | tr -d '[:space:]')
+        rm -f "$preshafile" "$hashfile"
         postsha=$(git rev-parse HEAD 2>/dev/null)
-        if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ]; then
-            git diff HEAD 2>/dev/null | sha256 > "$root/.claude/.code-review-ok"
+        if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ] && [ -n "$orighash" ]; then
+            printf '%s' "$orighash" > "$root/.claude/.code-review-ok"
         fi
     fi
-elif [ "$cmd" = "push" ]; then
+fi
+
+if [ "$needs_push" = "1" ]; then
     preshafile="$root/.claude/.pending-push-presha"
+    hashfile="$root/.claude/.pending-push-hash"
     if [ -f "$preshafile" ]; then
         presha=$(cat "$preshafile" 2>/dev/null | tr -d '[:space:]')
-        rm -f "$preshafile"
+        orighash=""
+        [ -f "$hashfile" ] && orighash=$(cat "$hashfile" 2>/dev/null | tr -d '[:space:]')
+        rm -f "$preshafile" "$hashfile"
         postsha=$(git rev-parse '@{u}' 2>/dev/null)
-        if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ]; then
-            diff=$(git diff origin/main...HEAD 2>/dev/null)
-            if [ $? -ne 0 ]; then
-                diff=$(git diff HEAD 2>/dev/null)
-            fi
-            printf '%s' "$diff" | sha256 > "$root/.claude/.change-review-ok"
+        if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ] && [ -n "$orighash" ]; then
+            printf '%s' "$orighash" > "$root/.claude/.change-review-ok"
         fi
     fi
 fi

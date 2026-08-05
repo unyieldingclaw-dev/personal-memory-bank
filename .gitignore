@@ -39,6 +39,8 @@ handoff.md
 .claude/.change-review-ok.claimed*
 .claude/.pending-commit-presha
 .claude/.pending-push-presha
+.claude/.pending-commit-hash
+.claude/.pending-push-hash
 
 # Task contract files — session artifacts, never committed
 .claude/contracts/*.json
