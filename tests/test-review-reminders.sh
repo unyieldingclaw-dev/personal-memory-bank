@@ -1128,6 +1128,45 @@ else
   echo "--- tag-push exemption PS1 tests: SKIPPED (pwsh not installed on this machine) ---"
 fi
 
+# ── HIGH regression: a tampered local origin/main tracking ref cannot fake ancestry ──────────
+# WHY this section exists: found by a THIRD opposition-review pass, on the ancestor-check fix
+# above. is_ancestor_of_main()/Test-AncestorOfMain trusted the LOCAL refs/remotes/origin/main
+# tracking ref as ground truth for "already reviewed and on the remote" -- but that ref is an
+# ordinary local file, freely rewritable via `git update-ref refs/remotes/origin/main <sha>`, a
+# command this hook never gates at all (it only intercepts git commit/push/gh pr merge).
+# Reproduced directly: rewriting the tracking ref to point at an unreviewed commit made the
+# ancestor check wrongly report that commit as already-reviewed, letting a tag pointing at it
+# through -- reopening exactly the gap the ancestor-check fix was meant to close, just one step
+# removed. Fixed by running a fresh `git fetch origin main` immediately before the ancestor
+# check, overwriting any locally-tampered (or simply stale) value with the actual remote's
+# current state before trusting it.
+TAG_UNTAMPERED_ORIGIN_MAIN="$(git -C "$TMPDIR_TAG" rev-parse refs/remotes/origin/main)"
+echo "unreviewed content for ref-tampering test" > "$TMPDIR_TAG/tamper-secret.txt"
+git -C "$TMPDIR_TAG" add tamper-secret.txt
+git -C "$TMPDIR_TAG" commit -q -m "unreviewed local commit for ref-tampering test"
+TAG_TAMPER_UNREVIEWED_SHA="$(git -C "$TMPDIR_TAG" rev-parse HEAD)"
+
+echo ""
+echo "--- HIGH regression: rewriting the local origin/main tracking ref cannot fake ancestry (review-reminders.sh) ---"
+git -C "$TMPDIR_TAG" update-ref refs/remotes/origin/main "$TAG_TAMPER_UNREVIEWED_SHA"
+resp=$(invoke_hook_tag "review-reminders.sh" "git tag ref-tamper-exploit $TAG_TAMPER_UNREVIEWED_SHA && git push origin ref-tamper-exploit")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies a tag pointing at an unreviewed commit even after the local origin/main tracking ref is rewritten to make that commit look like an ancestor -- the fresh fetch overwrites the tampered value before trusting it"
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- HIGH regression: rewriting the local origin/main tracking ref cannot fake ancestry (review-reminders.ps1) ---"
+  git -C "$TMPDIR_TAG" update-ref refs/remotes/origin/main "$TAG_TAMPER_UNREVIEWED_SHA"
+  resp=$(invoke_hook_tag_ps1 "git tag ref-tamper-exploit-ps1 $TAG_TAMPER_UNREVIEWED_SHA && git push origin ref-tamper-exploit-ps1")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies a tag pointing at an unreviewed commit even after the local origin/main tracking ref is rewritten to make that commit look like an ancestor"
+fi
+
+echo ""
+echo "--- sanity: a genuinely-reviewed tag push still works after the fetch-before-check fix (review-reminders.sh) ---"
+git -C "$TMPDIR_TAG" reset -q --hard "$TAG_REVIEWED_HEAD"
+git -C "$TMPDIR_TAG" update-ref refs/remotes/origin/main "$TAG_UNTAMPERED_ORIGIN_MAIN"
+resp=$(invoke_hook_tag "review-reminders.sh" "git tag ref-tamper-sanity origin/main && git push origin ref-tamper-sanity")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still exempts a genuinely-reviewed tag push after the fetch-before-check fix -- no over-correction"
+
 rm -rf "$TMPDIR_TAG"
 
 print_summary

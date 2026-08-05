@@ -194,6 +194,59 @@ regression tests lock this in (the exact `<tag>:main` PoC, a force-push variant,
 check that the plain no-colon form of the same tag is still correctly exempted, so the fix
 didn't over-correct).
 
+## HIGH bypass found by a THIRD opposition-review pass, also fixed before push
+
+After the ancestor-check fix above was applied, a third, independent opposition-review pass
+(again deliberately requested to hunt for a DIFFERENT bug, not just re-confirm the second fix)
+found that `is_ancestor_of_main()`/`Test-AncestorOfMain` trusted the LOCAL
+`refs/remotes/origin/main` tracking ref as ground truth for "already reviewed and on the
+remote" — but that ref is an ordinary local file, freely rewritable via `git update-ref
+refs/remotes/origin/main <any-sha>` (or a direct edit to `.git/refs/remotes/origin/main` /
+`.git/packed-refs`), none of which this hook gates at all: it only intercepts `git
+commit`/`push`/`gh pr merge`, never arbitrary ref-mutating plumbing commands.
+
+Reproduced directly, in a sandbox with a real bare-repo `origin`: rewriting the local tracking
+ref to point at a commit that had never been pushed anywhere made the ancestor check wrongly
+report that commit as already-reviewed, and a tag pointing at it was then exempted and pushed —
+reopening the exact gap the ancestor-check fix (above) was meant to close, just one step of
+indirection removed, and requiring nothing more than one ordinary-looking git command first.
+
+This finding was initially argued against — the reasoning was that an agent already willing to
+rewrite local git internals to defeat the gate has an even simpler option (directly fabricating
+the `.claude/.change-review-ok` marker file itself, confirmed separately to also bypass the
+*original*, pre-existing branch-push gate, unrelated to tag pushes at all), so the ref-rewrite
+path felt "no worse than a pre-existing, already-implicit limitation." On reflection this
+argument didn't hold: no one had ever actually reviewed and accepted that pre-existing gap as
+acceptable — it was invented after the fact to justify not fixing this one. The two bypasses
+also aren't equally likely to occur: hand-crafting a sha256 hash into a hidden marker file is a
+deliberate, unusual action, while `git update-ref refs/remotes/origin/main <sha>` is ordinary
+git plumbing that could plausibly happen even in a good-faith session with no malicious intent
+(e.g. "let me just point my tracking ref at the right commit") — exactly the kind of thing this
+hook's own stated threat model (stopping *accidental or naive* unreviewed publication, not
+defending against a fully adversarial local actor) is supposed to catch. It's also the same bug
+class as the CRITICAL and MEDIUM-HIGH findings above: a locally-controlled value trusted
+without verification against actual remote state. Waving it away would have been inconsistent
+with the standard applied to the other two.
+
+Fixed by running a fresh, explicit `git fetch origin '+refs/heads/main:refs/remotes/origin/main'
+--quiet` immediately before the ancestor check, in both `is_ancestor_of_main()` and
+`Test-AncestorOfMain`, overwriting any locally-tampered or simply-stale value with the actual
+remote's current state before trusting it. If the fetch itself fails (offline, auth failure, no
+route to `origin`), this fails closed — no exemption — rather than falling back to the
+now-known-untrustworthy pre-fetch value: the `git push` this hook is pre-authorizing needs that
+exact same network access to `origin` the moment it actually runs anyway, so requiring it here
+first adds no new failure mode beyond what the underlying command already needs. This does add
+one network round-trip to `origin` per tag-push-exemption check, accepted as the cost of the
+check actually meaning what it claims. 3 new regression tests lock this in (the exact
+ref-rewrite-then-tag-push PoC for both `.sh` and `.ps1`, and a sanity check that a genuinely-
+reviewed tag push still works after the fetch is added, confirming no over-correction).
+
+The broader, still-open observation from this pass — that `.claude/.change-review-ok` can be
+fabricated directly via a Write-tool call, bypassing the entire review gate for ordinary branch
+pushes too, unrelated to tag pushes specifically — was NOT fixed here, since it's out of scope
+for a tag-push-exemption fix and affects the base gate design, not this feature. It's a
+legitimate follow-up worth its own design discussion.
+
 ## Source
 
 Finding reported verbatim by the `ai-code-review-agent` session after hitting this live while

@@ -457,9 +457,27 @@ function Resolve-TagTarget {
 # HEAD or some other ref: falling back would WEAKEN the actual security property this check
 # exists to enforce -- HEAD itself may contain unreviewed local commits. No fallback, just no
 # exemption, consistent with this file's "unable to verify -> don't exempt" pattern.
+#
+# WHY a fresh `git fetch` runs here, immediately before the ancestor check: found by a THIRD
+# opposition-review pass, on this exact function. The check above trusted the LOCAL
+# refs/remotes/origin/main tracking ref as ground truth for "already reviewed and on the
+# remote" -- but that ref is an ordinary local file, freely rewritable by any git command (e.g.
+# `git update-ref refs/remotes/origin/main <any-sha>`) that this hook never gates at all (it
+# only intercepts git commit/push/gh pr merge). Reproduced directly: rewriting the local
+# tracking ref to point at an unreviewed commit made this check wrongly report it as
+# already-reviewed, letting a tag pointing at that commit through. A fresh, explicit fetch
+# right before the check overwrites any locally-tampered or simply-stale value with the actual
+# remote's current state, closing that gap regardless of how the local ref got out of sync. If
+# the fetch itself fails (offline, auth failure, no route to origin), this fails closed -- no
+# exemption -- rather than falling back to the (now known untrustworthy) pre-fetch value: the
+# `git push` this hook is pre-authorizing needs that exact same network access to origin the
+# moment it actually runs, so requiring it here first adds no new failure mode beyond what the
+# underlying command already needs.
 function Test-AncestorOfMain {
     param([string]$Ref)
     if (-not $Ref) { return $false }
+    git fetch origin '+refs/heads/main:refs/remotes/origin/main' --quiet 2>$null
+    if ($LASTEXITCODE -ne 0) { return $false }
     git merge-base --is-ancestor $Ref origin/main 2>$null
     return ($LASTEXITCODE -eq 0)
 }
