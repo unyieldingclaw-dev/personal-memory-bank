@@ -253,4 +253,60 @@ else
   echo "SKIPPED (python3 not installed on this machine — resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
 fi
 
+# ── fail-open: missing _review-gate-lib.sh/.ps1 causes the hook to exit 0, not crash/deny ──
+# WHY this test exists: dot-sourcing the shared lib is a new failure path introduced by the
+# 2026-07-29 dedup refactor -- a missing/corrupt lib file must make the hook fail open (skip
+# the gate) rather than hang, crash, or wrongfully deny. All 4 independent sourcing call
+# sites (2 bash hook files, 2 PowerShell hook files) are tested separately -- a mistake in
+# one file's sourcing line isn't guaranteed to be caught by testing only one representative
+# file per language.
+echo ""
+echo "--- fail-open: review-reminders.sh exits 0 when _review-gate-lib.sh is missing ---"
+LIBBAK_SH="$REPO_ROOT/scripts/_review-gate-lib.sh.bak"
+trap '[ -f "$LIBBAK_SH" ] && mv "$LIBBAK_SH" "$REPO_ROOT/scripts/_review-gate-lib.sh"; trap - EXIT' EXIT
+mv "$REPO_ROOT/scripts/_review-gate-lib.sh" "$LIBBAK_SH"
+resp=$(printf '{"tool_input":{"command":"git commit -m test"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+rc=$?
+mv "$LIBBAK_SH" "$REPO_ROOT/scripts/_review-gate-lib.sh"
+trap - EXIT
+assert_exit_zero $rc "review-reminders.sh exits 0 when _review-gate-lib.sh is missing (fails open, doesn't crash)"
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny when _review-gate-lib.sh is missing (fails open, doesn't wrongfully block)"
+
+echo ""
+echo "--- fail-open: review-reminders-post.sh exits 0 when _review-gate-lib.sh is missing ---"
+trap '[ -f "$LIBBAK_SH" ] && mv "$LIBBAK_SH" "$REPO_ROOT/scripts/_review-gate-lib.sh"; trap - EXIT' EXIT
+mv "$REPO_ROOT/scripts/_review-gate-lib.sh" "$LIBBAK_SH"
+printf '{"tool_input":{"command":"git commit -m test"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders-post.sh" 2>/dev/null)
+rc=$?
+mv "$LIBBAK_SH" "$REPO_ROOT/scripts/_review-gate-lib.sh"
+trap - EXIT
+assert_exit_zero $rc "review-reminders-post.sh exits 0 when _review-gate-lib.sh is missing (fails open)"
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- fail-open: review-reminders.ps1 exits 0 when _review-gate-lib.ps1 is missing ---"
+  LIBBAK_PS1="$REPO_ROOT/scripts/_review-gate-lib.ps1.bak"
+  trap '[ -f "$LIBBAK_PS1" ] && mv "$LIBBAK_PS1" "$REPO_ROOT/scripts/_review-gate-lib.ps1"; trap - EXIT' EXIT
+  mv "$REPO_ROOT/scripts/_review-gate-lib.ps1" "$LIBBAK_PS1"
+  resp=$(printf '{"tool_input":{"command":"git commit -m test"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  rc=$?
+  mv "$LIBBAK_PS1" "$REPO_ROOT/scripts/_review-gate-lib.ps1"
+  trap - EXIT
+  assert_exit_zero $rc "review-reminders.ps1 exits 0 when _review-gate-lib.ps1 is missing (fails open)"
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 does not deny when _review-gate-lib.ps1 is missing (fails open)"
+
+  echo ""
+  echo "--- fail-open: review-reminders-post.ps1 exits 0 when _review-gate-lib.ps1 is missing ---"
+  trap '[ -f "$LIBBAK_PS1" ] && mv "$LIBBAK_PS1" "$REPO_ROOT/scripts/_review-gate-lib.ps1"; trap - EXIT' EXIT
+  mv "$REPO_ROOT/scripts/_review-gate-lib.ps1" "$LIBBAK_PS1"
+  printf '{"tool_input":{"command":"git commit -m test"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders-post.ps1" 2>/dev/null)
+  rc=$?
+  mv "$LIBBAK_PS1" "$REPO_ROOT/scripts/_review-gate-lib.ps1"
+  trap - EXIT
+  assert_exit_zero $rc "review-reminders-post.ps1 exits 0 when _review-gate-lib.ps1 is missing (fails open)"
+else
+  echo ""
+  echo "--- fail-open PowerShell tests: SKIPPED (pwsh not installed on this machine) ---"
+fi
+
 print_summary
