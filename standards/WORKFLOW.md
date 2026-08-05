@@ -170,7 +170,7 @@ On next session: read `handoff.md` first, merge into Memory Bank, delete it, the
 - **Default model:** Sonnet handles 90%+ of tasks
 - **Escalate to Opus** only for: complex architecture, large multi-file refactors, deep cross-file debugging. Switch back after.
 - **Compact at task boundaries** (not mid-task): after planning, after debugging, before switching context
-- Auto-compact fires at 40% (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` in `.claude/settings.json`)
+- Auto-compact fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in `.claude/settings.json`
 - Manual compact at ~35% stays ahead of mid-task interruption
 
 ## Cursor Integration

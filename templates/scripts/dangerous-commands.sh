@@ -1,15 +1,32 @@
 #!/usr/bin/env sh
 # PreToolUse hook — 3-tier dangerous command guardrails for Claude Code.
 # Reads the Bash tool input JSON from stdin and enforces BLOCK / CONFIRM / WARN tier
-# matching via POSIX case matching against the raw payload. Fails open: unexpected
-# errors exit 0.
+# matching against the extracted tool_input.command. Fails open: unexpected errors
+# exit 0.
 #
-# WHY match raw stdin instead of extracting the "command" field: a `grep -o
-# '"command":"[^"]*"'` extraction breaks on any JSON-escaped quote inside the command,
-# silently truncating the match and letting a dangerous pattern after that quote through
-# unchecked (the same bug found and fixed in review-reminders.sh). Since these patterns
-# only plausibly appear in this hook's stdin inside the command field, matching the raw
-# payload directly is robust to that escaping edge case.
+# WHY extract tool_input.command via python3 instead of matching raw stdin: raw-stdin
+# matching false-positived on a trigger phrase appearing ANYWHERE in the JSON payload --
+# e.g. a Bash tool call's own "description" field merely mentioning "rm -rf" in prose,
+# never actually running it -- incorrectly BLOCKing/CONFIRMing a harmless action. This
+# is not the same risk the original raw-stdin approach was written to avoid: that
+# concern was specifically about a naive `grep -o '"command":"[^"]*"'` extraction
+# breaking on a JSON-escaped quote inside the command and silently truncating the match.
+# python3's json.load is a real parser, not a fragile regex -- it handles escaped quotes
+# correctly, so it closes the false-positive gap without reintroducing the
+# truncation risk. Matches dangerous-commands.ps1's existing ConvertFrom-Json approach
+# and this repo's established precedent (check-contract.sh, review-reminders.sh's
+# resolve_cd_root()).
+#
+# WHY fall back to raw-stdin matching (not to no matching at all) when python3 is
+# missing or JSON parsing fails: this hook's whole purpose is catching genuinely
+# dangerous commands, and a real dangerous command's text is still present SOMEWHERE
+# in the raw payload even when extraction isn't possible -- raw matching never misses
+# a true positive, it only risks occasional false ones. Disabling the guardrail
+# entirely on a missing dependency would trade a rare false-positive-block for a
+# silent, total loss of protection, the wrong direction for a safety gate. This
+# fallback does NOT apply when python3 succeeds and tool_input.command is genuinely
+# empty -- that's a real, parsed answer ("no command to check"), not an extraction
+# failure, so it's trusted as-is rather than falling back to raw matching.
 #
 # WHY hookSpecificOutput.permissionDecision, not exit code: settings.json wires this hook
 # as "... 2>/dev/null || bash ... || true" for cross-platform fail-open portability, and
@@ -23,13 +40,26 @@ if [ -z "$input" ]; then
     exit 0
 fi
 
+cmd="$input"
+if command -v python3 >/dev/null 2>&1; then
+    extracted=$(printf '%s' "$input" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d.get('tool_input', {}).get('command', ''))
+except Exception:
+    sys.exit(1)
+" 2>/dev/null)
+    [ $? -eq 0 ] && cmd="$extracted"
+fi
+
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
 }
 
 block() {
     # BLOCK: irreversible or highly destructive — refuse unconditionally
-    case "$input" in
+    case "$cmd" in
         *"$1"*)
             deny "BLOCK: $2. Refusing this command."
             exit 0
@@ -45,7 +75,7 @@ block_boundary() {
     # field-path bug that had made this pattern a no-op made the collision real). POSIX
     # case globs have no \b, so this approximates it: match $1 followed by a non-letter,
     # or match $1 as the literal end of the string.
-    case "$input" in
+    case "$cmd" in
         *"$1"[!a-zA-Z]*|*"$1")
             deny "BLOCK: $2. Refusing this command."
             exit 0
@@ -55,7 +85,7 @@ block_boundary() {
 
 confirm() {
     # CONFIRM: advanced op with legitimate uses — require explicit manual invocation
-    case "$input" in
+    case "$cmd" in
         *"$1"*)
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
@@ -65,7 +95,7 @@ confirm() {
 
 warn() {
     # WARN: credential/secrets access — command proceeds, access is surfaced
-    case "$input" in
+    case "$cmd" in
         *"$1"*)
             printf "WARNING: %s. Proceeding.\n" "$2"
             ;;

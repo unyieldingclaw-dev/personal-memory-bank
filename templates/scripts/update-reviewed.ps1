@@ -18,10 +18,11 @@ try {
 
     # WHY .tool_input.file_path, not .file_path: the real payload nests everything
     # under "tool_input" (e.g. {"tool_name":"Edit","tool_input":{"file_path":"..."}}),
-    # confirmed in check-contract.ps1 (bd47244) by capturing a live hook payload. This
-    # script had the same flat-read bug and, unlike check-contract.ps1/dangerous-commands.ps1,
-    # was never included in that fix -- $file_path was always $null, so the script
-    # silently exited 0 on every call without ever updating last-reviewed.
+    # matching the same fix already applied in check-contract.ps1 (confirmed there by
+    # capturing a live hook payload). This script had the same flat-read bug and,
+    # unlike check-contract.ps1/dangerous-commands.ps1, was never included in that fix
+    # -- $file_path was always $null, so the script silently exited 0 on every call
+    # without ever updating last-reviewed.
     $file_path = $parsed.tool_input.file_path
     if ([string]::IsNullOrWhiteSpace($file_path)) { exit 0 }
 
