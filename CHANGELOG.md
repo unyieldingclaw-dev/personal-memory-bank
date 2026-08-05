@@ -15,6 +15,10 @@
 ### Known gap, not fixed here (closed above)
 - `scripts/mb.ps1`'s `Invoke-Init` copy loop also excludes these 4 files (only its `TEMPLATE_OWNED`/gap-detection got the 1.2.0 fix) — PowerShell `mb init` on a fresh project has the same bug. Tracked separately.
 
+### Changed
+- `scripts/review-reminders.sh/.ps1` + `-post.sh/.ps1`: `sha256_file`/`diff_hash`/`resolve_cd_root` (bash) and `Get-FileHashHex`/`Get-CommitDiffHash`/`Get-PushDiffHash` (PowerShell) were duplicated verbatim across all 4 files (a fix to one had to be manually ported to the others, and had already missed once — see the 2026-07-09 trailing-newline bug). Extracted into new shared dot-sourced libs, `scripts/_review-gate-lib.sh`/`.ps1` (mirrored in `templates/scripts/`); all 4 hook files now dot-source instead of defining locally. `review-reminders-post.ps1` also now calls the shared `Get-CommitDiffHash`/`Get-PushDiffHash` instead of inlining its own third copy of the same pattern (confirmed byte-identical output before and after — a structural dedup, not a behavior fix).
+- A missing/corrupt lib file makes the sourcing hook fail open (gate skipped), matching this repo's established convention — but since a dot-sourced file is invisible to the existing settings.json-derived hook-existence checks, added a new hardcoded check (`scripts/check-review-gate-lib-presence.sh`, called by both `mb doctor` and the CI `template-integrity` job) so this new failure mode doesn't slip through undetected the way `review-reminders*.sh/.ps1` themselves briefly did.
+
 ## [1.2.1] — 2026-07-04 (template scaffolding gap)
 
 ### Fixed
