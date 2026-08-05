@@ -519,7 +519,9 @@ invoke_init() {
                   update-reviewed.sh update-reviewed.ps1 \
                   pre-push-check.sh pre-push-check.ps1 \
                   delegation-depth-check.sh delegation-depth-check.ps1 \
-                  pre-compact-check.sh pre-compact-check.ps1; do
+                  pre-compact-check.sh pre-compact-check.ps1 \
+                  review-reminders.sh review-reminders.ps1 \
+                  review-reminders-post.sh review-reminders-post.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
 
@@ -1701,6 +1703,10 @@ invoke_upgrade() {
         "scripts/delegation-depth-check.ps1"
         "scripts/pre-compact-check.sh"
         "scripts/pre-compact-check.ps1"
+        "scripts/review-reminders.sh"
+        "scripts/review-reminders.ps1"
+        "scripts/review-reminders-post.sh"
+        "scripts/review-reminders-post.ps1"
         # Slash commands — governance workflow commands from templates, not project-specific
         ".claude/commands/code-review.md"
         ".claude/commands/feature-dev.md"

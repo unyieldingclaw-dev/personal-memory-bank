@@ -36,6 +36,13 @@ for f in CONTRACTS-GUIDE.md HOOKS-GUIDE.md; do
   assert_file_exists "$TMPDIR_INIT/docs/$f" "mb init creates docs/$f"
 done
 
+# review-reminders.sh/.ps1/-post.sh/-post.ps1 are invoked directly by templates/.claude/settings.json
+# but were missing from the init copy loop's script allowlist -- mb init shipped a settings.json
+# referencing hook scripts that were never actually copied into scripts/.
+for f in review-reminders.sh review-reminders.ps1 review-reminders-post.sh review-reminders-post.ps1; do
+  assert_file_exists "$TMPDIR_INIT/scripts/$f" "mb init creates scripts/$f"
+done
+
 # ── Re-init: already initialized ─────────────────────────────────────────────
 echo ""
 echo "--- re-init: already initialized ---"
