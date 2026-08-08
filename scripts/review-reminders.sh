@@ -33,11 +33,17 @@
 # hook detects the relevant git ref didn't move and reissues the marker, so a rejected
 # attempt (e.g. a separate pre-commit hook) doesn't force a pointless re-review.
 #
-# WHY match raw stdin instead of extracting the "command" field: a `grep -o
-# '"command":"[^"]*"'` extraction breaks on any JSON-escaped quote inside the command,
-# silently truncating the match and letting anything after it through unchecked. Since
-# "git commit"/"git push" only plausibly appear in this hook's stdin inside the command
-# field, matching the raw payload directly is robust to that escaping edge case.
+# WHY extract tool_input.command via python3 instead of matching raw stdin: raw-payload
+# matching treats ANY occurrence of "git commit"/"git push" ANYWHERE in the JSON as if it were
+# the command being run -- including tool_input.description, which Claude Code populates from
+# the Bash tool's own "description" parameter. Reproduced directly: a Bash call running
+# `ls -la` with description "prep before git commit review" was denied as an unreviewed commit,
+# even though no commit was ever attempted. extract_command() below parses the actual
+# tool_input.command value via python3 and the case match runs against that value alone. A
+# `grep -o '"command":"[^"]*"'` extraction was considered and rejected: it breaks on any
+# JSON-escaped quote inside the command, silently truncating the match. Falls back to matching
+# raw stdin, exactly like before this fix, only when python3 is missing or the JSON fails to
+# parse -- never a silent bypass of the gate.
 #
 # WHY hookSpecificOutput.permissionDecision, not top-level "continue": top-level
 # {"continue": false} only stops the agent's turn *after* the tool call has already run --
@@ -101,6 +107,35 @@ diff_hash() {
 input=$(cat 2>/dev/null)
 [ -z "$input" ] && exit 0
 
+# WHY sys.stdout.write, not print: print() adds a trailing newline that becomes \r\n on
+# Windows python3 builds, requiring a `tr -d '\r'` cleanup step. write() with no newline
+# sidesteps the issue entirely -- nothing to strip.
+#
+# WHY check python3's own exit code, not just whether output is empty: tool_input.command CAN
+# legitimately be empty (JSON parsed fine but the field is genuinely absent, e.g. a non-Bash
+# tool call) -- that must fall through to "no match" rather than the raw-stdin fallback. Only a
+# python3 failure (missing binary, malformed JSON raising in json.loads) should trigger
+# fallback. Capturing python3's exit code directly, with no pipe in between, keeps the two
+# failure modes distinguishable.
+extract_command() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    extracted=$(python3 - "$input" <<'PYEOF' 2>/dev/null
+import sys, json
+data = json.loads(sys.argv[1])
+sys.stdout.write(data.get("tool_input", {}).get("command", ""))
+PYEOF
+)
+    [ $? -ne 0 ] && return 1
+    printf '%s' "$extracted"
+    return 0
+}
+
+if cmd=$(extract_command); then
+    match_target="$cmd"
+else
+    match_target="$input"
+fi
+
 root=$(git rev-parse --show-toplevel 2>/dev/null)
 [ -z "$root" ] && exit 0
 
@@ -123,7 +158,7 @@ consume_marker() {
     printf '%s' "$content"
 }
 
-case "$input" in
+case "$match_target" in
     *'git commit'*)
         expected=$(diff_hash HEAD)
         marker="$root/.claude/.code-review-ok"
