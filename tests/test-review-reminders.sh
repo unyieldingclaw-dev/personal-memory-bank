@@ -141,4 +141,61 @@ else
   echo "--- merge gate PowerShell tests: SKIPPED (pwsh not installed on this machine) ---"
 fi
 
+# ── field-extraction fix: a trigger phrase outside tool_input.command doesn't false-gate ────
+# WHY this test exists: review-reminders.sh used to `case "$input" in *'git commit'*)` against
+# the RAW stdin JSON payload, not the extracted command value -- so any occurrence of "git
+# commit"/"git push" anywhere in the payload (e.g. the Bash tool's own "description" field)
+# falsely triggered the gate for a command that was never a commit or push at all. Reproduced
+# directly: a real Bash call running `ls -la` with description "prep before git commit review"
+# was denied as an unreviewed commit.
+echo ""
+echo "--- field-extraction fix: trigger phrase in tool_input.description does not false-gate a commit ---"
+# WHY guarded on python3: extract_command() only extracts tool_input.command (and so only fixes
+# this false-gate) when python3 is available -- without it, the fallback is raw-stdin matching,
+# i.e. the pre-fix behavior this test exists to catch. Asserting unconditionally would hard-fail
+# on a python3-less machine for the documented fallback, not a regression.
+if command -v python3 >/dev/null 2>&1; then
+  # WHY rm -f first: without it, this test's outcome depends on whichever review-ok marker state
+  # an earlier test in this file happened to leave behind -- an absent-or-stale marker would deny
+  # regardless of the bug, and a leftover-valid one would allow regardless of the fix, either way
+  # telling us nothing about false-gating specifically. Removing the marker up front guarantees
+  # any deny observed here comes from the case statement wrongly matching the description text,
+  # not from incidental marker state.
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+  resp=$(printf '{"tool_input":{"command":"ls -la","description":"prep before git commit review"}}' \
+    | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny an unrelated command just because \"git commit\" appears in tool_input.description"
+else
+  echo "SKIPPED (python3 not installed on this machine — extract_command() fails open to raw-stdin matching, which cannot fix this false-gate by design)"
+fi
+
+echo ""
+echo "--- field-extraction fix: trigger phrase in tool_input.description does not false-gate a push ---"
+if command -v python3 >/dev/null 2>&1; then
+  rm -f "$TMPDIR_RR/.claude/.change-review-ok"
+  resp=$(printf '{"tool_input":{"command":"ls -la","description":"note: run git push later"}}' \
+    | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny an unrelated command just because \"git push\" appears in tool_input.description"
+else
+  echo "SKIPPED (python3 not installed on this machine — extract_command() fails open to raw-stdin matching, which cannot fix this false-gate by design)"
+fi
+
+# ── field-extraction fix: a real git commit with no valid marker is still gated ─────────────
+echo ""
+echo "--- field-extraction fix: a real git commit with no valid marker is still gated ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+resp=$(invoke_hook "review-reminders.sh" "git commit -m unreviewed")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still denies a real git commit with no valid review-ok marker present"
+
+# ── field-extraction fix: malformed JSON falls back to raw-stdin matching, not fail-open ────
+# WHY this test exists: extracting tool_input.command via python3 must not turn malformed-JSON
+# input into a silent bypass of the gate -- the fix falls back to the old raw-stdin match in
+# that case, preserving today's behavior rather than fail-opening a real git commit through.
+echo ""
+echo "--- field-extraction fix: malformed JSON still falls back to raw-stdin matching (real commit still gated) ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+resp=$(printf 'not valid json but contains git commit anyway' \
+  | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh falls back to raw-stdin matching on malformed JSON, still catching a literal git commit"
+
 print_summary
