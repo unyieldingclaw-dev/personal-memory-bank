@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-08-04
+last-reviewed: 2026-08-05
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -15,6 +15,38 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-08-05 — Review-Gate Confirm-Step: First Live/Whole-Branch Review, Findings Fixed
+
+- ✅ Ran `/change-review --base docs/branch-protection-rollout` against the full
+  `claude/strange-bun-9a0ffc` branch (10 commits) — both as the pre-merge whole-branch review and
+  as the first live exercise of the 2026-07-27/28 review-gate confirm-step system reviewing itself.
+  Found one Blocking finding plus 4 lower-severity findings; all fixed across 3 review rounds,
+  committed as `165faa5` (verified: 8 files, +397/-96).
+- ✅ **Blocking finding fixed:** `change-review.md`'s Step 4.5 (marker-write) and Job 9 item 3
+  (review-log write) hardcoded the confirmation hash to `git diff origin/main...HEAD`, ignoring
+  `--base <ref>`/`--pr <number>`/`--diff <path>`. Under any non-default invocation — including the
+  review run that found this — the marker written at confirm time could authorize a different,
+  larger diff than what was actually reviewed. Both steps now replay whatever Step 1 actually used
+  to gather the diff. Same bug class fixed by analogy in `code-review.md`.
+- ✅ **Non-blocking fixes:** review-log filename collisions now append `-2`/`-3` instead of
+  overwriting; ACR backend enum gained a "timed out" value + Job 7 timeout handling; the confirm
+  step's latent dependency on `extract_command()` (2026-07-27 fix) is now documented in
+  `docs/HOOKS-GUIDE.md`. One finding (TOCTOU between reviewer verdict and user confirmation) was
+  assessed as needing no code fix — accepted as a documented limitation.
+- ✅ Two further independent review rounds on the fixes themselves caught and fixed 4 more bugs:
+  missing PowerShell branches, ambiguous bracket notation, `--pr` diff re-fetch drift (now saved
+  once to a fixed literal path, `.claude/.change-review-pr-diff.tmp`), and a bash/PowerShell
+  shell-variable-persistence mismatch (shell state doesn't persist across separate tool calls in
+  this environment) — fixed via that same fixed literal path.
+- ✅ `templates/docs/HOOKS-GUIDE.md` was found out of sync with `docs/HOOKS-GUIDE.md`; brought back
+  in sync (trimmed-mirror form, per that file's existing SYNC NOTE convention — not byte-identical
+  by design, unlike the TEMPLATE_OWNED script mirrors).
+- Review-log: `docs/review-log/2026-07-28-6caa6ea-change-review.md`.
+- Reported by a separate session (`strange-bun-9a0ffc`, working in that worktree) via cross-session
+  message, since it can't write `memory-bank/` from a subworktree per this file's own rule.
+  Independently re-verified against actual repo state (`git show 165faa5 --stat`, branch
+  membership, review-log content) before this entry was written, not taken on faith.
 
 ## 2026-08-04 — Review-Gate Hook Lib Dedup
 
