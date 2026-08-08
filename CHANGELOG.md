@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+- `scripts/session-claims.sh`/`.ps1`: coordinate multiple Claude Code sessions working the same
+  repo at once via a gitignored, self-pruning `.claude/session-claims.json` registry —
+  `prune`/`list`/`claim`/`release`/`force-clear`/`notify`, `mkdir`-based lock with 30s staleness
+  theft, atomic writes. Mirrored into `templates/scripts/`.
+- New `SessionStart` hook (`notify`) auto-surfaces live claims at session start; silent when
+  there's nothing to report.
+- Two new `mb doctor` checks: malformed `session-claims.json`, stuck `session-claims.lock`
+  directory.
+- `docs/SESSION-CLAIMS-GUIDE.md`; `[NS-N]` stable-id convention for `activeContext.md`'s Next
+  Steps list, documented in `standards/MEMORY-BANK.md` and wired into `CLAUDE.md`'s
+  session-start/handoff protocol.
+
 ## [1.2.1] — 2026-08-03 (mb.ps1 review-reminders export gap)
 
 ### Fixed

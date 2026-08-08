@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-08-05
+last-reviewed: 2026-08-08
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -15,6 +15,72 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-08-08 — Concurrent Session Claims Feature Shipped
+
+- ✅ Implemented `docs/superpowers/specs/2026-08-04-concurrent-session-claims-design.md` via
+  `superpowers:writing-plans` (`docs/superpowers/plans/2026-08-04-concurrent-session-claims.md`,
+  13 tasks) → `superpowers:subagent-driven-development`, worktree branch
+  `worktree-concurrent-session-claims`, based on `docs/branch-protection-rollout`. 23 commits.
+- ✅ **Mechanism:** `.claude/session-claims.json` (gitignored, canonical in the main worktree
+  only) lets multiple Claude Code sessions working this repo at once coordinate on which Next
+  Steps item each is working — a session reading a handoff can see what's already claimed
+  instead of duplicating it. `mkdir`-based lock with 30s staleness theft, atomic
+  temp-file-then-rename writes, self-pruning (no manual cleanup, no unbounded growth). Six CLI
+  actions (`prune`/`list`/`claim`/`release`/`force-clear`/`notify`), independently implemented
+  in `scripts/session-claims.sh` (bash + python3) and `scripts/session-claims.ps1` (PowerShell,
+  no python3 dependency) with full behavioral parity, mirrored byte-identical into
+  `templates/scripts/`. A new `SessionStart` hook (`notify`, first one in this project) surfaces
+  live claims automatically — silent when there's nothing to report. Two new `mb doctor` checks
+  (malformed claims file, stuck lock directory). `activeContext.md`'s Next Steps items got
+  stable `[NS-N]` ids so claims have something durable to reference instead of fuzzy-matched
+  free text. New guide: `docs/SESSION-CLAIMS-GUIDE.md`; protocol wired into
+  `standards/MEMORY-BANK.md` and `CLAUDE.md`'s session-start and handoff steps.
+- ✅ **Real bugs found and fixed across the build, each via TDD + two-stage review** (spec
+  compliance then code quality, some through 2-3 rounds): a `set -u` crash/infinite-hang on a
+  dangling trailing CLI flag (bash) discovered mid-Task-2 and retrofitted into the plan itself so
+  Task 3 didn't inherit it; a PowerShell array-unwrap bug where a 0/1-element claims list
+  serialized as `null`/a bare object instead of `[]`/`[...]` — found once in the general case,
+  then again specifically in `notify`'s independent code path, where it briefly **corrupted the
+  live claims file** (silently destroyed a legitimate claim) since `notify` runs unattended from
+  the new `SessionStart` hook on every session start; missing required-field validation on the
+  PowerShell twin's `release`/`force-clear`; an em-dash literal that bash wrote as an invalid
+  UTF-8 byte and PowerShell silently substituted with a plain hyphen on this Windows environment,
+  so the two "twin" tools' output didn't even match each other; an empty (0-byte) claims file
+  silently passing PowerShell's validity check; an unguarded TOCTOU race in `mb doctor`'s
+  PowerShell lock-age check that could throw an uncaught exception and abort the rest of `mb
+  doctor`; and — found only in the final whole-branch review, after every individual task had
+  already passed its own review — PowerShell silently mutating every claim's timestamps from UTC
+  to the local machine's timezone offset on every re-save (`list`/`prune`/`release`/
+  `force-clear`/`notify`), via `ConvertFrom-Json`'s automatic `[DateTime]` coercion; fixed by
+  forcing both timestamp fields back to plain UTC ISO-8601 strings immediately after parse, with
+  a byte-identical (not just idempotent) round-trip against bash's own timestamp format.
+- ✅ **Process notes worth remembering:** this repo's `/code-review` commit gate blocked every
+  single agent-run commit in this build (as designed) — the user ran each `git commit` directly
+  in their own terminal per this session's established workaround, all ~23 commits. A design-spec
+  correction was needed at planning time (`resolve_cd_root()` doesn't apply to a script with no
+  gated command to extract a path from; `git rev-parse --git-common-dir` — already used by
+  `mb.sh`'s `cmd_commit` — was the right primitive) and is documented at the top of the plan
+  file, not just fixed silently. A cross-session message arrived mid-build from a different
+  session (`strange-bun-9a0ffc`, unrelated review-gate work) asking for a memory-bank update —
+  handled from the main checkout after independent verification (`git show --stat`), not taken on
+  faith; see the 2026-08-05 entry below for that content.
+- Full test coverage: `tests/test-session-claims.sh` (51 assertions, including cross-tool
+  bash↔PowerShell interop and several corruption/hang/crash regression checks), 2 new assertions
+  in `tests/test-mb-doctor.sh`, both registered in `tests/run.sh`. Full suite green throughout.
+- **Task 13 (the `[NS-N]` retrofit) intentionally landed on `docs/branch-protection-rollout`
+  directly, not this feature's worktree branch** — `memory-bank/activeContext.md` can never be
+  committed from a subworktree per this file's own rule, so that one task ran from the main
+  checkout (commit `27fc371`) while the other 12 ran on the worktree branch. A final
+  whole-branch reviewer initially flagged this as a "Critical: task never executed" finding,
+  looking only at the worktree's own branch history — false alarm, corrected after independent
+  verification; worth remembering as a real failure mode for any future whole-branch review of a
+  multi-worktree feature.
+- **Not yet done as of this entry:** merge/PR decision for
+  `worktree-concurrent-session-claims` (`finishing-a-development-branch` not yet run), and an
+  `/ai-review` pass has not yet been run against the branch (agreed with the user to run it as
+  part of the finishing sequence, on top of the `/code-review`/`/change-review` gates already
+  satisfied per-commit).
 
 ## 2026-08-05 — Review-Gate Confirm-Step: First Live/Whole-Branch Review, Findings Fixed
 
