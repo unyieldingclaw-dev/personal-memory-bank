@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-08-08
+last-reviewed: 2026-08-10
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,7 +16,31 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-08-08
+## Last Updated: 2026-08-10
+
+## Memory Bank Freshness Hook — Designed, Spec Committed (2026-08-10)
+
+Brainstormed and committed
+`docs/superpowers/specs/2026-08-10-memory-bank-freshness-hook-design.md` (`3e475ae`) in response to a
+reported incident in `ai-code-review-agent` (a PMB-managed but stale repo, `.pmb-version: 1.1.1`):
+six significant units of work landed there in one session with zero `memory-bank/` writes, because
+the CLAUDE.md instruction to update memory-bank after significant work is purely advisory with no
+forcing function, unlike the hook-enforced commit-review gate.
+
+**Design, in short:** new `TEMPLATE_OWNED` hook pair (`scripts/memory-bank-freshness.sh`/`.ps1`),
+`PreToolUse` on `git commit`, stateless `git log` lookback (no persistent state file, deliberately —
+see spec's Out of Scope for why). Hybrid enforcement: warns on 1-2 consecutive commits with no
+`memory-bank/` touch, hard-blocks on the 3rd. Explicitly skips inside git worktrees (this repo's own
+dominant workflow never touches memory-bank/ from a worktree) and exempts a commit that itself
+touches `memory-bank/` (via `git diff HEAD`, matching `Get-CommitDiffHash`'s existing precedent so
+`git commit -am` is handled correctly). Full rationale for every rejected alternative (pure warn, pure
+block, size-weighted streak, covering `git push`/`gh pr merge`/`npm publish`, a persistent counter
+file) is in the spec itself.
+
+**Not yet implemented.** Next step: `superpowers:writing-plans` to turn the spec into a task-by-task
+plan, then build via `superpowers:subagent-driven-development` — same pipeline as every other hook
+change in this file's history. Once shipped here, downstream repos (including
+`ai-code-review-agent`, the one where the incident happened) only get it on their next `mb upgrade`.
 
 ## Concurrent Session Claims — Implemented, Post-Review Fixes Landed (2026-08-08)
 
@@ -470,6 +494,9 @@ today for the first time all session. See `progress.md` for full detail.
 10. [NS-10] **mb plan workflow, revisited (2026-07-12):** confirmed `/feature-dev` Phase 3 is designed to use `.claude/plans/` → `mb plan promote` → `docs/plans/`, but `/superpowers:writing-plans` (used for all of this session's planning work, and 21 of 22 prior plans) is not wired to it and writes directly to `docs/superpowers/plans/` instead. Investigated retrofitting frontmatter + an `mb doctor` check to reconcile this — declined (see `progress.md` 2026-07-12 entry): no actual incident behind it, and `activeContext.md`/`progress.md` + the `PreCompact` gate already cover the real risk (silent staleness). Not planned as future work unless a concrete need surfaces.
 11. [NS-11] **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
 12. [NS-12] **Fleet-wide `mb` command gap (2026-07-13):** no `mb upgrade-all`/project registry exists — confirmed while auditing the fleet (see above). Worth a real design pass if drift like this recurs, but not building it speculatively off one audit; matches this file's existing "no incident, no proactive build" stance on the plan-promote item above.
+13. [NS-13] **Write the implementation plan for the memory-bank freshness hook** (spec:
+    `docs/superpowers/specs/2026-08-10-memory-bank-freshness-hook-design.md`, committed `3e475ae`) via
+    `superpowers:writing-plans`, then build via `superpowers:subagent-driven-development`. Not started.
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 

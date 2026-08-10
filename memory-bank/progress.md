@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-08-08
+last-reviewed: 2026-08-10
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -15,6 +15,38 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-08-10 — Memory Bank Freshness Hook: Designed, Spec Committed
+
+- ✅ Ran `superpowers:brainstorming` in response to a reported incident in `ai-code-review-agent`:
+  six significant units of work (bug fixes, a PR merge, an npm publish, a CI security fix, an audit,
+  audit-fix commits) landed in one session with zero `memory-bank/` writes, because CLAUDE.md's
+  "update memory-bank after significant work" rule is purely advisory — unlike the hook-enforced
+  commit-review gate, nothing structurally checks it.
+- ✅ Verified `ai-code-review-agent` is genuinely PMB-managed (`.pmb-version: 1.1.1`, `TEMPLATE_OWNED`
+  hooks present) but stale — confirming a fix scoped to `personal-memory-bank` alone wouldn't reach
+  where the incident happened; settled scope as `TEMPLATE_OWNED`, shipped via `mb upgrade`.
+- ✅ Design settled through several rounds of direct pushback rather than defaults: hybrid
+  warn-then-block (pure warn doesn't out-force the session-momentum problem that caused the incident;
+  pure block on a fuzzy heuristic risks hollow "touch the file" writes or `--no-verify`-style
+  bypasses), stateless `git log` lookback over a persistent counter file (avoids the corruption-class
+  bugs `concurrent-session-claims` needed several rounds to fix in a comparable state file), commit-only
+  trigger (`git push` is redundant with commit-time, `gh pr merge` is already unconditionally denied
+  for the agent elsewhere), and an explicit exemption for commits made inside a git worktree (this
+  repo's own dominant workflow never touches `memory-bank/` from a worktree by design — a naive streak
+  check would have misfired on nearly every commit this repo itself makes).
+- ✅ **Two real bugs caught by re-reading the repo's own existing code before finalizing, not by
+  guessing:** the current-commit exemption originally checked `git diff --cached --name-only`, which
+  would miss a `memory-bank/` edit picked up by `git commit -am` (unstaged but tracked) — fixed to
+  `git diff HEAD --name-only`, matching `_review-gate-lib.ps1`'s own `Get-CommitDiffHash` precedent.
+  Also surfaced a real sharp edge in the fast-forward-merge interaction: a worktree branch's commits
+  (legitimately exempt while in the worktree) carry their full streak onto main once merged, so if the
+  habitual post-merge memory-bank commit is skipped even once, the next unrelated main-checkout commit
+  jumps straight to a hard block with no graduated warning first. Decided this is intended, not a
+  defect — documented explicitly in the spec (and the deny message itself) rather than silently
+  building around it.
+- ✅ Spec committed: `docs/superpowers/specs/2026-08-10-memory-bank-freshness-hook-design.md` (`3e475ae`).
+- 📌 Not yet implemented. Next: `superpowers:writing-plans` → `superpowers:subagent-driven-development`.
 
 ## 2026-08-08 — Concurrent Session Claims Feature Shipped
 
