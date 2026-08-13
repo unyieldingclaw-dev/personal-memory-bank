@@ -16,6 +16,54 @@ lineage: []
 
 # Progress
 
+## 2026-08-12 — Review-Gate Layered Enforcement: Spec Written, Committed, Fixed Twice on Re-Verification
+
+- ✅ Ran `superpowers:brainstorming` after the user directly objected to this repo's own routine
+  workaround (handing `git commit`/`git push` commands to the user's terminal when the self-attestation
+  classifier blocks the agent) on the grounds that it silently bypasses the review-gate hook.
+- ✅ Investigation found the bypass is structural, not incidental: `review-reminders.sh`/`.ps1` is a
+  `PreToolUse` hook, invisible by construction to anything not run through the agent's own Bash tool.
+  Checked every other layer for a backstop and found none: `.githooks/pre-commit`/`pre-push` fire
+  regardless of invoker but check unrelated things (confirmed via direct grep — zero reference to the
+  review marker anywhere in `.githooks/`); CI/branch-protection on `main` exists but checks nothing
+  about review; `docs/review-log/` was assumed to exist (based on stale memory-bank narrative about
+  `claude/strange-bun-9a0ffc`, never merged here) but doesn't — confirmed by direct file check, a real
+  correction mid-conversation, not just research.
+- ✅ Design: three enforcement layers (CC hook downgraded to non-consuming peek; `.githooks/`
+  promoted to sole marker consumer; new CI required-check as the only actually-unbypassable backstop)
+  plus a new durable `docs/review-log/` record with a recorded HEAD-SHA field enabling
+  rebase/squash-tolerant containment checking, plus a separate per-invocation log distinguishing
+  "reviewed" from "attempted but never finished."
+- ✅ Spec committed `docs/superpowers/specs/2026-08-12-review-gate-layered-enforcement-design.md`
+  (`f2cec79`).
+- 🔴 **Two re-verification passes, both explicitly requested by the user, both found real bugs:**
+  (1) mid-design, a CI containment check that would have counted a *rejected* review (Request
+  Changes/Needs Discussion) as passing coverage, since it only checked "does an entry exist," not its
+  verdict — fixed to scan the findings table directly for `Blocking` rows rather than trust a summary
+  field, per this repo's own precedent for exactly that failure mode (the 2026-07-16 propagation bug).
+  (2) after commit, a full re-read pass found three more: the invocation-start log had no actual file
+  path or Files-Changed entry; a step-ordering mismatch in `code-review.md` (Step 1 doesn't know scope
+  yet, Step 2 does); and — the most consequential catch — a single shared `INVOCATIONS.log` file that
+  would have collided constantly across this repo's own many-parallel-worktree workflow, the same class
+  of bug `concurrent-session-claims` needed several rounds to fix in a comparable state file. Fixed by
+  switching to one uniquely-named file per invocation, matching `docs/review-log/`'s existing
+  collision-free pattern. Committed `b47db8f`.
+- ✅ Explicitly disclosed rather than hidden: `--no-verify` and an unset `core.hooksPath` both fully
+  defeat the git-hook layer for anyone (not just the agent) — only the CI layer is genuinely
+  unbypassable, and it's fleet-wide-real only for `personal-memory-bank`/`ai-code-review-agent` today.
+  This design closes the structural invoker-switching bypass; it explicitly does not and cannot close
+  the deeper LLM self-attestation trust problem (a sufficiently adversarial or broken agent can still
+  fabricate both the marker and the review-log entry) — same residual-risk acceptance this repo has
+  established elsewhere.
+- 📌 Same session, adjacent but separate: recorded the ACR fleet-version-drift incident (see entry
+  below) and resolved the "`mb upgrade` shouldn't just look at date" question — confirmed
+  `TEMPLATE_OWNED` sync is already unconditional; the real gap is nothing triggers a run, tracked as
+  `[NS-14]`, deliberately not folded into this spec's scope.
+- 📌 Not yet done: user confirmation that the spec is final, then `superpowers:writing-plans` →
+  `superpowers:subagent-driven-development`. The original docs-path review-friction exemption that
+  started this conversation remains deferred, not dropped — revisit once real universal enforcement is
+  live and its friction profile is known.
+
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
 - 📌 Cross-session report from `ai-code-review-agent`: that repo drifted to `.pmb-version: 1.1.1`

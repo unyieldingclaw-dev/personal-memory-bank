@@ -18,6 +18,53 @@ lineage: []
 
 ## Last Updated: 2026-08-12
 
+## Review-Gate Layered Enforcement — Spec Committed (2026-08-12)
+
+Design spec `docs/superpowers/specs/2026-08-12-review-gate-layered-enforcement-design.md` committed
+(`f2cec79`, then fixed on re-verification at `b47db8f`). Grew out of a direct user objection to this
+repo's own routine workaround — handing exact `git commit`/`git push` commands to the user's terminal
+whenever the self-attestation classifier blocks the agent's own marker-write — on the grounds that it
+silently bypasses the review-gate hook, which only ever sees Bash calls the agent itself makes.
+
+**Core finding:** none of this repo's other enforcement layers fill that gap. Real git hooks
+(`.githooks/pre-commit`/`pre-push`, active via `core.hooksPath`) fire regardless of invoker but check
+unrelated things (secrets, conflicts, `handoff.md`). CI/branch-protection on `main` exists but checks
+nothing about review. `docs/review-log/` — assumed to exist based on stale memory-bank narrative about
+`claude/strange-bun-9a0ffc` — doesn't exist on this branch at all; the only artifact is a gitignored,
+single-use marker consumed before the gated command even runs.
+
+**Design (three enforcement layers + a durable record):** CC `PreToolUse` hook downgraded to a
+non-consuming peek (fast feedback only); `.githooks/pre-commit`/`pre-push` promoted to sole
+authoritative marker consumer (fires for agent and user alike); a new required CI check as the only
+actually-unbypassable backstop, verifying every commit in a PR is covered by a passing, git-tracked
+`docs/review-log/` entry (containment-checked via a recorded HEAD-SHA, tolerant of squash/rebase) —
+plus a new per-invocation log (`docs/review-log/invocations/`, one file per attempt, deliberately not a
+shared append-only file) recording review attempts independent of whether they ever reach a verdict.
+
+**Explicitly disclosed, not hidden, limitations:** `--no-verify` and an unset `core.hooksPath` both
+fully defeat the git-hook layer for anyone — only the CI layer is genuinely unbypassable, and that
+layer only exists fleet-wide for `personal-memory-bank`/`ai-code-review-agent` today. A fully
+adversarial or badly broken agent can still fabricate both the marker and the review-log entry — this
+design closes the *structural* bypass (invoker switching), not the deeper self-attestation trust
+problem, which is explicitly out of scope.
+
+**Two re-verification passes each found real bugs before this was declared done** — first, a CI
+containment check that would have treated a *rejected* review as coverage (checking "entry exists"
+instead of "entry exists AND has zero Blocking findings, scanned from the table directly, not a
+trusted summary field"); second, on a follow-up deep-dive request, three more: no concrete file path
+for the invocation log, a step-ordering mismatch in `code-review.md` (Step 1 doesn't know scope yet),
+and a single shared log file that would have collided constantly across this repo's own
+many-parallel-worktrees workflow — fixed by matching `docs/review-log/`'s existing collision-free
+per-entry naming instead.
+
+**Not yet done:** implementation plan (next step: `superpowers:writing-plans`), then
+`superpowers:subagent-driven-development`. User has not yet confirmed the spec is final as of this
+entry — check before assuming the plan step has started.
+
+**Deferred, not dropped:** the original docs-path review-friction exemption that started this
+conversation. Revisit once this ships and the real friction profile (universal enforcement, not just
+agent-run commits) is known rather than hypothetical.
+
 ## Fleet Version Drift Incident — ACR Found 2 Versions Behind (2026-08-12)
 
 Cross-session report from an `ai-code-review-agent` session: that repo's `.pmb-version` reads `1.1.1`
@@ -536,11 +583,18 @@ today for the first time all session. See `progress.md` for full detail.
     above — ACR ran real work 2 PMB versions stale before anyone noticed, and `mb doctor`'s existing
     version-mismatch WARN wasn't what caught it. This is the concrete recurrence [NS-12] said would
     justify a real design pass on a fleet-wide `mb` command/registry — worth revisiting that stance now
-    rather than waiting for a third instance. Also carries an unscoped user request ("`mb upgrade`
-    should not just look at date, same with `setup`") whose intended mechanism isn't yet confirmed —
-    clarify before designing. Blocked on: ACR resyncing first (out of this session's reach per the
-    cross-repo write boundary), so this can't be *fixed* from a PMB session alone, but the detection-gap
-    design work can start independently.
+    rather than waiting for a third instance. The "`mb upgrade` should not just look at date" question
+    is now resolved, not open: verified against `mb.ps1` that `TEMPLATE_OWNED` sync is already
+    unconditional (no version/date gate on what gets copied) — the actual gap is that nothing *triggers*
+    a run, and the one passive version check that exists (`Show-Doctor` ~line 1206) can't be fully
+    trusted either, since PMB's own `VERSION` can trail unreleased work (true right now). Blocked on:
+    ACR resyncing first (out of this session's reach per the cross-repo write boundary), so this can't
+    be *fixed* from a PMB session alone, but the detection-gap design work can start independently.
+15. [NS-15] **Write the implementation plan for review-gate layered enforcement** (spec:
+    `docs/superpowers/specs/2026-08-12-review-gate-layered-enforcement-design.md`, committed `f2cec79`,
+    fixed on re-verification `b47db8f`) via `superpowers:writing-plans`, then build via
+    `superpowers:subagent-driven-development`. User had not yet confirmed the spec as final as of this
+    entry — confirm before assuming this has started.
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 
