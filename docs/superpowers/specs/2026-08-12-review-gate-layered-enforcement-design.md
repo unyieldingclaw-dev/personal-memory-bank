@@ -113,9 +113,25 @@ the presence of a `verdict: Approve` line alone.
 
 ### Component: invocation-start log
 
-Distinct from the review-log completion entries: `/code-review` Step 1 and `/change-review` Step 1 each
-append a line (timestamp, actor, scope) as their literal first action, before any findings work begins
-— independent of whether the review ever reaches a verdict. This is what lets a later reader tell
+Distinct from the review-log completion entries: `/code-review` and `/change-review` each write a
+small JSON file recording the invocation attempt (timestamp, actor, scope) to
+`docs/review-log/invocations/<epoch-ms>-<random-6char>.json` the moment scope is known, before any
+actual findings work begins. **One file per invocation, not one shared growing log** — a single
+append-only file would collide constantly across this repo's own dominant workflow of many parallel
+worktree branches independently invoking review commands, the exact class of shared-mutable-state
+contention `concurrent-session-claims` needed several bug-fix rounds to handle for a comparable file
+(`memory-bank/progress.md`, 2026-08-08 entry), and the same reason the memory-bank-freshness design
+rejected a persistent state file in favor of a stateless walk. Naming each entry uniquely (timestamp +
+random suffix, since no diff/hash exists yet at invocation-start time) preserves the same
+never-collide property `docs/review-log/`'s completion entries already have by construction:
+
+- `/change-review`: end of Step 1 ("Determine the diff") — scope is established there, as that step's
+  own first action.
+- `/code-review`: end of Step 2 ("Determine Scope") — **not** Step 1 ("Load Review Contract"), which
+  doesn't know scope yet. Still well before Step 4's domain-subagent dispatch, the actual "findings
+  work" this log exists to bound.
+
+Written independent of whether the review ever reaches a verdict — this is what lets a later reader tell
 "nobody reviewed this" apart from "someone tried and it silently failed" (subagent crash, session drop,
 classifier interference — all documented, recurring failure modes in this repo's own history).
 
@@ -270,8 +286,9 @@ needs explicit user action (`gh api` or the GitHub UI).
 | `templates/.githooks/*` | Mirrored, `TEMPLATE_OWNED` |
 | `scripts/review-reminders.sh` / `.ps1` | Commit/push branches: consume-and-deny → peek-and-deny; `gh pr merge` branch unchanged |
 | `templates/scripts/review-reminders.sh` / `.ps1` | Mirrored |
-| `.claude/commands/code-review.md` | Step 1: invocation-start log write. Step 5: review-log write (recorded SHA field) + explicit `git add` staging, before marker write |
-| `.claude/commands/change-review.md` | Step 1: invocation-start log write. Job 9: review-log write (recorded SHA field) + explicit `git add` staging, before marker write |
+| `docs/review-log/invocations/` | New directory — git-tracked, one uniquely-named JSON file per review invocation attempt (never a shared/appended file, to avoid cross-worktree merge contention) |
+| `.claude/commands/code-review.md` | End of Step 2: invocation-start log write. Step 5: review-log write (recorded SHA field) + explicit `git add` staging, before marker write |
+| `.claude/commands/change-review.md` | End of Step 1: invocation-start log write. Job 9: review-log write (recorded SHA field) + explicit `git add` staging, before marker write |
 | `templates/claude-commands/code-review.md` / `change-review.md` | Mirrored |
 | `.github/workflows/pmb-health.yml` (or new workflow) | New required-check job: containment verification per commit + final-diff coverage |
 | `docs/review-log/README.md` | New — documents the format, including the recorded-SHA field |
