@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-08-10
+last-reviewed: 2026-08-12
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -15,6 +15,19 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
+
+- 📌 Cross-session report from `ai-code-review-agent`: that repo drifted to `.pmb-version: 1.1.1`
+  against PMB's `1.2.1`+unreleased, missing `_review-gate-lib.ps1`, `Resolve-CdRoot`, and the
+  `gh pr merge` deny in its `review-reminders.ps1` — ran a 13-task feature under stale governance
+  hooks before it was caught. `mb doctor`'s existing version-mismatch WARN existed the whole time
+  and wasn't what surfaced it. Full detail: `activeContext.md`'s 2026-08-12 entry, `[NS-14]`.
+- 📌 Not independently re-verified from this session (separate repo, cross-repo write boundary).
+  Not yet fixed — ACR hasn't run the real `mb upgrade` yet, blocked on that session's own user
+  go-ahead.
+- 📌 User separately flagged that `mb upgrade`/`mb init` staleness detection "should not just look
+  at date" — mechanism unconfirmed, needs clarification before scoping.
 
 ## 2026-08-10 — Memory Bank Freshness Hook: Designed, Spec Committed
 

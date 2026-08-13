@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-08-10
+last-reviewed: 2026-08-12
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,7 +16,42 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-08-10
+## Last Updated: 2026-08-12
+
+## Fleet Version Drift Incident — ACR Found 2 Versions Behind (2026-08-12)
+
+Cross-session report from an `ai-code-review-agent` session: that repo's `.pmb-version` reads `1.1.1`
+while PMB's own `VERSION` is `1.2.1` plus unreleased work (concurrent-session-claims). Diffing ACR's
+live `scripts/review-reminders.ps1` against PMB's current copy showed it's missing the
+`_review-gate-lib.ps1` extraction entirely, `Resolve-CdRoot` (dispatched-subagent ambient-cwd fix),
+and the unconditional `gh pr merge` deny — ACR ran a real 13-task implementation effort under
+review-gate hooks two versions stale before this was caught. Not independently re-verified from this
+session (separate repo, not reachable without crossing the cross-repo write boundary) — taken from the
+reporting session's own diff, which it performed directly against ACR's live files.
+
+**Root cause of the drift going unnoticed:** `mb doctor`'s existing PMB-version-mismatch check
+(`scripts/mb.ps1` ~line 1214, `[WARN] Project on PMB $projectVersion, local PMB is $localVersion — run
+mb upgrade`) existed the whole time and was not what surfaced this — it's a passive WARN line in
+`doctor`/`status` output, easy to miss unless someone thinks to run it and reads carefully. The
+reporting session's own trigger was separate: its agent misheard "mb upgrade" as an instruction to
+hand-edit memory-bank prose rather than run the actual CLI command, an error only caught when the user
+separately asked it to verify PMB was current.
+
+**Distinct from, but adjacent to, the memory-bank-freshness hook work below:** that hook catches "no
+memory-bank write happened." This is "a downstream repo silently fell behind PMB's own governance-hook
+fixes, with nothing proactively surfacing it." Worth considering as a companion problem, not solved by
+the freshness hook alone.
+
+**Not yet resolved:** ACR has not run the real `mb upgrade` yet — flagged by that session, waiting on
+the user's go-ahead before it touches hooks/settings/scripts. Per this file's own cross-repo write
+boundary rule, this PMB session cannot act on ACR's repo directly; any fix has to run from ACR's own
+session.
+
+**Also flagged by the user, not yet scoped:** "`mb upgrade` should not just look at date. same with
+setup [`mb init`]." Mechanism the user means is not yet confirmed — the actual `.pmb-version` check is
+exact string equality, not date-based; the only date-based logic found so far is the memory-bank
+staleness checks (`last-reviewed` vs `staleness-threshold`) and the update-notifier's 7-day remote-check
+cache TTL, both unrelated to local drift detection. Needs clarification before scoping any fix.
 
 ## Memory Bank Freshness Hook — Designed, Spec Committed (2026-08-10)
 
@@ -497,6 +532,15 @@ today for the first time all session. See `progress.md` for full detail.
 13. [NS-13] **Write the implementation plan for the memory-bank freshness hook** (spec:
     `docs/superpowers/specs/2026-08-10-memory-bank-freshness-hook-design.md`, committed `3e475ae`) via
     `superpowers:writing-plans`, then build via `superpowers:subagent-driven-development`. Not started.
+14. [NS-14] **Fleet version-drift, real incident now (2026-08-12):** see "Fleet Version Drift Incident"
+    above — ACR ran real work 2 PMB versions stale before anyone noticed, and `mb doctor`'s existing
+    version-mismatch WARN wasn't what caught it. This is the concrete recurrence [NS-12] said would
+    justify a real design pass on a fleet-wide `mb` command/registry — worth revisiting that stance now
+    rather than waiting for a third instance. Also carries an unscoped user request ("`mb upgrade`
+    should not just look at date, same with `setup`") whose intended mechanism isn't yet confirmed —
+    clarify before designing. Blocked on: ACR resyncing first (out of this session's reach per the
+    cross-repo write boundary), so this can't be *fixed* from a PMB session alone, but the detection-gap
+    design work can start independently.
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 
