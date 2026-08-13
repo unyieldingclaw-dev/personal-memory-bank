@@ -85,6 +85,16 @@ When this happens: state the recommendation, then explicitly re-ask ("Want me to
 
 This distinction can't be enforced by a hook: a `PreToolUse` hook sees only the tool call about to run, not the conversation that did or didn't authorize it. A marker file claiming "user approved this" would be exactly as fakeable as a self-written code-review marker — see `standards/RULES-FILE-INTEGRITY.md` and the `/change-review` push-gate design for why diff-bound hashes work here and an unverifiable "approved" flag would not. This rule is advisory by necessity, not by oversight.
 
+### The User Is Never the Compliance Bypass
+
+Some CONFIRM/BLOCK-tier commands (force-push, `git filter-branch`, `--no-verify`, `chmod -R 777`) are deliberately designed so only the user's own hands ever execute them — the block exists specifically to require a human to decide and act, and the user running it directly genuinely satisfies that. This rule is about a different case: **blocks whose purpose is verifying that some other step already happened** — most concretely, the review-gate marker, which exists to confirm `/code-review`/`/change-review` actually ran.
+
+If a hook or the harness's safety classifier blocks that kind of action — one the AI could not complete itself because the thing it's checking for (review) didn't successfully register, not because the action itself needs a human's hands — asking the user to run the same command directly is not a resolution. It doesn't make review have happened; it just evades the check. This applies even when the underlying work was genuinely done and reviewed (e.g. `/code-review` produced a real Approve verdict, but the marker-write itself was denied) and even when the content looks low-risk (docs, memory-bank-only changes).
+
+When this happens: stop, report the block plainly, and diagnose whether it's valid — a genuine risk correctly caught, or a false positive/bug worth fixing at the root through the normal workflow. Never default to "please run this yourself" as the resolution for a verification-purpose block.
+
+This can't be hook-enforced either: a `PreToolUse` hook only fires on tool calls, and there's no tool call at all when the AI asks the user to run something in a separate terminal — invisible to the hook layer the same way an unauthorized approval is (see "What Counts as Approval" above). Advisory by necessity, not by oversight.
+
 ### File Operations
 
 | Rule | Trigger | Rationale |

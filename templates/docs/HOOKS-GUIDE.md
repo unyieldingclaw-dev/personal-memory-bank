@@ -30,6 +30,8 @@ Hooks are one layer in a four-layer enforcement stack. Understanding which layer
 
 **Why "was this authorized?" stays advisory, not a hook:** A `PreToolUse` hook sees only the tool call about to run, never the chat turn that did or didn't authorize it — so it can't tell a genuine "yes" from an ambiguous non-answer being misread as one. The tempting fix, a marker file the agent writes after concluding "the user approved this," is exactly as fakeable as a self-written code-review marker, which is why `/code-review` and `/change-review` bind their markers to a SHA-256 of the actual reviewed diff instead of an unverifiable claim. There's no equivalent artifact to hash for "the user meant this right now," so this stays a `standards/SECURITY-GUARDRAILS.md` rule (see "What Counts as Approval") — caught by discipline, not a gate that always fires.
 
+**Why "have the user run it themselves" also stays advisory:** asking the user to run a blocked command directly is a legitimate resolution for CONFIRM/BLOCK-tier commands designed to require a human's own hands (force-push, `filter-branch`, `--no-verify`) — but not for a block whose purpose is verifying some other step (review) already happened, since the user running it themselves doesn't make that true. No tool call exists to hook for the difference — asking the user something is plain text, invisible to `PreToolUse`. Stays a `standards/SECURITY-GUARDRAILS.md` rule (see "The User Is Never the Compliance Bypass") for the same structural reason as above.
+
 ## Default Hooks in This Standard
 
 Configured in `.claude/settings.json`:

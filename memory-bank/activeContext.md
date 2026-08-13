@@ -18,6 +18,64 @@ lineage: []
 
 ## Last Updated: 2026-08-12
 
+## User-As-Bypass Hardened Into Governance + Investigation-Integrity Design (2026-08-12)
+
+Same-day follow-up to the review-gate spec below. The user caught this session's own established habit
+("hand the user the exact commit commands when the marker-write gets classifier-blocked") live and
+named it directly: never use the user as the bypass for a control the agent itself couldn't satisfy.
+Distinguished from CONFIRM/BLOCK-tier commands (force-push, `filter-branch`, `--no-verify`,
+`chmod -R 777`) where a human's hands are the *designed* resolution — this only applies to
+verification-purpose blocks (the review marker), where the user running it directly doesn't make the
+verified thing actually true.
+
+**Hardened into repo governance, not just private memory** (private memory doesn't bind other sessions):
+new "### The User Is Never the Compliance Bypass" section in `standards/SECURITY-GUARDRAILS.md` +
+`templates/standards/SECURITY-GUARDRAILS.md` (byte-identical), plus a matching worked-example paragraph
+in `docs/HOOKS-GUIDE.md` + trimmed `templates/docs/HOOKS-GUIDE.md` explaining why this also can't be
+hook-enforced (asking the user to run something in their own terminal isn't a tool call — invisible to
+`PreToolUse` the same way unauthorized-approval is). An independent review agent caught one real error
+in the first draft of the `HOOKS-GUIDE.md` worked example — it mislabeled force-push as CONFIRM-tier
+("run manually if intentional"); actually verified against `scripts/dangerous-commands.sh:109-110`,
+force-push is BLOCK-tier (refused outright, no manual-run suggestion). Fixed.
+
+**A real ~2-month latent bug found and fixed along the way, not assumed away:** `.claude/skills/mb-drift.md`
+had been documented as a shipped, working skill since 2026-07-xx, but Claude Code only discovers
+project/plugin skills that live in a directory named after the skill containing an uppercase `SKILL.md`
+— a flat file directly under `skills/` is never discoverable. Verified via direct empirical test
+(`Skill(skill:"mb-drift")` → `Unknown skill`) and by comparing every plugin skill's directory shape.
+Fixed via `git mv` to `.claude/skills/mb-drift/SKILL.md`; live-confirmed the skill then appeared in the
+available-skills list for the first time all session.
+
+**New spec, not yet committed:** `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md`
+— addresses a separate problem the user raised: six straight instances in this same session where "one
+more look" surfaced real findings, meaning first-pass answers were confident drafts, not genuinely
+vetted ones. Two mechanisms: per-claim grounding (reusing `standards/CODE-REVIEW.md`'s existing
+`VERIFIED`/`INFERRED`/`SPECULATIVE` vocabulary rather than inventing new terms) + a genuine adversarial
+coverage pass before presenting anything as final. Distribution needs new nested-aware helper functions
+in `mb.sh`/`mb.ps1` (`skills/` isn't currently wired into `TEMPLATE_OWNED` at all — verified, not
+assumed).
+
+**New portable brief, not yet committed:** `docs/WORK-MB-INVESTIGATION-BRIEF.md` — a self-contained
+document for the user's *separate* work Memory-Bank project to read, containing only generalized
+principles + abstracted worked examples (deliberately no PMB file paths or mechanism names), directing
+that system to investigate its own structure rather than importing a conclusion nobody verified against
+it.
+
+**A proposed component was designed, then explicitly withdrawn — record this so it isn't re-proposed
+without re-litigating why.** An amendment to the review-gate spec below added a "review-depth
+classification" system: a deterministic `diff_is_docs_only()` function letting docs-only diffs go
+through a lighter single-reviewer path instead of full `/code-review`, independently re-verified at
+every enforcement layer per this spec's own governing principle. The user rejected the entire direction
+on principle, not on execution quality: *"do we really have to scheme on how to get out of regulated
+actions?"* / *"I am okay with presenting proper concerns, but do not like skirting responsibilities."*
+The diagnosis: regardless of how well-hardened the mechanism was against gaming, it was still a
+standing, self-administered exception system for the reviewed party's own review — the identical
+underlying failure as the original user-as-bypass mistake, just re-engineered with more safeguards
+rather than removed. Fully reverted out of the spec (confirmed via `git diff HEAD` showing zero diff
+against the already-committed `b47db8f` version). **Standing rule going forward: full `/code-review`,
+every time, no lite path, no standing self-classification exception — a concern can be raised and the
+user can decide case-by-case, but no automated reduced-scrutiny mechanism gets built.**
+
 ## Review-Gate Layered Enforcement — Spec Committed (2026-08-12)
 
 Design spec `docs/superpowers/specs/2026-08-12-review-gate-layered-enforcement-design.md` committed
@@ -592,9 +650,15 @@ today for the first time all session. See `progress.md` for full detail.
     be *fixed* from a PMB session alone, but the detection-gap design work can start independently.
 15. [NS-15] **Write the implementation plan for review-gate layered enforcement** (spec:
     `docs/superpowers/specs/2026-08-12-review-gate-layered-enforcement-design.md`, committed `f2cec79`,
-    fixed on re-verification `b47db8f`) via `superpowers:writing-plans`, then build via
-    `superpowers:subagent-driven-development`. User had not yet confirmed the spec as final as of this
-    entry — confirm before assuming this has started.
+    fixed on re-verification `b47db8f` — a later "review-depth classification" amendment was drafted,
+    then withdrawn per explicit user correction, see entry above; the committed `b47db8f` content is
+    unchanged and still the live spec) via `superpowers:writing-plans`, then build via
+    `superpowers:subagent-driven-development`.
+16. [NS-16] **Commit and hand off `investigation-integrity` design + the portable work-MB brief**
+    (both described in the entry above, both currently uncommitted) — once committed, run
+    `superpowers:writing-plans` on the investigation-integrity spec the same way as NS-15, and confirm
+    with the user whether/when the portable brief should be delivered to the work-MB session (it's not
+    this session's system to act on directly).
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 
