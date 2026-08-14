@@ -366,6 +366,12 @@ show_clean() {
     echo ""
 
     # Slim check
+    # WHY progress.md is checked here too, not just activeContext.md: mb doctor's own
+    # File Sizes check (check_size, ~line 809) already measures progress.md against a
+    # 400-line cap -- this display only ever showed activeContext.md, so running `mb clean`
+    # without also running `mb doctor` gave a false "maintenance pass complete" impression
+    # even when progress.md was well over its own limit. Same thresholds as mb doctor's
+    # check_size() and pmb-health.yml's CI file-size job, kept in sync deliberately.
     echo -e "${YELLOW}--- Slim Check ---${NC}"
     SLIM_PATH="$MEMORY_BANK_PATH/activeContext.md"
     if [ -f "$SLIM_PATH" ]; then
@@ -380,6 +386,20 @@ show_clean() {
         fi
     else
         echo -e "${YELLOW}Warning: activeContext.md not found${NC}"
+    fi
+    PROGRESS_PATH="$MEMORY_BANK_PATH/progress.md"
+    if [ -f "$PROGRESS_PATH" ]; then
+        PROGRESS_LINES=$(wc -l < "$PROGRESS_PATH" | tr -d ' ')
+        echo "progress.md: $PROGRESS_LINES lines (max: 400)"
+        if [ "$PROGRESS_LINES" -gt 400 ]; then
+            echo -e "${RED}ACTION NEEDED: File is over limit!${NC}"
+        elif [ "$PROGRESS_LINES" -gt 250 ]; then
+            echo -e "${YELLOW}RECOMMENDED: Consider archiving old entries${NC}"
+        else
+            echo -e "${GREEN}OK: File is within target range${NC}"
+        fi
+    else
+        echo -e "${YELLOW}Warning: progress.md not found${NC}"
     fi
     echo ""
 

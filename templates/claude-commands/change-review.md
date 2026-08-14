@@ -154,12 +154,15 @@ Cross-reference job 2 claims against the test changes:
    - Bash: `git diff origin/main...HEAD > /tmp/cr-diff.patch` (or replay the Step 1 command that produced the diff)
    - If Step 1 used `--diff <path>`, copy that file to `/tmp/cr-diff.patch`
    - If Step 1 used `gh pr diff <number>`, re-run: `gh pr diff <number> > /tmp/cr-diff.patch`
-2. Run `ai-review-agent --profile security --diff /tmp/cr-diff.patch` and incorporate its findings here.
-3. Attribute findings as `basis: acr`.
+2. Run `ai-review-agent --profile security --diff /tmp/cr-diff.patch` and check its exit code, not just whether the command was found.
+3. **If the exit code is 0:** incorporate its findings here, attributed as `basis: acr`. An empty findings list with exit 0 is a genuine clean pass.
+4. **If the exit code is non-zero (ACR exits 2 when its agents fail internally):** do not treat an empty findings list as a clean pass — that reads as "reviewed, nothing found" when it may mean "did not actually run." Note the non-zero exit explicitly in this job's output, then fall through to the inline `/security-review` logic below as the actual security coverage for this run, attributed as `basis: llm` (not `basis: acr`, since ACR did not genuinely complete).
 
 > **Why:** Without `--diff`, ACR defaults to `git diff --cached` (staged changes), which is a different surface than the PR or branch diff computed in Step 1.
+>
+> **Why check the exit code, not just presence:** a presence-only check (`which ai-review-agent`, Step 2) can't distinguish "ACR ran and found nothing" from "ACR was invoked but every agent inside it failed or timed out" — the latter also produces zero findings, and without an exit-code check both look identical: a clean security review. That's a silently skipped security check reading as a pass.
 
-**If ACR is not available:** Run the PMB `/security-review` logic inline:
+**If ACR is not available, or was available but failed (see above):** Run the PMB `/security-review` logic inline:
 
 - Hardcoded secrets, credentials, API keys, tokens
 - Injection vectors: SQL, shell, path traversal, template injection
