@@ -7,7 +7,7 @@ tags:
   - work/completed
   - work/in-progress
   - work/backlog
-last-reviewed: 2026-08-13
+last-reviewed: 2026-08-14
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -15,6 +15,21 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-08-14 — Independent Review Discipline Added as Third `investigation-integrity` Mechanism
+- ✅ Motivated directly by the entry below: self-review (however adversarial) shares the blind spots of whoever wrote the work; a genuinely separate agent catches a different class of defect. Added as mechanism 3 alongside grounding/coverage discipline in `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md`.
+- 🔴 The design itself went through 2 rounds of independent review before being applied — round 1 found 13 issues (model-tier requirements, `feature-dev.md` not deferring to `WORKFLOW.md`, missing spec-section coverage, weak skip-threshold, undefined failure mode); round 2 (checking whether the round-1 fixes actually held up) found a genuinely Blocking one: a *gating* Phase 3.5 would make this an 8-phase workflow, directly conflicting with `memory-bank/projectbrief.md`'s immutable "7-phase workflow" non-negotiable requirement — never checked against that file until round 2 caught it.
+- ✅ Resolved by the user's explicit choice: kept the mechanism advisory/non-gating (matching `.claude/commands/change-review.md`'s existing "Step 3.5: Baseline Repo Health — informational, not a review job" precedent) rather than amending `projectbrief.md`. `projectbrief.md` itself was never touched.
+- ✅ Round 2 also caught real internal-consistency breaks introduced by round-1's own point-fixes (patching cited lines individually instead of a full coherent rewrite): stale "two mechanism" language left in 4 places across the spec and the already-committed `docs/WORK-MB-INVESTIGATION-BRIEF.md`; a duplicate Files-Changed table header; new template/live table drift in the exact tables the change was trying to keep in sync; a `feature-dev.md` paragraph 3x longer than every other phase that also contradicted that file's own "do not skip phases" line; an undefined finding-schema for the advisory gate to key on. All fixed in the final rewrite, verified via direct grep/diff after applying (see below), not just re-asserted.
+- ✅ Applied to 8 files: `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md`, `docs/WORK-MB-INVESTIGATION-BRIEF.md`, `standards/WORKFLOW.md` + `templates/standards/WORKFLOW.md` (new Phase 3.5, both tables, template's pre-existing Phase 3 drift left untouched — see `[NS-19]`), `.claude/commands/feature-dev.md` + `templates/claude-commands/feature-dev.md` (confirmed still byte-identical), and this file + `activeContext.md` (residual staleness cleanup, see below).
+- 📌 Not yet committed. Not yet applied to an actual implementation plan in practice (the review-gate plan below was reviewed *before* this mechanism formally existed — it's the incident that motivated the mechanism, not an example of the mechanism already running).
+
+## 2026-08-14 — Independent Review of the Review-Gate Layered Enforcement Plan Completed; 8 Defects Found and Fixed
+- ✅ The independent pre-implementation review of `docs/superpowers/plans/2026-08-12-review-gate-layered-enforcement.md`, previously interrupted twice by a spend-limit error (see `[NS-15]`'s prior entry), was re-dispatched and completed — a fresh Agent with no context from writing the plan, verifying every claim against the actual current repo state rather than trusting the plan's own descriptions.
+- 🔴 Found 8 real, file:line-verified defects the plan's own self-review (which itself already found 3 gaps) missed: 3 Blocking (a `set -e` crash on `scripts/pre-push-check.sh`'s mainline no-origin/main-yet path; a test assertion in `tests/test-review-reminders.sh:184` broken by the Layer 1 peek-only downgrade; a no-op `docs/review-log/README.md` distribution fix on both shells), 2 High (a PowerShell `Join-Path` backslash bug that would silently break Layer 2 on non-Windows `pwsh`, incl. GitHub Actions runners; an off-by-one step-renumbering bug in `code-review.md`'s edit), 1 Medium, 2 Low.
+- ✅ All 8 fixed directly in the plan document, within its existing Design Note section (as two new bulleted blocks, not a separate new section) — same transparency convention the plan's own self-review already established for its 3 gaps. Added push-gate test coverage (previously nonexistent) that doubles as the regression test for the `set -e` fix.
+- 📌 The plan itself is fixed and self-consistent (verified: sequential step numbering per task, balanced code fences) but **not yet executed** — no code changes made, plan file still untracked. Still needs a Subagent-Driven vs. Inline execution decision. See `[NS-15]`.
+- ✅ This result directly motivated designing a third `investigation-integrity` mechanism ("independent review discipline" — a genuinely separate agent, not self-review, before any plan goes to execution) — in progress as of this entry, itself going through the same independent-review discipline before being applied.
 
 ## 2026-08-14 — Independently Verified an Imported Governance-Review Document; Trimmed Memory Bank Over CI Limits
 
@@ -110,8 +125,9 @@ lineage: []
 - 📌 **2026-08-13 update:** implementation plan written and self-reviewed —
   `docs/superpowers/plans/2026-08-12-review-gate-layered-enforcement.md`, 14 tasks. Self-review found 3
   real gaps between the spec's prose and its own Files-Changed table. An independent pre-implementation
-  review agent was dispatched and interrupted twice by an account spend-limit error — disclosed plainly,
-  not yet re-run to completion. **Not yet implemented** — see `[NS-15]`.
+  review agent was dispatched and interrupted twice by an account spend-limit error — disclosed plainly.
+  **2026-08-14 update:** re-dispatched to completion, found 8 more real defects, all fixed — see this
+  file's 2026-08-14 entry above for full detail. **Still not implemented** — see `[NS-15]`.
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 

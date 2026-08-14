@@ -60,6 +60,25 @@ A 7-phase workflow that front-loads understanding and defers code until the desi
 
 ---
 
+### Phase 3.5 — Independent Plan Review (advisory — not one of the 7 counted phases)
+
+Not a gate. This project's `memory-bank/projectbrief.md` fixes the workflow at 7 phases as a non-negotiable requirement, so this step is deliberately scoped as a recommended practice inserted between Plan and Implement, not an 8th phase — matching the precedent `.claude/commands/change-review.md`'s own "Step 3.5: Baseline Repo Health" already sets for a non-counted, informational step.
+
+**Why:** self-review, however adversarial, shares the blind spots of whoever wrote the plan. See `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md`'s "independent review discipline" (mechanism 3) for the full mechanism and the motivating incident.
+
+**What happens:**
+- Dispatch a fresh Agent, no context from writing the plan, on a capable model — never a cost-optimized/cheap model (this project's subagent default may be cost-optimized; override it)
+- It independently verifies the plan against its spec and the actual current repo state, including tracing shell-script error-handling behavior and templates/ mirror consistency
+- Findings use this repo's `standards/CODE-REVIEW.md` vocabulary (`VERIFIED`/`INFERRED`/`SPECULATIVE`, `Severity`, `Blocking`)
+- Any `Blocking: true` finding should be fixed before proceeding; non-blocking findings are disclosed in the plan's Design Note, not silently dropped
+- If the review agent itself fails to complete, retry once; if still blocked, disclose to the user and get an explicit decision before proceeding without one
+
+**Output:** A plan verified by someone other than its own author, or an explicit, disclosed decision to proceed without one.
+
+**Recommended for:** any plan with real consequence. Lighter-weight for small or low-risk plans — use judgment, since this step is advisory rather than a hard-and-fast gate.
+
+---
+
 ### Phase 4 — Implement (TDD)
 
 **Verification-First:** Before asking Claude to start implementing, state upfront:
@@ -130,6 +149,7 @@ Never commit `.env`, credentials, or unrelated changes.
 | 1. Brainstorm | Trivial change | Agreed approach |
 | 2. Spec | No spec needed | docs/specs/*.md |
 | 3. Plan | No spec needed | docs/plans/*.md |
+| 3.5 Independent Plan Review (advisory) | Small/low-risk plan | Verified plan or documented decision to proceed without |
 | 4. Implement | — | Committed, tested code |
 | 5. Simplify | — | Clean committed code |
 | 6. Security Review | — | Resolved findings |
@@ -143,6 +163,7 @@ If using the Superpowers plugin, each phase maps to a skill:
 |-------|-------|
 | Brainstorm | `superpowers:brainstorming` |
 | Plan | `superpowers:writing-plans` |
+| Independent Plan Review (advisory) | No dedicated skill yet — dispatch a fresh `Agent` (general-purpose or Explore) on a capable model, self-contained prompt |
 | Implement | `superpowers:executing-plans` or `superpowers:subagent-driven-development` |
 | Simplify | `code-simplifier` plugin |
 | Security Review | `security` plugin or `/security-review` command |

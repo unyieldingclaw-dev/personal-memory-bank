@@ -21,6 +21,9 @@ mb plan promote .claude/plans/YYYY-MM-DD-<feature-slug>.md
 
 Do not commit `.claude/plans/` files. Do not load all plans at session start.
 
+**Phase 3.5 — Independent Plan Review (advisory, not one of the 7 phases — does not count against "do not skip phases")**
+For plans with real consequence: dispatch a fresh Agent with no context from writing the plan, on a capable model, to verify it against its spec and the current repo state. Fix `Blocking: true` findings; disclose others. See `standards/WORKFLOW.md` for the full mechanism.
+
 **Phase 4 — Implement**
 Execute the plan using superpowers:subagent-driven-development (preferred) or superpowers:executing-plans. TDD: write failing test → implement → verify passing → commit after each unit.
 
