@@ -56,6 +56,10 @@
           {
             "type": "command",
             "command": "pwsh -NonInteractive -File scripts/check-contract.ps1 2>/dev/null || bash scripts/check-contract.sh 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "pwsh -NonInteractive -File scripts/warn-stale-review-marker.ps1 2>/dev/null || bash scripts/warn-stale-review-marker.sh 2>/dev/null || true"
           }
         ]
       },

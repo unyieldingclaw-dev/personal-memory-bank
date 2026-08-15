@@ -542,7 +542,8 @@ invoke_init() {
                   pre-compact-check.sh pre-compact-check.ps1 \
                   review-reminders.sh review-reminders.ps1 \
                   review-reminders-post.sh review-reminders-post.ps1 \
-                  _review-gate-lib.sh _review-gate-lib.ps1; do
+                  _review-gate-lib.sh _review-gate-lib.ps1 \
+                  warn-stale-review-marker.sh warn-stale-review-marker.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
 
@@ -1736,6 +1737,8 @@ invoke_upgrade() {
         "scripts/review-reminders-post.ps1"
         "scripts/_review-gate-lib.sh"
         "scripts/_review-gate-lib.ps1"
+        "scripts/warn-stale-review-marker.sh"
+        "scripts/warn-stale-review-marker.ps1"
         # Slash commands — governance workflow commands from templates, not project-specific
         ".claude/commands/code-review.md"
         ".claude/commands/feature-dev.md"

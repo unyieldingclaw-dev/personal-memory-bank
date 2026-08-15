@@ -1,5 +1,5 @@
 ---
-description: "Deep code review covering security, correctness, maintainability, testing, and architecture drift. Uses Claude (cloud API) — sends diff content to Anthropic. For offline/local review, use /ai-review instead. Spawns separate subagents per domain so findings don't bias each other."
+description: "Deep code review covering security, correctness, maintainability, testing, and architecture drift. Uses Claude (cloud API) — sends diff content to Anthropic. Some environments may have a personal, machine-local /ai-review command (Ollama-based, not shipped by this repo) as an offline alternative; if unavailable, this cloud-based review is the supported path. Spawns separate subagents per domain so findings don't bias each other."
 allowed-tools:
   - Bash(git diff *)
   - Bash(git log *)
