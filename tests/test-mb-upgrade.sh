@@ -53,6 +53,29 @@ assert_exit_zero $? "mb upgrade exits 0"
 assert_file_exists "$TMPDIR_UP/scripts/_review-gate-lib.sh" "upgrade restores TEMPLATE_OWNED _review-gate-lib.sh"
 assert_file_exists "$TMPDIR_UP/scripts/_review-gate-lib.ps1" "upgrade restores TEMPLATE_OWNED _review-gate-lib.ps1"
 
+# ── Template sync: ALL command files are auto-discovered, not a hardcoded subset ─
+# Regression test: TEMPLATE_OWNED used to hardcode 4 of 8 command files
+# (code-review.md, feature-dev.md, security-review.md, pmb-status.md), so
+# accessibility-review.md, change-review.md, health-check.md, and test-audit.md
+# were silently never restored by `mb upgrade` even though `mb init` already
+# discovered them correctly. Fixed to auto-discover from templates/claude-commands/
+# instead, matching mb.ps1's Invoke-Upgrade.
+echo ""
+echo "--- template sync: restores ALL command files, not just the previously-hardcoded 4 ---"
+
+rm -f "$TMPDIR_UP/.claude/commands/accessibility-review.md" \
+      "$TMPDIR_UP/.claude/commands/change-review.md" \
+      "$TMPDIR_UP/.claude/commands/health-check.md" \
+      "$TMPDIR_UP/.claude/commands/test-audit.md"
+assert_file_not_exists "$TMPDIR_UP/.claude/commands/change-review.md" "change-review.md absent before upgrade"
+
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0"
+assert_file_exists "$TMPDIR_UP/.claude/commands/accessibility-review.md" "upgrade restores accessibility-review.md"
+assert_file_exists "$TMPDIR_UP/.claude/commands/change-review.md" "upgrade restores change-review.md"
+assert_file_exists "$TMPDIR_UP/.claude/commands/health-check.md" "upgrade restores health-check.md"
+assert_file_exists "$TMPDIR_UP/.claude/commands/test-audit.md" "upgrade restores test-audit.md"
+
 # ── Version tracking: .pmb-version updated ───────────────────────────────────
 echo ""
 echo "--- version tracking: .pmb-version matches repo VERSION ---"

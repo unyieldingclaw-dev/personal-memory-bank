@@ -1739,15 +1739,24 @@ invoke_upgrade() {
         "scripts/_review-gate-lib.ps1"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
-        # Slash commands — governance workflow commands from templates, not project-specific
-        ".claude/commands/code-review.md"
-        ".claude/commands/feature-dev.md"
-        ".claude/commands/security-review.md"
-        ".claude/commands/pmb-status.md"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
     )
+
+    # WHY: Slash commands are auto-discovered from templates/claude-commands/ instead of
+    # hardcoded — a static list silently goes stale whenever a new command file is added
+    # (accessibility-review.md and change-review.md shipped in 1.2.0 but were never added to
+    # the old hardcoded list here, so `mb upgrade` never copied them into existing projects,
+    # even though `invoke_init`'s own command-copy loop above was already correct and
+    # auto-discovering). Matches mb.ps1's Invoke-Upgrade, which fixed the same bug the same
+    # way — this keeps both shells on a single source of truth (the actual contents of
+    # templates/claude-commands/) instead of two independently-maintained lists.
+    if [ -d "$TEMPLATES_DIR/claude-commands" ]; then
+        for f in "$TEMPLATES_DIR/claude-commands"/*; do
+            [ -f "$f" ] && TEMPLATE_OWNED+=(".claude/commands/$(basename "$f")")
+        done
+    fi
 
     ADVISORY_DIFF=(
         # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
