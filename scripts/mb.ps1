@@ -103,6 +103,7 @@ function Get-CachedPmbVersion {
         } catch {
             # WHY silent: a malformed cache file just means we fall through to
             # a fresh fetch below, same as a missing cache file.
+            Write-Verbose "Could not read/parse version cache '$cacheFile'; fetching fresh."
         }
     }
 
@@ -126,6 +127,7 @@ function Get-CachedPmbVersion {
         } catch {
             # WHY silent: caching is best-effort. A write failure just means
             # the next invocation fetches live again — never a gate.
+            Write-Verbose "Could not write version cache '$cacheFile'; will fetch live next time."
         }
     }
 }
@@ -2521,6 +2523,50 @@ function Invoke-PlanPromote {
         $Updated = $Lines -replace '^status: draft', 'status: planned'
         Set-Content -Path $Dest -Value $Updated
         Write-Host "Promoted to $Dest" -ForegroundColor Green
+    }
+
+    # Reconcile the originating backlog item (if any) -- see
+    # docs/superpowers/specs/2026-07-14-backlog-design.md "Plan-lifecycle
+    # reconciliation": mb backlog promote (mb.sh) stamps a
+    # "<!-- pmb-backlog-source: <slug> -->" line into the stub body so this
+    # step can find the right backlog item by identity, not by path --
+    # matching on the exact draft path broke the moment the user renamed the
+    # draft while fleshing it out with superpowers:writing-plans, which the
+    # spec calls out as the expected workflow this feature exists to support.
+    #
+    # WHY the exact HTML-comment format instead of a loose phrase match: an
+    # earlier version matched a plain "(Backlog source: x)" line, which reads
+    # as plausible English prose that this very repo's own docs discuss -- an
+    # unanchored match against the whole draft could pick up a decoy mention
+    # instead of the genuine marker, either silently skipping reconciliation
+    # or overwriting an unrelated backlog item that happens to share the
+    # matched slug. Nobody writes "<!-- pmb-backlog-source: x -->" as a
+    # sentence, so matching this exact syntax (anywhere in the file --
+    # position doesn't matter here, since the format itself is what makes an
+    # accidental match implausible) closes that without depending on the
+    # marker staying on any particular line, which further edits during
+    # writing-plans could easily move or remove.
+    if ($Content -match '(?m)^<!-- pmb-backlog-source: ([a-z0-9-]+) -->$') {
+        $BacklogSlug = $Matches[1]
+        $BacklogFile = "docs/backlog/$BacklogSlug.md"
+        if (Test-Path $BacklogFile) {
+            # WHY ForEach-Object + plain string interpolation instead of -replace
+            # with a literal replacement string: -replace (and [regex]::Replace
+            # with a string replacement) treats $1/$&/$$/etc. in the replacement
+            # as regex backreference tokens. $Dest is derived from the
+            # user-chosen plan filename and is never charset-restricted, so a
+            # filename containing '$&' or similar would otherwise corrupt this
+            # line instead of being written literally. Building the new line
+            # with plain interpolation and swapping it in per-line involves no
+            # replacement-string parsing at all, so nothing in $Dest is ever
+            # treated as special.
+            $BacklogLines = Get-Content $BacklogFile
+            $UpdatedBacklog = $BacklogLines | ForEach-Object {
+                if ($_ -match '^related_plan:') { "related_plan: $Dest" } else { $_ }
+            }
+            Set-Content -Path $BacklogFile -Value $UpdatedBacklog
+            Write-Host "Reconciled related_plan in $BacklogFile -> $Dest" -ForegroundColor Green
+        }
     }
 
     Write-Host "Next: git add $Dest && git commit" -ForegroundColor Yellow

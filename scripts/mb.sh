@@ -148,6 +148,7 @@ show_help() {
     echo "  upgrade           Propagate current governance templates to this project"
     echo "  verify-integrity  Check and refresh memory-bank file integrity checksums"
     echo "  plan              Plan management: status, list, promote, archive"
+    echo "  backlog           Backlog management: add, list, show, promote, dismiss"
     echo "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
     echo "  change-check      Post-change summary: diff stats, file types, /change-review job preview"
     echo "  help              Show this help message"
@@ -2109,6 +2110,275 @@ show_plan_list() {
     echo ""
 }
 
+# backlog_slugify — converts a title into a filesystem-safe slug.
+#
+# WHY lowercase + hyphen-collapse + 50-char truncation: matches the scheme
+# documented in docs/superpowers/specs/2026-07-14-backlog-design.md — short,
+# readable, shell-argument-friendly identifiers for the show/promote/dismiss
+# subcommands, without requiring a separate numeric ID system.
+backlog_slugify() {
+    printf '%s' "$1" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
+        | cut -c1-50 \
+        | sed -E 's/-+$//'
+}
+
+# backlog_unique_slug — appends -2, -3, ... on collision.
+#
+# WHY a separate function from backlog_slugify: collision resolution needs
+# filesystem access (checking what already exists in docs/backlog/), which
+# backlog_slugify deliberately doesn't do — keeps the pure string-transform
+# testable independently of the filesystem.
+backlog_unique_slug() {
+    BASE_SLUG=$(backlog_slugify "$1")
+    SLUG="$BASE_SLUG"
+    N=2
+    while [ -f "docs/backlog/${SLUG}.md" ]; do
+        SLUG="${BASE_SLUG}-${N}"
+        N=$((N + 1))
+    done
+    printf '%s' "$SLUG"
+}
+
+# backlog_validate_slug — rejects any slug outside the safe charset
+# (lowercase alnum + hyphen, non-empty) that show/promote/dismiss funnel
+# through before touching the filesystem. This is a superset of what
+# backlog_slugify/backlog_unique_slug actually produce (e.g. it also accepts
+# a leading/trailing hyphen, which slugify always strips) — sufficient to
+# close the security holes below, not a round-trip check against slugify's
+# exact output shape.
+#
+# WHY this exists: show/promote/dismiss take a slug straight from argv and
+# use it to build a filesystem path (docs/backlog/<slug>.md,
+# .claude/plans/<date>-<slug>.md) AND, in promote's case, interpolate it
+# into a sed substitution. An unvalidated slug containing `/` or `..` walks
+# the path outside docs/backlog/; one containing `#` (promote's sed
+# delimiter) or a newline can break out of the substitution and inject
+# additional sed commands. Restricting to this charset closes both holes at
+# the single point every subcommand already funnels through.
+backlog_validate_slug() {
+    case "$1" in
+        ""|*[!a-z0-9-]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+invoke_backlog_add() {
+    TITLE="$1"
+    DESC="${2:-}"
+    if [ -z "$TITLE" ]; then
+        echo -e "${RED}Usage: mb backlog add \"<title>\" [\"<description>\"]${NC}"
+        exit 1
+    fi
+    mkdir -p "docs/backlog"
+    SLUG=$(backlog_unique_slug "$TITLE")
+    if [ -z "$SLUG" ]; then
+        echo -e "${RED}Title must contain at least one letter or number: \"$TITLE\"${NC}"
+        exit 1
+    fi
+    TODAY=$(date +%Y-%m-%d)
+    FILE="docs/backlog/${SLUG}.md"
+    {
+        echo "---"
+        echo "status: open"
+        echo "created: $TODAY"
+        echo "last-reviewed: $TODAY"
+        echo "staleness-threshold: 90d"
+        echo "related_plan: null"
+        echo "---"
+        echo ""
+        echo "# $TITLE"
+        if [ -n "$DESC" ]; then
+            echo ""
+            echo "$DESC"
+        fi
+    } > "$FILE"
+    echo -e "${GREEN}Added backlog item: $FILE${NC}"
+}
+
+# backlog_field — reads a single frontmatter field, matching the grep/sed/tr
+# pattern already used throughout this file (e.g. show_plan_list's STATUS/
+# CREATED/SPEC reads) for consistency rather than introducing a new helper style.
+backlog_field() {
+    grep -m1 "^${2}:" "$1" 2>/dev/null | sed "s/^${2}:[[:space:]]*//" | tr -d ' \r'
+}
+
+# backlog_set_status — rewrites a backlog item's status field. Shared by
+# promote/dismiss so a future change to how the field is rewritten (e.g.
+# also bumping last-reviewed) only needs one edit.
+backlog_set_status() {
+    sed -i.bak "s/^status:.*/status: $2/" "$1" && rm -f "${1}.bak"
+}
+
+# backlog_resolve_slug — validates a slug argument and resolves it to its
+# docs/backlog/<slug>.md path, printing that path to stdout on success. On
+# failure it prints the error to stderr (so it doesn't pollute the captured
+# path) and returns non-zero — callers must check the exit status themselves
+# ($(...) runs in a subshell, so a plain `exit` inside this function would
+# only end the subshell, not the caller, which is why this returns instead).
+#
+# WHY this exists: show/promote/dismiss each did the identical empty-check +
+# backlog_validate_slug + file-exists sequence inline; centralizing it means
+# a future change to any of those checks (e.g. a friendlier not-found
+# message) is one edit instead of three kept in lockstep by hand.
+backlog_resolve_slug() {
+    SLUG="$1"
+    USAGE="$2"
+    if [ -z "$SLUG" ]; then
+        echo -e "${RED}${USAGE}${NC}" >&2
+        return 1
+    fi
+    if ! backlog_validate_slug "$SLUG"; then
+        echo -e "${RED}Invalid slug: $SLUG${NC}" >&2
+        return 1
+    fi
+    FILE="docs/backlog/${SLUG}.md"
+    if [ ! -f "$FILE" ]; then
+        echo -e "${RED}Backlog item not found: $SLUG${NC}" >&2
+        return 1
+    fi
+    printf '%s' "$FILE"
+}
+
+show_backlog_list() {
+    ALL_FLAG="$1"
+    echo ""
+    echo -e "${CYAN}Backlog${NC}"
+    echo -e "${CYAN}=======${NC}"
+    BACKLOG_DIR="docs/backlog"
+    if [ ! -d "$BACKLOG_DIR" ] || ! compgen -G "$BACKLOG_DIR/*.md" > /dev/null 2>&1; then
+        echo -e "${YELLOW}No backlog items. Add one with: mb backlog add \"<title>\"${NC}"
+        echo ""
+        return
+    fi
+    TODAY_EPOCH=$(date +%s)
+    for f in "$BACKLOG_DIR"/*.md; do
+        [ ! -f "$f" ] && continue
+        STATUS=$(backlog_field "$f" "status")
+        [ "$ALL_FLAG" != "--all" ] && [ "$STATUS" != "open" ] && continue
+        SLUG=$(basename "$f" .md)
+        TITLE=$(grep -m1 '^# ' "$f" 2>/dev/null | sed 's/^# //' | tr -d '\r')
+        CREATED=$(backlog_field "$f" "created")
+        AGE=""
+        if [ -n "$CREATED" ]; then
+            CREATED_EPOCH=$(date -d "$CREATED" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$CREATED" +%s 2>/dev/null || echo 0)
+            [ "$CREATED_EPOCH" != "0" ] && AGE=" age:$(( (TODAY_EPOCH - CREATED_EPOCH) / 86400 ))d"
+        fi
+        echo -e "  ${SLUG}  ${TITLE}  status:${STATUS}${AGE}"
+    done
+    echo ""
+}
+
+show_backlog_item() {
+    FILE=$(backlog_resolve_slug "$1" "Usage: mb backlog show <slug>") || exit 1
+    cat "$FILE"
+}
+
+invoke_backlog_promote() {
+    SLUG="$1"
+    FILE=$(backlog_resolve_slug "$SLUG" "Usage: mb backlog promote <slug>") || exit 1
+    # Guard against hand-edited/malformed items: without a '---' on line 1 AND
+    # a second '---' delimiter after it, the body-extraction below would
+    # silently produce a stub missing real content while still marking the
+    # item promoted — a silent data loss. Anchoring to line 1 specifically
+    # (not just "two --- lines exist somewhere in the file") matters: a file
+    # with prose before an accidental/legacy '---'-'---' pair still has
+    # DELIM_COUNT>=2, but the awk extraction below would treat that pair as
+    # the fences and silently drop the preamble into nowhere.
+    if [ "$(head -1 "$FILE")" != "---" ]; then
+        echo -e "${RED}Backlog item has malformed frontmatter (must start with '---'): $FILE${NC}"
+        exit 1
+    fi
+    DELIM_COUNT=$(grep -c '^---$' "$FILE" || true)
+    if [ "$DELIM_COUNT" -lt 2 ]; then
+        echo -e "${RED}Backlog item has malformed frontmatter (expected two '---' delimiters): $FILE${NC}"
+        exit 1
+    fi
+    # WHY also require a status: line: a file with two '---' fences but no
+    # status field passes the delimiter check above, then the status-rewrite
+    # sed below would silently match nothing — the item would report
+    # "Seeded plan stub" while never actually reaching status: promoted,
+    # leaving it invisible from the default `list` without ever being truly
+    # promoted.
+    if ! grep -q '^status:' "$FILE"; then
+        echo -e "${RED}Backlog item has malformed frontmatter (missing 'status:' field): $FILE${NC}"
+        exit 1
+    fi
+    # WHY require status: open: promote unconditionally overwrote the stub
+    # file at a deterministic path (.claude/plans/<today>-<slug>.md), so
+    # re-running promote on an already-promoted item silently destroyed any
+    # work already done fleshing out that stub, with the same success
+    # message both times. Requiring open also blocks re-promoting a
+    # dismissed item without an explicit state transition back through it.
+    CURRENT_STATUS=$(backlog_field "$FILE" "status")
+    if [ "$CURRENT_STATUS" != "open" ]; then
+        echo -e "${RED}Cannot promote: $SLUG has status '$CURRENT_STATUS' (expected 'open').${NC}"
+        exit 1
+    fi
+    # WHY awk instead of sed '1,/^---$/d' here: that idiom relies on a GNU-sed-only
+    # extension (line 1 is exempted from matching the end pattern, so the range
+    # runs to the *next* '---'). On BSD/macOS sed, line 1 ends the range
+    # immediately, stripping only the opening delimiter and leaving the rest of
+    # the frontmatter in the body. awk's explicit two-counter approach behaves
+    # identically on GNU, BSD, and busybox awk.
+    #
+    # WHY `&& n<2` on the delimiter match: without it, a literal `---` markdown
+    # horizontal rule inside the body (after the real frontmatter) would also
+    # match /^---$/ and get silently swallowed instead of printed. Gating on
+    # n<2 means only the first two delimiter lines (the real frontmatter
+    # fences) ever increment the counter or get skipped — once n reaches 2,
+    # any later `---` line falls through to the n>=2{print} rule like normal
+    # body content.
+    BODY=$(awk 'BEGIN{n=0} /^---$/ && n<2 {n++; next} n>=2{print}' "$FILE")
+    mkdir -p ".claude/plans"
+    TODAY=$(date +%Y-%m-%d)
+    STUB=".claude/plans/${TODAY}-${SLUG}.md"
+    # WHY the trailing "<!-- pmb-backlog-source: $SLUG -->" line: mb plan
+    # promote later needs to find this backlog item again to reconcile
+    # related_plan onto the plan's durable docs/plans/ location — matching by
+    # the stub's exact path breaks the moment the user renames it while
+    # fleshing it out with superpowers:writing-plans (the workflow this
+    # feature exists to support), since the rename severs any path-based
+    # link. A marker embedded in the file's content survives a rename.
+    #
+    # WHY an HTML comment specifically, not a plain visible line: a plain
+    # line like "(Backlog source: worth-planning)" reads as plausible English
+    # prose, and this very repo documents this exact feature — a plan
+    # document that discusses it in passing could accidentally match. The
+    # marker needs a format nobody would type by coincidence, at any position
+    # in the file, including after the user has added arbitrary content while
+    # fleshing the stub out (which would defeat a last-line-only anchor). An
+    # HTML comment is that: nobody writes "<!-- pmb-backlog-source: x -->" as
+    # a sentence, and it renders invisibly in the final plan document instead
+    # of leaving a stray literal line at the bottom. This is not the
+    # hidden-instruction-smuggling pattern this repo's own CI scans for
+    # elsewhere (rules-file-integrity) — that check is scoped to CLAUDE.md/
+    # standards/, files Claude reads as instructions; this is inert program
+    # metadata in a data file, no different in kind from the YAML frontmatter
+    # every backlog/plan file already carries.
+    {
+        echo "$BODY"
+        echo ""
+        echo "<!-- pmb-backlog-source: $SLUG -->"
+    } > "$STUB"
+    # WHY not add plan frontmatter here: this is a seed for superpowers:writing-plans
+    # to build out, not a finished plan — mb plan promote (a separate, later step)
+    # is what adds status/created/approved frontmatter once the plan is actually
+    # written and user-approved. See docs/superpowers/specs/2026-07-14-backlog-design.md.
+    backlog_set_status "$FILE" "promoted"
+    sed -i.bak "s#^related_plan:.*#related_plan: $STUB#" "$FILE" && rm -f "${FILE}.bak"
+    echo -e "${GREEN}Seeded plan stub: $STUB${NC}"
+    echo -e "${YELLOW}Next: flesh it out with superpowers:writing-plans, then mb plan promote $STUB${NC}"
+}
+
+invoke_backlog_dismiss() {
+    SLUG="$1"
+    FILE=$(backlog_resolve_slug "$SLUG" "Usage: mb backlog dismiss <slug>") || exit 1
+    backlog_set_status "$FILE" "dismissed"
+    echo -e "${GREEN}Dismissed: $SLUG${NC}"
+}
+
 invoke_plan_promote() {
     DRAFT="$ARG"
     if [ -z "$DRAFT" ]; then
@@ -2120,6 +2390,12 @@ invoke_plan_promote() {
         echo -e "${RED}Draft not found: $DRAFT${NC}"
         exit 1
     fi
+    case "$DRAFT" in
+        *$'\n'*)
+            echo -e "${RED}Draft path must not contain a newline: $DRAFT${NC}"
+            exit 1
+            ;;
+    esac
 
     FILENAME=$(basename "$DRAFT")
     DEST="docs/plans/$FILENAME"
@@ -2149,6 +2425,46 @@ invoke_plan_promote() {
             echo -e "${GREEN}Promoted to $DEST (status: draft → planned)${NC}"
         else
             echo -e "${GREEN}Promoted to $DEST (status: $CURRENT_STATUS preserved)${NC}"
+        fi
+    fi
+
+    # Reconcile the originating backlog item (if any) — see
+    # docs/superpowers/specs/2026-07-14-backlog-design.md "Plan-lifecycle
+    # reconciliation": mb backlog promote stamps a
+    # "<!-- pmb-backlog-source: <slug> -->" line into the stub body
+    # specifically so this step can find the right backlog item by identity,
+    # not by path. Matching on the exact draft path (the earlier design)
+    # broke the moment the user renamed the draft while fleshing it out with
+    # superpowers:writing-plans — the workflow the spec itself describes as
+    # the reason this feature exists — since the rename severs any
+    # path-based link before this step ever runs.
+    #
+    # WHY a full-line match (^...$) on the exact HTML-comment format instead
+    # of a loose grep -o for a visible phrase: an earlier version used a
+    # plain "(Backlog source: x)" line, which reads as plausible English
+    # prose that this very repo's own docs discuss — an unanchored search
+    # over a plan's whole body could pick up a decoy mention instead of the
+    # genuine marker, either silently skipping reconciliation for the real
+    # source item or, worse, matching a slug some unrelated existing backlog
+    # item happens to share and overwriting ITS related_plan instead. Nobody
+    # writes "<!-- pmb-backlog-source: x -->" as a sentence, so anchoring to
+    # this exact syntax (anywhere in the file — position no longer matters,
+    # since the format itself is what makes an accidental match implausible)
+    # closes that without depending on the marker staying the file's last
+    # line, which further edits during writing-plans could easily break.
+    BACKLOG_SLUG=$(grep -E '^<!-- pmb-backlog-source: [a-z0-9-]+ -->$' "$DEST" 2>/dev/null | head -1 | sed -E 's/^<!-- pmb-backlog-source: ([a-z0-9-]+) -->$/\1/')
+    if [ -n "$BACKLOG_SLUG" ]; then
+        BF="docs/backlog/${BACKLOG_SLUG}.md"
+        if [ -f "$BF" ]; then
+            # WHY escape before interpolating into sed's replacement text: $DEST is
+            # derived from the user-chosen plan filename, never charset-restricted --
+            # a literal `&` means "whole matched text" to sed, and `#` is this
+            # substitution's own delimiter; either one unescaped corrupts the
+            # frontmatter (or breaks the sed command outright) instead of
+            # reconciling it.
+            ESC_DEST=$(printf '%s' "$DEST" | sed 's/[\&#]/\\&/g')
+            sed -i.bak "s#^related_plan:.*#related_plan: $ESC_DEST#" "$BF" && rm -f "${BF}.bak"
+            echo -e "${GREEN}Reconciled related_plan in $BF -> $DEST${NC}"
         fi
     fi
 
@@ -2339,6 +2655,21 @@ case "$COMMAND" in
             *)
                 echo -e "${RED}Unknown plan subcommand: $SUBCMD${NC}"
                 echo -e "${YELLOW}Usage: mb plan <status|list|promote|archive>${NC}"
+                exit 1
+                ;;
+        esac
+        ;;
+    backlog)
+        SUBCMD="${2:-list}"
+        case "$SUBCMD" in
+            add)      invoke_backlog_add "${3:-}" "${4:-}" ;;
+            list)     show_backlog_list "${3:-}" ;;
+            show)     show_backlog_item "${3:-}" ;;
+            promote)  invoke_backlog_promote "${3:-}" ;;
+            dismiss)  invoke_backlog_dismiss "${3:-}" ;;
+            *)
+                echo -e "${RED}Unknown backlog subcommand: $SUBCMD${NC}"
+                echo -e "${YELLOW}Usage: mb backlog <add|list|show|promote|dismiss>${NC}"
                 exit 1
                 ;;
         esac

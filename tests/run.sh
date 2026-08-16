@@ -34,6 +34,7 @@ run_suite "review-reminders"     "$REPO_ROOT/tests/test-review-reminders.sh"
 run_suite "mb-version-notifier"  "$REPO_ROOT/tests/test-mb-version-notifier.sh"
 run_suite "update-reviewed"      "$REPO_ROOT/tests/test-update-reviewed.sh"
 run_suite "dangerous-commands"   "$REPO_ROOT/tests/test-dangerous-commands.sh"
+run_suite "mb-backlog"           "$REPO_ROOT/tests/test-mb-backlog.sh"
 
 echo ""
 echo "════════════════════════════════════"
