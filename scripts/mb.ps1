@@ -21,15 +21,26 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'DryRun', Justification='Read by nested functions (e.g. Invoke-Upgrade) via script-scope chaining — PSScriptAnalyzer cannot see usage inside a separately-scoped function body.')]
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "preflight", "change-check", "setup", "help")]
+    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "backlog", "preflight", "change-check", "setup", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
     [string]$Arg = "",
     [Parameter(Position=2)]
     [string]$Arg2 = "",
+    # WHY needed: "mb backlog add <title> <description>" needs a 4th positional
+    # slot (Command=backlog, Arg=add, Arg2=title, Arg3=description) — no other
+    # command currently needs more than 3.
+    [Parameter(Position=3)]
+    [string]$Arg3 = "",
     # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
     # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
-    [switch]$DryRun
+    [switch]$DryRun,
+    # WHY: same reasoning as $DryRun above — "mb backlog list --all" would otherwise
+    # have PowerShell's binder intercept the bare "--all" token as an attempted
+    # named-parameter bind ("-all") before the script body runs at all, regardless
+    # of quoting. Reproduced directly: without this, `mb backlog list --all` throws
+    # "A parameter cannot be found that matches parameter name 'all'."
+    [switch]$All
 )
 
 # WHY: $PSScriptRoot is the directory containing mb.ps1 (scripts/).
@@ -352,6 +363,7 @@ function Show-Help {
     Write-Host "  setup             Initialize or upgrade a project — folder picker, auto-detects mode"
     Write-Host "  verify-integrity  Check and refresh memory-bank file integrity checksums"
     Write-Host "  plan              Plan management: status, list, promote, archive"
+    Write-Host "  backlog           Backlog management: add, list, show, promote, dismiss"
     Write-Host "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
     Write-Host "  change-check      Post-change summary: diff stats, file types, /change-review job preview"
     Write-Host "  help              Show this help message"
@@ -2573,6 +2585,221 @@ function Invoke-PlanPromote {
     Write-Host ""
 }
 
+# ConvertTo-BacklogSlug / Get-UniqueBacklogSlug / Test-BacklogSlugValid /
+# Invoke-BacklogAdd / Get-BacklogField / Set-BacklogStatus / Resolve-BacklogSlug /
+# Show-BacklogList / Show-BacklogItem / Invoke-BacklogPromote / Invoke-BacklogDismiss
+# -- PowerShell port of mb.sh's backlog_slugify/backlog_unique_slug/
+# backlog_validate_slug/invoke_backlog_add/backlog_field/backlog_set_status/
+# backlog_resolve_slug/show_backlog_list/show_backlog_item/invoke_backlog_promote/
+# invoke_backlog_dismiss. Mirrors that implementation's behavior and guards
+# (slug charset validation, malformed-frontmatter checks, status:open guard on
+# re-promote) -- see scripts/mb.sh for the original WHY comments on each guard;
+# not re-derived here to avoid drift between the two copies of the same rationale.
+function ConvertTo-BacklogSlug {
+    param([string]$Title)
+    $Slug = ($Title.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+    if ($Slug.Length -gt 50) { $Slug = $Slug.Substring(0, 50) }
+    return $Slug.TrimEnd('-')
+}
+
+function Get-UniqueBacklogSlug {
+    param([string]$Title)
+    $BaseSlug = ConvertTo-BacklogSlug -Title $Title
+    $Slug = $BaseSlug
+    $N = 2
+    while (Test-Path "docs/backlog/$Slug.md") {
+        $Slug = "$BaseSlug-$N"
+        $N++
+    }
+    return $Slug
+}
+
+# WHY this validation exists and what it closes: identical rationale to mb.sh's
+# backlog_validate_slug -- show/promote/dismiss take a slug straight from argv
+# and use it to build a filesystem path (docs/backlog/<slug>.md,
+# .claude/plans/<date>-<slug>.md). Restricting to [a-z0-9-] closes path-traversal
+# (`..`, `/`) at the single point every subcommand funnels through.
+function Test-BacklogSlugValid {
+    param([string]$Slug)
+    if ([string]::IsNullOrEmpty($Slug)) { return $false }
+    return $Slug -cmatch '^[a-z0-9-]+$'
+}
+
+function Invoke-BacklogAdd {
+    param([string]$Title, [string]$Desc)
+    if (-not $Title) {
+        Write-Host 'Usage: mb backlog add "<title>" ["<description>"]' -ForegroundColor Red
+        exit 1
+    }
+    New-Item -ItemType Directory -Force -Path "docs/backlog" | Out-Null
+    $Slug = Get-UniqueBacklogSlug -Title $Title
+    if (-not $Slug) {
+        Write-Host "Title must contain at least one letter or number: `"$Title`"" -ForegroundColor Red
+        exit 1
+    }
+    $Today = Get-Date -Format 'yyyy-MM-dd'
+    $File = "docs/backlog/$Slug.md"
+    $Lines = @("---", "status: open", "created: $Today", "last-reviewed: $Today", "staleness-threshold: 90d", "related_plan: null", "---", "", "# $Title")
+    if ($Desc) { $Lines += @("", $Desc) }
+    Set-Content -Path $File -Value $Lines
+    Write-Host "Added backlog item: $File" -ForegroundColor Green
+}
+
+function Get-BacklogField {
+    param([string]$Path, [string]$Field)
+    $Line = Select-String -Path $Path -Pattern "^${Field}:" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $Line) { return "" }
+    # WHY -replace '\s' (all whitespace), not .Trim(): matches mb.sh's backlog_field,
+    # which pipes through `tr -d ' \r'` — strips every space/CR in the value, not just
+    # leading/trailing. Current call sites (status/created) never have internal
+    # whitespace, but this keeps the two implementations byte-for-byte equivalent.
+    return (($Line.Line -replace "^${Field}:\s*", '') -replace '\s', '')
+}
+
+# WHY plain -replace is safe here despite the general $&/$1-in-replacement hazard
+# (see Invoke-PlanPromote's WHY comment above): $Status is always one of this
+# file's own hardcoded literals ("promoted"/"dismissed"), never derived from user
+# input, so no replacement-string token injection is reachable through this path.
+function Set-BacklogStatus {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$Path, [string]$Status)
+    if ($PSCmdlet.ShouldProcess($Path, "Set status: $Status")) {
+        $Updated = (Get-Content $Path) -replace '^status:.*', "status: $Status"
+        Set-Content -Path $Path -Value $Updated
+    }
+}
+
+function Resolve-BacklogSlug {
+    param([string]$Slug, [string]$Usage)
+    if (-not $Slug) {
+        Write-Host $Usage -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Test-BacklogSlugValid -Slug $Slug)) {
+        Write-Host "Invalid slug: $Slug" -ForegroundColor Red
+        exit 1
+    }
+    $File = "docs/backlog/$Slug.md"
+    if (-not (Test-Path $File)) {
+        Write-Host "Backlog item not found: $Slug" -ForegroundColor Red
+        exit 1
+    }
+    return $File
+}
+
+function Show-BacklogList {
+    param([switch]$All)
+    Write-Host ""
+    Write-Host "Backlog" -ForegroundColor Cyan
+    Write-Host "=======" -ForegroundColor Cyan
+    $Items = if (Test-Path "docs/backlog") { Get-ChildItem "docs/backlog/*.md" -ErrorAction SilentlyContinue } else { $null }
+    if (-not $Items) {
+        Write-Host 'No backlog items. Add one with: mb backlog add "<title>"' -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+    $TodayEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    foreach ($f in $Items) {
+        $Status = Get-BacklogField -Path $f.FullName -Field "status"
+        if (-not $All -and $Status -ne "open") { continue }
+        $Slug = $f.BaseName
+        $TitleLine = Select-String -Path $f.FullName -Pattern '^# ' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $Title = if ($TitleLine) { $TitleLine.Line -replace '^# ', '' } else { '' }
+        $Created = Get-BacklogField -Path $f.FullName -Field "created"
+        $Age = ""
+        if ($Created) {
+            try {
+                $CreatedEpoch = [DateTimeOffset]::Parse($Created).ToUnixTimeSeconds()
+                # WHY [Math]::Floor, not an [int] cast: PowerShell's / on two Int64s
+                # yields a Double, and [int] on a Double *rounds* to nearest rather than
+                # truncating toward zero — diverging from mb.sh's `$(( ))` integer
+                # division (always truncates). Floor matches bash's behavior exactly.
+                $Days = [Math]::Floor(($TodayEpoch - $CreatedEpoch) / 86400)
+                $Age = " age:${Days}d"
+            } catch { Write-Verbose "Could not parse created date '$Created'; skipping age." }
+        }
+        Write-Host "  $Slug  $Title  status:$Status$Age"
+    }
+    Write-Host ""
+}
+
+function Show-BacklogItem {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog show <slug>"
+    Get-Content $File -Raw
+}
+
+function Invoke-BacklogPromote {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog promote <slug>"
+
+    # WHY @(...): Get-Content returns a scalar System.String, not a 1-element array,
+    # for a file containing exactly one line. Indexing a scalar with [0] returns its
+    # first *character*, not the line — silently misreporting "must start with '---'"
+    # for a genuine single-line "---" file. Forcing array semantics fixes that.
+    $Lines = @(Get-Content $File)
+    if ($Lines.Count -eq 0 -or $Lines[0] -ne '---') {
+        Write-Host "Backlog item has malformed frontmatter (must start with '---'): $File" -ForegroundColor Red
+        exit 1
+    }
+    $DelimCount = ($Lines | Where-Object { $_ -eq '---' }).Count
+    if ($DelimCount -lt 2) {
+        Write-Host "Backlog item has malformed frontmatter (expected two '---' delimiters): $File" -ForegroundColor Red
+        exit 1
+    }
+    if (-not ($Lines | Where-Object { $_ -match '^status:' })) {
+        Write-Host "Backlog item has malformed frontmatter (missing 'status:' field): $File" -ForegroundColor Red
+        exit 1
+    }
+    $CurrentStatus = Get-BacklogField -Path $File -Field "status"
+    if ($CurrentStatus -ne "open") {
+        Write-Host "Cannot promote: $Slug has status '$CurrentStatus' (expected 'open')." -ForegroundColor Red
+        exit 1
+    }
+
+    # WHY a counter loop instead of a single regex/range operation: mirrors
+    # mb.sh's awk extractor exactly -- only the first two '---' lines (the real
+    # frontmatter fences) are ever skipped; any later literal '---' (e.g. a
+    # markdown horizontal rule in the body) falls through to the body once N
+    # reaches 2, instead of being silently eaten.
+    $N = 0
+    $Body = @()
+    foreach ($Line in $Lines) {
+        if ($Line -eq '---' -and $N -lt 2) {
+            $N++
+            continue
+        }
+        if ($N -ge 2) { $Body += $Line }
+    }
+
+    New-Item -ItemType Directory -Force -Path ".claude/plans" | Out-Null
+    $Today = Get-Date -Format 'yyyy-MM-dd'
+    $Stub = ".claude/plans/$Today-$Slug.md"
+    # WHY the trailing "<!-- pmb-backlog-source: $Slug -->" line: see
+    # Invoke-PlanPromote's matching WHY comment above -- Invoke-PlanPromote reads
+    # this marker to reconcile related_plan by identity, surviving a rename.
+    $StubContent = ($Body -join "`n") + "`n`n<!-- pmb-backlog-source: $Slug -->`n"
+    Set-Content -Path $Stub -Value $StubContent -NoNewline
+
+    Set-BacklogStatus -Path $File -Status "promoted"
+    # WHY plain -replace is safe here (unlike Invoke-PlanPromote's $Dest case):
+    # $Stub is built from $Today (fixed format) and $Slug, and $Slug already
+    # passed Test-BacklogSlugValid's [a-z0-9-]-only charset above -- no
+    # replacement-string token ($&/$1/etc.) can appear in it.
+    $UpdatedFileLines = (Get-Content $File) -replace '^related_plan:.*', "related_plan: $Stub"
+    Set-Content -Path $File -Value $UpdatedFileLines
+
+    Write-Host "Seeded plan stub: $Stub" -ForegroundColor Green
+    Write-Host "Next: flesh it out with superpowers:writing-plans, then mb plan promote $Stub" -ForegroundColor Yellow
+}
+
+function Invoke-BacklogDismiss {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog dismiss <slug>"
+    Set-BacklogStatus -Path $File -Status "dismissed"
+    Write-Host "Dismissed: $Slug" -ForegroundColor Green
+}
+
 function Invoke-PlanArchive {
     param([string]$Plan)
     if (-not $Plan) {
@@ -2626,6 +2853,21 @@ switch ($Command) {
             default {
                 Write-Host "Unknown plan subcommand: $SubCmd" -ForegroundColor Red
                 Write-Host "Usage: mb plan <status|list|promote|archive>" -ForegroundColor Yellow
+                exit 1
+            }
+        }
+    }
+    "backlog" {
+        $SubCmd = if ($Arg) { $Arg } else { 'list' }
+        switch ($SubCmd) {
+            'add'     { Invoke-BacklogAdd -Title $Arg2 -Desc $Arg3 }
+            'list'    { Show-BacklogList -All:$All }
+            'show'    { Show-BacklogItem -Slug $Arg2 }
+            'promote' { Invoke-BacklogPromote -Slug $Arg2 }
+            'dismiss' { Invoke-BacklogDismiss -Slug $Arg2 }
+            default {
+                Write-Host "Unknown backlog subcommand: $SubCmd" -ForegroundColor Red
+                Write-Host "Usage: mb backlog <add|list|show|promote|dismiss>" -ForegroundColor Yellow
                 exit 1
             }
         }
