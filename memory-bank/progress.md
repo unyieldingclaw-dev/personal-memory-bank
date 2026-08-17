@@ -262,6 +262,33 @@ lineage: []
   - Recommended first fix (not yet done): add the missing XSS and eval/exec patterns to Job 7's fallback
     list in `change-review.md`. The `/code-review` domain-checklist-sharing question is a bigger design
     call, deferred.
+- 🔴 **`[NS-14]` update — mb.sh/mb.ps1 setup/upgrade scripts verified.** Prompted by the user asking
+  whether they'd been verified. Ran `tests/test-mb-init.sh` (19/19) and `tests/test-mb-upgrade.sh`
+  (26/26) fresh — both green, including the exact regression class that bit this project three times
+  before (`2fa1b63`, `fac4976`, `1b356ba`: files silently missing from the `TEMPLATE_OWNED` copy list).
+  Cross-checked the `TEMPLATE_OWNED` array against every file actually present in `templates/` directly
+  (not just what the tests already cover) — full parity, no new gaps. Found one piece of debris:
+  `templates/hooks/pre-push` is orphaned — `grep`-confirmed unreferenced anywhere in `mb.sh`, `mb.ps1`, or
+  `.github/`, a leftover from before the `.githooks/` rename. Not fixed, low priority.
+  - Checked whether these scripts have any global (`$HOME/.claude/`) install/upgrade path, per the user's
+    specific concern about running them against Global — they do not. Every `TEMPLATE_OWNED` target and
+    copy-loop destination (`scripts/mb.sh:1712-1744`) is project-relative. The only `$HOME/.claude/` touch
+    anywhere is `scripts/mb.sh:797` (`GLOBAL_CLAUDE="$HOME/.claude/CLAUDE.md"`), a read-only `mb doctor`
+    comparison (WARNs if global `CLAUDE.md` has a setting local lacks) — it never writes there. Practical
+    consequence: nothing in `mb.sh`/`mb.ps1` could push project-level command fixes out to the user-level
+    shadowing twins found in `[NS-21]` even if asked to; that would be a manual operation today.
+  - Checked the actual version-check code (`get_cached_pmb_version`, `scripts/mb.sh:41-131`) per the
+    user's second concern ("upgrade should look at local and the repo to verify we have the latest").
+    Three distinct version values exist: `.pmb-version` (target project's actually-installed version),
+    `$REPO_ROOT/VERSION` (the PMB source clone `mb.sh` itself runs from, i.e. wherever `MB_HOME` points),
+    and the true latest on GitHub `main` (fetched via a cached `curl`, 2s timeout, fail-open).
+    `mb doctor` check #12 (`scripts/mb.sh:944-956`) compares target-vs-local-clone only, WARN-only,
+    requires manually running `mb doctor`. A separate automatic notifier (runs after every command)
+    compares local-clone-vs-GitHub only. **Nothing compares target-vs-GitHub directly** — if the local
+    PMB source clone itself hasn't been `git pull`ed, `mb doctor` reports the target project "up to date"
+    relative to a stale local clone, even while genuinely behind the real latest upstream. This sharpens
+    `[NS-14]`'s existing finding (nothing *triggers* a check) with a second, independent gap: even a
+    triggered check can give a false "OK" if its own reference point is stale. Not designed yet.
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
