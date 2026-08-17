@@ -1,4 +1,4 @@
-# PostToolUse hook — companion to review-reminders.ps1 (PreToolUse). If a git commit/push
+# PostToolUse hook -- companion to review-reminders.ps1 (PreToolUse). If a git commit/push
 # that consumed a review-ok marker then failed, reissues the marker so a rejected attempt
 # (e.g. a separate pre-commit hook, nothing staged, a merge conflict) doesn't force a
 # pointless re-review -- the diff hasn't changed, so the same review still applies.
@@ -44,7 +44,7 @@ if ($cmd -match 'git\s+commit\b') {
         $preSha = if ($preSha) { $preSha.Trim() } else { $null }
         $postSha = git rev-parse HEAD 2>$null
         if ($preSha -and $postSha -and $postSha -eq $preSha) {
-            # HEAD didn't move — commit failed. A failed commit can't have altered the
+            # HEAD didn't move -- commit failed. A failed commit can't have altered the
             # working tree, so recomputing the hash fresh reproduces the same value.
             Get-CommitDiffHash | Set-Content (Join-Path $root '.claude/.code-review-ok')
         }

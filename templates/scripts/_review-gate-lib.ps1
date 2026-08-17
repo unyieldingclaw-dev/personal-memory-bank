@@ -1,4 +1,4 @@
-# scripts/_review-gate-lib.ps1 — shared helpers for review-reminders.ps1 / review-reminders-post.ps1
+# scripts/_review-gate-lib.ps1 -- shared helpers for review-reminders.ps1 / review-reminders-post.ps1
 # (PreToolUse / PostToolUse review-gate hook pair). Dot-sourced, not executed directly.
 #
 # WHY this file exists: Get-FileHashHex was duplicated verbatim in both hook files; the

@@ -1,4 +1,4 @@
-# PreToolUse hook — blocks git commit/push until the matching review slash command has run.
+# PreToolUse hook -- blocks git commit/push until the matching review slash command has run.
 # /code-review writes .claude/.code-review-ok on an Approve verdict; /change-review writes
 # .claude/.change-review-ok when no finding is Blocking. Each marker authorizes exactly one
 # commit or push attempt for a SPECIFIC diff -- see below.

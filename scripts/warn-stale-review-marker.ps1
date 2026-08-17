@@ -1,4 +1,4 @@
-# warn-stale-review-marker.ps1 — PreToolUse hook for Write/Edit (PowerShell)
+# warn-stale-review-marker.ps1 -- PreToolUse hook for Write/Edit (PowerShell)
 #
 # WHY this exists: a review-gate marker (.claude/.code-review-ok or
 # .claude/.change-review-ok) is bound to a SHA-256 hash of `git diff HEAD` (or
