@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Note — session-claims items below are in-flight, not shipped
+The four `Added` items below are implemented and committed on the not-yet-merged branch
+`worktree-concurrent-session-claims`, not on this branch/tag — see `[NS-18]` in
+`memory-bank/activeContext.md`.
+
 ### Added
 - `scripts/session-claims.sh`/`.ps1`: coordinate multiple Claude Code sessions working the same
   repo at once via a gitignored, self-pruning `.claude/session-claims.json` registry —
