@@ -116,7 +116,7 @@ Never write implementation before the failing test exists.
 
 3. **Compute the expected result from an independent source of truth.** Never derive a test's expected value from the same logic or algorithm being tested — that only proves the code agrees with itself, not that either is correct. *Why:* e.g. testing a slug generator by re-implementing the slugify logic inline in the test asserts self-consistency, not correctness; a genuinely wrong algorithm passes its own test every time. Use hand-computed values or a trusted reference, not restated logic.
 
-4. **Start with a tracer bullet.** Before decomposing a feature into its full task list, write and pass one test exercising the smallest meaningful path end-to-end — not a unit in isolation. *Why:* this surfaces integration/wiring problems (imports, plumbing, environment) immediately, instead of after building N isolated units that turn out not to connect.
+4. **Start with a tracer bullet.** Before implementing a task's individual units, write and pass one test exercising the smallest meaningful path through the task end-to-end — not a unit in isolation. *Why:* this surfaces integration/wiring problems (imports, plumbing, environment) immediately, instead of after building N isolated units that turn out not to connect.
 
 ---
 
