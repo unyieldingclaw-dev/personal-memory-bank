@@ -150,6 +150,12 @@ Companion to the Review Gate above. If a gated `git commit`/`git push` consumes 
 
 On detected failure, the hook recomputes the diff hash fresh (a failed commit/push can't have altered the working tree, so this reproduces the same value) and rewrites the marker.
 
+### 9. Stale Review-Marker Warning (`PreToolUse` — Write + Edit tools)
+
+Warns, before an edit happens, if a review-gate marker (`.claude/.code-review-ok` or `.claude/.change-review-ok`) currently exists and is about to be invalidated by that edit. Any tracked-file change alters the reviewed diff, which silently invalidates the marker's bound hash — without this hook, the only place that notices is the Review Gate above, at the moment of the next commit/push attempt.
+
+Warn-only, no `permissionDecision` — the Review Gate already recomputes the hash fresh at commit/push time and denies on any mismatch, so this hook adds zero new safety; it only surfaces the fact earlier. Does not inspect the edited file or delete the marker — marker deletion stays the sole responsibility of the Review Gate's `consume_marker()`. Implemented in `scripts/warn-stale-review-marker.ps1` and `scripts/warn-stale-review-marker.sh`.
+
 ## Git Hooks (versioned)
 
 PMB distributes two git hooks through the `.githooks/` directory, which is versioned in the project repo. `mb init` and `mb upgrade` both install these hooks and activate them via `core.hooksPath`.
