@@ -157,7 +157,14 @@ if command -v python3 >/dev/null 2>&1; then
   # shared or CI host. Picking a random high port each run makes a collision astronomically
   # unlikely without needing bind-retry logic.
   PORT=$((20000 + RANDOM % 10000))
-  (cd "$SRVDIR" && python3 -m http.server "$PORT" >/dev/null 2>&1) &
+  # WHY capture stderr to a file instead of discarding it (found by code review): a genuine
+  # bind failure (e.g. "Address already in use") used to vanish into /dev/null, leaving the
+  # SKIP path below with no way to distinguish "never became ready in time" from "never even
+  # tried" -- surfacing the server's own error, if any, turns an environment failure into a
+  # diagnosable one instead of just an unexplained absence.
+  SRV_STDERR="$(mktemp 2>/dev/null || mktemp -t mb-vn-srv-stderr)"
+  CLEANUP_DIRS+=("$SRV_STDERR")
+  (cd "$SRVDIR" && python3 -m http.server "$PORT" >/dev/null 2>"$SRV_STDERR") &
   SRV_PID=$!
   SRV_PORT="$PORT"
   # WHY poll for readiness instead of a fixed sleep: a flat `sleep 1` was
@@ -182,6 +189,12 @@ if command -v python3 >/dev/null 2>&1; then
   # indistinguishable from an actual bug without this check.
   if [ "$server_ready" -ne 1 ]; then
     echo "--- live fetch test: SKIPPED (test HTTP server did not become ready within the poll window) ---"
+    if [ -s "$SRV_STDERR" ]; then
+      echo "  server stderr (likely cause of the failure):"
+      sed 's/^/    /' "$SRV_STDERR"
+    else
+      echo "  (server produced no stderr output -- likely a port/network-level failure, not a Python error)"
+    fi
     kill_server_on_port "$SRV_PID" "$PORT"
     SRV_PID=""
     SRV_PORT=""
