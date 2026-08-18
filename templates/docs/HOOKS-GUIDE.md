@@ -44,8 +44,8 @@ Intercepts both Bash and PowerShell tool calls before they run using `scripts/da
 *Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
 
-**CONFIRM** (7 patterns — surfaces confirmation dialog):
-`git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `TRUNCATE TABLE` · `DELETE FROM`
+**CONFIRM** (6 patterns — surfaces confirmation dialog):
+`git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `git merge <branch>` (boundary-matched: excludes `git merge-base`)
 
 **WARN** (4 patterns — exits 0, surfaces access alert):
 `id_rsa` · `.pem` · `.env.production` · `credentials.json`

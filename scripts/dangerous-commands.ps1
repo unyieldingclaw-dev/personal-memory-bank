@@ -3,9 +3,12 @@
     PreToolUse hook — 3-tier dangerous command guardrails for Claude Code.
 .DESCRIPTION
     Reads the Bash tool input JSON from stdin, extracts the command string,
-    and enforces BLOCK / CONFIRM / WARN tier matching via simple substring checks.
-    All output goes to stdout so messages are visible even when stderr is suppressed.
-    Fails open: any unexpected error prints [HOOK ERROR] and exits 0.
+    and enforces BLOCK / CONFIRM / WARN tier matching via simple substring and
+    regex checks. All output goes to stdout so messages are visible even when
+    stderr is suppressed. Fails open on a genuine read failure (empty stdin):
+    prints [HOOK ERROR] and exits 0. On a JSON-parse failure with non-empty
+    stdin, falls back to matching tier patterns against the raw payload instead
+    of exiting immediately -- see the WHY comment on the catch block below.
 
     WHY hookSpecificOutput.permissionDecision, not exit code: top-level exit codes are
     unreliable here -- settings.json wires this hook as "... 2>/dev/null || bash ... || true"
@@ -35,11 +38,38 @@ try {
     # BLOCK/CONFIRM/WARN pattern has ever matched anything, regardless of exit code.
     $cmd = if ($data.tool_input.command) { [string]$data.tool_input.command } else { "" }
 } catch {
-    Write-Host "[HOOK ERROR] dangerous-commands.ps1 failed unexpectedly."
-    Write-Host "Proceeding in fails-open mode."
-    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] dangerous-commands.ps1: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
-    exit 0
+    # WHY fall back to raw-stdin matching (not exit 0 immediately) on a JSON-parse
+    # failure: mirrors dangerous-commands.sh's identical fallback exactly — a real
+    # dangerous command's text is still present somewhere in the raw payload even when
+    # structured extraction fails, so raw matching never misses a true positive, it
+    # only risks occasional false ones. Exiting immediately here would silently
+    # disable the guardrail entirely on a parse error, the wrong direction for a
+    # safety gate. Only applies when $raw was actually captured (the IsNullOrWhiteSpace
+    # early-exit above already handles the genuine "nothing to check" case, which
+    # this catch block never reaches).
+    if ($raw) {
+        $cmd = $raw
+        try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] dangerous-commands.ps1: JSON parse failed, fell back to raw-stdin matching: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
+    } else {
+        Write-Host "[HOOK ERROR] dangerous-commands.ps1 failed unexpectedly."
+        Write-Host "Proceeding in fails-open mode."
+        try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] dangerous-commands.ps1: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
+        exit 0
+    }
 }
+
+# WHY normalize tabs to spaces here, once, before any tier matching: code review found
+# that this file's boundary regex used \s (Unicode-aware, matches NBSP and other
+# Unicode space separators) while dangerous-commands.sh's confirm_boundary() used the
+# POSIX [[:space:]] class (locale-dependent, typically ASCII-only) -- a single-character
+# substitution (e.g. an NBSP in place of the space after "git merge") silently bypassed
+# the CONFIRM gate on one platform but not the other, verified by direct execution.
+# Normalizing tabs to spaces up front lets both boundary checks compare against a plain
+# literal space -- no character classes, no locale/Unicode ambiguity, byte-identical
+# semantics on both platforms. This intentionally does NOT normalize other Unicode
+# whitespace (NBSP, em-space, etc.) to a boundary character on either side: those stay
+# non-boundaries consistently everywhere, rather than a boundary on one platform only.
+$cmd = $cmd.Replace("`t", " ")
 
 function Deny {
     param([string]$Reason)
@@ -88,10 +118,33 @@ $confirmPatterns = @(
     @{ pattern = "sudo rm";           reason = "privileged deletion" }                      # WHY: elevated deletion can remove system files
     @{ pattern = "chmod -R 777";      reason = "world-writable recursive chmod" }           # WHY: makes entire tree world-writable
     @{ pattern = "--no-verify";       reason = "bypasses pre-commit hooks (local governance)" } # WHY: skips safety hooks on commit
+    # WHY regex, not a plain substring: "git merge" as a bare substring also matches
+    # "git merge-base", a common, harmless read-only command — the character after
+    # "merge" there is "-", not a word boundary in the usual sense. Requiring
+    # space-or-end-of-string after "merge" excludes that case while still matching
+    # "git merge <branch>", "git merge --no-ff <branch>", and bare "git merge". WHY a
+    # literal space, not \s, on the trailing side: $cmd already had tabs normalized to
+    # spaces before this pattern ever runs (see the .Replace("`t"," ") call above), and
+    # dangerous-commands.sh does the same normalization -- so both sides only ever need
+    # to check for a plain ASCII space here, with no \s-vs-[[:space:]] Unicode/locale
+    # ambiguity to keep in parity (an earlier version used \s, which -- unlike bash's
+    # [[:space:]] under the C/POSIX locale -- also matches NBSP and other Unicode space
+    # separators; that mismatch let an NBSP-substituted "git merge" silently bypass the
+    # CONFIRM gate on bash but not PowerShell, found by code review and verified by
+    # direct execution).
+    # WHY a leading boundary too (^|[^a-zA-Z]) (found by code review, not present in
+    # the original version): without one, the pattern also matches as a substring of
+    # a longer word — e.g. "git commit -m 'legit merge of feature A'" contains the
+    # literal substring "git merge " inside "le-GIT- -MERGE-of", which would wrongly
+    # trigger CONFIRM. Requiring the character before "git" to be absent (start of
+    # string) or not a letter closes that gap. Mirrors dangerous-commands.sh's
+    # confirm_boundary() leading-boundary fix exactly, for sh/ps1 parity.
+    @{ pattern = '(^|[^a-zA-Z])git merge( |$)'; regex = $true; reason = "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier" } # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
 )
 
 foreach ($entry in $confirmPatterns) {
-    if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $isMatch = if ($entry.regex) { $cmd -imatch $entry.pattern } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) }
+    if ($isMatch) {
         Deny ($CONFIRM_MSG -f $entry.reason)
         exit 0
     }

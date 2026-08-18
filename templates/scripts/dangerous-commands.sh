@@ -53,6 +53,19 @@ except Exception:
     [ $? -eq 0 ] && cmd="$extracted"
 fi
 
+# WHY normalize tabs to spaces here, once, before any tier matching: code review found
+# that dangerous-commands.ps1's boundary regex used \s (Unicode-aware, matches NBSP and
+# other Unicode space separators) while this script's confirm_boundary() used the POSIX
+# [[:space:]] class (locale-dependent, typically ASCII-only) -- a single-character
+# substitution (e.g. an NBSP in place of the space after "git merge") silently bypassed
+# the CONFIRM gate on one platform but not the other, verified by direct execution.
+# Normalizing tabs to spaces up front lets both boundary checks compare against a plain
+# literal space -- no character classes, no locale/Unicode ambiguity, byte-identical
+# semantics on both platforms. This intentionally does NOT normalize other Unicode
+# whitespace (NBSP, em-space, etc.) to a boundary character on either side: those stay
+# non-boundaries consistently everywhere, rather than a boundary on one platform only.
+cmd=$(printf '%s' "$cmd" | tr '\011' ' ')
+
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
 }
@@ -93,6 +106,50 @@ confirm() {
     esac
 }
 
+confirm_boundary() {
+    # Like confirm(), but requires $1 to be bounded on BOTH sides: preceded by the
+    # start of the string or a non-letter, and followed by whitespace or the literal
+    # end of the string — not just any non-letter on the trailing side, which
+    # block_boundary() accepts. WHY the stricter trailing boundary: "git merge" as a
+    # plain substring (or under block_boundary's non-letter check) also matches
+    # "git merge-base", a common, harmless read-only command this repo's own session
+    # tooling uses constantly — the character after "merge" in "merge-base" is "-", a
+    # non-letter, so block_boundary's boundary rule would still false-positive there.
+    # WHY a leading boundary too (found by code review, not present in the original
+    # version): without one, "$1" also matches as a substring of a longer word — e.g.
+    # "git commit -m 'legit merge of feature A'" contains the literal substring
+    # "git merge " inside "le-GIT- -MERGE-of", which would wrongly trigger CONFIRM.
+    # Requiring the character before "$1" to be absent (start of string) or a
+    # non-letter closes that gap while still matching "git merge <branch>",
+    # "git merge --no-ff <branch>", bare "git merge", and "; git merge <branch>".
+    # WHY a literal space, not a [[:space:]]/\s character class, on the trailing
+    # side: $cmd already had tabs normalized to spaces before this function ever
+    # runs (see the tr call near the top of the file), and dangerous-commands.ps1
+    # does the same normalization -- so both sides only ever need to check for a
+    # plain ASCII space here, with no character-class/locale/Unicode ambiguity to
+    # keep in parity.
+    # WHY case-fold both sides before matching (found by opposition review, not
+    # present in the original version): POSIX case globs are case-sensitive, but
+    # dangerous-commands.ps1's `-imatch` is not -- so "GIT merge main" (the
+    # executable name uppercase, the subcommand itself still lowercase, which git
+    # accepts) was denied on PowerShell but silently allowed on bash. On Windows
+    # this is a real, executable command, not a contrived case: the filesystem
+    # resolves "GIT" to git.exe case-insensitively, and git's own subcommand
+    # parsing only requires "merge" (not "GIT") to be lowercase. Folding both
+    # $cmd and $1 to lowercase before the case match closes that platform gap
+    # without touching confirm()/block()/block_boundary(), which are unaffected
+    # by this pattern and use the file's existing explicit-lowercase-variant
+    # convention (see the "drop table"/"DROP TABLE" pairs above) instead.
+    cmd_lc=$(printf '%s' "$cmd" | tr 'A-Z' 'a-z')
+    pat_lc=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+    case "$cmd_lc" in
+        "$pat_lc "*|"$pat_lc"|*[!a-zA-Z]"$pat_lc "*|*[!a-zA-Z]"$pat_lc")
+            deny "CONFIRM REQUIRED: $2. Run manually if intentional."
+            exit 0
+            ;;
+    esac
+}
+
 warn() {
     # WARN: credential/secrets access — command proceeds, access is surfaced
     case "$cmd" in
@@ -124,6 +181,7 @@ confirm "git update-ref"    "low-level ref manipulation"        # WHY: low-level
 confirm "sudo rm"           "privileged deletion"               # WHY: elevated deletion can remove system files
 confirm "chmod -R 777"      "world-writable recursive chmod"    # WHY: makes entire tree world-writable
 confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WHY: skips safety hooks on commit
+confirm_boundary "git merge" "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier"  # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
 
 # WARN: credential/secrets access — legitimate workflows exist, surface the access only
 warn "id_rsa"           "SSH private key access"                # WHY: SSH private key — may be intentional (key setup)
