@@ -363,9 +363,38 @@ lineage: []
   project's tooling had just been found to have (npm-link vs. stale-registry-copy) — verified clean: the
   global `mb` command is a thin wrapper reading `MB_HOME` and invoking `scripts/mb.ps1` directly from the
   live repo path, no intermediate copy, no publish step, structurally the safe pattern.
-- Remaining from the original `/change-review` pass's findings, not yet started: 3 test-coverage gaps
-  (version-notifier quote-stripping, `mb clean` weak assertion, PowerShell parity for the chained-cd fix);
-  the marker-destruction-on-denial fix itself; atomic version-cache write + `diff_hash()` trap-scoping;
+- ✅ **All 3 test-coverage gaps closed (Task #32, committed `2991093`):**
+  - `tests/test-mb-version-notifier.sh`: proves `get_cached_pmb_version()`'s `tr -d '[:space:]"'`
+    sanitization actually protects the hand-built cache JSON, and that the written file round-trips
+    on a subsequent read. First draft's round-trip assertion pointed the second invocation at the
+    still-live test server, so a broken cache reader could be silently masked by a live-fetch
+    fallback applying the same sanitization — caught independently by both the Testing and
+    Correctness domain reviewers on the same review pass. Fixed by pointing the second invocation
+    at an unreachable port; the opposition reviewer mutation-tested the fix directly (a corrupted
+    cache file now genuinely fails the assertion; a valid one still passes in ~400ms since the
+    cache-hit branch short-circuits before ever calling curl).
+  - `tests/test-mb-clean.sh`: replaced `assert_contains "$output" "slim"` (trivially satisfied by
+    every invocation, since "Slim Check" is an unconditional header) with assertions tied to
+    `show_clean()`'s actual line-count branches for `progress.md`, plus new coverage for the
+    previously-untested 250–400-line "RECOMMENDED" middle branch.
+  - `tests/test-review-reminders.sh`: adds PowerShell-side coverage for the chained-cd and
+    whitespace-variant root-resolution fixes (`Resolve-CdRoot`), previously bash-only despite being
+    security-relevant on both platforms. First draft's new tests failed for a subtle reason: testing
+    a native PowerShell process requires real Windows paths with escaped backslashes, not the
+    POSIX-style paths bash's own `mktemp` produces — an unescaped backslash inside a JSON string is
+    a valid-but-wrong JSON escape sequence (e.g. `\t` in `\tmp.XXXX` decodes to a literal tab),
+    silently corrupting the path before `Resolve-CdRoot` ever sees it. This read exactly like a real
+    security bypass (a decoy repo's marker appeared to authorize a commit in a different repo) until
+    traced back to the test's own JSON construction via an isolated `Resolve-CdRoot` call proving the
+    function itself was correct given a real Windows path. Fixed via a new `win_path_for_json()` test
+    helper (`cygpath -w` + backslash-doubling), gated on `cygpath` being present so its absence
+    produces a clean SKIPPED line rather than a spurious FAIL.
+  - The opposition reviewer also independently root-caused an unrelated single-run "9 failed" result
+    (from a manual re-run during this same session) as a pre-existing, environment-level test-server
+    readiness-poll flake (the poll exhausts 10 attempts and proceeds anyway) — reproduced
+    deterministically by neutering the server-launch line, confirmed unrelated to this diff.
+- Remaining from the original `/change-review` pass's findings, not yet started: the
+  marker-destruction-on-denial fix itself; atomic version-cache write + `diff_hash()` trap-scoping;
   final full test-suite run + re-run `/change-review` + push/merge PR #8.
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
