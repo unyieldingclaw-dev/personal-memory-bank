@@ -166,10 +166,26 @@ if command -v python3 >/dev/null 2>&1; then
   # connection attempt still timed out under mb.sh's own 2s --max-time,
   # while an immediate retry succeeded. Polling until the server actually
   # answers removes the race instead of guessing a longer fixed delay.
+  server_ready=0
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    curl -sf --max-time 1 "http://127.0.0.1:$PORT/VERSION" >/dev/null 2>&1 && break
+    curl -sf --max-time 1 "http://127.0.0.1:$PORT/VERSION" >/dev/null 2>&1 && { server_ready=1; break; }
     sleep 0.3
   done
+  # WHY explicitly check server_ready and skip the rest of this block otherwise (found by
+  # code review): before this fix, the poll loop above fell through silently on a server that
+  # never became ready (port collision, bind failure swallowed by the `>/dev/null 2>&1`
+  # redirect on its launch, a Windows firewall prompt) -- every assertion below would then run
+  # against an unreachable server and fail with confusing, regression-looking output instead
+  # of a clear signal that the test infrastructure itself never came up. Reproduced directly:
+  # neutering the server-launch line alone produces the exact same failure count and pattern
+  # as a real, unrelated environmental flake did during this suite's own development,
+  # indistinguishable from an actual bug without this check.
+  if [ "$server_ready" -ne 1 ]; then
+    echo "--- live fetch test: SKIPPED (test HTTP server did not become ready within the poll window) ---"
+    kill_server_on_port "$SRV_PID" "$PORT"
+    SRV_PID=""
+    SRV_PORT=""
+  else
   cd "$TMPDIR_FETCH" || exit 1
   output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_FETCH/.mb" MB_VERSION_CHECK_URL="http://127.0.0.1:$PORT/VERSION" bash "$MB" status 2>&1)
   cd - > /dev/null || exit 1
@@ -260,6 +276,7 @@ if command -v python3 >/dev/null 2>&1; then
   kill_server_on_port "$SRV_PID" "$PORT"
   SRV_PID=""
   SRV_PORT=""
+  fi
 else
   echo "--- live fetch test: SKIPPED (python3 not installed on this machine) ---"
 fi
