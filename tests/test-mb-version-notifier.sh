@@ -218,6 +218,45 @@ if command -v python3 >/dev/null 2>&1; then
   assert_contains "$output" "7.7.7" "mb.sh: clock-skewed (future) cache triggers a live re-fetch, reflecting the freshly-served version"
   assert_not_contains "$output" "8.8.8" "mb.sh: clock-skewed cache's stale remoteVersion is not trusted just because age_seconds went negative"
 
+  # ── a served version containing whitespace and a stray quote is sanitized before the ───────
+  # ── cache write, and the resulting cache file is still valid on a subsequent read ──────────
+  # WHY this test exists: get_cached_pmb_version's own comment explains REMOTE_VERSION is
+  # sanitized via `tr -d '[:space:]"'` before being interpolated into the cache file's JSON via
+  # a plain printf (not a real JSON encoder) -- a literal `"` reaching that printf would break
+  # the JSON structure the cache reader's bounded `sed` pattern depends on. Nothing previously
+  # served a response actually containing a quote character to exercise that sanitization path;
+  # every prior test either pre-populated a clean cache file directly or served a plain version
+  # string with no special characters.
+  echo ""
+  echo "--- a served version with whitespace/a stray quote is sanitized, cache file stays valid ---"
+  echo '  8.1.2"  ' > "$SRVDIR/VERSION"
+  TMPDIR_QUOTE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-quote)"
+  CLEANUP_DIRS+=("$TMPDIR_QUOTE")
+  setup_test_project "$TMPDIR_QUOTE"
+  cd "$TMPDIR_QUOTE" || exit 1
+  output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_QUOTE/.mb" MB_VERSION_CHECK_URL="http://127.0.0.1:$PORT/VERSION" bash "$MB" status 2>&1)
+  cd - > /dev/null || exit 1
+  assert_contains "$output" "8.1.2" "mb.sh: whitespace/quote-laden served version is sanitized down to the clean version in the NOTICE"
+  assert_not_contains "$output" '"' "mb.sh: NOTICE output contains no stray quote character from the served response"
+  cache_content=$(cat "$TMPDIR_QUOTE/.mb/version-check-cache.json")
+  assert_contains "$cache_content" '"remoteVersion":"8.1.2"' "mb.sh: cache file's remoteVersion field is clean, well-formed JSON (no embedded quote corrupting the structure)"
+  # WHY a second, separate invocation against the now-written cache file: this proves the
+  # written JSON round-trips correctly through the cache READER's bounded sed pattern, not just
+  # that the WRITE side looked clean -- a subtly corrupted cache file (e.g. an unescaped quote
+  # that happened to still parse) would only surface as a bug on the next read, not the write.
+  # WHY an unreachable check URL here, not the live server again (found by code review): with
+  # the live server still reachable, get_cached_pmb_version()'s live-fetch fallback (mb.sh:107-119)
+  # applies the identical tr -d '[:space:]"' sanitization on ANY cache-read failure -- so a
+  # broken cache reader would silently re-fetch and still produce "8.1.2", making this
+  # assertion pass even if the thing it claims to test (the cache read path) were broken.
+  # Pointing at a closed port makes the fallback path fail too (curl -sf returns nothing), so
+  # "8.1.2" in the output can only come from a genuine, successful cache-file read.
+  cd "$TMPDIR_QUOTE" || exit 1
+  output2=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_QUOTE/.mb" MB_VERSION_CHECK_URL="http://127.0.0.1:1/VERSION" bash "$MB" status 2>&1)
+  cd - > /dev/null || exit 1
+  assert_contains "$output2" "8.1.2" "mb.sh: the cache file written from a sanitized version reads back correctly on a subsequent cache-hit invocation, with the live-fetch fallback unreachable so this can't be masked by a silent re-fetch"
+  echo "7.7.7" > "$SRVDIR/VERSION"
+
   kill_server_on_port "$SRV_PID" "$PORT"
   SRV_PID=""
   SRV_PORT=""

@@ -40,6 +40,29 @@ invoke_hook_ps1() {
     | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null)
 }
 
+win_path_for_json() {
+  # win_path_for_json <posix-path> — converts a bash-style POSIX path (e.g. from mktemp -d)
+  # into a JSON-string-safe native Windows path, for embedding inside a command string sent
+  # to review-reminders.ps1. Two steps, both required:
+  #   1. cygpath -w: review-reminders.ps1 is a native Windows process with no MSYS
+  #      path-translation layer -- Resolve-CdRoot's [System.IO.Path] calls cannot resolve a
+  #      POSIX-style "/tmp/tmp.XXXX" path (it silently treats a leading "/" as rooted at the
+  #      current drive, producing a nonexistent path). Confirmed directly: an isolated
+  #      Resolve-CdRoot call resolves correctly given a real Windows path, and returns empty
+  #      given the POSIX form of the identical directory.
+  #   2. backslash-doubling: a Windows path's literal backslashes are not valid unescaped
+  #      characters inside a JSON string -- e.g. the "\t" in "...\Temp\tmp.XXXX" is a valid
+  #      JSON escape sequence (tab) that silently corrupts the path if left unescaped, which
+  #      is exactly what step 1 alone produced when first tried here (the hook received a
+  #      corrupted path, resolved no root, and silently exited 0 with no output at all --
+  #      not a deny, just nothing, which read exactly like a real bypass until traced back to
+  #      this missing escape step).
+  local posix_path="$1"
+  local win_path
+  win_path="$(cygpath -w "$posix_path" 2>/dev/null || echo "$posix_path")"
+  printf '%s' "${win_path//\\/\\\\}"
+}
+
 invoke_hook_from() {
   # invoke_hook_from <script> <spawn-dir> <command-text> — like invoke_hook, but spawns the
   # hook process from <spawn-dir> instead of $TMPDIR_RR, so <command-text> can carry its own
@@ -47,6 +70,18 @@ invoke_hook_from() {
   local script="$1" spawn_dir="$2" command="$3"
   printf '{"tool_input":{"command":"%s"}}' "$command" \
     | (cd "$spawn_dir" && bash "$REPO_ROOT/scripts/$script" 2>/dev/null)
+}
+
+invoke_hook_ps1_from() {
+  # invoke_hook_ps1_from <spawn-dir> <command-text> — PowerShell equivalent of
+  # invoke_hook_from, for review-reminders.ps1 specifically. WHY this exists: prior to it,
+  # only review-reminders.sh's resolve_cd_root() had spawn-dir-independent coverage for the
+  # chained-cd and whitespace-variant fixes -- review-reminders.ps1's own Resolve-CdRoot
+  # implements the identical logic but had no test proving it, a real cross-platform coverage
+  # gap for a security-relevant root-resolution function (found by code review).
+  local spawn_dir="$1" command="$2"
+  printf '{"tool_input":{"command":"%s"}}' "$command" \
+    | (cd "$spawn_dir" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null)
 }
 
 write_marker_bash_recipe() {
@@ -230,6 +265,50 @@ else
   echo "SKIPPED (python3 not installed on this machine — resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
 fi
 
+# ── cross-shell parity: chained-cd fix also holds for review-reminders.ps1 ─────────────────
+# WHY this test exists (found by code review): the chained-cd fix and its regression test
+# above only ever exercised review-reminders.sh's resolve_cd_root(). review-reminders.ps1's
+# Resolve-CdRoot implements the identical last-cd-wins logic but had zero test coverage of
+# its own for this security-relevant behavior — a real PowerShell-side parity gap for the
+# exact scenario (a decoy repo's valid-but-unrelated marker authorizing a commit in a
+# different repo) the bash fix above was written to close. Independent of python3 -- ps1
+# parses JSON via ConvertFrom-Json, not the python3 helper the bash hook uses. Paths embedded
+# in the command string go through win_path_for_json() (defined above) -- see its own
+# comment for why a plain POSIX or unescaped-Windows path breaks this specific hook.
+echo ""
+echo "--- cross-shell parity: review-reminders.ps1 also resolves root to the LAST cd ---"
+# WHY also require cygpath, not just pwsh (found by code review): win_path_for_json()'s
+# fallback to the raw POSIX path when cygpath is missing would silently produce a path
+# Resolve-CdRoot can't parse, turning an environment gap into a spurious test FAIL instead of
+# a clean SKIPPED line -- matching this file's existing skip-not-fail convention elsewhere.
+if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+  TMPDIR_DECOY_A_PS1="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-decoy-ps1)"
+  git -C "$TMPDIR_DECOY_A_PS1" init -q -b main
+  git -C "$TMPDIR_DECOY_A_PS1" config user.email "test@example.com"
+  git -C "$TMPDIR_DECOY_A_PS1" config user.name "Test"
+  echo "decoy one" > "$TMPDIR_DECOY_A_PS1/file.txt"
+  git -C "$TMPDIR_DECOY_A_PS1" add file.txt
+  git -C "$TMPDIR_DECOY_A_PS1" commit -q -m "initial"
+  mkdir -p "$TMPDIR_DECOY_A_PS1/.claude"
+  echo "decoy two" >> "$TMPDIR_DECOY_A_PS1/file.txt"
+  tmp=$(mktemp)
+  git -C "$TMPDIR_DECOY_A_PS1" diff HEAD > "$tmp" 2>/dev/null
+  sha256sum "$tmp" | cut -d' ' -f1 > "$TMPDIR_DECOY_A_PS1/.claude/.code-review-ok"
+  rm -f "$tmp"
+
+  echo "line nine" >> "$TMPDIR_RR/file.txt"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+  DECOY_A_PS1_WIN="$(win_path_for_json "$TMPDIR_DECOY_A_PS1")"
+  TMPDIR_RR_WIN="$(win_path_for_json "$TMPDIR_RR")"
+  resp=$(invoke_hook_ps1_from "$TMPDIR_DECOY_A_PS1" "cd \\\"$DECOY_A_PS1_WIN\\\" && cd \\\"$TMPDIR_RR_WIN\\\" && git commit -m test8ps1")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 resolves root to the LAST cd (RR) in a chained command, not the first (decoy A) — denies because RR has no valid marker of its own"
+  assert_file_exists "$TMPDIR_DECOY_A_PS1/.claude/.code-review-ok" "review-reminders.ps1 did not touch decoy A's marker — confirming root resolved to RR (the last cd), not A (the first)"
+
+  rm -rf "$TMPDIR_DECOY_A_PS1"
+else
+  echo "SKIPPED (pwsh and/or cygpath not installed on this machine)"
+fi
+
 # ── whitespace-variant fix: bash and PowerShell now accept the same cd-prefix shapes ────────
 # WHY this test exists: bash's original sed pattern required exactly one space before `&&`
 # (`cd "path" &&`); review-reminders.ps1's regex was more permissive (`\s+`/`\s*`). A command
@@ -251,6 +330,31 @@ if command -v python3 >/dev/null 2>&1; then
   rm -rf "$TMPDIR_WRONG_WS"
 else
   echo "SKIPPED (python3 not installed on this machine — resolve_cd_root() fails open to ambient cwd, already covered by the rest of this suite)"
+fi
+
+# ── cross-shell parity: review-reminders.ps1 also accepts the tight-whitespace variant ─────
+# WHY this test exists (found by code review): the WHY comment above notes review-reminders.ps1's
+# regex was already more permissive than bash's pre-fix pattern -- but nothing actually invoked
+# review-reminders.ps1 with this exact input to empirically confirm that, as opposed to inferring
+# it from reading the regex. This closes that gap: a live check, not just a re-statement of the
+# regex's shape. Independent of python3. Path embedded in the command string goes through
+# win_path_for_json() -- see its own comment above for why.
+echo ""
+echo "--- cross-shell parity: review-reminders.ps1 accepts a cd prefix with no space before && ---"
+# WHY also require cygpath: see the identical guard on the chained-cd parity test above.
+if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+  TMPDIR_WRONG_WS_PS1="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-wrongws-ps1)"
+  git init -q -b main "$TMPDIR_WRONG_WS_PS1"
+
+  echo "line ten" >> "$TMPDIR_RR/file.txt"
+  write_marker_bash_recipe ".code-review-ok"
+  TMPDIR_RR_WIN="$(win_path_for_json "$TMPDIR_RR")"
+  resp=$(invoke_hook_ps1_from "$TMPDIR_WRONG_WS_PS1" "cd \\\"$TMPDIR_RR_WIN\\\"&&git commit -m test9ps1")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 resolves root from a cd prefix with no space before && (tight-whitespace variant), even though the hook process was spawned from an unrelated directory"
+
+  rm -rf "$TMPDIR_WRONG_WS_PS1"
+else
+  echo "SKIPPED (pwsh and/or cygpath not installed on this machine)"
 fi
 
 # ── fail-open: missing _review-gate-lib.sh/.ps1 causes the hook to exit 0, not crash/deny ──
