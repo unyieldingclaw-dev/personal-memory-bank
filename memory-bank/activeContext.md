@@ -16,49 +16,33 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-08-18
+## Last Updated: 2026-08-18 (later)
 
 ## Trim History
 
-Trimmed 2026-08-14 (671→~150 lines) and 2026-08-18 (NS-24 condensed to a pointer, per the same rule).
-Historical narrative lives in `docs/archive/context-*.md` / `progress.md`'s dated entries — this file
-states only current state. Check `Next Steps` for the authoritative pending-work list.
+Trimmed 2026-08-14 (671→~150), 2026-08-18 (NS-24 condensed; older narrative sections condensed further
+same day). Full history in `docs/archive/context-*.md` / `progress.md`'s dated entries. `Next Steps` is
+the authoritative pending-work list.
 
-## User-As-Bypass Hardened Into Governance + Investigation-Integrity Design (2026-08-12)
+## User-As-Bypass Hardened; Investigation-Integrity Design (2026-08-12)
 
-The user caught this session's own established habit ("hand the user the exact commit commands when
-the marker-write gets classifier-blocked") live and named it directly: never use the user as the
-bypass for a control the agent itself couldn't satisfy — distinct from CONFIRM/BLOCK-tier commands
-(force-push, `--no-verify`, etc.) where a human's hands are the *designed* resolution. Hardened into
-`standards/SECURITY-GUARDRAILS.md` (+ template mirror) and `docs/HOOKS-GUIDE.md` (+ trimmed mirror),
-not left as private-memory-only. Also fixed a real ~2-month latent bug found along the way: `.claude/skills/mb-drift.md` was never discoverable (Claude Code requires `<name>/SKILL.md`, not a flat
-file) — fixed via `git mv`, live-confirmed.
+Never use the user as the bypass for a control the agent itself couldn't satisfy (distinct from
+CONFIRM/BLOCK-tier commands where a human IS the designed resolution) — hardened into
+`standards/SECURITY-GUARDRAILS.md`/`docs/HOOKS-GUIDE.md` (+ template mirrors), not left private-memory-only.
+Spec `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md` + brief
+`docs/WORK-MB-INVESTIGATION-BRIEF.md` committed `15df2c2`. A "review-depth classification" exemption was
+designed then explicitly withdrawn on user objection — same failure class as user-as-bypass. **Standing
+rule: full `/code-review`, every time, no lite path.** Full narrative: `progress.md` 2026-08-12.
 
-New spec `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md` and portable brief
-`docs/WORK-MB-INVESTIGATION-BRIEF.md` (for the user's separate work Memory-Bank project) — both
-committed `15df2c2`. **A proposed "review-depth classification" amendment to the review-gate spec was
-explicitly designed then withdrawn** on the user's principled objection ("do we really have to scheme
-on how to get out of regulated actions?") — it was a standing, self-administered review-scope
-exception, the same failure class as the original user-as-bypass mistake. Do not re-propose without
-re-litigating this. **Standing rule: full `/code-review`, every time, no lite path.**
+## Review-Gate Layered Enforcement — Spec + Plan Written, Not Yet Executed (2026-08-12/13)
 
-## Review-Gate Layered Enforcement — Spec Committed, Plan Written (2026-08-12 / 2026-08-13)
-
-Design spec `docs/superpowers/specs/2026-08-12-review-gate-layered-enforcement-design.md` (`f2cec79`,
-fixed `b47db8f`) closes the structural bypass above: CC `PreToolUse` hook downgraded to non-consuming
-peek; `.githooks/pre-commit`/`pre-push` promoted to sole authoritative marker consumer (fires
-regardless of invoker); new CI containment check as the only actually-unbypassable backstop, reading a
-new durable `docs/review-log/` record + invocation-start log. Explicitly disclosed, not hidden:
-`--no-verify` and an unset `core.hooksPath` still fully defeat the git-hook layer; a fully adversarial
-agent could still fabricate both the marker and the review-log entry — closes the structural
-invoker-switching bypass only, not the deeper self-attestation trust problem.
-
-**Implementation plan written, self-reviewed, and independently reviewed**: `docs/superpowers/plans/2026-08-12-review-gate-layered-enforcement.md`, 14 tasks. The plan's own self-review found 3 real gaps between the spec's prose
-and its own Files-Changed table (documented in the plan's "Design note," not silently reconciled). An
-independent pre-implementation review agent, after being interrupted twice by an account-level
-spend-limit error, was re-dispatched to completion on 2026-08-14 and found 8 more real defects — see
-`[NS-15]` and `progress.md`'s 2026-08-14 entry. All 8 are fixed in the plan. **Still not implemented** —
-do not assume any task in the plan has started without checking; still needs an execution-mode decision.
+Spec `docs/superpowers/specs/2026-08-12-review-gate-layered-enforcement-design.md` (`f2cec79`, fixed
+`b47db8f`): CC `PreToolUse` hook downgraded to non-consuming peek; `.githooks/pre-commit`/`pre-push`
+become sole authoritative marker consumer; new CI containment check as backstop. Disclosed limits:
+`--no-verify`/unset `core.hooksPath` still defeat the git-hook layer. **Plan**
+(`docs/superpowers/plans/2026-08-12-review-gate-layered-enforcement.md`, 14 tasks) self-reviewed AND
+independently reviewed (8 real defects found, all fixed in-plan) — see `[NS-15]`. **Still not
+implemented** — needs an execution-mode decision before Task 1. Full narrative: `progress.md` 2026-08-12/14.
 
 ## Fleet Version Drift Incident — ACR Found 2 Versions Behind (2026-08-12)
 
@@ -135,8 +119,21 @@ rebase onto `main`), a second branch has overlapping WIP, a narrow patch would b
 **Task #34** (cache-write atomicity + `diff_hash()` trap-scoping) done — PowerShell `Move-Item` needed a
 second pass (wasn't actually atomic under load); a self-caught trap-restore regression (armed a caller's
 inherited trap for early firing in a subshell) was mutation-tested, caught, reverted before shipping.
-Full narrative: `progress.md`'s 2026-08-18 entries, not repeated here. **Remaining:** Task #33 (deferred);
-Task #35 (final test run + `/change-review` + push/merge PR #8).
+Full narrative: `progress.md`'s 2026-08-18 entries, not repeated here. **Task #35 mostly done:** full
+`/change-review` run completed clean, 2 Blocking + 2 Medium findings fixed (`69b9566`), push-gate marker
+independently re-verified (`ec65945c...`). **Only the actual `git push` remains** — paused for a
+user-directed tangent (Handoff Protocol redesign, next entry), not abandoned; resume on user go-ahead
+(push is user-facing). **Task #33 remains deferred** (see above).
+
+## Handoff Protocol Narrowed — Memory-Bank Now Authoritative for Priority (2026-08-18)
+
+Work-MB's handoff → "priority order" flow was causing new sessions to miss things (asking a
+pressure-written document to also carry synthesis). Redesigned `## Handoff Protocol` in `CLAUDE.md` +
+`templates/CLAUDE.md` (byte-identical, `3a2a7fd`): `handoff.md` now scoped to ephemeral in-flight state
+only; new sessions read `activeContext.md`'s Next Steps first as authoritative, reconcile against
+`handoff.md` second, surface conflicts rather than silently picking one. Portable companion brief
+`docs/WORK-MB-HANDOFF-DESIGN-BRIEF.md` (`3aa70af`) sent the same principle to work-MB. Both reviewed +
+Opposition-marker-verified. Distinct from `[NS-22]` (handoff.md cleanup-enforcement gap), still open.
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 
