@@ -1,5 +1,42 @@
 # Changelog
 
+## [Unreleased]
+
+### Note — session-claims items below are in-flight, not shipped
+The four `Added` items below are implemented and committed on the not-yet-merged branch
+`worktree-concurrent-session-claims`, not on this branch/tag — see `[NS-18]` in
+`memory-bank/activeContext.md`.
+
+### Added
+- `scripts/session-claims.sh`/`.ps1`: coordinate multiple Claude Code sessions working the same
+  repo at once via a gitignored, self-pruning `.claude/session-claims.json` registry —
+  `prune`/`list`/`claim`/`release`/`force-clear`/`notify`, `mkdir`-based lock with 30s staleness
+  theft, atomic writes. Mirrored into `templates/scripts/`.
+- New `SessionStart` hook (`notify`) auto-surfaces live claims at session start; silent when
+  there's nothing to report.
+- Two new `mb doctor` checks: malformed `session-claims.json`, stuck `session-claims.lock`
+  directory.
+- `docs/SESSION-CLAIMS-GUIDE.md`; `[NS-N]` stable-id convention for `activeContext.md`'s Next
+  Steps list, documented in `standards/MEMORY-BANK.md` and wired into `CLAUDE.md`'s
+  session-start/handoff protocol.
+
+## [1.2.1] — 2026-08-03 (mb.ps1 review-reminders export gap)
+
+### Fixed
+- `scripts/mb.ps1`: `Invoke-Init`'s hook-scripts copy loop excluded `review-reminders.sh`/`.ps1` and `review-reminders-post.sh`/`.ps1` — only `Invoke-Upgrade`'s `$templateOwned`/gap-detection got the 1.2.0 (review-gate hardening) fix, so a fresh PowerShell `mb init` shipped a `settings.json` referencing hook scripts never actually copied into `scripts/` (they'd only appear on a subsequent `mb upgrade`). This closes the PowerShell-side twin of the same-day `mb.sh` fix below. Added regression coverage: `tests/mb-setup.Tests.ps1` asserts `mb init` (subprocess) creates all 4 files.
+
+## [1.2.1] — 2026-08-03 (mb.sh review-reminders export gap)
+
+### Fixed
+- `scripts/mb.sh`: `templates/.claude/settings.json` invokes `scripts/review-reminders.sh`/`.ps1` and `scripts/review-reminders-post.sh`/`.ps1` directly for the commit/push review gate, but none of the 4 files were in `mb init`'s hook-scripts copy loop or `mb upgrade`'s `TEMPLATE_OWNED` array — a fresh `mb init`/`mb upgrade` shipped a `settings.json` referencing hook scripts that were never actually copied into the target project's `scripts/` directory, silently disabling the review gate for every project onboarded via `mb.sh` (only this repo's own native copies worked). `scripts/mb.ps1` got the `TEMPLATE_OWNED` half of this fix in 1.2.0 (review-gate hardening) but not the corresponding `mb.sh` change — this closes that parity gap. Added regression coverage: `tests/test-mb-init.sh` asserts all 4 files are created by `mb init`; `tests/test-mb-upgrade.sh` asserts `mb upgrade` restores them via `TEMPLATE_OWNED`.
+
+### Known gap, not fixed here (closed above)
+- `scripts/mb.ps1`'s `Invoke-Init` copy loop also excludes these 4 files (only its `TEMPLATE_OWNED`/gap-detection got the 1.2.0 fix) — PowerShell `mb init` on a fresh project has the same bug. Tracked separately.
+
+### Changed
+- `scripts/review-reminders.sh/.ps1` + `-post.sh/.ps1`: `sha256_file`/`diff_hash`/`resolve_cd_root` (bash) and `Get-FileHashHex`/`Get-CommitDiffHash`/`Get-PushDiffHash` (PowerShell) were duplicated verbatim across all 4 files (a fix to one had to be manually ported to the others, and had already missed once — see the 2026-07-09 trailing-newline bug). Extracted into new shared dot-sourced libs, `scripts/_review-gate-lib.sh`/`.ps1` (mirrored in `templates/scripts/`); all 4 hook files now dot-source instead of defining locally. `review-reminders-post.ps1` also now calls the shared `Get-CommitDiffHash`/`Get-PushDiffHash` instead of inlining its own third copy of the same pattern (confirmed byte-identical output before and after — a structural dedup, not a behavior fix).
+- A missing/corrupt lib file makes the sourcing hook fail open (gate skipped), matching this repo's established convention — but since a dot-sourced file is invisible to the existing settings.json-derived hook-existence checks, added a new hardcoded check (`scripts/check-review-gate-lib-presence.sh`, called by both `mb doctor` and the CI `template-integrity` job) so this new failure mode doesn't slip through undetected the way `review-reminders*.sh/.ps1` themselves briefly did.
+
 ## [1.2.1] — 2026-07-04 (template scaffolding gap)
 
 ### Fixed

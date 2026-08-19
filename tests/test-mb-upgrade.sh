@@ -26,6 +26,56 @@ output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
 assert_exit_zero $? "mb upgrade exits 0"
 assert_file_exists "$TMPDIR_UP/scripts/dangerous-commands.sh" "upgrade restores TEMPLATE_OWNED script"
 
+# ── Template sync: review-reminders scripts are TEMPLATE_OWNED too ───────────
+# Regression test: templates/.claude/settings.json invokes review-reminders.sh/.ps1 and
+# review-reminders-post.sh/.ps1 directly, but they were missing from TEMPLATE_OWNED, so a
+# deleted or stale copy was never restored by mb upgrade.
+echo ""
+echo "--- template sync: restores review-reminders TEMPLATE_OWNED scripts ---"
+
+rm -f "$TMPDIR_UP/scripts/review-reminders.sh" "$TMPDIR_UP/scripts/review-reminders-post.sh"
+assert_file_not_exists "$TMPDIR_UP/scripts/review-reminders.sh" "review-reminders.sh absent before upgrade"
+
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0"
+assert_file_exists "$TMPDIR_UP/scripts/review-reminders.sh" "upgrade restores TEMPLATE_OWNED review-reminders.sh"
+assert_file_exists "$TMPDIR_UP/scripts/review-reminders-post.sh" "upgrade restores TEMPLATE_OWNED review-reminders-post.sh"
+
+# ── Template sync: _review-gate-lib.sh/.ps1 are TEMPLATE_OWNED too ───────────
+echo ""
+echo "--- template sync: restores _review-gate-lib TEMPLATE_OWNED scripts ---"
+
+rm -f "$TMPDIR_UP/scripts/_review-gate-lib.sh" "$TMPDIR_UP/scripts/_review-gate-lib.ps1"
+assert_file_not_exists "$TMPDIR_UP/scripts/_review-gate-lib.sh" "_review-gate-lib.sh absent before upgrade"
+
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0"
+assert_file_exists "$TMPDIR_UP/scripts/_review-gate-lib.sh" "upgrade restores TEMPLATE_OWNED _review-gate-lib.sh"
+assert_file_exists "$TMPDIR_UP/scripts/_review-gate-lib.ps1" "upgrade restores TEMPLATE_OWNED _review-gate-lib.ps1"
+
+# ── Template sync: ALL command files are auto-discovered, not a hardcoded subset ─
+# Regression test: TEMPLATE_OWNED used to hardcode 4 of 8 command files
+# (code-review.md, feature-dev.md, security-review.md, pmb-status.md), so
+# accessibility-review.md, change-review.md, health-check.md, and test-audit.md
+# were silently never restored by `mb upgrade` even though `mb init` already
+# discovered them correctly. Fixed to auto-discover from templates/claude-commands/
+# instead, matching mb.ps1's Invoke-Upgrade.
+echo ""
+echo "--- template sync: restores ALL command files, not just the previously-hardcoded 4 ---"
+
+rm -f "$TMPDIR_UP/.claude/commands/accessibility-review.md" \
+      "$TMPDIR_UP/.claude/commands/change-review.md" \
+      "$TMPDIR_UP/.claude/commands/health-check.md" \
+      "$TMPDIR_UP/.claude/commands/test-audit.md"
+assert_file_not_exists "$TMPDIR_UP/.claude/commands/change-review.md" "change-review.md absent before upgrade"
+
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0"
+assert_file_exists "$TMPDIR_UP/.claude/commands/accessibility-review.md" "upgrade restores accessibility-review.md"
+assert_file_exists "$TMPDIR_UP/.claude/commands/change-review.md" "upgrade restores change-review.md"
+assert_file_exists "$TMPDIR_UP/.claude/commands/health-check.md" "upgrade restores health-check.md"
+assert_file_exists "$TMPDIR_UP/.claude/commands/test-audit.md" "upgrade restores test-audit.md"
+
 # ── Version tracking: .pmb-version updated ───────────────────────────────────
 echo ""
 echo "--- version tracking: .pmb-version matches repo VERSION ---"

@@ -1,15 +1,32 @@
 #!/usr/bin/env sh
 # PreToolUse hook — 3-tier dangerous command guardrails for Claude Code.
 # Reads the Bash tool input JSON from stdin and enforces BLOCK / CONFIRM / WARN tier
-# matching via POSIX case matching against the raw payload. Fails open: unexpected
-# errors exit 0.
+# matching against the extracted tool_input.command. Fails open: unexpected errors
+# exit 0.
 #
-# WHY match raw stdin instead of extracting the "command" field: a `grep -o
-# '"command":"[^"]*"'` extraction breaks on any JSON-escaped quote inside the command,
-# silently truncating the match and letting a dangerous pattern after that quote through
-# unchecked (the same bug found and fixed in review-reminders.sh). Since these patterns
-# only plausibly appear in this hook's stdin inside the command field, matching the raw
-# payload directly is robust to that escaping edge case.
+# WHY extract tool_input.command via python3 instead of matching raw stdin: raw-stdin
+# matching false-positived on a trigger phrase appearing ANYWHERE in the JSON payload --
+# e.g. a Bash tool call's own "description" field merely mentioning "rm -rf" in prose,
+# never actually running it -- incorrectly BLOCKing/CONFIRMing a harmless action. This
+# is not the same risk the original raw-stdin approach was written to avoid: that
+# concern was specifically about a naive `grep -o '"command":"[^"]*"'` extraction
+# breaking on a JSON-escaped quote inside the command and silently truncating the match.
+# python3's json.load is a real parser, not a fragile regex -- it handles escaped quotes
+# correctly, so it closes the false-positive gap without reintroducing the
+# truncation risk. Matches dangerous-commands.ps1's existing ConvertFrom-Json approach
+# and this repo's established precedent (check-contract.sh, review-reminders.sh's
+# resolve_cd_root()).
+#
+# WHY fall back to raw-stdin matching (not to no matching at all) when python3 is
+# missing or JSON parsing fails: this hook's whole purpose is catching genuinely
+# dangerous commands, and a real dangerous command's text is still present SOMEWHERE
+# in the raw payload even when extraction isn't possible -- raw matching never misses
+# a true positive, it only risks occasional false ones. Disabling the guardrail
+# entirely on a missing dependency would trade a rare false-positive-block for a
+# silent, total loss of protection, the wrong direction for a safety gate. This
+# fallback does NOT apply when python3 succeeds and tool_input.command is genuinely
+# empty -- that's a real, parsed answer ("no command to check"), not an extraction
+# failure, so it's trusted as-is rather than falling back to raw matching.
 #
 # WHY hookSpecificOutput.permissionDecision, not exit code: settings.json wires this hook
 # as "... 2>/dev/null || bash ... || true" for cross-platform fail-open portability, and
@@ -23,13 +40,39 @@ if [ -z "$input" ]; then
     exit 0
 fi
 
+cmd="$input"
+if command -v python3 >/dev/null 2>&1; then
+    extracted=$(printf '%s' "$input" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d.get('tool_input', {}).get('command', ''))
+except Exception:
+    sys.exit(1)
+" 2>/dev/null)
+    [ $? -eq 0 ] && cmd="$extracted"
+fi
+
+# WHY normalize tabs to spaces here, once, before any tier matching: code review found
+# that dangerous-commands.ps1's boundary regex used \s (Unicode-aware, matches NBSP and
+# other Unicode space separators) while this script's confirm_boundary() used the POSIX
+# [[:space:]] class (locale-dependent, typically ASCII-only) -- a single-character
+# substitution (e.g. an NBSP in place of the space after "git merge") silently bypassed
+# the CONFIRM gate on one platform but not the other, verified by direct execution.
+# Normalizing tabs to spaces up front lets both boundary checks compare against a plain
+# literal space -- no character classes, no locale/Unicode ambiguity, byte-identical
+# semantics on both platforms. This intentionally does NOT normalize other Unicode
+# whitespace (NBSP, em-space, etc.) to a boundary character on either side: those stay
+# non-boundaries consistently everywhere, rather than a boundary on one platform only.
+cmd=$(printf '%s' "$cmd" | tr '\011' ' ')
+
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
 }
 
 block() {
     # BLOCK: irreversible or highly destructive — refuse unconditionally
-    case "$input" in
+    case "$cmd" in
         *"$1"*)
             deny "BLOCK: $2. Refusing this command."
             exit 0
@@ -45,7 +88,7 @@ block_boundary() {
     # field-path bug that had made this pattern a no-op made the collision real). POSIX
     # case globs have no \b, so this approximates it: match $1 followed by a non-letter,
     # or match $1 as the literal end of the string.
-    case "$input" in
+    case "$cmd" in
         *"$1"[!a-zA-Z]*|*"$1")
             deny "BLOCK: $2. Refusing this command."
             exit 0
@@ -55,8 +98,52 @@ block_boundary() {
 
 confirm() {
     # CONFIRM: advanced op with legitimate uses — require explicit manual invocation
-    case "$input" in
+    case "$cmd" in
         *"$1"*)
+            deny "CONFIRM REQUIRED: $2. Run manually if intentional."
+            exit 0
+            ;;
+    esac
+}
+
+confirm_boundary() {
+    # Like confirm(), but requires $1 to be bounded on BOTH sides: preceded by the
+    # start of the string or a non-letter, and followed by whitespace or the literal
+    # end of the string — not just any non-letter on the trailing side, which
+    # block_boundary() accepts. WHY the stricter trailing boundary: "git merge" as a
+    # plain substring (or under block_boundary's non-letter check) also matches
+    # "git merge-base", a common, harmless read-only command this repo's own session
+    # tooling uses constantly — the character after "merge" in "merge-base" is "-", a
+    # non-letter, so block_boundary's boundary rule would still false-positive there.
+    # WHY a leading boundary too (found by code review, not present in the original
+    # version): without one, "$1" also matches as a substring of a longer word — e.g.
+    # "git commit -m 'legit merge of feature A'" contains the literal substring
+    # "git merge " inside "le-GIT- -MERGE-of", which would wrongly trigger CONFIRM.
+    # Requiring the character before "$1" to be absent (start of string) or a
+    # non-letter closes that gap while still matching "git merge <branch>",
+    # "git merge --no-ff <branch>", bare "git merge", and "; git merge <branch>".
+    # WHY a literal space, not a [[:space:]]/\s character class, on the trailing
+    # side: $cmd already had tabs normalized to spaces before this function ever
+    # runs (see the tr call near the top of the file), and dangerous-commands.ps1
+    # does the same normalization -- so both sides only ever need to check for a
+    # plain ASCII space here, with no character-class/locale/Unicode ambiguity to
+    # keep in parity.
+    # WHY case-fold both sides before matching (found by opposition review, not
+    # present in the original version): POSIX case globs are case-sensitive, but
+    # dangerous-commands.ps1's `-imatch` is not -- so "GIT merge main" (the
+    # executable name uppercase, the subcommand itself still lowercase, which git
+    # accepts) was denied on PowerShell but silently allowed on bash. On Windows
+    # this is a real, executable command, not a contrived case: the filesystem
+    # resolves "GIT" to git.exe case-insensitively, and git's own subcommand
+    # parsing only requires "merge" (not "GIT") to be lowercase. Folding both
+    # $cmd and $1 to lowercase before the case match closes that platform gap
+    # without touching confirm()/block()/block_boundary(), which are unaffected
+    # by this pattern and use the file's existing explicit-lowercase-variant
+    # convention (see the "drop table"/"DROP TABLE" pairs above) instead.
+    cmd_lc=$(printf '%s' "$cmd" | tr 'A-Z' 'a-z')
+    pat_lc=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+    case "$cmd_lc" in
+        "$pat_lc "*|"$pat_lc"|*[!a-zA-Z]"$pat_lc "*|*[!a-zA-Z]"$pat_lc")
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
             ;;
@@ -65,7 +152,7 @@ confirm() {
 
 warn() {
     # WARN: credential/secrets access — command proceeds, access is surfaced
-    case "$input" in
+    case "$cmd" in
         *"$1"*)
             printf "WARNING: %s. Proceeding.\n" "$2"
             ;;
@@ -94,6 +181,7 @@ confirm "git update-ref"    "low-level ref manipulation"        # WHY: low-level
 confirm "sudo rm"           "privileged deletion"               # WHY: elevated deletion can remove system files
 confirm "chmod -R 777"      "world-writable recursive chmod"    # WHY: makes entire tree world-writable
 confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WHY: skips safety hooks on commit
+confirm_boundary "git merge" "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier"  # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
 
 # WARN: credential/secrets access — legitimate workflows exist, surface the access only
 warn "id_rsa"           "SSH private key access"                # WHY: SSH private key — may be intentional (key setup)

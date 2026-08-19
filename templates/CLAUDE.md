@@ -21,7 +21,7 @@ At the start of every conversation, and again after any context compaction, sile
 
 ## Context Compaction Recovery
 
-Claude Code compacts at ~40% (via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` in settings.json). The `PreCompact` hook fires first and warns if neither the memory bank nor a handoff has been captured this session. A "context was compacted" summary may appear at the top of the conversation.
+Claude Code compacts at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json. The `PreCompact` hook fires first and warns if neither the memory bank nor a handoff has been captured this session. A "context was compacted" summary may appear at the top of the conversation.
 
 **If you observe a compaction summary:** Re-read ALL `memory-bank/` files immediately, summarize recovered context to the user, confirm where to resume if mid-task. **Do not continue from memory alone.**
 
@@ -110,19 +110,23 @@ This is the single highest-leverage habit for improving output quality.
 
 ## Handoff Protocol
 
+**Scope is deliberately narrow.** `memory-bank/` (especially `activeContext.md`'s Next Steps) is the durable, continuously-updated source of truth for priority and rationale — it is supposed to already be current throughout the session, not just at the end (see the Memory Bank rules above). `handoff.md` exists ONLY to capture genuinely ephemeral in-flight state that memory-bank updates wouldn't naturally hold: exactly where an edit was interrupted, uncommitted diff state, what was about to be tested next. Do not use `handoff.md` to re-summarize decisions, priorities, or task ordering — that duplicates memory-bank and risks drifting from it, written under the worst possible conditions for careful synthesis (an imminent compaction or context limit).
+
 When user types "Handoff" or reports context >= 40%:
 
 1. **STOP** all work immediately
-2. **CREATE** `handoff.md` in project root with: accomplishments, files modified, service state, commands to resume, pending tasks, context for next agent
-3. **RESPOND** only: "Handoff ready at `handoff.md`. Start a new conversation."
-4. **STOP** - do not continue
+2. Before writing `handoff.md`, verify `memory-bank/activeContext.md` and `progress.md` are actually current. If stale, update them FIRST — a rich `handoff.md` cannot compensate for a stale memory-bank, since the next session is instructed to treat memory-bank as authoritative, not this file
+3. **CREATE** `handoff.md` in project root, scoped ONLY to: exact in-flight state (file/line being edited, uncommitted diffs, what was about to run next), any running processes/services left in a non-default state, any command needed to resume, and an explicit pointer — "See `memory-bank/activeContext.md`'s Next Steps for priority and rationale; this file covers only what wasn't captured there yet."
+4. **RESPOND** only: "Handoff ready at `handoff.md`. Start a new conversation."
+5. **STOP** - do not continue
 
 When starting a new conversation:
-1. Check for `handoff.md` — if present, read it FIRST before anything else
-2. Read ALL files in `memory-bank/` to restore full project context
+1. Read ALL files in `memory-bank/` FIRST — this is the authoritative source for priority, rationale, and what's already been tried. Do not treat `handoff.md` as authoritative for these.
+2. Check for `handoff.md` — if present, read it SECOND, treating it only as the narrow ephemeral-state supplement described above, never as a re-summary to synthesize task priority from
 3. Run `/pmb-status` to verify current system state
-4. If a handoff was found: merge its info into Memory Bank, delete `handoff.md`, summarize recovered context to user
-5. Confirm where to resume if mid-task; otherwise continue work
+4. Reconcile: does `handoff.md`'s in-flight state match what `activeContext.md`'s Next Steps implies should be happening? If they conflict, surface the conflict to the user — do not silently pick one
+5. If a handoff was found: merge its info into Memory Bank, delete `handoff.md`, summarize recovered context to user
+6. Confirm where to resume if mid-task; otherwise continue work
 
 ## Token Budget
 
@@ -131,8 +135,8 @@ When starting a new conversation:
 - Switch to Opus (`/model opus`) only for: complex architecture decisions, large multi-file refactors, deep cross-file debugging. Switch back after.
 - Subagents run on Haiku automatically (set in settings.json) — sufficient for file reads, test runs, and exploration.
 
-**Compact at task boundaries — auto-compact fires at 40%:**
-- Auto-compaction is set to fire at 40% context (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` in settings.json); the `PreCompact` hook warns first if memory bank is stale
+**Compact at task boundaries — auto-compact fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`:**
+- Auto-compaction fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json; the `PreCompact` hook warns first if memory bank is stale
 - Compact manually at natural boundaries before that point:
   - After planning: `/compact Focus on decisions and file paths`
   - After debugging: `/compact Focus on what was tried and what worked`

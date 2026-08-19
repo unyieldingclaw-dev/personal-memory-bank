@@ -865,4 +865,23 @@ EOF
 output=$(cd "$TMPDIR_AGENTPARITY" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
 assert_contains "$output" "differ from their templates/.claude/agents/ copy" "check 25: live/template parity — divergent copy → [WARN]"
 
+# ── New check: _review-gate-lib.sh missing but review-reminders.sh present → [ERROR] ────────
+echo ""
+echo "--- new check: _review-gate-lib.sh missing → [ERROR] ---"
+
+TMPDIR_NOLIB="$(mktemp -d 2>/dev/null || mktemp -d -t mb-nolib-test)"
+trap 'rm -rf "$TMPDIR_NOLIB"' EXIT
+
+setup_test_project "$TMPDIR_NOLIB"
+mkdir -p "$TMPDIR_NOLIB/.claude" "$TMPDIR_NOLIB/scripts"
+cat > "$TMPDIR_NOLIB/.claude/settings.json" <<'JSON'
+{"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "scripts/update-last-reviewed.sh"}]}]}}
+JSON
+echo "#!/usr/bin/env bash" > "$TMPDIR_NOLIB/scripts/update-last-reviewed.sh"
+echo "#!/usr/bin/env sh" > "$TMPDIR_NOLIB/scripts/review-reminders.sh"
+# _review-gate-lib.sh deliberately NOT created
+
+output=$(cd "$TMPDIR_NOLIB" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "\[ERROR\].*_review-gate-lib.sh missing" "new check: _review-gate-lib.sh missing but review-reminders.sh present → [ERROR]"
+
 print_summary

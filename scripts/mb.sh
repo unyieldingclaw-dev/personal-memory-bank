@@ -38,6 +38,114 @@ ARG="${2:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${MB_HOME:-$(dirname "$SCRIPT_DIR")}"
 
+# get_cached_pmb_version — sets LOCAL_VERSION and REMOTE_VERSION.
+#
+# WHY a shared helper instead of inlining in invoke_upgrade: the same check now
+# also runs once after every command (see the notifier block near the end of
+# this file), not just inside `mb upgrade`. One helper, one cache, one place to
+# get the TTL/fail-open logic right.
+#
+# WHY cached with a TTL instead of a live fetch every call: a live network call
+# on every single mb invocation would be slow and flaky. Caching for
+# CACHE_TTL_SECONDS means the check is nearly free on every call except
+# roughly once per TTL window.
+#
+# WHY MB_VERSION_CACHE_DIR / MB_VERSION_CHECK_URL env var overrides: lets tests
+# point this at a temp dir and a local/unreachable URL instead of the real
+# user cache and the real GitHub URL. Production code paths never need to set
+# these; they default to the real values.
+#
+# WHY sed instead of python3 to parse the cache: the cache file is written by
+# this same function via a fixed printf format, never arbitrary/user-supplied
+# JSON, so a targeted sed extraction is sufficient and safe. This matters more
+# here than it would have for a one-off `mb upgrade` check: the notifier below
+# now runs get_cached_pmb_version after EVERY command, so requiring python3
+# just to *read* the cache would mean any python3-less machine never gets a
+# cache hit and pays a live curl fetch on every single invocation — silently
+# defeating the whole point of caching. sed is a POSIX baseline tool with no
+# such gap.
+#
+# WHY fail open (leave REMOTE_VERSION empty) on any error — unreachable
+# network, malformed cache: this is an optional notice, never a gate. A broken
+# check must never block or slow down real work.
+CACHE_TTL_SECONDS=604800  # 7 days
+
+get_cached_pmb_version() {
+    local cache_dir cache_file check_url now_epoch cached_epoch cached_remote age_seconds cache_tmp
+    LOCAL_VERSION=""
+    REMOTE_VERSION=""
+    [ -f "$REPO_ROOT/VERSION" ] || return 0
+    LOCAL_VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
+
+    cache_dir="${MB_VERSION_CACHE_DIR:-$HOME/.mb}"
+    cache_file="$cache_dir/version-check-cache.json"
+    check_url="${MB_VERSION_CHECK_URL:-https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION}"
+    now_epoch=$(date +%s)
+
+    if [ -f "$cache_file" ]; then
+        cached_epoch=$(sed -n 's/.*"checkedAtEpoch":\([0-9]*\).*/\1/p' "$cache_file" 2>/dev/null)
+        cached_remote=$(sed -n 's/.*"remoteVersion":"\([^"]*\)".*/\1/p' "$cache_file" 2>/dev/null)
+        # WHY validate cached_epoch before arithmetic: it comes straight from the
+        # on-disk cache file. An unsanitized value reaching `$(( ))` either aborts
+        # the whole script under `set -e` (non-numeric input is a hard error in
+        # bash arithmetic) or, worse, executes anything shaped like `$(...)` inside
+        # it — undermining the fail-open guarantee this whole function exists for.
+        # A malformed/corrupted cache must degrade to "treat as stale", not crash.
+        case "$cached_epoch" in
+            ''|*[!0-9]*) cached_epoch=0 ;;
+        esac
+        age_seconds=$(( now_epoch - cached_epoch ))
+        # WHY require age_seconds >= 0: a future checkedAtEpoch (clock skew, or a
+        # cache written once under a wrong system clock) would otherwise satisfy
+        # "-lt CACHE_TTL_SECONDS" forever, keeping a stale cache "fresh" indefinitely.
+        if [ -n "$cached_remote" ] && [ "$age_seconds" -ge 0 ] && [ "$age_seconds" -lt "$CACHE_TTL_SECONDS" ]; then
+            REMOTE_VERSION="$cached_remote"
+            return 0
+        fi
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        # WHY strip '"' here too, not just whitespace: REMOTE_VERSION is written into the
+        # cache file's JSON below via a plain printf, not a real JSON encoder -- a response
+        # containing a literal " would break the JSON structure (the cache reader above uses
+        # a bounded sed, not a parser, so a stray quote either truncates or corrupts the next
+        # read). A legitimate version string never contains a quote character, so stripping
+        # any that appear is a safe, minimal boundary sanitization rather than a real escaping
+        # scheme -- no different in spirit from the existing whitespace strip on this line.
+        REMOTE_VERSION=$(curl -sf --max-time 2 "$check_url" 2>/dev/null | tr -d '[:space:]"' || true)
+        if [ -n "$REMOTE_VERSION" ]; then
+            mkdir -p "$cache_dir" 2>/dev/null || true
+            # WHY write to a temp file in the same directory then mv, instead of writing
+            # $cache_file directly: this notifier now runs after EVERY command, so two mb
+            # invocations from concurrent sessions against the same project (a scenario this
+            # repo explicitly supports -- see the concurrent-session-claims feature) can race
+            # to write this file at the same TTL-expiry moment. A direct `>` redirect is not
+            # atomic with respect to a concurrent reader; `mv` within the same filesystem is,
+            # matching this repo's own established pattern for the review-gate marker files
+            # (review-reminders.sh's consume_marker(), same TOCTOU-avoidance reason).
+            cache_tmp=$(mktemp "$cache_dir/version-check-cache.XXXXXX" 2>/dev/null) || cache_tmp=""
+            if [ -n "$cache_tmp" ]; then
+                if printf '{"checkedAtEpoch":%s,"remoteVersion":"%s"}' "$now_epoch" "$REMOTE_VERSION" > "$cache_tmp" 2>/dev/null; then
+                    mv "$cache_tmp" "$cache_file" 2>/dev/null || rm -f "$cache_tmp"
+                else
+                    rm -f "$cache_tmp"
+                fi
+            fi
+        fi
+    fi
+}
+
+# pmb_version_is_stale — true when REMOTE_VERSION/LOCAL_VERSION (as set by
+# get_cached_pmb_version) show a real, non-empty version mismatch.
+#
+# WHY a helper instead of repeating this condition: the same three-clause
+# check appears at both call sites (invoke_upgrade's WARN and the end-of-
+# script NOTICE below) — a shared predicate means a future fix only needs to
+# be made once.
+pmb_version_is_stale() {
+    [ -n "$REMOTE_VERSION" ] && [ -n "$LOCAL_VERSION" ] && [ "$REMOTE_VERSION" != "$LOCAL_VERSION" ]
+}
+
 show_help() {
     echo ""
     echo -e "${CYAN}Memory Bank Utility Commands${NC}"
@@ -55,6 +163,7 @@ show_help() {
     echo "  upgrade           Propagate current governance templates to this project"
     echo "  verify-integrity  Check and refresh memory-bank file integrity checksums"
     echo "  plan              Plan management: status, list, promote, archive"
+    echo "  backlog           Backlog management: add, list, show, promote, dismiss"
     echo "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
     echo "  change-check      Post-change summary: diff stats, file types, /change-review job preview"
     echo "  help              Show this help message"
@@ -273,6 +382,12 @@ show_clean() {
     echo ""
 
     # Slim check
+    # WHY progress.md is checked here too, not just activeContext.md: mb doctor's own
+    # File Sizes check (check_size, ~line 809) already measures progress.md against a
+    # 400-line cap -- this display only ever showed activeContext.md, so running `mb clean`
+    # without also running `mb doctor` gave a false "maintenance pass complete" impression
+    # even when progress.md was well over its own limit. Same thresholds as mb doctor's
+    # check_size() and pmb-health.yml's CI file-size job, kept in sync deliberately.
     echo -e "${YELLOW}--- Slim Check ---${NC}"
     SLIM_PATH="$MEMORY_BANK_PATH/activeContext.md"
     if [ -f "$SLIM_PATH" ]; then
@@ -287,6 +402,20 @@ show_clean() {
         fi
     else
         echo -e "${YELLOW}Warning: activeContext.md not found${NC}"
+    fi
+    PROGRESS_PATH="$MEMORY_BANK_PATH/progress.md"
+    if [ -f "$PROGRESS_PATH" ]; then
+        PROGRESS_LINES=$(wc -l < "$PROGRESS_PATH" | tr -d ' ')
+        echo "progress.md: $PROGRESS_LINES lines (max: 400)"
+        if [ "$PROGRESS_LINES" -gt 400 ]; then
+            echo -e "${RED}ACTION NEEDED: File is over limit!${NC}"
+        elif [ "$PROGRESS_LINES" -gt 250 ]; then
+            echo -e "${YELLOW}RECOMMENDED: Consider archiving old entries${NC}"
+        else
+            echo -e "${GREEN}OK: File is within target range${NC}"
+        fi
+    else
+        echo -e "${YELLOW}Warning: progress.md not found${NC}"
     fi
     echo ""
 
@@ -426,7 +555,11 @@ invoke_init() {
                   update-reviewed.sh update-reviewed.ps1 \
                   pre-push-check.sh pre-push-check.ps1 \
                   delegation-depth-check.sh delegation-depth-check.ps1 \
-                  pre-compact-check.sh pre-compact-check.ps1; do
+                  pre-compact-check.sh pre-compact-check.ps1 \
+                  review-reminders.sh review-reminders.ps1 \
+                  review-reminders-post.sh review-reminders-post.ps1 \
+                  _review-gate-lib.sh _review-gate-lib.ps1 \
+                  warn-stale-review-marker.sh warn-stale-review-marker.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
 
@@ -650,6 +783,12 @@ show_doctor() {
         elif [ ${#MISSING_HOOKS[@]} -gt 0 ]; then
             for h in "${MISSING_HOOKS[@]}"; do
                 echo -e "${YELLOW}[WARN] Hook script missing: $h — run 'mb init' to install${NC}"
+            done
+        fi
+        LIB_CHECK_OUT=$(sh "$SCRIPT_DIR/check-review-gate-lib-presence.sh" "scripts" 2>&1) || true
+        if [ -n "$LIB_CHECK_OUT" ]; then
+            echo "$LIB_CHECK_OUT" | while IFS= read -r line; do
+                echo -e "${RED}[ERROR] $line${NC}"
             done
         fi
         # Git hooks — versioned via core.hooksPath
@@ -1573,20 +1712,13 @@ invoke_upgrade() {
     fi
 
     # Remote version check — soft warning, never blocks upgrade
-    if [ -f "$REPO_ROOT/VERSION" ]; then
-        LOCAL_VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
-        if command -v curl >/dev/null 2>&1; then
-            REMOTE_VERSION=$(curl -sf --max-time 3 \
-                "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" \
-                2>/dev/null | tr -d '[:space:]' || true)
-            if [ -n "$REMOTE_VERSION" ] && [ "$REMOTE_VERSION" != "$LOCAL_VERSION" ]; then
-                echo -e "${YELLOW}[WARN] PMB $LOCAL_VERSION installed locally, $REMOTE_VERSION available${NC}"
-                echo -e "${YELLOW}       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank${NC}"
-                echo ""
-            elif [ -z "$REMOTE_VERSION" ]; then
-                echo -e "${GRAY}[INFO] Remote version check skipped (unreachable)${NC}"
-            fi
-        fi
+    get_cached_pmb_version
+    if pmb_version_is_stale; then
+        echo -e "${YELLOW}[WARN] PMB $LOCAL_VERSION installed locally, $REMOTE_VERSION available${NC}"
+        echo -e "${YELLOW}       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank${NC}"
+        echo ""
+    elif [ -n "$LOCAL_VERSION" ] && [ -z "$REMOTE_VERSION" ]; then
+        echo -e "${GRAY}[INFO] Remote version check skipped (unreachable)${NC}"
     fi
 
     # WHY: Ownership is hardcoded as explicit arrays — NOT a config file.
@@ -1615,15 +1747,32 @@ invoke_upgrade() {
         "scripts/delegation-depth-check.ps1"
         "scripts/pre-compact-check.sh"
         "scripts/pre-compact-check.ps1"
-        # Slash commands — governance workflow commands from templates, not project-specific
-        ".claude/commands/code-review.md"
-        ".claude/commands/feature-dev.md"
-        ".claude/commands/security-review.md"
-        ".claude/commands/pmb-status.md"
+        "scripts/review-reminders.sh"
+        "scripts/review-reminders.ps1"
+        "scripts/review-reminders-post.sh"
+        "scripts/review-reminders-post.ps1"
+        "scripts/_review-gate-lib.sh"
+        "scripts/_review-gate-lib.ps1"
+        "scripts/warn-stale-review-marker.sh"
+        "scripts/warn-stale-review-marker.ps1"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
     )
+
+    # WHY: Slash commands are auto-discovered from templates/claude-commands/ instead of
+    # hardcoded — a static list silently goes stale whenever a new command file is added
+    # (accessibility-review.md and change-review.md shipped in 1.2.0 but were never added to
+    # the old hardcoded list here, so `mb upgrade` never copied them into existing projects,
+    # even though `invoke_init`'s own command-copy loop above was already correct and
+    # auto-discovering). Matches mb.ps1's Invoke-Upgrade, which fixed the same bug the same
+    # way — this keeps both shells on a single source of truth (the actual contents of
+    # templates/claude-commands/) instead of two independently-maintained lists.
+    if [ -d "$TEMPLATES_DIR/claude-commands" ]; then
+        for f in "$TEMPLATES_DIR/claude-commands"/*; do
+            [ -f "$f" ] && TEMPLATE_OWNED+=(".claude/commands/$(basename "$f")")
+        done
+    fi
 
     ADVISORY_DIFF=(
         # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
@@ -1976,6 +2125,275 @@ show_plan_list() {
     echo ""
 }
 
+# backlog_slugify — converts a title into a filesystem-safe slug.
+#
+# WHY lowercase + hyphen-collapse + 50-char truncation: matches the scheme
+# documented in docs/superpowers/specs/2026-07-14-backlog-design.md — short,
+# readable, shell-argument-friendly identifiers for the show/promote/dismiss
+# subcommands, without requiring a separate numeric ID system.
+backlog_slugify() {
+    printf '%s' "$1" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
+        | cut -c1-50 \
+        | sed -E 's/-+$//'
+}
+
+# backlog_unique_slug — appends -2, -3, ... on collision.
+#
+# WHY a separate function from backlog_slugify: collision resolution needs
+# filesystem access (checking what already exists in docs/backlog/), which
+# backlog_slugify deliberately doesn't do — keeps the pure string-transform
+# testable independently of the filesystem.
+backlog_unique_slug() {
+    BASE_SLUG=$(backlog_slugify "$1")
+    SLUG="$BASE_SLUG"
+    N=2
+    while [ -f "docs/backlog/${SLUG}.md" ]; do
+        SLUG="${BASE_SLUG}-${N}"
+        N=$((N + 1))
+    done
+    printf '%s' "$SLUG"
+}
+
+# backlog_validate_slug — rejects any slug outside the safe charset
+# (lowercase alnum + hyphen, non-empty) that show/promote/dismiss funnel
+# through before touching the filesystem. This is a superset of what
+# backlog_slugify/backlog_unique_slug actually produce (e.g. it also accepts
+# a leading/trailing hyphen, which slugify always strips) — sufficient to
+# close the security holes below, not a round-trip check against slugify's
+# exact output shape.
+#
+# WHY this exists: show/promote/dismiss take a slug straight from argv and
+# use it to build a filesystem path (docs/backlog/<slug>.md,
+# .claude/plans/<date>-<slug>.md) AND, in promote's case, interpolate it
+# into a sed substitution. An unvalidated slug containing `/` or `..` walks
+# the path outside docs/backlog/; one containing `#` (promote's sed
+# delimiter) or a newline can break out of the substitution and inject
+# additional sed commands. Restricting to this charset closes both holes at
+# the single point every subcommand already funnels through.
+backlog_validate_slug() {
+    case "$1" in
+        ""|*[!a-z0-9-]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+invoke_backlog_add() {
+    TITLE="$1"
+    DESC="${2:-}"
+    if [ -z "$TITLE" ]; then
+        echo -e "${RED}Usage: mb backlog add \"<title>\" [\"<description>\"]${NC}"
+        exit 1
+    fi
+    mkdir -p "docs/backlog"
+    SLUG=$(backlog_unique_slug "$TITLE")
+    if [ -z "$SLUG" ]; then
+        echo -e "${RED}Title must contain at least one letter or number: \"$TITLE\"${NC}"
+        exit 1
+    fi
+    TODAY=$(date +%Y-%m-%d)
+    FILE="docs/backlog/${SLUG}.md"
+    {
+        echo "---"
+        echo "status: open"
+        echo "created: $TODAY"
+        echo "last-reviewed: $TODAY"
+        echo "staleness-threshold: 90d"
+        echo "related_plan: null"
+        echo "---"
+        echo ""
+        echo "# $TITLE"
+        if [ -n "$DESC" ]; then
+            echo ""
+            echo "$DESC"
+        fi
+    } > "$FILE"
+    echo -e "${GREEN}Added backlog item: $FILE${NC}"
+}
+
+# backlog_field — reads a single frontmatter field, matching the grep/sed/tr
+# pattern already used throughout this file (e.g. show_plan_list's STATUS/
+# CREATED/SPEC reads) for consistency rather than introducing a new helper style.
+backlog_field() {
+    grep -m1 "^${2}:" "$1" 2>/dev/null | sed "s/^${2}:[[:space:]]*//" | tr -d ' \r'
+}
+
+# backlog_set_status — rewrites a backlog item's status field. Shared by
+# promote/dismiss so a future change to how the field is rewritten (e.g.
+# also bumping last-reviewed) only needs one edit.
+backlog_set_status() {
+    sed -i.bak "s/^status:.*/status: $2/" "$1" && rm -f "${1}.bak"
+}
+
+# backlog_resolve_slug — validates a slug argument and resolves it to its
+# docs/backlog/<slug>.md path, printing that path to stdout on success. On
+# failure it prints the error to stderr (so it doesn't pollute the captured
+# path) and returns non-zero — callers must check the exit status themselves
+# ($(...) runs in a subshell, so a plain `exit` inside this function would
+# only end the subshell, not the caller, which is why this returns instead).
+#
+# WHY this exists: show/promote/dismiss each did the identical empty-check +
+# backlog_validate_slug + file-exists sequence inline; centralizing it means
+# a future change to any of those checks (e.g. a friendlier not-found
+# message) is one edit instead of three kept in lockstep by hand.
+backlog_resolve_slug() {
+    SLUG="$1"
+    USAGE="$2"
+    if [ -z "$SLUG" ]; then
+        echo -e "${RED}${USAGE}${NC}" >&2
+        return 1
+    fi
+    if ! backlog_validate_slug "$SLUG"; then
+        echo -e "${RED}Invalid slug: $SLUG${NC}" >&2
+        return 1
+    fi
+    FILE="docs/backlog/${SLUG}.md"
+    if [ ! -f "$FILE" ]; then
+        echo -e "${RED}Backlog item not found: $SLUG${NC}" >&2
+        return 1
+    fi
+    printf '%s' "$FILE"
+}
+
+show_backlog_list() {
+    ALL_FLAG="$1"
+    echo ""
+    echo -e "${CYAN}Backlog${NC}"
+    echo -e "${CYAN}=======${NC}"
+    BACKLOG_DIR="docs/backlog"
+    if [ ! -d "$BACKLOG_DIR" ] || ! compgen -G "$BACKLOG_DIR/*.md" > /dev/null 2>&1; then
+        echo -e "${YELLOW}No backlog items. Add one with: mb backlog add \"<title>\"${NC}"
+        echo ""
+        return
+    fi
+    TODAY_EPOCH=$(date +%s)
+    for f in "$BACKLOG_DIR"/*.md; do
+        [ ! -f "$f" ] && continue
+        STATUS=$(backlog_field "$f" "status")
+        [ "$ALL_FLAG" != "--all" ] && [ "$STATUS" != "open" ] && continue
+        SLUG=$(basename "$f" .md)
+        TITLE=$(grep -m1 '^# ' "$f" 2>/dev/null | sed 's/^# //' | tr -d '\r')
+        CREATED=$(backlog_field "$f" "created")
+        AGE=""
+        if [ -n "$CREATED" ]; then
+            CREATED_EPOCH=$(date -d "$CREATED" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$CREATED" +%s 2>/dev/null || echo 0)
+            [ "$CREATED_EPOCH" != "0" ] && AGE=" age:$(( (TODAY_EPOCH - CREATED_EPOCH) / 86400 ))d"
+        fi
+        echo -e "  ${SLUG}  ${TITLE}  status:${STATUS}${AGE}"
+    done
+    echo ""
+}
+
+show_backlog_item() {
+    FILE=$(backlog_resolve_slug "$1" "Usage: mb backlog show <slug>") || exit 1
+    cat "$FILE"
+}
+
+invoke_backlog_promote() {
+    SLUG="$1"
+    FILE=$(backlog_resolve_slug "$SLUG" "Usage: mb backlog promote <slug>") || exit 1
+    # Guard against hand-edited/malformed items: without a '---' on line 1 AND
+    # a second '---' delimiter after it, the body-extraction below would
+    # silently produce a stub missing real content while still marking the
+    # item promoted — a silent data loss. Anchoring to line 1 specifically
+    # (not just "two --- lines exist somewhere in the file") matters: a file
+    # with prose before an accidental/legacy '---'-'---' pair still has
+    # DELIM_COUNT>=2, but the awk extraction below would treat that pair as
+    # the fences and silently drop the preamble into nowhere.
+    if [ "$(head -1 "$FILE")" != "---" ]; then
+        echo -e "${RED}Backlog item has malformed frontmatter (must start with '---'): $FILE${NC}"
+        exit 1
+    fi
+    DELIM_COUNT=$(grep -c '^---$' "$FILE" || true)
+    if [ "$DELIM_COUNT" -lt 2 ]; then
+        echo -e "${RED}Backlog item has malformed frontmatter (expected two '---' delimiters): $FILE${NC}"
+        exit 1
+    fi
+    # WHY also require a status: line: a file with two '---' fences but no
+    # status field passes the delimiter check above, then the status-rewrite
+    # sed below would silently match nothing — the item would report
+    # "Seeded plan stub" while never actually reaching status: promoted,
+    # leaving it invisible from the default `list` without ever being truly
+    # promoted.
+    if ! grep -q '^status:' "$FILE"; then
+        echo -e "${RED}Backlog item has malformed frontmatter (missing 'status:' field): $FILE${NC}"
+        exit 1
+    fi
+    # WHY require status: open: promote unconditionally overwrote the stub
+    # file at a deterministic path (.claude/plans/<today>-<slug>.md), so
+    # re-running promote on an already-promoted item silently destroyed any
+    # work already done fleshing out that stub, with the same success
+    # message both times. Requiring open also blocks re-promoting a
+    # dismissed item without an explicit state transition back through it.
+    CURRENT_STATUS=$(backlog_field "$FILE" "status")
+    if [ "$CURRENT_STATUS" != "open" ]; then
+        echo -e "${RED}Cannot promote: $SLUG has status '$CURRENT_STATUS' (expected 'open').${NC}"
+        exit 1
+    fi
+    # WHY awk instead of sed '1,/^---$/d' here: that idiom relies on a GNU-sed-only
+    # extension (line 1 is exempted from matching the end pattern, so the range
+    # runs to the *next* '---'). On BSD/macOS sed, line 1 ends the range
+    # immediately, stripping only the opening delimiter and leaving the rest of
+    # the frontmatter in the body. awk's explicit two-counter approach behaves
+    # identically on GNU, BSD, and busybox awk.
+    #
+    # WHY `&& n<2` on the delimiter match: without it, a literal `---` markdown
+    # horizontal rule inside the body (after the real frontmatter) would also
+    # match /^---$/ and get silently swallowed instead of printed. Gating on
+    # n<2 means only the first two delimiter lines (the real frontmatter
+    # fences) ever increment the counter or get skipped — once n reaches 2,
+    # any later `---` line falls through to the n>=2{print} rule like normal
+    # body content.
+    BODY=$(awk 'BEGIN{n=0} /^---$/ && n<2 {n++; next} n>=2{print}' "$FILE")
+    mkdir -p ".claude/plans"
+    TODAY=$(date +%Y-%m-%d)
+    STUB=".claude/plans/${TODAY}-${SLUG}.md"
+    # WHY the trailing "<!-- pmb-backlog-source: $SLUG -->" line: mb plan
+    # promote later needs to find this backlog item again to reconcile
+    # related_plan onto the plan's durable docs/plans/ location — matching by
+    # the stub's exact path breaks the moment the user renames it while
+    # fleshing it out with superpowers:writing-plans (the workflow this
+    # feature exists to support), since the rename severs any path-based
+    # link. A marker embedded in the file's content survives a rename.
+    #
+    # WHY an HTML comment specifically, not a plain visible line: a plain
+    # line like "(Backlog source: worth-planning)" reads as plausible English
+    # prose, and this very repo documents this exact feature — a plan
+    # document that discusses it in passing could accidentally match. The
+    # marker needs a format nobody would type by coincidence, at any position
+    # in the file, including after the user has added arbitrary content while
+    # fleshing the stub out (which would defeat a last-line-only anchor). An
+    # HTML comment is that: nobody writes "<!-- pmb-backlog-source: x -->" as
+    # a sentence, and it renders invisibly in the final plan document instead
+    # of leaving a stray literal line at the bottom. This is not the
+    # hidden-instruction-smuggling pattern this repo's own CI scans for
+    # elsewhere (rules-file-integrity) — that check is scoped to CLAUDE.md/
+    # standards/, files Claude reads as instructions; this is inert program
+    # metadata in a data file, no different in kind from the YAML frontmatter
+    # every backlog/plan file already carries.
+    {
+        echo "$BODY"
+        echo ""
+        echo "<!-- pmb-backlog-source: $SLUG -->"
+    } > "$STUB"
+    # WHY not add plan frontmatter here: this is a seed for superpowers:writing-plans
+    # to build out, not a finished plan — mb plan promote (a separate, later step)
+    # is what adds status/created/approved frontmatter once the plan is actually
+    # written and user-approved. See docs/superpowers/specs/2026-07-14-backlog-design.md.
+    backlog_set_status "$FILE" "promoted"
+    sed -i.bak "s#^related_plan:.*#related_plan: $STUB#" "$FILE" && rm -f "${FILE}.bak"
+    echo -e "${GREEN}Seeded plan stub: $STUB${NC}"
+    echo -e "${YELLOW}Next: flesh it out with superpowers:writing-plans, then mb plan promote $STUB${NC}"
+}
+
+invoke_backlog_dismiss() {
+    SLUG="$1"
+    FILE=$(backlog_resolve_slug "$SLUG" "Usage: mb backlog dismiss <slug>") || exit 1
+    backlog_set_status "$FILE" "dismissed"
+    echo -e "${GREEN}Dismissed: $SLUG${NC}"
+}
+
 invoke_plan_promote() {
     DRAFT="$ARG"
     if [ -z "$DRAFT" ]; then
@@ -1987,6 +2405,12 @@ invoke_plan_promote() {
         echo -e "${RED}Draft not found: $DRAFT${NC}"
         exit 1
     fi
+    case "$DRAFT" in
+        *$'\n'*)
+            echo -e "${RED}Draft path must not contain a newline: $DRAFT${NC}"
+            exit 1
+            ;;
+    esac
 
     FILENAME=$(basename "$DRAFT")
     DEST="docs/plans/$FILENAME"
@@ -2016,6 +2440,46 @@ invoke_plan_promote() {
             echo -e "${GREEN}Promoted to $DEST (status: draft → planned)${NC}"
         else
             echo -e "${GREEN}Promoted to $DEST (status: $CURRENT_STATUS preserved)${NC}"
+        fi
+    fi
+
+    # Reconcile the originating backlog item (if any) — see
+    # docs/superpowers/specs/2026-07-14-backlog-design.md "Plan-lifecycle
+    # reconciliation": mb backlog promote stamps a
+    # "<!-- pmb-backlog-source: <slug> -->" line into the stub body
+    # specifically so this step can find the right backlog item by identity,
+    # not by path. Matching on the exact draft path (the earlier design)
+    # broke the moment the user renamed the draft while fleshing it out with
+    # superpowers:writing-plans — the workflow the spec itself describes as
+    # the reason this feature exists — since the rename severs any
+    # path-based link before this step ever runs.
+    #
+    # WHY a full-line match (^...$) on the exact HTML-comment format instead
+    # of a loose grep -o for a visible phrase: an earlier version used a
+    # plain "(Backlog source: x)" line, which reads as plausible English
+    # prose that this very repo's own docs discuss — an unanchored search
+    # over a plan's whole body could pick up a decoy mention instead of the
+    # genuine marker, either silently skipping reconciliation for the real
+    # source item or, worse, matching a slug some unrelated existing backlog
+    # item happens to share and overwriting ITS related_plan instead. Nobody
+    # writes "<!-- pmb-backlog-source: x -->" as a sentence, so anchoring to
+    # this exact syntax (anywhere in the file — position no longer matters,
+    # since the format itself is what makes an accidental match implausible)
+    # closes that without depending on the marker staying the file's last
+    # line, which further edits during writing-plans could easily break.
+    BACKLOG_SLUG=$(grep -E '^<!-- pmb-backlog-source: [a-z0-9-]+ -->$' "$DEST" 2>/dev/null | head -1 | sed -E 's/^<!-- pmb-backlog-source: ([a-z0-9-]+) -->$/\1/')
+    if [ -n "$BACKLOG_SLUG" ]; then
+        BF="docs/backlog/${BACKLOG_SLUG}.md"
+        if [ -f "$BF" ]; then
+            # WHY escape before interpolating into sed's replacement text: $DEST is
+            # derived from the user-chosen plan filename, never charset-restricted --
+            # a literal `&` means "whole matched text" to sed, and `#` is this
+            # substitution's own delimiter; either one unescaped corrupts the
+            # frontmatter (or breaks the sed command outright) instead of
+            # reconciling it.
+            ESC_DEST=$(printf '%s' "$DEST" | sed 's/[\&#]/\\&/g')
+            sed -i.bak "s#^related_plan:.*#related_plan: $ESC_DEST#" "$BF" && rm -f "${BF}.bak"
+            echo -e "${GREEN}Reconciled related_plan in $BF -> $DEST${NC}"
         fi
     fi
 
@@ -2210,9 +2674,38 @@ case "$COMMAND" in
                 ;;
         esac
         ;;
+    backlog)
+        SUBCMD="${2:-list}"
+        case "$SUBCMD" in
+            add)      invoke_backlog_add "${3:-}" "${4:-}" ;;
+            list)     show_backlog_list "${3:-}" ;;
+            show)     show_backlog_item "${3:-}" ;;
+            promote)  invoke_backlog_promote "${3:-}" ;;
+            dismiss)  invoke_backlog_dismiss "${3:-}" ;;
+            *)
+                echo -e "${RED}Unknown backlog subcommand: $SUBCMD${NC}"
+                echo -e "${YELLOW}Usage: mb backlog <add|list|show|promote|dismiss>${NC}"
+                exit 1
+                ;;
+        esac
+        ;;
     *)
         echo -e "${RED}Unknown command: $COMMAND${NC}"
         show_help
         exit 1
         ;;
 esac
+
+# Update notifier — runs after every command except upgrade (has its own WARN
+# above) and help (no need to nag on a bare help lookup). Also excludes
+# "update" -- a deprecated alias that still dispatches to invoke_upgrade
+# (line ~2274), so without this exclusion it would double-print: invoke_upgrade's
+# own [WARN] followed immediately by this generic [NOTICE]. Cached/fail-open
+# via get_cached_pmb_version — see that function's WHY comments for the
+# reasoning.
+if [ "$COMMAND" != "upgrade" ] && [ "$COMMAND" != "update" ] && [ "$COMMAND" != "help" ]; then
+    get_cached_pmb_version
+    if pmb_version_is_stale; then
+        echo -e "${YELLOW}[NOTICE] PMB $LOCAL_VERSION installed, $REMOTE_VERSION available — run: mb upgrade${NC}"
+    fi
+fi

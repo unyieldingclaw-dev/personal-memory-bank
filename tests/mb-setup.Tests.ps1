@@ -136,3 +136,38 @@ Describe "Invoke-Upgrade docs advisory-create (subprocess)" {
         }
     }
 }
+
+# WHY subprocess, not in-process: Invoke-Init also calls `exit` on error paths and
+# mutates the process's current location, same reasoning as the Invoke-Upgrade test above.
+# Regression test: templates/.claude/settings.json invokes review-reminders.sh/.ps1 and
+# review-reminders-post.sh/.ps1 directly, but Invoke-Init's hook-scripts copy loop never
+# included them -- a fresh PowerShell `mb init` shipped a settings.json referencing hook
+# scripts that were never actually copied into scripts/ (the mb.sh side of this same bug
+# was fixed separately; see CHANGELOG.md).
+Describe "Invoke-Init review-reminders scripts (subprocess)" {
+    BeforeAll {
+        $script:RepoRoot5 = $RepoRoot
+        $script:InitReviewRemindersProject = New-TestProject -Base $TestDrive -Name 'init-review-reminders'
+    }
+
+    It "copies review-reminders.sh/.ps1 and review-reminders-post.sh/.ps1 on mb init" {
+        $mbScript = Join-Path $script:RepoRoot5 'scripts/mb.ps1'
+        Push-Location $script:InitReviewRemindersProject
+        try {
+            git init -q 2>$null
+            git config user.email "test@test.com" 2>$null
+            git config user.name "Test" 2>$null
+            git commit -q --allow-empty -m "init" 2>$null
+
+            $env:MB_HOME = $script:RepoRoot5
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
+
+            foreach ($f in @("review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1")) {
+                Test-Path (Join-Path $script:InitReviewRemindersProject "scripts\$f") | Should -Be $true
+            }
+        } finally {
+            Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            Pop-Location
+        }
+    }
+}

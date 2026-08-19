@@ -21,15 +21,26 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'DryRun', Justification='Read by nested functions (e.g. Invoke-Upgrade) via script-scope chaining — PSScriptAnalyzer cannot see usage inside a separately-scoped function body.')]
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "preflight", "change-check", "setup", "help")]
+    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "backlog", "preflight", "change-check", "setup", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
     [string]$Arg = "",
     [Parameter(Position=2)]
     [string]$Arg2 = "",
+    # WHY needed: "mb backlog add <title> <description>" needs a 4th positional
+    # slot (Command=backlog, Arg=add, Arg2=title, Arg3=description) — no other
+    # command currently needs more than 3.
+    [Parameter(Position=3)]
+    [string]$Arg3 = "",
     # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
     # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
-    [switch]$DryRun
+    [switch]$DryRun,
+    # WHY: same reasoning as $DryRun above — "mb backlog list --all" would otherwise
+    # have PowerShell's binder intercept the bare "--all" token as an attempted
+    # named-parameter bind ("-all") before the script body runs at all, regardless
+    # of quoting. Reproduced directly: without this, `mb backlog list --all` throws
+    # "A parameter cannot be found that matches parameter name 'all'."
+    [switch]$All
 )
 
 # WHY: $PSScriptRoot is the directory containing mb.ps1 (scripts/).
@@ -55,6 +66,117 @@ function Get-MbMode {
         return 'upgrade'
     }
     return 'init'
+}
+
+# Get-CachedPmbVersion — sets $script:PmbLocalVersion and $script:PmbRemoteVersion.
+#
+# WHY a shared helper instead of inlining in Invoke-Upgrade: the same check now
+# also runs once after every command (see the notifier block near the end of
+# this file), not just inside `mb upgrade`. One helper, one cache, one place to
+# get the TTL/fail-open logic right.
+#
+# WHY cached with a TTL instead of a live fetch every call: a live network call
+# on every single mb invocation would be slow and flaky. Caching for
+# $script:PmbCacheTtlSeconds means the check is nearly free on every call
+# except roughly once per TTL window.
+#
+# WHY $env:MB_VERSION_CACHE_DIR / $env:MB_VERSION_CHECK_URL overrides: lets
+# tests point this at a temp dir and a local/unreachable URL instead of the
+# real user cache and the real GitHub URL. Production code paths never need to
+# set these; they default to the real values.
+#
+# WHY fail open (leave $script:PmbRemoteVersion empty) on any error — network
+# unreachable, malformed cache JSON: this is an optional notice, never a gate.
+# A broken check must never block or slow down real work.
+$script:PmbCacheTtlSeconds = 604800  # 7 days
+
+function Get-CachedPmbVersion {
+    $script:PmbLocalVersion = $null
+    $script:PmbRemoteVersion = $null
+
+    $versionFile = Join-Path $RepoRoot "VERSION"
+    if (-not (Test-Path $versionFile)) { return }
+    $script:PmbLocalVersion = (Get-Content $versionFile -Raw).Trim()
+
+    $cacheDir = if ($env:MB_VERSION_CACHE_DIR) { $env:MB_VERSION_CACHE_DIR } else { Join-Path $env:USERPROFILE ".mb" }
+    $cacheFile = Join-Path $cacheDir "version-check-cache.json"
+    $checkUrl = if ($env:MB_VERSION_CHECK_URL) { $env:MB_VERSION_CHECK_URL } else { "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" }
+    $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+    if (Test-Path $cacheFile) {
+        try {
+            $cache = Get-Content $cacheFile -Raw | ConvertFrom-Json -ErrorAction Stop
+            $ageSeconds = $nowEpoch - [int64]$cache.checkedAtEpoch
+            if ($ageSeconds -ge 0 -and $ageSeconds -lt $script:PmbCacheTtlSeconds -and $cache.remoteVersion) {
+                $script:PmbRemoteVersion = $cache.remoteVersion
+                return
+            }
+        } catch {
+            # WHY silent: a malformed cache file just means we fall through to
+            # a fresh fetch below, same as a missing cache file.
+            Write-Verbose "Could not read/parse version cache '$cacheFile'; fetching fresh."
+        }
+    }
+
+    try {
+        $response = Invoke-WebRequest -Uri $checkUrl -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+        $script:PmbRemoteVersion = $response.Content.Trim()
+    } catch {
+        $script:PmbRemoteVersion = $null
+    }
+
+    # WHY a separate try/catch for the cache write: a write failure here (disk
+    # full, locked file, permission error) must not discard an already-
+    # successful fetch above — folding the write into the fetch's try block
+    # meant a write error's catch would null out a good $script:PmbRemoteVersion.
+    # Mirrors mb.sh, where the write is a fire-and-forget `|| true` that never
+    # touches REMOTE_VERSION.
+    if ($script:PmbRemoteVersion) {
+        try {
+            if (-not (Test-Path $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
+            # WHY write to a temp file in the same directory then rename, instead of Set-Content
+            # on $cacheFile directly: this notifier runs after EVERY command, so two mb
+            # invocations from concurrent sessions against the same project (a scenario this
+            # repo explicitly supports -- see the concurrent-session-claims feature) can race to
+            # write this file at the same TTL-expiry moment. Mirrors mb.sh's identical fix
+            # (mktemp + mv in the same directory).
+            #
+            # WHY [System.IO.File]::Move(...,$true), not the Move-Item cmdlet: empirically
+            # verified in this repo's own PowerShell 7/NTFS environment under concurrent load --
+            # Move-Item -Force produced 105 writer-side IOExceptions and 67+ reader-side
+            # FileNotFoundExceptions out of a few thousand concurrent attempts (it does not wrap
+            # a true atomic rename the way POSIX `mv` does), while the raw .NET
+            # [System.IO.File]::Move 3-arg overload had zero reader errors under identical load.
+            # Impact of the cmdlet's non-atomicity was muted, not eliminated, by the cache
+            # reader already failing open on any read error -- but the raw .NET call is the
+            # actually-atomic primitive and costs nothing extra to call directly.
+            $cacheTmp = Join-Path $cacheDir ([System.IO.Path]::GetRandomFileName())
+            try {
+                @{ checkedAtEpoch = $nowEpoch; remoteVersion = $script:PmbRemoteVersion } | ConvertTo-Json -Compress | Set-Content $cacheTmp -Encoding utf8
+                [System.IO.File]::Move($cacheTmp, $cacheFile, $true)
+            } finally {
+                # WHY: if Set-Content succeeded but File.Move threw (e.g. the destination
+                # is locked by a concurrent reader), $cacheTmp would otherwise leak as debris
+                # in $cacheDir instead of being cleaned up like mb.sh's `rm -f` fallback.
+                if (Test-Path $cacheTmp) { Remove-Item $cacheTmp -Force -ErrorAction SilentlyContinue }
+            }
+        } catch {
+            # WHY silent: caching is best-effort. A write failure just means
+            # the next invocation fetches live again — never a gate.
+            Write-Verbose "Could not write version cache '$cacheFile'; will fetch live next time."
+        }
+    }
+}
+
+# Test-PmbVersionStale — $true when $script:PmbRemoteVersion/$script:PmbLocalVersion
+# (as set by Get-CachedPmbVersion) show a real, non-empty version mismatch.
+#
+# WHY a helper instead of repeating this condition: the same check appears at
+# both call sites (Invoke-Upgrade's WARN and the end-of-script NOTICE below) —
+# a shared predicate means a future fix only needs to be made once. Mirrors
+# pmb_version_is_stale() in scripts/mb.sh (Task 1) for cross-shell consistency.
+function Test-PmbVersionStale {
+    return [bool]($script:PmbRemoteVersion -and $script:PmbLocalVersion -and $script:PmbRemoteVersion -ne $script:PmbLocalVersion)
 }
 
 
@@ -96,7 +218,9 @@ function Get-MbUpgradeAnalysis {
         'scripts/delegation-depth-check.ps1', 'scripts/delegation-depth-check.sh',
         'scripts/pre-compact-check.ps1',  'scripts/pre-compact-check.sh',
         'scripts/review-reminders.ps1',   'scripts/review-reminders.sh',
-        'scripts/review-reminders-post.ps1', 'scripts/review-reminders-post.sh'
+        'scripts/review-reminders-post.ps1', 'scripts/review-reminders-post.sh',
+        'scripts/_review-gate-lib.sh',    'scripts/_review-gate-lib.ps1',
+        'scripts/warn-stale-review-marker.sh', 'scripts/warn-stale-review-marker.ps1'
     )
     $govMissing = @($templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) })
 
@@ -264,6 +388,7 @@ function Show-Help {
     Write-Host "  setup             Initialize or upgrade a project — folder picker, auto-detects mode"
     Write-Host "  verify-integrity  Check and refresh memory-bank file integrity checksums"
     Write-Host "  plan              Plan management: status, list, promote, archive"
+    Write-Host "  backlog           Backlog management: add, list, show, promote, dismiss"
     Write-Host "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
     Write-Host "  change-check      Post-change summary: diff stats, file types, /change-review job preview"
     Write-Host "  help              Show this help message"
@@ -658,7 +783,7 @@ function Invoke-Init {
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
     # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
-    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1")) {
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1","review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-lib.sh","_review-gate-lib.ps1","warn-stale-review-marker.sh","warn-stale-review-marker.ps1")) {
         Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
     }
 
@@ -906,6 +1031,20 @@ function Show-Doctor {
         } elseif ($missingHooks.Count -gt 0) {
             foreach ($h in $missingHooks) {
                 Write-Host "[WARN] Hook script missing: $h — run 'mb init' to install" -ForegroundColor Yellow
+            }
+        }
+        # Lib-file existence — hardcoded, not settings.json-derived (see WHY in
+        # scripts/check-review-gate-lib-presence.sh, mb.sh's equivalent check): a
+        # dot-sourced lib is never referenced in settings.json, so the dynamic check above
+        # cannot see it going missing.
+        if ((Test-Path "scripts/review-reminders.ps1") -or (Test-Path "scripts/review-reminders-post.ps1")) {
+            if (-not (Test-Path "scripts/_review-gate-lib.ps1")) {
+                Write-Host "[ERROR] scripts/_review-gate-lib.ps1 missing but scripts/review-reminders.ps1/-post.ps1 present -- the review-gate hook will fail open (gate silently disabled)" -ForegroundColor Red
+            }
+        }
+        if ((Test-Path "scripts/review-reminders.sh") -or (Test-Path "scripts/review-reminders-post.sh")) {
+            if (-not (Test-Path "scripts/_review-gate-lib.sh")) {
+                Write-Host "[ERROR] scripts/_review-gate-lib.sh missing but scripts/review-reminders.sh/-post.sh present -- the review-gate hook will fail open (gate silently disabled)" -ForegroundColor Red
             }
         }
         # Git hooks — versioned via core.hooksPath
@@ -1849,22 +1988,13 @@ function Invoke-Upgrade {
     }
 
     # Remote version check — soft warning, never blocks upgrade
-    $versionFile = Join-Path $RepoRoot "VERSION"
-    if (Test-Path $versionFile) {
-        $localVersion = (Get-Content $versionFile -Raw).Trim()
-        try {
-            $response = Invoke-WebRequest `
-                -Uri "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" `
-                -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
-            $remoteVersion = $response.Content.Trim()
-            if ($remoteVersion -ne $localVersion) {
-                Write-Host "[WARN] PMB $localVersion installed locally, $remoteVersion available" -ForegroundColor Yellow
-                Write-Host "       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank" -ForegroundColor Yellow
-                Write-Host ""
-            }
-        } catch {
-            Write-Host "[INFO] Remote version check skipped (unreachable)" -ForegroundColor DarkGray
-        }
+    Get-CachedPmbVersion
+    if (Test-PmbVersionStale) {
+        Write-Host "[WARN] PMB $($script:PmbLocalVersion) installed locally, $($script:PmbRemoteVersion) available" -ForegroundColor Yellow
+        Write-Host "       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank" -ForegroundColor Yellow
+        Write-Host ""
+    } elseif ($script:PmbLocalVersion -and -not $script:PmbRemoteVersion) {
+        Write-Host "[INFO] Remote version check skipped (unreachable)" -ForegroundColor DarkGray
     }
 
     # WHY: Ownership is hardcoded as explicit arrays — NOT a config file.
@@ -1897,6 +2027,10 @@ function Invoke-Upgrade {
         "scripts/review-reminders.ps1"
         "scripts/review-reminders-post.sh"
         "scripts/review-reminders-post.ps1"
+        "scripts/_review-gate-lib.sh"
+        "scripts/_review-gate-lib.ps1"
+        "scripts/warn-stale-review-marker.sh"
+        "scripts/warn-stale-review-marker.ps1"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
@@ -2428,8 +2562,267 @@ function Invoke-PlanPromote {
         Write-Host "Promoted to $Dest" -ForegroundColor Green
     }
 
+    # Reconcile the originating backlog item (if any) -- see
+    # docs/superpowers/specs/2026-07-14-backlog-design.md "Plan-lifecycle
+    # reconciliation": mb backlog promote (mb.sh) stamps a
+    # "<!-- pmb-backlog-source: <slug> -->" line into the stub body so this
+    # step can find the right backlog item by identity, not by path --
+    # matching on the exact draft path broke the moment the user renamed the
+    # draft while fleshing it out with superpowers:writing-plans, which the
+    # spec calls out as the expected workflow this feature exists to support.
+    #
+    # WHY the exact HTML-comment format instead of a loose phrase match: an
+    # earlier version matched a plain "(Backlog source: x)" line, which reads
+    # as plausible English prose that this very repo's own docs discuss -- an
+    # unanchored match against the whole draft could pick up a decoy mention
+    # instead of the genuine marker, either silently skipping reconciliation
+    # or overwriting an unrelated backlog item that happens to share the
+    # matched slug. Nobody writes "<!-- pmb-backlog-source: x -->" as a
+    # sentence, so matching this exact syntax (anywhere in the file --
+    # position doesn't matter here, since the format itself is what makes an
+    # accidental match implausible) closes that without depending on the
+    # marker staying on any particular line, which further edits during
+    # writing-plans could easily move or remove.
+    if ($Content -match '(?m)^<!-- pmb-backlog-source: ([a-z0-9-]+) -->$') {
+        $BacklogSlug = $Matches[1]
+        $BacklogFile = "docs/backlog/$BacklogSlug.md"
+        if (Test-Path $BacklogFile) {
+            # WHY ForEach-Object + plain string interpolation instead of -replace
+            # with a literal replacement string: -replace (and [regex]::Replace
+            # with a string replacement) treats $1/$&/$$/etc. in the replacement
+            # as regex backreference tokens. $Dest is derived from the
+            # user-chosen plan filename and is never charset-restricted, so a
+            # filename containing '$&' or similar would otherwise corrupt this
+            # line instead of being written literally. Building the new line
+            # with plain interpolation and swapping it in per-line involves no
+            # replacement-string parsing at all, so nothing in $Dest is ever
+            # treated as special.
+            $BacklogLines = Get-Content $BacklogFile
+            $UpdatedBacklog = $BacklogLines | ForEach-Object {
+                if ($_ -match '^related_plan:') { "related_plan: $Dest" } else { $_ }
+            }
+            Set-Content -Path $BacklogFile -Value $UpdatedBacklog
+            Write-Host "Reconciled related_plan in $BacklogFile -> $Dest" -ForegroundColor Green
+        }
+    }
+
     Write-Host "Next: git add $Dest && git commit" -ForegroundColor Yellow
     Write-Host ""
+}
+
+# ConvertTo-BacklogSlug / Get-UniqueBacklogSlug / Test-BacklogSlugValid /
+# Invoke-BacklogAdd / Get-BacklogField / Set-BacklogStatus / Resolve-BacklogSlug /
+# Show-BacklogList / Show-BacklogItem / Invoke-BacklogPromote / Invoke-BacklogDismiss
+# -- PowerShell port of mb.sh's backlog_slugify/backlog_unique_slug/
+# backlog_validate_slug/invoke_backlog_add/backlog_field/backlog_set_status/
+# backlog_resolve_slug/show_backlog_list/show_backlog_item/invoke_backlog_promote/
+# invoke_backlog_dismiss. Mirrors that implementation's behavior and guards
+# (slug charset validation, malformed-frontmatter checks, status:open guard on
+# re-promote) -- see scripts/mb.sh for the original WHY comments on each guard;
+# not re-derived here to avoid drift between the two copies of the same rationale.
+function ConvertTo-BacklogSlug {
+    param([string]$Title)
+    $Slug = ($Title.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+    if ($Slug.Length -gt 50) { $Slug = $Slug.Substring(0, 50) }
+    return $Slug.TrimEnd('-')
+}
+
+function Get-UniqueBacklogSlug {
+    param([string]$Title)
+    $BaseSlug = ConvertTo-BacklogSlug -Title $Title
+    $Slug = $BaseSlug
+    $N = 2
+    while (Test-Path "docs/backlog/$Slug.md") {
+        $Slug = "$BaseSlug-$N"
+        $N++
+    }
+    return $Slug
+}
+
+# WHY this validation exists and what it closes: identical rationale to mb.sh's
+# backlog_validate_slug -- show/promote/dismiss take a slug straight from argv
+# and use it to build a filesystem path (docs/backlog/<slug>.md,
+# .claude/plans/<date>-<slug>.md). Restricting to [a-z0-9-] closes path-traversal
+# (`..`, `/`) at the single point every subcommand funnels through.
+function Test-BacklogSlugValid {
+    param([string]$Slug)
+    if ([string]::IsNullOrEmpty($Slug)) { return $false }
+    return $Slug -cmatch '^[a-z0-9-]+$'
+}
+
+function Invoke-BacklogAdd {
+    param([string]$Title, [string]$Desc)
+    if (-not $Title) {
+        Write-Host 'Usage: mb backlog add "<title>" ["<description>"]' -ForegroundColor Red
+        exit 1
+    }
+    New-Item -ItemType Directory -Force -Path "docs/backlog" | Out-Null
+    $Slug = Get-UniqueBacklogSlug -Title $Title
+    if (-not $Slug) {
+        Write-Host "Title must contain at least one letter or number: `"$Title`"" -ForegroundColor Red
+        exit 1
+    }
+    $Today = Get-Date -Format 'yyyy-MM-dd'
+    $File = "docs/backlog/$Slug.md"
+    $Lines = @("---", "status: open", "created: $Today", "last-reviewed: $Today", "staleness-threshold: 90d", "related_plan: null", "---", "", "# $Title")
+    if ($Desc) { $Lines += @("", $Desc) }
+    Set-Content -Path $File -Value $Lines
+    Write-Host "Added backlog item: $File" -ForegroundColor Green
+}
+
+function Get-BacklogField {
+    param([string]$Path, [string]$Field)
+    $Line = Select-String -Path $Path -Pattern "^${Field}:" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $Line) { return "" }
+    # WHY -replace '\s' (all whitespace), not .Trim(): matches mb.sh's backlog_field,
+    # which pipes through `tr -d ' \r'` — strips every space/CR in the value, not just
+    # leading/trailing. Current call sites (status/created) never have internal
+    # whitespace, but this keeps the two implementations byte-for-byte equivalent.
+    return (($Line.Line -replace "^${Field}:\s*", '') -replace '\s', '')
+}
+
+# WHY plain -replace is safe here despite the general $&/$1-in-replacement hazard
+# (see Invoke-PlanPromote's WHY comment above): $Status is always one of this
+# file's own hardcoded literals ("promoted"/"dismissed"), never derived from user
+# input, so no replacement-string token injection is reachable through this path.
+function Set-BacklogStatus {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$Path, [string]$Status)
+    if ($PSCmdlet.ShouldProcess($Path, "Set status: $Status")) {
+        $Updated = (Get-Content $Path) -replace '^status:.*', "status: $Status"
+        Set-Content -Path $Path -Value $Updated
+    }
+}
+
+function Resolve-BacklogSlug {
+    param([string]$Slug, [string]$Usage)
+    if (-not $Slug) {
+        Write-Host $Usage -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Test-BacklogSlugValid -Slug $Slug)) {
+        Write-Host "Invalid slug: $Slug" -ForegroundColor Red
+        exit 1
+    }
+    $File = "docs/backlog/$Slug.md"
+    if (-not (Test-Path $File)) {
+        Write-Host "Backlog item not found: $Slug" -ForegroundColor Red
+        exit 1
+    }
+    return $File
+}
+
+function Show-BacklogList {
+    param([switch]$All)
+    Write-Host ""
+    Write-Host "Backlog" -ForegroundColor Cyan
+    Write-Host "=======" -ForegroundColor Cyan
+    $Items = if (Test-Path "docs/backlog") { Get-ChildItem "docs/backlog/*.md" -ErrorAction SilentlyContinue } else { $null }
+    if (-not $Items) {
+        Write-Host 'No backlog items. Add one with: mb backlog add "<title>"' -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+    $TodayEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    foreach ($f in $Items) {
+        $Status = Get-BacklogField -Path $f.FullName -Field "status"
+        if (-not $All -and $Status -ne "open") { continue }
+        $Slug = $f.BaseName
+        $TitleLine = Select-String -Path $f.FullName -Pattern '^# ' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $Title = if ($TitleLine) { $TitleLine.Line -replace '^# ', '' } else { '' }
+        $Created = Get-BacklogField -Path $f.FullName -Field "created"
+        $Age = ""
+        if ($Created) {
+            try {
+                $CreatedEpoch = [DateTimeOffset]::Parse($Created).ToUnixTimeSeconds()
+                # WHY [Math]::Floor, not an [int] cast: PowerShell's / on two Int64s
+                # yields a Double, and [int] on a Double *rounds* to nearest rather than
+                # truncating toward zero — diverging from mb.sh's `$(( ))` integer
+                # division (always truncates). Floor matches bash's behavior exactly.
+                $Days = [Math]::Floor(($TodayEpoch - $CreatedEpoch) / 86400)
+                $Age = " age:${Days}d"
+            } catch { Write-Verbose "Could not parse created date '$Created'; skipping age." }
+        }
+        Write-Host "  $Slug  $Title  status:$Status$Age"
+    }
+    Write-Host ""
+}
+
+function Show-BacklogItem {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog show <slug>"
+    Get-Content $File -Raw
+}
+
+function Invoke-BacklogPromote {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog promote <slug>"
+
+    # WHY @(...): Get-Content returns a scalar System.String, not a 1-element array,
+    # for a file containing exactly one line. Indexing a scalar with [0] returns its
+    # first *character*, not the line — silently misreporting "must start with '---'"
+    # for a genuine single-line "---" file. Forcing array semantics fixes that.
+    $Lines = @(Get-Content $File)
+    if ($Lines.Count -eq 0 -or $Lines[0] -ne '---') {
+        Write-Host "Backlog item has malformed frontmatter (must start with '---'): $File" -ForegroundColor Red
+        exit 1
+    }
+    $DelimCount = ($Lines | Where-Object { $_ -eq '---' }).Count
+    if ($DelimCount -lt 2) {
+        Write-Host "Backlog item has malformed frontmatter (expected two '---' delimiters): $File" -ForegroundColor Red
+        exit 1
+    }
+    if (-not ($Lines | Where-Object { $_ -match '^status:' })) {
+        Write-Host "Backlog item has malformed frontmatter (missing 'status:' field): $File" -ForegroundColor Red
+        exit 1
+    }
+    $CurrentStatus = Get-BacklogField -Path $File -Field "status"
+    if ($CurrentStatus -ne "open") {
+        Write-Host "Cannot promote: $Slug has status '$CurrentStatus' (expected 'open')." -ForegroundColor Red
+        exit 1
+    }
+
+    # WHY a counter loop instead of a single regex/range operation: mirrors
+    # mb.sh's awk extractor exactly -- only the first two '---' lines (the real
+    # frontmatter fences) are ever skipped; any later literal '---' (e.g. a
+    # markdown horizontal rule in the body) falls through to the body once N
+    # reaches 2, instead of being silently eaten.
+    $N = 0
+    $Body = @()
+    foreach ($Line in $Lines) {
+        if ($Line -eq '---' -and $N -lt 2) {
+            $N++
+            continue
+        }
+        if ($N -ge 2) { $Body += $Line }
+    }
+
+    New-Item -ItemType Directory -Force -Path ".claude/plans" | Out-Null
+    $Today = Get-Date -Format 'yyyy-MM-dd'
+    $Stub = ".claude/plans/$Today-$Slug.md"
+    # WHY the trailing "<!-- pmb-backlog-source: $Slug -->" line: see
+    # Invoke-PlanPromote's matching WHY comment above -- Invoke-PlanPromote reads
+    # this marker to reconcile related_plan by identity, surviving a rename.
+    $StubContent = ($Body -join "`n") + "`n`n<!-- pmb-backlog-source: $Slug -->`n"
+    Set-Content -Path $Stub -Value $StubContent -NoNewline
+
+    Set-BacklogStatus -Path $File -Status "promoted"
+    # WHY plain -replace is safe here (unlike Invoke-PlanPromote's $Dest case):
+    # $Stub is built from $Today (fixed format) and $Slug, and $Slug already
+    # passed Test-BacklogSlugValid's [a-z0-9-]-only charset above -- no
+    # replacement-string token ($&/$1/etc.) can appear in it.
+    $UpdatedFileLines = (Get-Content $File) -replace '^related_plan:.*', "related_plan: $Stub"
+    Set-Content -Path $File -Value $UpdatedFileLines
+
+    Write-Host "Seeded plan stub: $Stub" -ForegroundColor Green
+    Write-Host "Next: flesh it out with superpowers:writing-plans, then mb plan promote $Stub" -ForegroundColor Yellow
+}
+
+function Invoke-BacklogDismiss {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog dismiss <slug>"
+    Set-BacklogStatus -Path $File -Status "dismissed"
+    Write-Host "Dismissed: $Slug" -ForegroundColor Green
 }
 
 function Invoke-PlanArchive {
@@ -2489,6 +2882,21 @@ switch ($Command) {
             }
         }
     }
+    "backlog" {
+        $SubCmd = if ($Arg) { $Arg } else { 'list' }
+        switch ($SubCmd) {
+            'add'     { Invoke-BacklogAdd -Title $Arg2 -Desc $Arg3 }
+            'list'    { Show-BacklogList -All:$All }
+            'show'    { Show-BacklogItem -Slug $Arg2 }
+            'promote' { Invoke-BacklogPromote -Slug $Arg2 }
+            'dismiss' { Invoke-BacklogDismiss -Slug $Arg2 }
+            default {
+                Write-Host "Unknown backlog subcommand: $SubCmd" -ForegroundColor Red
+                Write-Host "Usage: mb backlog <add|list|show|promote|dismiss>" -ForegroundColor Yellow
+                exit 1
+            }
+        }
+    }
     # Deprecated aliases — kept for backward compatibility, not shown in help
     "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow }
     "validate"      { Write-Host "mb validate is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
@@ -2498,4 +2906,22 @@ switch ($Command) {
     "update"        { Write-Host "mb update is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
     "archive"       { Write-Host "mb archive is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
     "slim"          { Write-Host "mb slim is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
+}
+
+# Update notifier — runs after every command except upgrade (has its own WARN
+# above) and help (no need to nag on a bare help lookup). Cached/fail-open via
+# Get-CachedPmbVersion — see that function's WHY comments for the reasoning.
+#
+# WHY "update" isn't excluded here the way mb.sh excludes it: mb.sh's "update" case still
+# dispatches to Invoke-Upgrade's bash equivalent, so without an exclusion it would
+# double-print that command's own [WARN] followed immediately by this [NOTICE]. This
+# PowerShell "update" case (~line 2573) only prints a one-line deprecation notice pointing at
+# `mb clean` — it never calls Invoke-Upgrade — so no double-print exists here and no exclusion
+# is needed. Documented explicitly so a future sync of this exclusion list between the two
+# scripts doesn't add "update" here by copy-paste assumption without re-checking this.
+if ($Command -ne "upgrade" -and $Command -ne "help") {
+    Get-CachedPmbVersion
+    if (Test-PmbVersionStale) {
+        Write-Host "[NOTICE] PMB $($script:PmbLocalVersion) installed, $($script:PmbRemoteVersion) available — run: mb upgrade" -ForegroundColor Yellow
+    }
 }

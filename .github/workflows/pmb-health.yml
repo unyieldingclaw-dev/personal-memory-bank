@@ -378,6 +378,7 @@ jobs:
               FAIL=1
             fi
           done
+          bash scripts/check-review-gate-lib-presence.sh templates/scripts || FAIL=1
           [ "$FAIL" -eq 0 ] && echo "template-integrity: PASS" || echo "template-integrity: FAIL"
           exit $FAIL
 
@@ -424,3 +425,23 @@ jobs:
       - name: Run mb doctor on this repo
         shell: bash
         run: MB_HOME="$(pwd)" bash scripts/mb.sh doctor
+
+  pester-tests:
+    name: Pester Tests (mb.ps1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module -Name Pester -Force -Scope CurrentUser -RequiredVersion 5.7.1
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          $result = Invoke-Pester -Path "tests/" -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) {
+            Write-Host "FAILED: $($result.FailedCount) test(s) failed"
+            exit 1
+          }
+          Write-Host "Pester: $($result.PassedCount) passed, 0 failed"

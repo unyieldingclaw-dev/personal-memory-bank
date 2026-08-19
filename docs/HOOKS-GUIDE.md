@@ -28,6 +28,10 @@ Hooks are one layer in a four-layer enforcement stack. Understanding which layer
 
 **Design rule:** Don't duplicate concerns across layers. If a check belongs in CI, adding it to hooks creates two places to update when patterns change. If a check is semantic, adding it to hooks creates false confidence (simple pattern matching misses context). Each layer does its job; the stack as a whole provides defense in depth.
 
+**Worked example — why "was this authorized?" stays advisory:** A session merged a feature branch into a shared branch after the user replied "what do you suggest" to a structured choice — a request for a recommendation, not a directive, but the agent treated it as one. A `PreToolUse` hook can't fix this: it sees only the `git merge` command about to run, never the chat turn that did or didn't authorize it. The tempting fix — a marker file the agent writes after concluding "the user approved this" — is exactly as fakeable as a self-written code-review marker, which is why `/code-review` and `/change-review` bind their markers to a SHA-256 of the actual reviewed diff instead of an unverifiable claim (see the `review-reminders.sh`/`.ps1` header comments). There's no equivalent artifact to hash for "the user meant this right now," so this stays a `standards/SECURITY-GUARDRAILS.md` rule (see "What Counts as Approval") — caught by drift-resistant discipline, not a gate that always fires.
+
+**Worked example — why "the user ran it themselves" can't be hook-enforced either:** A session made several commits by asking the user to run `git commit` directly whenever the review-gate marker-write was blocked — a workaround this repo had normalized across many prior sessions, since the `PreToolUse` hook only sees Bash calls the agent itself makes, never a command typed into the user's own terminal. The user caught this live and named it directly: the user must never be used to bypass a control the agent couldn't satisfy. This is distinct from `dangerous-commands.sh`'s BLOCK/CONFIRM tiers — force-push is refused outright (BLOCK), while `filter-branch`/`--no-verify`/`chmod -R 777` prompt "run manually if intentional" (CONFIRM) — those blocks exist specifically so only a human's hands ever pull that trigger, and the user running them directly genuinely resolves the concern. The review-gate marker's purpose is different: verifying review already happened, which the user running the command themselves does nothing to make true. No hook fix exists for this either — asking the user to run something isn't a tool call, so there's nothing for `PreToolUse` to see or deny. It stays a `standards/SECURITY-GUARDRAILS.md` rule (see "The User Is Never the Compliance Bypass") for the same reason "What Counts as Approval" does: some things can only be caught by discipline, not by a gate. The actual hard backstop for this specific case is designed, not yet built — see `docs/superpowers/specs/2026-08-12-review-gate-layered-enforcement-design.md`'s Layer 3 CI check, which would catch an unreviewed commit regardless of how it landed.
+
 ## Default Hooks in This Standard
 
 Configured in `.claude/settings.json`:
@@ -40,8 +44,8 @@ Intercepts both Bash and PowerShell tool calls before they run using `scripts/da
 *Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
 
-**CONFIRM** (7 patterns — surfaces confirmation dialog):
-`git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `TRUNCATE TABLE` · `DELETE FROM`
+**CONFIRM** (6 patterns — surfaces confirmation dialog):
+`git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `git merge <branch>` (boundary-matched: excludes `git merge-base`)
 
 **WARN** (4 patterns — exits 0, surfaces access alert):
 `id_rsa` · `.pem` · `.env.production` · `credentials.json`
@@ -140,12 +144,12 @@ Fires before every `Agent` tool call. Tracks nested agent delegation depth and e
 
 ### 7. Review Gate (`PreToolUse` — Bash tool)
 
-Fires before every Bash tool call and pattern-matches `git commit` / `git push` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
+Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is denied unconditionally — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
 
 **Marker files (single-use per diff, gitignored):**
 
-- `.claude/.code-review-ok` — written by `/code-review` (Step 7) when the Verdict is **Approve**. Contains a SHA-256 hash of `git diff HEAD` at review time, not an empty file.
-- `.claude/.change-review-ok` — written by `/change-review` (Step 6) when no finding has `Blocking: Yes`. Contains a SHA-256 hash of `git diff origin/main...HEAD` (or `git diff HEAD` with no upstream).
+- `.claude/.code-review-ok` — written by `/code-review`'s Opposition-review subagent (Step 5) when the Verdict is **Approve**. Contains a SHA-256 hash of `git diff HEAD` at review time, not an empty file.
+- `.claude/.change-review-ok` — written by `/change-review`'s Job 9 (Opposition) subagent when no finding has `Blocking: Yes`. Contains a SHA-256 hash of `git diff origin/main...HEAD` (or `git diff HEAD` with no upstream).
 
 **Why a hash, not an empty marker:** an empty marker is trivially fakeable with `touch` — anyone, or a rushed agent, can satisfy the gate without reviewing anything. Binding the marker to a hash of the exact diff means it only authorizes committing/pushing that specific diff; if the working tree changes after the review, the hash no longer matches and the gate re-engages. The hook recomputes the same hash fresh and compares it to the marker's stored value before allowing the commit/push through.
 
@@ -158,6 +162,8 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 
 The `.sh` version matches against the raw stdin payload rather than extracting the `command` field with `grep`/`sed`, because that extraction breaks on any JSON-escaped quote inside the command (e.g. `git commit -m "wip"`), silently truncating the match and letting anything after it — including a chained `&& git push` — through unchecked.
 
+**`gh pr merge` — unconditional deny, no marker (added 2026-07-09):** unlike commit/push, this is not a diff-bound hash check — it always denies, full stop, with no override. By the time a PR is mergeable, its diff has already passed the commit gate, the push gate, and (assuming branch protection's `required_status_checks.strict: true`) CI on the current head; a third hash gate here would mostly re-verify what's already verified, while adding real fragility (PR-number/`--repo` parsing, a `gh pr diff` API call inside a hook). The actual gap at merge time isn't diff integrity, it's authorization: merging changes shared history and should never happen without the user deciding to do it in that moment — a hash can't encode "the user meant this right now," only an explicit human action can. This hook only ever sees commands the agent itself runs (a human's own terminal usage is invisible to it), so an unconditional deny is total: if this hook fires at all, it's the agent attempting the merge, never the user, so there's no legitimate case to let through — not even an explicit in-conversation instruction from the user, since honoring that would mean the agent still performs the merge action itself. The user always runs `gh pr merge` directly.
+
 ### 8. Review Gate Failure Recovery (`PostToolUse` — Bash tool)
 
 Companion to the Review Gate above. If a gated `git commit`/`git push` consumes a marker and then the command itself fails (a separate pre-commit hook rejects it, nothing is staged, a merge conflict), this hook reissues the marker so the rejected attempt doesn't force a pointless re-review — the diff hasn't changed, so the same review still applies. Implemented in `scripts/review-reminders-post.ps1` and `scripts/review-reminders-post.sh`.
@@ -165,6 +171,14 @@ Companion to the Review Gate above. If a gated `git commit`/`git push` consumes 
 **How it detects failure without depending on an unverified response schema:** the `PreToolUse` hook records the current git ref (`HEAD` for commit, `@{u}` for push) to a temp file immediately after consuming a marker. This `PostToolUse` hook compares that recorded ref to the ref's current value — if it didn't move, the command failed, full stop, regardless of what any tool-response field says. This was a deliberate choice over parsing `tool_response` for a success/failure field: the PreToolUse payload shape only became known through live empirical capture, and extending that same guesswork to PostToolUse's response schema risked repeating the same mistake. Ground-truth git state needs no schema assumption.
 
 On detected failure, the hook recomputes the diff hash fresh (a failed commit/push can't have altered the working tree, so this reproduces the same value) and rewrites the marker.
+
+### 9. Stale Review-Marker Warning (`PreToolUse` — Write + Edit tools)
+
+Warns, before an edit happens, if a review-gate marker (`.claude/.code-review-ok` or `.claude/.change-review-ok`) currently exists and is about to be invalidated by that edit. Any tracked-file change alters `git diff HEAD`/`origin/main...HEAD`, which silently invalidates the marker's bound hash — without this hook, the only place that notices is the Review Gate above, at the moment of the *next* commit/push attempt, which can be many edits later.
+
+Warn-only, no `permissionDecision` — the actual enforcement already exists and is airtight (the Review Gate recomputes the hash fresh at commit/push time and denies on any mismatch; a stale marker is already rejected the same as a missing one). This hook adds zero new safety; it only surfaces, before the edit, what would otherwise only be discovered after a failed commit attempt. Matches the Contract Scope Check's established warn-only pattern (plain message, exit 0, no permission decision).
+
+Does not inspect the edited file or delete the marker — presence alone is the entire condition, and marker deletion stays the sole responsibility of the Review Gate's `consume_marker()` (an atomic `mv`, avoiding a second writer to the same security-relevant file). Implemented in `scripts/warn-stale-review-marker.ps1` and `scripts/warn-stale-review-marker.sh`.
 
 ## Git Hooks (versioned)
 

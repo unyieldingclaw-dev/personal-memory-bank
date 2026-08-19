@@ -14,11 +14,18 @@ if [ -z "$INPUT" ]; then exit 0; fi
 
 # WHY: Use python3 for JSON parsing — available on all supported platforms (Mac, Linux).
 # Falls back to exit 0 if python3 is missing rather than blocking agent work.
+# WHY tool_input.file_path, not file_path: the real payload nests everything under
+# "tool_input" (e.g. {"tool_name":"Edit","tool_input":{"file_path":"..."}}), matching
+# the same fix already applied in check-contract.ps1 (confirmed there via a live hook
+# payload). This script had the same flat-read bug and, unlike
+# check-contract.sh/dangerous-commands.sh, was never included in that fix -- FILE_PATH
+# was always empty, so the script silently exited 0 on every call without ever
+# updating last-reviewed.
 FILE_PATH=$(echo "$INPUT" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
-    print(d.get('file_path', ''))
+    print(d.get('tool_input', {}).get('file_path', ''))
 except Exception:
     print('')
 " 2>/dev/null || true)
