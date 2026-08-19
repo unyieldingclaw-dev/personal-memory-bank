@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-08-18
+last-reviewed: 2026-08-19
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -71,7 +71,7 @@ not started, `[NS-0]`) and the mb update-notifier + authorization-drift incident
 Branch protection rolled out 2026-07-08 to the 5 public PMB-based repos (full detail:
 `docs/archive/context-2026-07-fleet-audit-and-branch-protection.md`, which also covers the 2026-07-13
 fleet audit finding real review-flow enforcement in only 2 of 11 repos). `docs/branch-protection-rollout`
-is the working branch; PR #8 open, CI-green, unmerged as of last check — see `[NS-4]`.
+was the working branch; **PR #8 merged 2026-08-19** (squash-merged to `main` as `b0490ef`) — see `[NS-4]`.
 
 ## Architecture Constraints to Remember
 
@@ -88,9 +88,9 @@ is the working branch; PR #8 open, CI-green, unmerged as of last check — see `
 
 0. [NS-0] **Resume `mb backlog` Tasks 2-5** from `.claude/worktrees/backlog-feature` (branch `worktree-backlog-feature`, Task 1 committed at `3c6cb3d`) — full detail archived, see above. Task contract there expired 2026-07-24T00:59:18Z — re-propose. Full task specs: `docs/superpowers/plans/2026-07-14-backlog-feature.md`.
 1. [NS-1] **Decide what to do with unrelated uncommitted WIP** (`/ai-review` merge-gate nudge + a "Hook-Enforced Review Gate" section in `standards/WORKFLOW.md`) — no matching commit/branch/memory-bank entry found anywhere as of last check. Needs its own review + commit decision.
-2. [NS-2] **`docs/branch-protection-rollout` needs pushing** — was significantly ahead of `origin` as of last check; today's session added more commits on top. Re-check ahead-count before pushing.
+2. [NS-2] **Resolved 2026-08-18:** `docs/branch-protection-rollout` pushed (`0cc53f1..d864d99`, two pushes) after two `/change-review` runs (each required by a diff-changing commit landing after the prior marker was written) came back clean, both hashes independently verified. See NS-24 and `progress.md`'s 2026-08-18/19 entries for the full narrative.
 3. [NS-3] **Merge two pending worktree branches:** `worktree-cross-repo-write-boundary` (8 commits, tests green) and `worktree-fix-workflow-doc-paths` (single commit `b52f63d`). Both need a PR + user-run merge.
-4. [NS-4] PR #8 (`docs/branch-protection-rollout`) — this session's own `gh pr merge` gate means it can never merge this itself; user needs to run `gh pr merge` directly.
+4. [NS-4] **Resolved 2026-08-19: PR #8 (`docs/branch-protection-rollout`) merged** — user-run `gh pr merge --squash`, now `main`'s tip (`b0490ef`). One local-only commit (`d745121`, the corrected CI-fix narrative) was never pushed before the merge and so was left out — cherry-picked onto a fresh branch (`docs/finalize-branch-protection-memory-bank`, commit `805ae5a`) off the merged `main`, going through its own push-gate review, for a small follow-up PR.
 5. [NS-5] Delete `rfx-data-analytics` manually (blocked on missing `gh` OAuth scope).
 6. [NS-6] **Tipsy-Bunghole, before syncing:** commit + push its pending planning-doc commits first, then run `mb upgrade` from inside that repo's own session. `Nolan-Budget` needs the opposite: its already-current local state just needs committing and pushing.
 7. [NS-7] Fix red CI on `Bowling-Tracker`/`gmail-organizer` (confirm still red), then write real CI workflows for `pitlogic`/`Spotify-Road-Trip`/`Pit-timer`.
@@ -110,20 +110,24 @@ is the working branch; PR #8 open, CI-green, unmerged as of last check — see `
 21. [NS-21] **Audit PMB for mechanisms that exist but are undiscoverable or misrouted by their actual invocation path** — user-requested 2026-08-14, following two real incidents found within a few days of each other, in different mechanisms: `mb-drift.md` (fixed 2026-08-12, was a flat file instead of `<name>/SKILL.md`) and `/code-review` (found 2026-08-14). **Corrected via independent review, not the original attribution:** invoking `/code-review` via the `Skill` tool's bare name silently resolved to a **user-level (global config scope) twin at `~/.claude/commands/code-review.md`** — an older/generic ancestor of PMB's project version, with no `standards/CODE-REVIEW.md` contract, no marker-write step, and an instruction to generate tests during review (a `standards/CODE-REVIEW.md` Failure Criterion). It is **not** an installed marketplace plugin — `~/.claude/plugins/installed_plugins.json` was checked directly and contains no `code-review` entry; a marketplace plugin of that name exists only in the uninstalled catalog. Confirmed via `claude-code-guide`: typing `/code-review` literally is documented to correctly prefer the project-local command; the `Skill` tool's bare-name resolution across config scopes is undocumented, and this collision was reproduced and verified live (the returned content's exact subagent section names matched the user-level file byte-for-byte). **Checking for siblings (not treating this as isolated) found two more:** `~/.claude/commands/feature-dev.md` also exists and does **not** contain the new Phase 3.5 content just added to PMB's project version (`grep -c "3.5"` → 0) — anything invoking `feature-dev` ambiguously would silently get the version missing today's update. `~/.claude/commands/security-review.md` is, by contrast, byte-identical to PMB's project version (`diff` → empty) — no shadowing risk there, but it also has no hook/marker gate at all (checked `review-reminders.sh`/`dangerous-commands.sh`/`.githooks/` — none reference it), so its `[CRITICAL]`/`[HIGH]` findings are enforced only by `standards/WORKFLOW.md`'s advisory Phase 6, same trust ceiling as everything not wired into the review-gate marker system. **Separately found, adjacent but distinct:** `~/.claude/commands/ai-review.md` exists only at the user level — PMB's own `code-review.md` tells people to fall back to `/ai-review` for offline review, but PMB does not ship or own that command itself; a session without that global file would hit a dead reference. Audit scope: check every `.claude/commands/*.md` and `.claude/skills/*/SKILL.md` against its `~/.claude/commands/`/`~/.claude/skills/` equivalent for the same class of gap, not just plugin collisions. **Update (2026-08-14):** `security-review` and `ai-review` sub-findings resolved; a new hook (`scripts/warn-stale-review-marker.sh`/`.ps1`) was also built the same session. Full detail and rationale in `progress.md`'s 2026-08-14 entries, not repeated here. **Still open:** the original `/code-review` Skill-tool shadowing risk itself (worked around, not fixed at the mechanism level), `feature-dev.md`'s user-level/project-level drift, and the broader audit scope above. **Update (2026-08-17):** a hardening audit of `/code-review`, `/security-review`, `/change-review` (same audit family as this item) found real, non-speculative drift — `/change-review` Job 7's inline security fallback has silently diverged from `/security-review`'s pattern list in both directions, dropping the XSS and unsafe-eval/exec checks entirely while adding others; `/code-review`'s 5 required domains share no concrete checklist beyond Architecture Drift, so Security/Correctness/Maintainability/Testing findings rest on unconstrained model judgment. Full detail in `progress.md`'s 2026-08-17 entry, not repeated here.
 22. [NS-22] **Compaction/handoff protocol is advisory-only and silently rots — same trust ceiling as `[NS-21]`.** Found 2026-08-17: two stale, untracked `handoff.md` files (repo root, dated 2026-08-03/04; `.claude/worktrees/mystifying-hertz-c54477/`, dated 2026-07-27) sat undetected for weeks — nothing enforces `CLAUDE.md:124`'s instruction to delete a handoff file after merging its content into Memory Bank. Full detail in `progress.md`'s 2026-08-17 entry, not repeated here. Not designed yet — needs its own brainstorming pass.
 23. [NS-23] **No mechanism verifies `standards/*.md` content against the external authorities it cites (WCAG, OWASP, etc.).** Found 2026-08-17, same audit pass as `[NS-22]`. Only 3 of ~15 standards files carry `review-cycle`/`staleness-threshold` frontmatter at all (`PERFORMANCE-BUDGET.md`, `SECURITY-RULES.md`, `TRUST-CLASSIFICATION.md`); `ACCESSIBILITY.md` (claims WCAG 2.1 AA), `SECURITY-GUARDRAILS.md`, `CODE-QUALITY.md` have none. Where present, the mechanism only prompts a manual re-read on a timer — no doctor/CI check compares against the actual current external standard version. Full detail in `progress.md`'s 2026-08-17 entry. Not designed yet.
-24. [NS-24] **Working through the full `/change-review` pass's findings (3 Blocking + 8 non-blocking) on
-`docs/branch-protection-rollout`, per "fix all found issues... new and preexisting."** Tasks #27-32 done
-(doc fixes, `mb.ps1` backlog port, `dangerous-commands.sh`/`.ps1` CONFIRM hardening, stale-marker hook
-docs, 3 test-coverage gaps). **Task #33** (marker-destruction-on-denial, live-reproduced) deliberately
-deferred, not patched: the real fix already exists on `feature/review-gate-layered-enforcement` (can't
+24. [NS-24] **Resolved 2026-08-18 (Tasks #27-35 done except #33, deliberately deferred).** Full
+`/change-review` pass's findings on `docs/branch-protection-rollout` ("fix all found issues... new and
+preexisting") worked through and pushed. **Task #33** (marker-destruction-on-denial, live-reproduced)
+deliberately deferred: the real fix already exists on `feature/review-gate-layered-enforcement` (can't
 rebase onto `main`), a second branch has overlapping WIP, a narrow patch would be a third mechanism.
 **Task #34** (cache-write atomicity + `diff_hash()` trap-scoping) done — PowerShell `Move-Item` needed a
-second pass (wasn't actually atomic under load); a self-caught trap-restore regression (armed a caller's
-inherited trap for early firing in a subshell) was mutation-tested, caught, reverted before shipping.
-Full narrative: `progress.md`'s 2026-08-18 entries, not repeated here. **Task #35 mostly done:** full
-`/change-review` run completed clean, 2 Blocking + 2 Medium findings fixed (`69b9566`), push-gate marker
-independently re-verified (`ec65945c...`). **Only the actual `git push` remains** — paused for a
-user-directed tangent (Handoff Protocol redesign, next entry), not abandoned; resume on user go-ahead
-(push is user-facing). **Task #33 remains deferred** (see above).
+second pass (wasn't atomic under load); a self-caught trap-restore regression was mutation-tested,
+caught, reverted before shipping. **Task #35 done, CI failure found post-push and fixed:**
+`/change-review` re-run required twice (diff changed twice more — once for the Handoff Protocol
+tangent, once for a CI fix below), both runs clean, hashes independently verified. First push
+(`0cc53f1..c80d494`) revealed a real, non-flaky `MB Command Tests` failure on GitHub Actions
+(`cygpath` missing on `ubuntu-latest`, unconditionally called inside a `pwsh`-only test guard) —
+root-caused from the actual CI log, fixed by matching an existing precedent in two sibling test
+files, pushed again (`c80d494..d864d99`). **Verified via `gh pr checks 8` after the real CI run
+completed: all 10 checks pass, `mergeStateStatus: CLEAN`.** **PR #8 merged 2026-08-19** (`b0490ef`).
+One local-only commit missed the merge — see `[NS-4]`. Full narrative: `progress.md`'s 2026-08-18/19
+entries. **Task #33 remains the only open
+item from this thread.**
 
 ## Handoff Protocol Narrowed — Memory-Bank Now Authoritative for Priority (2026-08-18)
 
