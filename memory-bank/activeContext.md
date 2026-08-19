@@ -71,7 +71,7 @@ not started, `[NS-0]`) and the mb update-notifier + authorization-drift incident
 Branch protection rolled out 2026-07-08 to the 5 public PMB-based repos (full detail:
 `docs/archive/context-2026-07-fleet-audit-and-branch-protection.md`, which also covers the 2026-07-13
 fleet audit finding real review-flow enforcement in only 2 of 11 repos). `docs/branch-protection-rollout`
-is the working branch; PR #8 open, CI-green, unmerged as of last check — see `[NS-4]`.
+was the working branch; **PR #8 merged 2026-08-19** (squash-merged to `main` as `b0490ef`) — see `[NS-4]`.
 
 ## Architecture Constraints to Remember
 
@@ -90,7 +90,7 @@ is the working branch; PR #8 open, CI-green, unmerged as of last check — see `
 1. [NS-1] **Decide what to do with unrelated uncommitted WIP** (`/ai-review` merge-gate nudge + a "Hook-Enforced Review Gate" section in `standards/WORKFLOW.md`) — no matching commit/branch/memory-bank entry found anywhere as of last check. Needs its own review + commit decision.
 2. [NS-2] **Resolved 2026-08-18:** `docs/branch-protection-rollout` pushed (`0cc53f1..d864d99`, two pushes) after two `/change-review` runs (each required by a diff-changing commit landing after the prior marker was written) came back clean, both hashes independently verified. See NS-24 and `progress.md`'s 2026-08-18/19 entries for the full narrative.
 3. [NS-3] **Merge two pending worktree branches:** `worktree-cross-repo-write-boundary` (8 commits, tests green) and `worktree-fix-workflow-doc-paths` (single commit `b52f63d`). Both need a PR + user-run merge.
-4. [NS-4] **PR #8 (`docs/branch-protection-rollout`) — all 10 CI checks pass, `mergeStateStatus: CLEAN`, confirmed via `gh pr checks 8` after the CI fix landed.** This session's own `gh pr merge` gate means it can never merge this itself; user needs to run `gh pr merge` directly.
+4. [NS-4] **Resolved 2026-08-19: PR #8 (`docs/branch-protection-rollout`) merged** — user-run `gh pr merge --squash`, now `main`'s tip (`b0490ef`). One local-only commit (`d745121`, the corrected CI-fix narrative) was never pushed before the merge and so was left out — cherry-picked onto a fresh branch (`docs/finalize-branch-protection-memory-bank`, commit `805ae5a`) off the merged `main`, going through its own push-gate review, for a small follow-up PR.
 5. [NS-5] Delete `rfx-data-analytics` manually (blocked on missing `gh` OAuth scope).
 6. [NS-6] **Tipsy-Bunghole, before syncing:** commit + push its pending planning-doc commits first, then run `mb upgrade` from inside that repo's own session. `Nolan-Budget` needs the opposite: its already-current local state just needs committing and pushing.
 7. [NS-7] Fix red CI on `Bowling-Tracker`/`gmail-organizer` (confirm still red), then write real CI workflows for `pitlogic`/`Spotify-Road-Trip`/`Pit-timer`.
@@ -124,8 +124,9 @@ tangent, once for a CI fix below), both runs clean, hashes independently verifie
 (`cygpath` missing on `ubuntu-latest`, unconditionally called inside a `pwsh`-only test guard) —
 root-caused from the actual CI log, fixed by matching an existing precedent in two sibling test
 files, pushed again (`c80d494..d864d99`). **Verified via `gh pr checks 8` after the real CI run
-completed: all 10 checks pass, `mergeStateStatus: CLEAN`.** PR #8 fully mergeable — user needs to run
-`gh pr merge`. Full narrative: `progress.md`'s 2026-08-18/19 entries. **Task #33 remains the only open
+completed: all 10 checks pass, `mergeStateStatus: CLEAN`.** **PR #8 merged 2026-08-19** (`b0490ef`).
+One local-only commit missed the merge — see `[NS-4]`. Full narrative: `progress.md`'s 2026-08-18/19
+entries. **Task #33 remains the only open
 item from this thread.**
 
 ## Handoff Protocol Narrowed — Memory-Bank Now Authoritative for Priority (2026-08-18)

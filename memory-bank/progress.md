@@ -295,8 +295,14 @@ Full narrative: `docs/archive/progress-2026-08-18-task30-dangerous-commands-hard
   commit; the new delta was tiny and already reviewed at the commit gate, so the push-gate Opposition
   pass was scoped to confirming that plus scope integrity, not re-reviewing all 93 prior commits),
   hash `1f0e5f3...`, pushed `c80d494..d864d99`. **Waited for the actual CI run and confirmed via
-  `gh pr checks 8`: all 10 checks pass, `mergeStateStatus: CLEAN`.** PR #8 fully mergeable — user
-  needs to run `gh pr merge`. Only `[NS-24]`'s Task #33 remains open from this thread.
+  `gh pr checks 8`: all 10 checks pass, `mergeStateStatus: CLEAN`.**
+- ✅ **PR #8 merged 2026-08-19** (`gh pr merge 8 --squash`, now `main`'s tip `b0490ef`). One
+  local-only commit (this very entry's own predecessor, `d745121`) was committed but never pushed
+  before the merge, so it was left out of `main`. Cherry-picked onto a fresh branch
+  (`docs/finalize-branch-protection-memory-bank`, off the post-merge `main` tip) as commit `805ae5a`,
+  reviewed again at the push gate (content byte-identical to what was already reviewed this session;
+  the only new finding was this exact "PR #8 open" staleness, now corrected inline), for a small
+  follow-up PR. Only `[NS-24]`'s Task #33 remains open from this thread.
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
