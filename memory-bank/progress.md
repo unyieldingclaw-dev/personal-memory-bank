@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-08-18
+last-reviewed: 2026-08-19
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -271,6 +271,32 @@ Full narrative: `docs/archive/progress-2026-08-18-task30-dangerous-commands-hard
   non-blocking gap fixed pre-commit), hash re-verified, committed `3a2a7fd`. Portable brief
   `docs/WORK-MB-HANDOFF-DESIGN-BRIEF.md` for work-MB (same discipline, one Medium finding softened
   pre-commit), committed `3aa70af`. Distinct from `[NS-22]` (cleanup-enforcement gap), still open.
+- ✅ **Task #35 completed, branch pushed, CI verified green.** The Handoff Protocol commits changed
+  the diff, so the earlier push-gate marker (`ec65945c...`) no longer matched
+  `git diff origin/main...HEAD` — re-ran `/change-review` (ACR exit 1 on the whole diff due to its own
+  2000-line truncation default; inline security greps + Opposition spot-checks substituted as Job 7's
+  actual coverage, all clean; false-positive "command injection" findings on static hardcoded hook
+  strings dismissed with evidence — separately written up as a portable ACR investigation brief for
+  the user's ACR session, sent as a file, not committed to this repo). Came back clean, hash
+  `5d3607cd...`. Pushed `0cc53f1..c80d494`.
+- 🔴 **CI actually failed post-push** (`MB Command Tests`, a required check): `tests/test-review-gate-lib.sh`'s
+  `Get-FileHashHex` cross-shell parity test guarded on `pwsh` alone but unconditionally called
+  `cygpath` inside — GitHub Actions' `ubuntu-latest` ships `pwsh` without `cygpath` (a git-bash/MSYS
+  tool), so `cygpath: command not found` fired 3 times and 2 assertions failed for an environment
+  reason unrelated to the code being tested. Root-caused by reading the actual CI job log, not
+  guessed. **Fix matched an already-established precedent found in this exact repo:** two sibling
+  test files (`test-review-reminders.sh`, `test-update-reviewed.sh`) already required both
+  `command -v pwsh` AND `command -v cygpath` before any cygpath-dependent block, from an earlier,
+  separate code review — this file was the one instance missed. Applied the identical guard. Verified
+  locally (still 9/9 passing with both tools present) and via a logic-level mutation test (old guard
+  proceeds into the broken block under simulated "pwsh present, cygpath absent," new guard correctly
+  skips) before ever touching CI. Reviewed (domain + Opposition, no blocking findings), committed
+  `d864d99`. Re-ran the push-gate `/change-review` a second time (marker invalidated again by the new
+  commit; the new delta was tiny and already reviewed at the commit gate, so the push-gate Opposition
+  pass was scoped to confirming that plus scope integrity, not re-reviewing all 93 prior commits),
+  hash `1f0e5f3...`, pushed `c80d494..d864d99`. **Waited for the actual CI run and confirmed via
+  `gh pr checks 8`: all 10 checks pass, `mergeStateStatus: CLEAN`.** PR #8 fully mergeable — user
+  needs to run `gh pr merge`. Only `[NS-24]`'s Task #33 remains open from this thread.
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
