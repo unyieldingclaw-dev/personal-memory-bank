@@ -72,6 +72,63 @@ git -C "$TMPDIR_LIB" commit -q -m "second"
 no_change_hash=$(cd "$TMPDIR_LIB" && diff_hash HEAD)
 assert_contains "$no_change_hash" "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" "diff_hash on a clean tree (no diff) matches the empty-file SHA-256"
 
+# ── diff_hash: never touches the EXIT trap, in either calling convention ────
+# WHY this test exists: diff_hash() used to end with an unconditional `trap - EXIT`, which
+# would silently clear a caller's own EXIT trap in a direct, same-shell call. A save-and-
+# restore fix (`trap -p EXIT` + eval it back) was tried and reverted after it was found to
+# cause a WORSE bug: in a command-substitution subshell (`$(diff_hash ...)`, the pattern
+# review-reminders.sh actually uses), explicitly re-registering an inherited trap arms it for
+# that subshell's own exit -- bash treats a merely-inherited, never-touched trap as dormant on
+# subshell exit, but the moment `trap` is called explicitly (even to restore the same value),
+# it fires early. This proves the final, no-trap-manipulation-at-all design leaves a caller's
+# own EXIT trap byte-identical before and after calling diff_hash(), for BOTH calling
+# conventions -- a direct call in the same shell, and a call via command substitution.
+echo ""
+echo "--- diff_hash: leaves a caller's own EXIT trap untouched (direct call, same shell) ---"
+direct_check=$(
+  cd "$TMPDIR_LIB" || exit 1
+  trap 'true' EXIT
+  before_trap=$(trap -p EXIT)
+  diff_hash HEAD > "$TMPDIR_LIB/direct-call-output.txt"
+  after_trap=$(trap -p EXIT)
+  [ "$before_trap" = "$after_trap" ] && echo "UNCHANGED" || echo "CHANGED"
+)
+assert_contains "$direct_check" "UNCHANGED" "diff_hash leaves a caller's own EXIT trap untouched on a direct, same-shell call"
+
+echo ""
+echo "--- diff_hash: does not prematurely fire an inherited EXIT trap in a subshell call ---"
+TRAP_MARKER="$TMPDIR_LIB/outer-trap-fired"
+rm -f "$TRAP_MARKER"
+# WHY echo a status string instead of checking $TRAP_MARKER after this command substitution
+# returns: the outer `( ... )` subshell's OWN real exit (falling off the end, after the echo)
+# legitimately fires its trap and creates the marker too -- checking the marker file from
+# outside this command substitution can't distinguish "diff_hash fired it early" from "the
+# outer subshell fired it at its own, correct, real exit," since both leave the marker present
+# by the time control returns here. The marker must be checked INSIDE the subshell, immediately
+# after the diff_hash call and before anything else can trigger this subshell's own exit, with
+# the verdict carried out via stdout instead.
+subshell_status=$(
+  cd "$TMPDIR_LIB" || { echo "SETUP_FAILED"; exit 1; }
+  trap 'touch "'"$TRAP_MARKER"'"' EXIT
+  diff_hash HEAD > /dev/null
+  if [ -f "$TRAP_MARKER" ]; then
+    echo "FIRED_EARLY"
+  else
+    echo "OK"
+  fi
+)
+if [ "$subshell_status" = "OK" ]; then
+  echo "  PASS: diff_hash does not prematurely fire an inherited EXIT trap when called via command substitution"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: diff_hash does not prematurely fire an inherited EXIT trap when called via command substitution"
+  echo "    status was '$subshell_status' -- the inherited trap fired early, inside diff_hash's own subshell,"
+  echo "    which is the exact regression found and reverted (deletes a caller's real working directory"
+  echo "    prematurely, e.g. \$TMPDIR_LIB, before the caller's own real exit)"
+  FAIL=$((FAIL + 1))
+fi
+rm -f "$TRAP_MARKER" "$TMPDIR_LIB/direct-call-output.txt"
+
 # ── Get-FileHashHex (_review-gate-lib.ps1): trailing-newline + empty-file parity ─
 # WHY convert paths via cygpath first: $REPO_ROOT/$TMPDIR_LIB are POSIX-style git-bash paths
 # (e.g. /c/Users/...). PowerShell's -File parameter gets this auto-translated by git-bash's

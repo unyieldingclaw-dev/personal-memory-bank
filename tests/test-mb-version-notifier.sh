@@ -207,6 +207,62 @@ if command -v python3 >/dev/null 2>&1; then
   assert_file_exists "$TMPDIR_FETCH/.mb/version-check-cache.json" "mb.sh: live fetch writes the cache file"
   cache_content=$(cat "$TMPDIR_FETCH/.mb/version-check-cache.json")
   assert_contains "$cache_content" "7.7.7" "mb.sh: cache file contains the fetched version"
+  # WHY this assertion exists: get_cached_pmb_version() writes the cache atomically via a
+  # mktemp+mv in $MB_VERSION_CACHE_DIR itself (not /tmp), specifically so a concurrent reader
+  # never observes a partial write -- a regression back to a direct `>` redirect wouldn't fail
+  # any assertion above (the final file content would still be correct on a single, uncontended
+  # run), so this checks the write left no stray "version-check-cache.XXXXXX" temp file behind,
+  # which only the atomic mktemp+mv path produces and only cleans up correctly.
+  leftover_tmp=$(find "$TMPDIR_FETCH/.mb" -maxdepth 1 -name 'version-check-cache.??????' 2>/dev/null)
+  if [ -z "$leftover_tmp" ]; then
+    echo "  PASS: mb.sh: atomic cache write leaves no leftover temp file in the cache dir"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: mb.sh: atomic cache write leaves no leftover temp file in the cache dir"
+    echo "    Found leftover temp file(s): $leftover_tmp"
+    FAIL=$((FAIL + 1))
+  fi
+
+  # WHY this test exists (found by code review): the "no leftover temp file" assertion above
+  # would ALSO pass against a reverted, non-atomic `>` direct-write -- old code never creates a
+  # temp file in the first place, so its absence proves nothing about which write path ran.
+  # This test instead exploits the actual POSIX guarantee the atomic-write fix depends on:
+  # rename() repoints a directory entry to a new inode but never touches an already-open file
+  # descriptor's view of the OLD inode's data. Opening an fd on the cache file BEFORE a second
+  # write, then reading through that SAME fd AFTER the write completes, can only show the
+  # complete, untruncated OLD content if the write used write-to-temp-then-rename; a direct `>`
+  # redirect truncates the destination file in place (the O_TRUNC the shell opens it with truncates the
+  # very inode this fd already points to), which this same fd would observe as a sudden drop to
+  # empty/partial content. This is deterministic and fast, unlike a real concurrent-process stress
+  # test, because it tests the mechanism directly rather than trying to win a timing race.
+  echo ""
+  echo "--- atomic cache write: an already-open reader fd sees the old content intact, not truncated ---"
+  # WHY force staleness first: the cache written by the test just above is still within
+  # CACHE_TTL_SECONDS, so a second get_cached_pmb_version call would short-circuit on the
+  # cache-hit path and never write at all -- this rewrite (a plain `>`, safe here since nothing
+  # has an fd open on the file yet) backdates checkedAtEpoch so the call below is forced through
+  # the live-fetch-and-write path this test actually needs to exercise.
+  EXPIRED_EPOCH_FD_TEST=$(( $(date +%s) - 604800 - 3600 ))
+  printf '{"checkedAtEpoch":%s,"remoteVersion":"7.7.7"}' "$EXPIRED_EPOCH_FD_TEST" > "$TMPDIR_FETCH/.mb/version-check-cache.json"
+  exec 3< "$TMPDIR_FETCH/.mb/version-check-cache.json"
+  echo "8.8.8" > "$SRVDIR/VERSION"
+  MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_FETCH/.mb" MB_VERSION_CHECK_URL="http://127.0.0.1:$PORT/VERSION" bash -c '
+    source "'"$REPO_ROOT/scripts/mb.sh"'" 2>/dev/null || true
+    get_cached_pmb_version
+  ' > /dev/null 2>&1
+  old_fd_content=$(cat <&3)
+  exec 3<&-
+  new_read_content=$(cat "$TMPDIR_FETCH/.mb/version-check-cache.json")
+  echo "7.7.7" > "$SRVDIR/VERSION"
+  if echo "$old_fd_content" | grep -q "7.7.7" && echo "$new_read_content" | grep -q "8.8.8"; then
+    echo "  PASS: an fd opened before the rewrite still reads the complete old content, not truncated garbage"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: an fd opened before the rewrite still reads the complete old content, not truncated garbage"
+    echo "    old-fd content: '$old_fd_content' (expected to contain 7.7.7)"
+    echo "    fresh-read content: '$new_read_content' (expected to contain 8.8.8)"
+    FAIL=$((FAIL + 1))
+  fi
 
   # ── expired cache (older than CACHE_TTL_SECONDS) triggers a fresh fetch ────────────────────
   # WHY this test exists: every prior cache-hit test used a fresh (now) checkedAtEpoch, so

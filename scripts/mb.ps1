@@ -134,7 +134,32 @@ function Get-CachedPmbVersion {
     if ($script:PmbRemoteVersion) {
         try {
             if (-not (Test-Path $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
-            @{ checkedAtEpoch = $nowEpoch; remoteVersion = $script:PmbRemoteVersion } | ConvertTo-Json -Compress | Set-Content $cacheFile -Encoding utf8
+            # WHY write to a temp file in the same directory then rename, instead of Set-Content
+            # on $cacheFile directly: this notifier runs after EVERY command, so two mb
+            # invocations from concurrent sessions against the same project (a scenario this
+            # repo explicitly supports -- see the concurrent-session-claims feature) can race to
+            # write this file at the same TTL-expiry moment. Mirrors mb.sh's identical fix
+            # (mktemp + mv in the same directory).
+            #
+            # WHY [System.IO.File]::Move(...,$true), not the Move-Item cmdlet: empirically
+            # verified in this repo's own PowerShell 7/NTFS environment under concurrent load --
+            # Move-Item -Force produced 105 writer-side IOExceptions and 67+ reader-side
+            # FileNotFoundExceptions out of a few thousand concurrent attempts (it does not wrap
+            # a true atomic rename the way POSIX `mv` does), while the raw .NET
+            # [System.IO.File]::Move 3-arg overload had zero reader errors under identical load.
+            # Impact of the cmdlet's non-atomicity was muted, not eliminated, by the cache
+            # reader already failing open on any read error -- but the raw .NET call is the
+            # actually-atomic primitive and costs nothing extra to call directly.
+            $cacheTmp = Join-Path $cacheDir ([System.IO.Path]::GetRandomFileName())
+            try {
+                @{ checkedAtEpoch = $nowEpoch; remoteVersion = $script:PmbRemoteVersion } | ConvertTo-Json -Compress | Set-Content $cacheTmp -Encoding utf8
+                [System.IO.File]::Move($cacheTmp, $cacheFile, $true)
+            } finally {
+                # WHY: if Set-Content succeeded but File.Move threw (e.g. the destination
+                # is locked by a concurrent reader), $cacheTmp would otherwise leak as debris
+                # in $cacheDir instead of being cleaned up like mb.sh's `rm -f` fallback.
+                if (Test-Path $cacheTmp) { Remove-Item $cacheTmp -Force -ErrorAction SilentlyContinue }
+            }
         } catch {
             # WHY silent: caching is best-effort. A write failure just means
             # the next invocation fetches live again — never a gate.

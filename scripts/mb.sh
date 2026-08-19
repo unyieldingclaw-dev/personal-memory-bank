@@ -71,7 +71,7 @@ REPO_ROOT="${MB_HOME:-$(dirname "$SCRIPT_DIR")}"
 CACHE_TTL_SECONDS=604800  # 7 days
 
 get_cached_pmb_version() {
-    local cache_dir cache_file check_url now_epoch cached_epoch cached_remote age_seconds
+    local cache_dir cache_file check_url now_epoch cached_epoch cached_remote age_seconds cache_tmp
     LOCAL_VERSION=""
     REMOTE_VERSION=""
     [ -f "$REPO_ROOT/VERSION" ] || return 0
@@ -115,7 +115,22 @@ get_cached_pmb_version() {
         REMOTE_VERSION=$(curl -sf --max-time 2 "$check_url" 2>/dev/null | tr -d '[:space:]"' || true)
         if [ -n "$REMOTE_VERSION" ]; then
             mkdir -p "$cache_dir" 2>/dev/null || true
-            printf '{"checkedAtEpoch":%s,"remoteVersion":"%s"}' "$now_epoch" "$REMOTE_VERSION" > "$cache_file" 2>/dev/null || true
+            # WHY write to a temp file in the same directory then mv, instead of writing
+            # $cache_file directly: this notifier now runs after EVERY command, so two mb
+            # invocations from concurrent sessions against the same project (a scenario this
+            # repo explicitly supports -- see the concurrent-session-claims feature) can race
+            # to write this file at the same TTL-expiry moment. A direct `>` redirect is not
+            # atomic with respect to a concurrent reader; `mv` within the same filesystem is,
+            # matching this repo's own established pattern for the review-gate marker files
+            # (review-reminders.sh's consume_marker(), same TOCTOU-avoidance reason).
+            cache_tmp=$(mktemp "$cache_dir/version-check-cache.XXXXXX" 2>/dev/null) || cache_tmp=""
+            if [ -n "$cache_tmp" ]; then
+                if printf '{"checkedAtEpoch":%s,"remoteVersion":"%s"}' "$now_epoch" "$REMOTE_VERSION" > "$cache_tmp" 2>/dev/null; then
+                    mv "$cache_tmp" "$cache_file" 2>/dev/null || rm -f "$cache_tmp"
+                else
+                    rm -f "$cache_tmp"
+                fi
+            fi
         fi
     fi
 }

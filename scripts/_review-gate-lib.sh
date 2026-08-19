@@ -46,18 +46,31 @@ sha256_file() {
 # own, unrelated failure mode) -- so this returns git diff's own exit code via `$rc`,
 # captured before sha256_file has a chance to run and overwrite `$?`.
 #
-# WHY the trap: without it, a script exit between `mktemp` and the final `rm -f` (e.g. an
-# unexpected signal) leaks a temp file. `trap - EXIT` clears it again once this function
-# returns normally, since sh traps are shell-global, not function-scoped -- otherwise this
-# trap would still be armed (harmlessly, but confusingly) for the rest of the script.
+# WHY no EXIT trap here, despite `mktemp` needing cleanup: an earlier version of this function
+# set `trap 'rm -f "$tmp"' EXIT` then unconditionally `trap - EXIT` at the end -- which silently
+# clears ANY trap a caller had already armed in the SAME shell before calling this function (sh
+# traps are shell-global, not function-scoped). A save-and-restore fix (`trap -p EXIT` before,
+# `eval` that value back afterward) was tried and reverted: it's safe for a direct, same-shell
+# call, but callers that invoke this via command substitution (`$(diff_hash ...)`, which is how
+# review-reminders.sh calls it at every one of its 3 call sites) run it in a subshell that
+# *inherits* the caller's trap at fork time. Empirically confirmed: bash treats an inherited-but-
+# never-explicitly-touched EXIT trap as dormant for that subshell's own exit, but the moment this
+# function calls `trap` explicitly -- even just to restore the exact same value via eval -- bash
+# arms it for that subshell's exit too, firing the CALLER's cleanup early (e.g. deleting the
+# caller's own working directory) the instant this function returns, not at the caller's real
+# exit. Reproduced directly against tests/test-review-gate-lib.sh, which wraps `diff_hash` calls
+# in `$(cd "$TMPDIR_LIB" && diff_hash HEAD)` under its own top-level `trap 'rm -rf "$TMPDIR_LIB"'
+# EXIT` -- the save/restore version deleted $TMPDIR_LIB mid-test-run. Given real callers today
+# never set their own trap (so nothing to clobber in practice) and no in-repo caller relies on
+# the leaked-temp-file safety net firing on an abnormal signal mid-`git diff` (a low-stakes OS
+# temp-file leak, not a correctness or security issue), the safest fix is to not touch trap state
+# at all: rely solely on the explicit `rm -f "$tmp"` below on the normal-completion path.
 diff_hash() {
     tmp=$(mktemp)
-    trap 'rm -f "$tmp"' EXIT
     git diff "$@" > "$tmp" 2>/dev/null
     rc=$?
     sha256_file "$tmp"
     rm -f "$tmp"
-    trap - EXIT
     return $rc
 }
 
