@@ -137,7 +137,13 @@ rm -f "$TRAP_MARKER" "$TMPDIR_LIB/direct-call-output.txt"
 # reported "The term '/c/Users/.../_review-gate-lib.ps1' is not recognized" for the untranslated
 # form. Converting explicitly with cygpath -w (available in git-bash) avoids relying on MSYS's
 # argv-level heuristic for a path used mid-string.
-if command -v pwsh >/dev/null 2>&1; then
+# WHY also require cygpath, not just pwsh (found on GitHub Actions ubuntu-latest, which ships
+# pwsh but not cygpath -- cygpath is git-bash/MSYS-only): matches the identical guard already
+# used by test-review-reminders.sh and test-update-reviewed.sh for the same reason -- without
+# it, this block runs on any Linux/macOS box with pwsh installed, cygpath's "command not found"
+# leaves the *_WIN vars empty, and the PowerShell calls fail for an environment reason having
+# nothing to do with Get-FileHashHex itself, turning a clean SKIP into a spurious FAIL.
+if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
   echo ""
   echo "--- Get-FileHashHex: trailing-newline and empty-file hashes match sha256_file's bash output ---"
   LIB_PS1_WIN=$(cygpath -w "$REPO_ROOT/scripts/_review-gate-lib.ps1")
@@ -150,7 +156,7 @@ if command -v pwsh >/dev/null 2>&1; then
   assert_contains "$ps1_hash_empty" "$hash_empty" "Get-FileHashHex matches bash sha256_file for an empty file (cross-shell hash parity)"
 else
   echo ""
-  echo "--- Get-FileHashHex tests: SKIPPED (pwsh not installed on this machine) ---"
+  echo "--- Get-FileHashHex tests: SKIPPED (pwsh and/or cygpath not installed on this machine) ---"
 fi
 
 print_summary
