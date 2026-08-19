@@ -3,10 +3,7 @@ authority: accumulating
 review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
-tags:
-  - work/completed
-  - work/in-progress
-  - work/backlog
+tags: [work/completed, work/in-progress, work/backlog]
 last-reviewed: 2026-08-18
 compaction_generation: 0
 source_type: canonical
@@ -55,47 +52,18 @@ lineage: []
 Full narrative for all of the above (exact findings lists, before/after diffs, dated sub-corrections):
 `docs/archive/progress-2026-08-investigation-integrity.md`.
 
-## 2026-08-17 — Review-Gate Layered Enforcement: All 14 Tasks Implemented and Committed
+## 2026-08-17 — Review-Gate Layered Enforcement: All 14 Tasks Implemented and Committed — condensed, full detail archived
 
-- ✅ `docs/superpowers/plans/2026-08-12-review-gate-layered-enforcement.md`'s 14 tasks all committed on
-  `feature/review-gate-layered-enforcement` (branched from `07788ad`, isolated in
-  `.claude/worktrees/review-gate-layered-enforcement`), each via the same cycle: implement (directly, or
-  via a scoped implementer subagent forbidden from self-committing/self-marking) → independently verify
-  the diff → dispatch an Opposition reviewer (own `pwd` check first, per the Task 5 incident below) → the
-  orchestrator independently re-verifies the marker hash before every commit. Full 20-suite test run green
-  (`All test suites passed.`) after every task; not yet merged to `main` or pushed.
-- 🔴 **Testing item #8's empirical merge-commit result, unresolved at design time (Known Limitation #4):
-  a non-fast-forward `git merge` does NOT fire Layer 2's `pre-commit` hook** — confirmed via a live merge
-  in a throwaway repo (Task 8). Documented in the design spec and `docs/HOOKS-GUIDE.md` as a known residual
-  gap alongside `--no-verify`; Layer 3 (CI containment) is unaffected since it checks commits, not hooks.
-- 🔴 **Three real bugs found only because the new test suites were fixed to actually exercise what they
-  claimed to, not because anyone went looking for them:**
-  1. Task 8's Layer 2 suite silently tested `pre-commit-check.ps1`/`pre-push-check.ps1` instead of the
-     `.sh` scripts on any pwsh-equipped machine (incl. this repo's own CI) — the throwaway test repos'
-     hooks inherited the real delegator's pwsh-first preference. Fixed by forcing bash explicitly in the
-     test fixtures. That fix then surfaced a genuine `set -e` crash in already-shipped `pre-push-check.sh`
-     (Task 5): `consume_marker()`'s non-zero return on a missing marker terminated the script under
-     `set -e` before it could print its own deny message — push was still blocked, just silently.
-  2. Task 9's rewritten peek-only assertion expected a deny that the actual (correct) peek-only behavior
-     never produces, and a `resolve_cd_root()` regression test compared a POSIX-style path against a
-     Windows-style one returned by the same underlying `git rev-parse` call on this machine — both were
-     test bugs, not product bugs, found via the same "run it and see" discipline.
-  3. Task 13's `findings_has_blocking()` (present verbatim in the plan's own text) only checked the LAST
-     cell of a findings table row — correct for `code-review.md`'s schema but silently wrong for
-     `change-review.md`'s (which has a trailing `Confidence` column after `Blocking`), meaning a blocked
-     change-review entry would have been treated as clean coverage by the CI containment check. An
-     Opposition reviewer caught this on the first pass; fixed to match anywhere in the row, with a new
-     regression fixture.
-- ✅ One further real bug independently found and fixed while wiring `.github/workflows/pmb-health.yml`:
-  the plan's Step 3 assumed `mb-doctor-self-check` was still the last job in the file — it wasn't; an
-  already-merged, unrelated commit (`4321147`, wiring Pester into CI) had since added `pester-tests` after
-  it. The new `review-gate-containment` job was inserted after the actual last job instead.
-- 📌 Every deviation from the plan's literal text (listed above, plus two test-fixture branch-topology
-  fixes in Task 13) was independently verified and justified by a re-dispatched Opposition reviewer before
-  commit — not just applied and assumed correct.
-- 📌 **Not yet done:** wiring `review-gate-containment` into branch protection's required-status-checks
-  (a manual, CONFIRM-tier GitHub settings change per `standards/SECURITY-GUARDRAILS.md`, explicitly left
-  for the user); merging/pushing the feature branch itself.
+- ✅ All 14 tasks committed on `feature/review-gate-layered-enforcement` (isolated worktree), each via
+  implement → independently verify → Opposition review → orchestrator re-verifies marker hash. 3 real bugs
+  found only because test suites were fixed to actually exercise what they claimed to (a pwsh-vs-sh test
+  gap that then surfaced a genuine `set -e` crash in shipped `pre-push-check.sh`; two test-only bugs; a
+  `findings_has_blocking()` bug that would have let a blocked `change-review` entry pass CI containment).
+  A confirmed known limitation: non-fast-forward `git merge` doesn't fire Layer 2's `pre-commit` hook
+  (documented, not fixed — Layer 3 CI containment is unaffected). **Not yet merged to `main` or pushed**
+  — see `activeContext.md`'s Task #33 deferral note for why, and current status.
+
+Full narrative (exact bug descriptions, commit cycle detail): `docs/archive/progress-2026-08-review-gate-layered-enforcement-execution.md`.
 
 ## 2026-08-17 (continued) — Branch-Ancestry Diagnosis, Handoff/Compaction Gap, Standards-Freshness Gap, Review-Gate Hardening Audit
 
@@ -321,6 +289,40 @@ Full narrative for all of the above (exact findings lists, before/after diffs, d
   version-cache write + `diff_hash()` trap-scoping (Task #34); final full test-suite run + re-run
   `/change-review` + push/merge PR #8 (Task #35).
 
+## 2026-08-18 (continued) — Task #33 Deferred; Task #34 Hardening Fixes (One Self-Caught, Reverted)
+
+- 🔴 **Task #33 investigated, deliberately deferred rather than patched.** The real structural fix already
+  exists on `feature/review-gate-layered-enforcement` (can't cleanly rebase onto `main`); a second branch
+  has uncommitted WIP on an overlapping mechanism. A narrow patch here would be a third. Full reasoning:
+  `activeContext.md`'s NS-24 entry. Committed `c66d9d1`.
+- ✅ **Task #34, atomic version-cache write:** `mb.sh`/`mb.ps1` wrote the version-cache JSON via a direct
+  overwrite, not atomic against a concurrent reader — real risk, since this check runs after every `mb`
+  command and this repo supports concurrent sessions. Fixed via mktemp-in-same-dir + `mv` (bash), temp
+  file + `[System.IO.File]::Move` (PowerShell). **PowerShell needed a second fix mid-review:** a reviewer
+  load-tested `Move-Item -Force` under concurrent access and got 105 writer-side `IOException`s and 67+
+  reader-side `FileNotFoundException`s — not the atomic primitive it looks like on Windows. Switched to
+  the raw `File.Move` overload (zero errors under identical load).
+- 🔴 **Task #34, `diff_hash()` trap-scoping: a self-caught regression.** The original bug (unconditional
+  `trap - EXIT` clears a caller's own trap on a direct, same-shell call) was real. The first fix
+  (`trap -p EXIT` save + `eval`-restore) looked correct until it deleted `test-review-gate-lib.sh`'s own
+  `$TMPDIR_LIB` mid-run. Root cause: bash treats an EXIT trap merely *inherited* into a
+  command-substitution subshell as dormant, but explicitly calling `trap` inside it — even to restore the
+  same value — arms it, firing early. Since `review-reminders.sh` calls `diff_hash` via
+  `$(diff_hash ...)`, the "fix" would have fired a caller's cleanup trap early in production. Reverted to
+  touching no trap state at all; a guard test for this had its own bug first (checked the marker after
+  the subshell's own `exit`, which fires it too) fixed via an echoed status string before any exit.
+  Mutation-tested repeatedly: the fix passes 9/9; the buggy code reliably drops it to 4/9.
+- 🔴 **A first-round review finding was independently re-tested and found wrong, not accepted on
+  authority.** The reviewer claimed the subshell-trap test couldn't discriminate the fix from the bug;
+  re-running the exact mutation showed it clearly does (9/9 vs 4/9, twice). Their other findings held up:
+  the `Move-Item` issue, and a genuine coverage gap — "no leftover temp file" also passes against fully
+  reverted code. Fixed with a stronger test: open an fd on the cache file before a forced rewrite, confirm
+  it still shows the complete *old* content — exploiting the POSIX guarantee (`rename()` doesn't touch an
+  already-open fd) the fix depends on.
+- ✅ Two full review rounds, both reproducing the mutations themselves. Opposition's first revert attempt
+  used `git checkout --` on an uncommitted file (reset to pre-fix `HEAD`), caught immediately, corrected
+  from the `templates/` mirror, disclosed not hidden. Hash independently re-verified. Committed `acdfbb6`.
+
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
 - 📌 `ai-code-review-agent` drifted 2 versions behind PMB, ran a 13-task feature under stale
@@ -377,16 +379,13 @@ Full history: CHANGELOG.md
 
 ## Removed vs Enterprise
 
-- ❌ Eric Nolan branding and brand assets
-- ❌ Data Classification, Model Governance, OWASP LLM Top 10 (compliance only)
-- ❌ Incident Runbook, accessibility review command
-- ❌ Enterprise logging (PII redaction, correlation IDs)
-- ❌ Team onboarding scripts and training materials
+Eric Nolan branding/brand assets; Data Classification, Model Governance, OWASP LLM Top 10 (compliance only);
+Incident Runbook, accessibility review command; enterprise logging (PII redaction, correlation IDs);
+team onboarding scripts and training materials.
 
 ## Backlog
 
-**Deferred pending operational evidence:**
-- ⏸ handoff CLI, pinned.md, mb update --from-git, mb privacy
+Deferred pending operational evidence: handoff CLI, pinned.md, mb update --from-git, mb privacy.
 
 ## Earlier Sessions (2026-06-19 to 2026-06-24) — condensed, full detail in CHANGELOG.md
 
