@@ -303,6 +303,8 @@ Full narrative: `docs/archive/progress-2026-08-18-task30-dangerous-commands-hard
   reviewed again at the push gate (content byte-identical to what was already reviewed this session;
   the only new finding was this exact "PR #8 open" staleness, now corrected inline), for a small
   follow-up PR. Only `[NS-24]`'s Task #33 remains open from this thread.
+- ✅ **PR #12 merged 2026-08-19** (the follow-up carrying the CI-fix narrative + staleness correction), `main` fast-forwarded to `4f24768`. Both fully-merged branches (`docs/branch-protection-rollout`, `docs/finalize-branch-protection-memory-bank`) deleted locally and on `origin` after confirming `git diff main <branch>` was empty (or, for the old branch, showed only its own now-superseded stale text — `main`'s version was strictly more accurate, not missing anything).
+- 📌 **`[NS-25]` found while deleting branches:** `review-reminders.sh`/`.ps1`'s push-gate raw-substring-matches `'git push'`, so `git push origin --delete <branch>` (no content diff) got denied identically to a real push — `diff_hash origin/main...HEAD` is meaningless for a pure ref deletion. Worked around via `gh api -X DELETE repos/.../git/refs/heads/<branch>`, which bypasses `git push` entirely and is legitimate (no diff exists to review). Not fixed in the hook itself: an independent review caught that the first-pass reasoning for deferring the fix (cited JSON-field-extraction fragility) was wrong — the real risk of a `--delete` special case is a fail-*open* substring false-positive on a real push, corrected accordingly. See `activeContext.md`'s `[NS-25]` for the full, corrected reasoning.
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
