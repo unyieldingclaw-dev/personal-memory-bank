@@ -132,8 +132,28 @@ When starting a new conversation:
 
 **Model selection — default to Sonnet, escalate deliberately:**
 - Sonnet handles 90%+ of tasks. Start here every session.
-- Switch to Opus (`/model opus`) only for: complex architecture decisions, large multi-file refactors, deep cross-file debugging. Switch back after.
+- Switch to Opus (`/model opus`) for work such as: complex architecture decisions, large multi-file refactors, deep cross-file debugging — see the trigger list below for the full set. Switch back after.
 - Subagents run on Haiku automatically (set in settings.json) — sufficient for file reads, test runs, and exploration.
+
+**Claude must PROMPT for escalation — do not wait to be asked.** Escalating at the right moment is a token *saving*, not a spend: a wrong design caught after implementation costs a revert, a debugging pass, and a redesign — many times the price of one careful pass up front. Quality at the front end is the cheaper path. When a trigger below fires, say so explicitly and recommend `/model opus` before continuing.
+
+**Escalate on observable triggers, not on feeling stuck** — a model that is out of its depth is not a reliable judge that it is out of its depth, so these are countable rather than introspective:
+- Cross-branch reconciliation — a rebase/merge with real conflicts, or porting work between long-diverged branches
+- Enforcement or security-boundary changes — hooks, review gates, auth, anything governing what is permitted
+- Multi-file refactors — roughly 5+ files, or any change requiring paired mirrored copies of the same file
+- 3+ failed fix attempts on one bug — that is an architecture signal, not a cue for attempt #4
+- Writing a design spec or implementation plan
+- Cross-platform shell semantics — bash/PowerShell parity, shell quoting/escaping, trap and subshell behavior
+
+**Why this is a prompt and not just guidance:** the failure mode it addresses is a plausible-looking design that survives self-review because the flawed premise is never questioned — exactly the case where the model in the seat is least able to notice it needs help. Observable triggers fire whether or not the model senses difficulty.
+
+**Effort level (`CLAUDE_CODE_EFFORT_LEVEL`) — a separate, cheaper dial than model.** Model sets the capability ceiling; effort sets how much reasoning is spent per turn. They fix different failures:
+- **Raise effort** when the task is well understood but demands care — long verification chains, thorough test design, close log reading, checking many cases.
+- **Raise model** when the risk is a wrong *premise* rather than shallow reasoning — "is this design sound," "what am I not seeing." More effort does not reliably rescue a flawed framing, because the extra reasoning is spent inside the same wrong frame.
+
+Nominal defaults are per-model: `high` for Sonnet, `xhigh` for Opus. **An explicitly set level overrides that default and does not follow a model switch** — switching to Opus leaves effort wherever it was, potentially below Opus's nominal default, with nothing surfacing the mismatch. Note the env var may be named `CLAUDE_EFFORT` rather than `CLAUDE_CODE_EFFORT_LEVEL`, and may be injected by the harness rather than set in any `settings.json` — check with `env | grep -i effort` rather than assuming a config file is authoritative. After `/model opus`, raise effort deliberately; it will not track the model on its own. Downshift just as deliberately: `medium` for routine single-file edits, config changes, and well-specified mechanical work (real token savings, no quality cost); `low` only for formatting and file moves.
+
+**Also check `MAX_THINKING_TOKENS`** (`.claude/settings.json` env block). Exact interaction with model and effort is not verifiable from inside the repo, but it plausibly bounds reasoning depth independently of both — so a raised effort level may still be capped by it. Worth revisiting before deep architecture or security-boundary work.
 
 **Compact at task boundaries — auto-compact fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`:**
 - Auto-compaction fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json; the `PreCompact` hook warns first if memory bank is stale
