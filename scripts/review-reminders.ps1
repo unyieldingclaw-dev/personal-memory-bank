@@ -90,8 +90,15 @@ function Deny {
 function Test-AndConsumeMarker {
     param([string]$Marker, [string]$ExpectedHash)
     $claimed = "$Marker.claimed"
+    # WHY [System.IO.File]::Move, not the Move-Item cmdlet: empirically verified (see
+    # scripts/mb.ps1's Get-CachedPmbVersion, hardened for the same reason) that Move-Item -Force
+    # is NOT the atomic primitive it looks like on this platform's PowerShell 7/NTFS stack --
+    # under concurrent load it produced writer-side IOExceptions and reader-side
+    # FileNotFoundExceptions, while the raw .NET File.Move overload had zero errors under
+    # identical load. This function is the actual security-critical marker-consumption path
+    # (unlike the version cache), so it gets the more reliable primitive.
     try {
-        Move-Item -Path $Marker -Destination $claimed -Force -ErrorAction Stop
+        [System.IO.File]::Move($Marker, $claimed, $true)
     } catch {
         return $false
     }

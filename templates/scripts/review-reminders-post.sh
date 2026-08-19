@@ -40,7 +40,7 @@ if [ "$cmd" = "commit" ]; then
         rm -f "$preshafile"
         postsha=$(git rev-parse HEAD 2>/dev/null)
         if [ -n "$presha" ] && [ -n "$postsha" ] && [ "$postsha" = "$presha" ]; then
-            diff_hash HEAD > "$root/.claude/.code-review-ok"
+            diff_hash HEAD | write_marker_atomic "$root/.claude/.code-review-ok"
         fi
     fi
 elif [ "$cmd" = "push" ]; then
@@ -55,7 +55,7 @@ elif [ "$cmd" = "push" ]; then
             if [ "$rc" -ne 0 ]; then
                 hash=$(diff_hash HEAD)
             fi
-            printf '%s' "$hash" > "$root/.claude/.change-review-ok"
+            printf '%s' "$hash" | write_marker_atomic "$root/.claude/.change-review-ok"
         fi
     fi
 fi

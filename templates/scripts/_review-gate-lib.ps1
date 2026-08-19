@@ -90,3 +90,31 @@ function Get-PushDiffHash {
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
     }
 }
+
+# WHY this helper: review-reminders-post.ps1 reissues a review-ok marker (after a commit/push
+# that consumed one then failed) by writing $Content directly to the marker path -- a plain
+# Set-Content truncates-then-writes in place, which a concurrent reader racing to consume the
+# same marker via Test-AndConsumeMarker's [System.IO.File]::Move could observe mid-write.
+# Routes the write through the same mktemp-in-same-dir + File.Move pattern already established
+# for the version cache (scripts/mb.ps1's Get-CachedPmbVersion) and the marker-consumption path
+# itself (Test-AndConsumeMarker, above/in review-reminders.ps1) -- one helper instead of a third
+# independent copy of the same fix, matching this file's own reason for existing.
+#
+# WHY no -NoNewline on the Set-Content call: this only changes HOW the write happens
+# (atomically vs. in place), not WHAT gets written -- preserves the exact trailing-newline
+# behavior of the `Get-CommitDiffHash | Set-Content (path)` pattern it replaces. Both
+# consuming sides already strip all whitespace before comparing (bash's consume_marker() via
+# `tr -d '[:space:]'`, PowerShell's Test-AndConsumeMarker via `.Trim()`), so this wouldn't
+# have affected correctness either way -- but changing it would still be an unrelated,
+# unrequested behavior change riding along with an atomicity fix.
+function Write-MarkerAtomic {
+    param([string]$Path, [string]$Content)
+    $dir = Split-Path -Parent $Path
+    $tmp = Join-Path $dir ([System.IO.Path]::GetRandomFileName())
+    try {
+        Set-Content -Path $tmp -Value $Content
+        [System.IO.File]::Move($tmp, $Path, $true)
+    } finally {
+        if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}

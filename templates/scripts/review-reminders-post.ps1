@@ -46,7 +46,7 @@ if ($cmd -match 'git\s+commit\b') {
         if ($preSha -and $postSha -and $postSha -eq $preSha) {
             # HEAD didn't move -- commit failed. A failed commit can't have altered the
             # working tree, so recomputing the hash fresh reproduces the same value.
-            Get-CommitDiffHash | Set-Content (Join-Path $root '.claude/.code-review-ok')
+            Write-MarkerAtomic (Join-Path $root '.claude/.code-review-ok') (Get-CommitDiffHash)
         }
     }
 } elseif ($cmd -match 'git\s+push\b') {
@@ -57,7 +57,7 @@ if ($cmd -match 'git\s+commit\b') {
         $preSha = if ($preSha) { $preSha.Trim() } else { $null }
         $postSha = git rev-parse '@{u}' 2>$null
         if ($preSha -and $postSha -and $postSha -eq $preSha) {
-            Get-PushDiffHash | Set-Content (Join-Path $root '.claude/.change-review-ok')
+            Write-MarkerAtomic (Join-Path $root '.claude/.change-review-ok') (Get-PushDiffHash)
         }
     }
 }

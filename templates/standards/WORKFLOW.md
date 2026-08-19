@@ -102,6 +102,16 @@ Never write implementation before the failing test exists.
 
 **Commit frequency:** After each passing test or logical unit. Never accumulate more than one unit of work in a commit.
 
+**Test Design Principles:**
+
+1. **Test the public interface (the seam), not internals.** A test exercises what a caller can observe — return values, visible side effects, errors — never private state or implementation-specific call sequences. *Why:* tests coupled to internals break on every refactor even when behavior is unchanged, training people to treat red tests as noise instead of signal.
+
+2. **One test per observable behavior — write, implement, verify, commit — before starting the next.** Do not write a batch of tests up front and implement them as a batch. *Why:* batching hides which test is driving which code; a partially-passing batch conceals which minimal-code step actually worked versus which is untested guesswork.
+
+3. **Compute the expected result from an independent source of truth.** Never derive a test's expected value from the same logic or algorithm being tested — that only proves the code agrees with itself, not that either is correct. *Why:* e.g. testing a slug generator by re-implementing the slugify logic inline in the test asserts self-consistency, not correctness; a genuinely wrong algorithm passes its own test every time. Use hand-computed values or a trusted reference, not restated logic.
+
+4. **Start with a tracer bullet.** Before implementing a task's individual units, write and pass one test exercising the smallest meaningful path through the task end-to-end — not a unit in isolation. *Why:* this surfaces integration/wiring problems (imports, plumbing, environment) immediately, instead of after building N isolated units that turn out not to connect.
+
 ---
 
 ### Phase 5 — Simplify

@@ -74,6 +74,35 @@ diff_hash() {
     return $rc
 }
 
+# WHY this helper: review-reminders-post.sh reissues a review-ok marker (after a commit/push
+# that consumed one then failed) by redirecting straight into the marker path -- a plain `>`
+# truncates-then-writes in place, which a concurrent reader racing to consume the same marker
+# via consume_marker()'s `mv` could observe mid-write. Routes the write through the same
+# mktemp-in-same-dir + mv pattern already established for the version cache (mb.sh's
+# get_cached_pmb_version) -- one helper instead of duplicating the fix inline at two call
+# sites in review-reminders-post.sh, matching this file's own reason for existing.
+#
+# WHY stdin, not a string argument: this repo has been bitten more than once by exactly this
+# class of bug -- `$(...)` command substitution silently strips a trailing newline that a
+# direct redirect preserves (see diff_hash()'s own WHY comment above, and the 2026-07-09
+# trailing-newline hash-mismatch bug this whole shared-lib file exists to prevent recurring).
+# `diff_hash HEAD | write_marker_atomic path` pipes diff_hash's raw stdout straight through,
+# byte-for-byte including its trailing newline, into this function's own `cat > "$tmp"` --
+# no command substitution anywhere in the chain. A string-argument design
+# (`write_marker_atomic path "$(diff_hash HEAD)"`) would have reintroduced the exact bug class
+# this file's own dedup refactor was built to eliminate.
+write_marker_atomic() {
+    path="$1"
+    dir=$(dirname "$path")
+    tmp=$(mktemp "$dir/.marker-write.XXXXXX" 2>/dev/null) || return 1
+    if cat > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$path" 2>/dev/null || { rm -f "$tmp"; return 1; }
+    else
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
 # WHY parameterless, relying on the caller's global $input: the caller (review-reminders.sh /
 # review-reminders-post.sh) reads raw stdin into $input and does its own raw-stdin case-match
 # BEFORE calling this function -- $input is already a shell global by the time this runs, and

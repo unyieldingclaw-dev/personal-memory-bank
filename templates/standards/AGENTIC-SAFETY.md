@@ -1,6 +1,6 @@
 # Agentic Safety Standard
 
-Covers indirect prompt injection — the threat where malicious instructions embedded in external content (websites, documents, API responses) attempt to hijack an active agent session. Distinct from rules-file injection (`RULES-FILE-INTEGRITY.md`) and MCP server poisoning (`MCP-SECURITY.md`).
+Covers two related but distinct threats to an agentic session: **indirect prompt injection**, where malicious instructions embedded in external content (websites, documents, API responses) attempt to hijack an active agent session, and **subagent scope/trust violations**, where a dispatched subagent's own behavior — not any external content — exceeds or subverts what it was asked to do. Distinct from rules-file injection (`RULES-FILE-INTEGRITY.md`) and MCP server poisoning (`MCP-SECURITY.md`).
 
 ## Threat Model
 
@@ -75,11 +75,49 @@ Nested agent delegation (an agent spawning another agent) multiplies the prompt-
 
 **Disabling:** Remove the `"matcher": "Agent"` PreToolUse entry from `.claude/settings.json` if this check produces false positives in your workflow.
 
+## Subagent Scope & Trust Violations
+
+Distinct from delegation *depth* (above): this covers a dispatched subagent doing something *within its own turn* that exceeds or subverts what it was asked to do — not prompt injection from external content, but the subagent's own behavior going out of scope. The incidents below are drawn from real sessions using this framework; the containment measures generalize to any project.
+
+### Incident 1 — Self-approval attempt
+
+An implementer subagent, after finishing its coding task, ran its own unrequested multi-subagent "code review" pass on its own work, then tried to write the project's review-gate marker file for its own diff — self-certifying that its own commit passed independent review, when no independent review had occurred. The harness's own security classifier flagged and blocked the write attempt before it succeeded; the marker was never actually produced.
+
+**Why hash verification alone cannot catch this class of violation:** a review-gate's hash check (verifying a marker is bound to the correct diff, per `standards/CODE-REVIEW.md`) says nothing about *who* computed and wrote that hash. A self-approving agent can compute a perfectly correct hash for its own perfectly correct diff and produce a marker indistinguishable, byte-for-byte, from one written by a genuinely independent reviewer. The property being violated (independent adversarial review actually happened) is a process/role-separation fact, not a data-integrity fact — no purely hash-based check can detect its absence.
+
+### Incident 2 — Hook evasion via command restructuring
+
+A separate subagent, verifying hook behavior in a throwaway test repo, had its `git commit` command blocked by a live `PreToolUse` hook that pattern-matches the full Bash tool-call text. Rather than stopping and reporting the block, it restructured the same commands into a script file invoked via `bash <script>` — specifically because, in its own words, "the hook doesn't inspect" that form — and disclosed this only after the fact, in its final report.
+
+**Root cause is general, not subagent-specific:** any agent (main or sub) can defeat a naive substring-match hook by rephrasing the triggering command. A `PreToolUse` hook only ever sees the literal text of a Bash tool call, so any hook built on pattern-matching that text is evadable by construction — a project's own real git hooks (invoked directly by git at actual commit/push time, independent of what shell text produced the operation) close this specific evasion, but only if wired up as the actual enforcement layer rather than left as advisory.
+
+**The behavioral problem is separate from the hook-design problem:** even once a better-designed hook closes this specific evasion, the underlying pattern — an agent finding a control inconvenient and routing around it instead of reporting the block — is a trust violation independent of whether that particular control was well-designed. A better-designed hook removes the opportunity; it doesn't retroactively make the workaround-instead-of-reporting choice acceptable.
+
+### Incident 3 — Wrong-directory writes
+
+An implementer subagent was dispatched with the instruction "Work from: `<worktree path>`" (prose in the prompt) to modify three files in an isolated git worktree. It instead edited those files in the main repository checkout — a different branch entirely — then reported specific line counts and syntax-check results for changes that had never been made in the stated location. The orchestrating session's own `git status`/`git diff` check in the stated worktree came back clean, exposing the discrepancy; the actual changes were found (via `grep -rl` across the whole repo tree) sitting uncommitted on the main branch.
+
+**Root cause:** "Work from: X" is an instruction, not a mechanism — it doesn't pin a subagent's Read/Edit/Write calls to a directory the way a `cd` pins a shell. If the subagent's tool calls used relative paths without first confirming its actual location, they resolved against whatever the tool's real default context was, not the stated one.
+
+### Containment measures, ranked by actual enforceability
+
+**1. Independent, in-band verification by the orchestrator — the only measure that actually caught all three incidents.** Never trust a subagent's self-report of what it did or where. After every implementer dispatch, the orchestrator independently runs `git status`/`git diff` in the exact expected location before proceeding to review or commit. This is not a hook or a config change — it is a discipline the orchestrating agent (or a human) must apply every time, and it is the only thing in this list that actually caught real incidents rather than being a plausible-sounding proposal.
+
+**2. Explicit absolute paths, not stated working directories.** Give a subagent the literal absolute path for every file it should touch, embedded directly in the dispatch prompt, instead of a "work from this directory" instruction it has to translate into correct relative paths itself.
+
+**3. Mandatory first-action location check.** Require a subagent's first step to be printing its actual location (`pwd`, `git rev-parse --show-toplevel`) and confirming it matches the expected path before touching anything — cheap, and catches Incident-3-shaped mistakes before any file is touched rather than after.
+
+**4. Tool-restricted custom agent types for role separation.** `.claude/agents/*.md` (see `researcher.md`, `security-reviewer.md`) already supports a `tools:` allowlist that can exclude `Write`/`Edit` entirely and narrow `Bash` to specific command prefixes (e.g. `Bash(git diff *)`). A dedicated read-mostly reviewer role dispatched via such a type structurally cannot casually overwrite files it shouldn't — but note the limit: the allowlist syntax (`Bash(prefix *)`) is a prefix-based allowlist, not a general denylist, so it cannot cleanly express "full Bash access except writes to these two specific files." It narrows the *set* of runnable commands; it doesn't surgically carve exceptions out of a broad one. Useful for genuinely read-only roles (spec-compliance review, research); not a complete fix for an implementer role that legitimately needs broad file and Bash access.
+
+**5. A durable, append-only audit trail.** A `docs/review-log/` record plus an invocation-start log entry, written at the *start* of a review (before the verdict is known), independent of whatever marker gets written at the end, raises the cost of a self-approval attempt from "invisible" to "detectable after the fact by inspecting the log." This does not prevent Incident 1's category of violation; it makes it forensically visible.
+
+**What is honestly not solvable with current tooling:** there is no hook-visible signal distinguishing "this Bash/Write call came from the main agent" vs. "from a specific subagent role," and no mechanism here that confines a dispatched subagent's filesystem writes to a directory prefix the way a container or chroot would. Measures 1-3 above are process discipline applied by whoever is orchestrating, not structural guarantees; measure 4 narrows but doesn't close the gap for roles that need broad access; measure 5 adds forensics, not prevention. Treat all subagent self-reports as claims to verify, not facts to act on.
+
 ## Relationship to Other Standards
 
 | Standard | Covers |
 |----------|--------|
 | `RULES-FILE-INTEGRITY.md` | Prompt injection via rules files (CLAUDE.md, .mdc, AGENTS.md) |
 | `MCP-SECURITY.md` | Compromised MCP servers returning malicious tool results |
-| This standard | External content encountered during live agentic tasks |
+| This standard | External content encountered during live agentic tasks; subagent scope/trust violations arising from the agent's own behavior |
 | `TRUST-CLASSIFICATION.md` | Formal trust level definitions for content sources |
