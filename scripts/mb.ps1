@@ -2086,6 +2086,15 @@ function Invoke-Upgrade {
     # them on POSIX. Both shells now agree on create-if-missing/diff-if-customized semantics.)
     $advisoryCreate += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "docs" | ForEach-Object { "docs/$($_.Name)" })
 
+    # WHY this one is hardcoded rather than auto-discovered: the loop above only scans
+    # templates/docs/, so a template living under templates/.github/ is never picked up.
+    # Must stay in sync with scripts/mb.sh's ADVISORY_CREATE entry for the same path -- without
+    # it, `mb upgrade` would ship this workflow to POSIX adopters and silently skip Windows
+    # ones, the exact bash/PowerShell distribution asymmetry this repo has been bitten by before.
+    # WHY $advisoryCreate and not $templateOwned: a project may already run its own CI; create
+    # it when absent, diff-and-warn when customized, never overwrite.
+    $advisoryCreate += ".github/workflows/memory-bank-size.yml"
+
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X -> templates/cursor/rules/X (no dot prefix)
     # .claude/commands/X -> templates/claude-commands/X (different directory name)

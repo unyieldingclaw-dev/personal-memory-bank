@@ -21,11 +21,37 @@ jobs:
           echo "=== memory-bank files (per-file limits) ==="
           declare -A MB_WARN=( [projectbrief.md]=80  [activeContext.md]=100 [systemPatterns.md]=200 [techContext.md]=200 [progress.md]=250 )
           declare -A MB_FAIL=( [projectbrief.md]=120 [activeContext.md]=150 [systemPatterns.md]=300 [techContext.md]=300 [progress.md]=400 )
+          # WHY byte limits alongside line limits: a line cap measures the wrong dimension --
+          # collapsing multi-line entries into one long line satisfies it while saving zero
+          # tokens. That is not hypothetical: on 2026-08-19 a cap breach in activeContext.md was
+          # "fixed" by reflowing 158 lines to 134 with byte-identical content, CI green, no
+          # reduction in the actual SessionStart cost these caps exist to bound. Since every
+          # memory-bank file is re-read at session start and again after each compaction, bytes
+          # (not lines) are what the context budget actually pays for.
+          #
+          # WHY the byte thresholds are asymmetric with the line thresholds: WARN is a rounded
+          # budget in the neighbourhood of "that file's line cap at ~120 chars/line" -- roughly
+          # derived, not a formula (the two largest files anchor on their FAIL line cap, the
+          # smaller ones on their WARN line cap, and all are rounded to legible numbers); FAIL is
+          # a ceiling set above present size so this check does not immediately block all work
+          # on files that are already over. This is deliberately a ratchet -- as files shrink,
+          # lower MB_FAIL_BYTES toward MB_WARN_BYTES. A FAIL value that is never tightened is a
+          # cap in name only.
+          declare -A MB_WARN_BYTES=( [projectbrief.md]=9600 [activeContext.md]=18000 [systemPatterns.md]=24000 [techContext.md]=24000 [progress.md]=48000 )
+          # activeContext.md sits at ~39 KB as of 2026-08-19, so a 40000 ceiling would have left
+          # ~600 bytes of headroom and gone red on the next ordinary edit -- a tripwire, not a
+          # guardrail. 45000 catches genuine runaway while the WARN at 18000 carries the real
+          # signal. RATCHET THIS DOWN once activeContext.md is actually trimmed; a ceiling that
+          # only ever moves up is not a cap.
+          declare -A MB_FAIL_BYTES=( [projectbrief.md]=20000 [activeContext.md]=45000 [systemPatterns.md]=40000 [techContext.md]=40000 [progress.md]=60000 )
           while IFS= read -r -d '' file; do
             base=$(basename "$file")
             warn=${MB_WARN[$base]:-80}
             fail=${MB_FAIL[$base]:-150}
+            warnb=${MB_WARN_BYTES[$base]:-12000}
+            failb=${MB_FAIL_BYTES[$base]:-30000}
             lines=$(wc -l < "$file")
+            bytes=$(wc -c < "$file")
             if [ "$lines" -gt "$fail" ]; then
               echo "FAIL: $file ($lines lines -- limit $fail)"
               FAIL=1
@@ -33,6 +59,14 @@ jobs:
               echo "WARN: $file ($lines lines -- warn $warn)"
             else
               echo "OK:   $file ($lines lines)"
+            fi
+            if [ "$bytes" -gt "$failb" ]; then
+              echo "FAIL: $file ($bytes bytes -- limit $failb)"
+              FAIL=1
+            elif [ "$bytes" -gt "$warnb" ]; then
+              echo "WARN: $file ($bytes bytes -- warn $warnb; ~$((bytes / 4)) tokens re-read every session start and compaction)"
+            else
+              echo "OK:   $file ($bytes bytes)"
             fi
           done < <(find memory-bank -name "*.md" -print0 2>/dev/null)
 
