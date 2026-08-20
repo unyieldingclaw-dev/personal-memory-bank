@@ -82,8 +82,31 @@ jobs:
             fi
           done < <(find memory-bank -name "*.md" -print0 2>/dev/null)
 
+          # The aggregate is the real budget: it is what a session actually pays at start and
+          # again after every compaction. Per-file ceilings above only localise WHICH file grew,
+          # and must never be read as permission to reach their sum. Thresholds mirror
+          # `mb doctor`'s own long-declared startup-context check so the two never disagree.
+          #
+          # WHY this recomputes from an explicit file list instead of reusing TOTAL_BYTES from the
+          # loop above: that loop globs every *.md under memory-bank/, which includes files
+          # `mb doctor` does not count (a shipped README.md, any local notes). Reusing it would
+          # have made this workflow permanently disagree with doctor by exactly those files'
+          # size -- reintroducing, in the adopter template, the very "two tools reporting
+          # different numbers for the same thing" defect this check exists to eliminate.
+          CEIL=0
+          [ -f CLAUDE.md ] && CEIL=$((CEIL + $(wc -c < CLAUDE.md)))
+          for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+            [ -f "memory-bank/$f" ] && CEIL=$((CEIL + $(wc -c < "memory-bank/$f")))
+          done
+          CEIL_KB=$(awk "BEGIN {printf \"%.1f\", $CEIL / 1024}")
           echo ""
-          echo "memory-bank total: $TOTAL_BYTES bytes (~$((TOTAL_BYTES / 4)) tokens re-read at every session start and after every compaction)"
+          echo "startup context (CLAUDE.md + the 5 tracked memory-bank files): $CEIL bytes / ${CEIL_KB} KB (~$((CEIL / 4)) tokens re-read at every session start and after every compaction)"
+          if [ "$CEIL" -gt 25600 ]; then
+            echo "OVER:  exceeds the 25 KB startup-context ceiling"
+            FAIL=1
+          elif [ "$CEIL" -gt 15360 ]; then
+            echo "WARN:  exceeds the 15 KB startup-context warn line"
+          fi
           echo ""
 
           if [ "$FAIL" -ne 0 ]; then

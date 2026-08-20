@@ -70,6 +70,41 @@ jobs:
             fi
           done < <(find memory-bank -name "*.md" -print0 2>/dev/null)
 
+          # === Aggregate startup-context budget ===
+          # WHY this exists in addition to the per-file caps above: `mb doctor` check 15 has long
+          # declared an AGGREGATE ceiling (WARN >15 KB, ERROR >25 KB across CLAUDE.md plus the five
+          # memory-bank files) -- and CI never checked it, so CI could report all-green on a repo
+          # that `mb doctor` was simultaneously calling an ERROR. That contradiction was live: on
+          # 2026-08-19 the same repo state produced "[OK] File sizes within limits" from the
+          # line-based check and "[ERROR] Startup context 96.7 KB exceeds 25 KB limit" from doctor.
+          #
+          # The aggregate is the REAL budget -- it is what a session actually pays at start and
+          # again after every compaction. The per-file caps above are a coarse backstop that
+          # localises WHICH file grew; they are deliberately subordinate to this number and must
+          # never be read as permission to reach their sum.
+          #
+          # WHY advisory here rather than blocking: the repo is presently ~4x over this ceiling, so
+          # failing on it would red the build immediately and block the very work needed to get
+          # under it. Thresholds are stated at doctor's real values rather than inflated to
+          # whatever currently passes -- an honest number that is not yet enforced beats a
+          # comfortable one that is. Make this blocking once memory-bank/ is genuinely under 25 KB.
+          echo ""
+          echo "=== aggregate startup context (mirrors mb doctor check 15) ==="
+          CEIL=0
+          [ -f CLAUDE.md ] && CEIL=$((CEIL + $(wc -c < CLAUDE.md)))
+          for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+            [ -f "memory-bank/$f" ] && CEIL=$((CEIL + $(wc -c < "memory-bank/$f")))
+          done
+          CEIL_KB=$(awk "BEGIN {printf \"%.1f\", $CEIL / 1024}")
+          if [ "$CEIL" -gt 25600 ]; then
+            echo "OVER:  startup context ${CEIL_KB} KB exceeds the 25 KB ceiling (~$((CEIL / 4)) tokens per session start, re-paid after every compaction)"
+            echo "       advisory for now -- see the WHY above; fix via 'mb clean' or archiving to docs/archive/"
+          elif [ "$CEIL" -gt 15360 ]; then
+            echo "WARN:  startup context ${CEIL_KB} KB exceeds the 15 KB warn line (~$((CEIL / 4)) tokens per session start)"
+          else
+            echo "OK:    startup context ${CEIL_KB} KB (warn 15 KB, ceiling 25 KB)"
+          fi
+
           echo ""
           echo "=== all other markdown files (warn: 500, fail: 800) ==="
           while IFS= read -r -d '' file; do
