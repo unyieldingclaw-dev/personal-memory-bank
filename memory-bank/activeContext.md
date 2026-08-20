@@ -16,7 +16,7 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-08-19 (PR #15 opened)
+## Last Updated: 2026-08-19 (PR #15 merged)
 
 ## Trim History
 
@@ -68,9 +68,9 @@ not started, `[NS-0]`) and the mb update-notifier + authorization-drift incident
 
 ## Current Focus
 
-`feat/memory-bank-byte-caps` (`aaa89ff`, `5654378`) → **PR #15 opened 2026-08-19**, not yet merged —
-see `[NS-31]`. `handoff.md` deleted same session (content merged here), re-arming the PreCompact
-freshness gate per `[NS-22]`. Branch-protection rollout (2026-07-08, PR #8): see `[NS-4]`, `docs/archive/`.
+No open work as of 2026-08-19 — `[NS-31]` (byte-caps, PR #15) just merged to `main` as `5d573fd`,
+branch deleted. `handoff.md` deleted this session (content merged in), re-arming the PreCompact
+freshness gate per `[NS-22]`. Pick next from `[NS-3]`, `[NS-18]`, or `[NS-26]`.
 
 ## Architecture Constraints to Remember
 
@@ -82,6 +82,7 @@ freshness gate per `[NS-22]`. Branch-protection rollout (2026-07-08, PR #8): see
 - `fixtures/` and `docs/` are excluded from pre-push secret scanning (intentionally bad code + docs quoting it)
 - `mb status` = state ("can I work?"); `mb doctor`/`/health-check` = validation ("is it correct?")
 - Doctor test renames use single subdirectory + conditional restore (not whole-dir rename) to prevent data loss
+- This agent never runs `gh pr merge`, and push-gate marker writes get classifier-denied from a non-authoring subagent — both platform-enforced, not just repo convention (incident: `progress.md` 2026-08-19)
 
 ## Next Steps
 
@@ -122,7 +123,7 @@ freshness gate per `[NS-22]`. Branch-protection rollout (2026-07-08, PR #8): see
 
 30. [NS-30] **PMB distributes the memory-bank cost driver but not its guardrail — a template/distribution defect, not just a local one.** Verified 2026-08-19: `templates/CLAUDE.md` instructs adopters to "read ALL files in `memory-bank/`" in three places (session start, post-compaction, handoff pickup), but **`templates/.github/workflows/` does not exist** — the CI file-size caps (150-line `activeContext`, 400-line `progress`) that actually bound PMB's own memory-bank are never shipped. Adopters receive only `mb doctor`'s `check_size()`, which warns and can be ignored indefinitely. **Measured consequence in a real downstream repo (ACR's own audit, 2026-08-19):** memory-bank = **190,798 bytes / ~47.7K tokens** (`activeContext.md` 79,160 + `progress.md` 93,402 = 91% of payload) reloaded at every session start *and* every compaction — 2.5x PMB's own ~22K (`[NS-28]`), and ~2.4x the enterprise figure an external doc calls a context crisis. PMB stays bounded only because it holds CI that adopters never get. **Fixes:** ship the file-size workflow (or an equivalent hook) via `templates/`; and/or replace the blanket "read ALL" with the tiered read the external MB doc recommends (core trio + `activeContext` always, `progress.md` on demand/summary-only). Byte caps, not line caps, per `[NS-28]`. **ADDRESSED 2026-08-19 (both halves):** PMB's own `.github/workflows/pmb-health.yml` now checks bytes alongside lines (WARN at the principled target = line-cap x 120 chars; FAIL at a ceiling above present size so nothing breaks immediately — deliberately a **ratchet**, lower `MB_FAIL_BYTES` as files shrink or it is a cap in name only). Simulated against the live repo: passes, and correctly singles out `activeContext.md` alone (238 chars/line vs `progress.md`'s 99). Distribution fixed via new `templates/.github/workflows/memory-bank-size.yml`, registered in `mb.sh`'s **ADVISORY_CREATE** (create-if-missing, diff-notice otherwise) so adopters with their own CI are not trampled; shipped **warn-only** with a documented `ENFORCE="true"` opt-in, per the external MB doc's guidance against defaults that block solo devs with no fix path. Both modes verified against an over-limit fixture (advisory→exit 0, enforcing→exit 1) — ad hoc, **not** a committed test, so treat as a point-in-time check rather than a standing guarantee. Registered in `mb.ps1`'s `$advisoryCreate` too (hardcoded, since its auto-discovery only scans `templates/docs/`) — the bash-only version was caught in review as exactly the POSIX/Windows distribution asymmetry this repo has hit before. **Correction, same day:** the first pass invented per-file byte caps (45K/60K) without checking that `mb doctor` check 15 already declared an **aggregate** ceiling (WARN >15 KB, ERROR >25 KB over `CLAUDE.md` + the 5 files) — so it added a *third* disagreeing unit, 4x more permissive than PMB's own stated budget. An external PMB architecture audit caught this (its F1). Both workflows now also compute that aggregate at doctor's real thresholds, so CI and doctor report the same number (**~4x over**, and rising as these very entries are added) instead of contradicting each other; per-file caps are explicitly demoted to a backstop that localises *which* file grew and must never be read as permission to reach their sum. Advisory in PMB's CI for now — an honest unenforced number beats a comfortable enforced one. **Still open:** the "read ALL files" mandate itself (tiered reads undone); the audit's **F2** (`pre-compact-check` gates on a *new* `progress.md` entry every compaction — the one deterministic hook mechanically drives the growth the diagnostics flag, with no counterweight) and **F3** (`mb status`, the command CLAUDE.md actually names at session start, omits the ceiling line `mb doctor` already computes). Both unfixed. **Corroboration:** three independent audits (this session, a second session, ACR's) converged on the same four items — memory-bank size dominant, no output-filtering hook (`[NS-29]`), `CLAUDE_EFFORT` name mismatch, autocompact 50-vs-65 conflict — so these are systemic, not one-off. ACR-specific extras from its audit: no `.claude/agents/*.md` at all (belt-and-suspenders wholly unimplemented there) and duplicate context7 MCP servers.
 
-31. [NS-31] **Merge PR #15** (`feat/memory-bank-byte-caps`) once CI is green, then delete the branch. Delivers `[NS-28]`/`[NS-30]`'s byte-cap fix.
+31. [NS-31] **Resolved 2026-08-19:** PR #15 merged (`5d573fd`, user-run — confirmed hard rule: this agent never merges PRs, even with explicit permission). Branch deleted local+remote (remote via `gh api -X DELETE`, not `git push --delete`, per `[NS-25]`). Delivered `[NS-28]`/`[NS-30]`'s byte-cap fix. Full incident narrative (marker-write classifier block, self-approval reasoning): `progress.md` 2026-08-19.
 
 ## Handoff Protocol Narrowed — Memory-Bank Now Authoritative for Priority (2026-08-18)
 
