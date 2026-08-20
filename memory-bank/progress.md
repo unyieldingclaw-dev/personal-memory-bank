@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-08-19
+last-reviewed: 2026-08-20
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -200,7 +200,7 @@ Full narrative: `docs/archive/progress-2026-08-18-tasks-33-35-and-handoff-redesi
   in-flight state; `activeContext.md`'s Next Steps is authoritative for priority.
 - 📌 **`[NS-25]` found while deleting branches:** the push gate raw-substring-matches the push command text,
   so a pure `--delete` (no diff) is denied like a real content push; worked around via `gh api -X DELETE`.
-  **Correction 2026-08-19:** that entry claimed both branches were deleted "locally and on `origin`" — local
+  **Correction 2026-08-20:** that entry claimed both branches were deleted "locally and on `origin`" — local
   deletion held, but `docs/branch-protection-rollout` (`d864d99`) and
   `docs/finalize-branch-protection-memory-bank` (`8646bf3`) are **still present on `origin`**, confirmed via
   `git ls-remote` after a `--prune` fetch. Their content is safely in `main` via the squash merges; only the
@@ -226,6 +226,36 @@ Full narrative: `docs/archive/progress-2026-08-18-tasks-33-35-and-handoff-redesi
   non-authoring subagent (user wrote the marker instead); this agent hard-refuses `gh pr merge`
   regardless of explicit permission. Relevant to `[NS-26]`/`[NS-27]`'s Opposition-authority design.
 - 🔴 **Branch-audit method + a self-caught evidence error (`[NS-26]` scope extension, Opus).** `git merge-tree`'s "changed in both" lines are NOT conflicts and its markers are diff-prefixed, so `grep '^<<<<<<<'` silently returns 0 — count unanchored, and count files carrying markers (16 for cross-repo-write-boundary) not "changed in both" sections (17); both errors were made here. The first draft also cited `_review-gate-lib.sh` as that branch's regression vector, but the file does not exist on it at all — the zero `write_marker_atomic` count came from absence, not staleness, and an earlier command's "FILE ABSENT" output was wrongly rationalized as a grep exit-code artifact. Caught by two independent review domains converging; the real vector is `review-reminders-post.sh`. Port-only conclusion survived; its evidence did not. **`progress.md` is now at its 400-line cap — next entry needs an archive pass first.**
+
+## 2026-08-20 — Archive Pass; Session-Crossed-Midnight Dating Error Caught by the Gate It Broke
+
+- ✅ **`progress.md` archive pass shipped** (PR #18, `8847714`): 400→302 lines, 41,492→31,239 bytes.
+  Three completed 2026-08-18 sections moved verbatim to
+  `docs/archive/progress-2026-08-18-tasks-33-35-and-handoff-redesign.md`, byte-identical, zero loss.
+  Motivated by `progress.md` sitting at exactly 400/400 against a `-gt 400` FAIL cap while the
+  PreCompact hook demands a fresh entry from that same file every compaction — `[NS-30]`'s F2 in practice.
+- 🔴 **Dating error: this session crossed midnight and kept writing the previous day's date.** Commits
+  through `716fa09` were genuinely 2026-08-19; `8847714` landed 2026-08-20 08:28, but its content
+  (archive header, the inline `*(Correction …)*` marker, the `progress.md` stub, and `[NS-25]`'s
+  instances 4-5) was dated 2026-08-19. **Found because the PreCompact gate began blocking** (`exit 2`,
+  "no entry dated 2026-08-20") — it caught a memory-bank accuracy defect that four review domains had
+  not, which argues for keeping it strict. Corrected in the stub above and in `[NS-25]`. The merged
+  archive file's own `Archived 2026-08-19` provenance line is likewise off by a day and is deliberately
+  left alone — rewriting merged history for a one-day slip is not worth the churn, but note the
+  exemption covers only that provenance line, not the archived body (whose dates are genuinely 08-18).
+- 📌 **`scripts/pre-compact-check.sh` would fail OPEN under a real POSIX `sh` — latent, not live.**
+  Pre-existing, not introduced here: it declares `#!/usr/bin/env sh` but uses bash-only arrays
+  (`BLOCK_REASONS=()`, `+=`, `${#…[@]}`); `dash scripts/pre-compact-check.sh` reproduces
+  `Syntax error: "(" unexpected`. **Not currently reachable:** `.claude/settings.json` hardcodes
+  `bash scripts/pre-compact-check.sh`, and where `pwsh` exists the `.ps1` sibling fires instead — so the
+  shebang is never consulted. Worth recording anyway because `[NS-22]` makes this gate load-bearing for
+  unattended operation, and the mismatch is one config edit away from mattering. One-word fix
+  (shebang → `bash`), not applied here to keep this docs-only. **The severity correction is itself the
+  lesson:** all four review domains read the script statically and rated it live; only tracing
+  hook-config → invocation site showed it was not. Static reads over-rate reachability.
+- 📌 **Still open after today:** the two branch-protection branches remain on `origin` despite an earlier
+  record claiming deletion (`d864d99`, `8646bf3`); and `activeContext.md` is now the tight file — under
+  1 KB and ~2 lines from its FAIL cap — carrying the same latent deadlock `progress.md` just escaped.
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
