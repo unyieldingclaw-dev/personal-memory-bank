@@ -1806,6 +1806,13 @@ invoke_upgrade() {
         # downstream project's CLAUDE.md.
         "docs/CONTRACTS-GUIDE.md"
         "docs/HOOKS-GUIDE.md"
+        # WHY a CI workflow is distributed here: CLAUDE.md instructs every adopting project to
+        # read ALL of memory-bank/ at session start and again after each compaction, but the CI
+        # size limits that bound that cost lived only in PMB's own repo and were never shipped —
+        # so projects inherited the cost driver without its guardrail. ADVISORY_CREATE (not
+        # TEMPLATE_OWNED) is deliberate: a project with its own CI keeps it and just sees a diff
+        # notice, rather than having a workflow overwritten under it.
+        ".github/workflows/memory-bank-size.yml"
     )
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
