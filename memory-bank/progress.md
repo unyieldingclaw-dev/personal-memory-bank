@@ -323,6 +323,7 @@ Full narrative: `docs/archive/progress-2026-08-18-task30-dangerous-commands-hard
   just repo convention: push-gate marker writes are classifier-denied even from a separate
   non-authoring subagent (user wrote the marker instead); this agent hard-refuses `gh pr merge`
   regardless of explicit permission. Relevant to `[NS-26]`/`[NS-27]`'s Opposition-authority design.
+- 🔴 **Branch-audit method + a self-caught evidence error (`[NS-26]` scope extension, Opus).** `git merge-tree`'s "changed in both" lines are NOT conflicts and its markers are diff-prefixed, so `grep '^<<<<<<<'` silently returns 0 — count unanchored, and count files carrying markers (16 for cross-repo-write-boundary) not "changed in both" sections (17); both errors were made here. The first draft also cited `_review-gate-lib.sh` as that branch's regression vector, but the file does not exist on it at all — the zero `write_marker_atomic` count came from absence, not staleness, and an earlier command's "FILE ABSENT" output was wrongly rationalized as a grep exit-code artifact. Caught by two independent review domains converging; the real vector is `review-reminders-post.sh`. Port-only conclusion survived; its evidence did not. **`progress.md` is now at its 400-line cap — next entry needs an archive pass first.**
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
