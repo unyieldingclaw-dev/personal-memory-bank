@@ -253,7 +253,7 @@ jobs:
       # gitleaks-action v2.3.9 still uses node20; no Node 24 release exists yet.
       # FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 silences the deprecation warning until upstream ships a fix.
       # Pinned to SHA for supply-chain safety. Dependabot will auto-PR updates.
-      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
