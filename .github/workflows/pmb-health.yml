@@ -11,7 +11,7 @@ jobs:
     name: File Size
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Check file sizes
         shell: bash
@@ -130,7 +130,7 @@ jobs:
     name: Forbidden Patterns
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Credential grep
         id: credential-grep
@@ -247,7 +247,7 @@ jobs:
     name: Secret Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       # gitleaks-action v2.3.9 still uses node20; no Node 24 release exists yet.
@@ -262,7 +262,7 @@ jobs:
     name: SAST (Semgrep)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Run Semgrep
         shell: bash
@@ -289,7 +289,7 @@ jobs:
     name: Rules-File Integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Invisible Unicode characters
         id: invisible-unicode
@@ -426,7 +426,7 @@ jobs:
     name: Template Integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Validate hook scripts referenced in templates/.claude/settings.json exist in templates/scripts/
         shell: bash
@@ -455,7 +455,7 @@ jobs:
     name: MB Command Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Run mb command tests
         shell: bash
@@ -465,7 +465,7 @@ jobs:
     name: PowerShell Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Install PSScriptAnalyzer
         shell: pwsh
@@ -489,7 +489,7 @@ jobs:
     name: MB Doctor Self-Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Run mb doctor on this repo
         shell: bash
@@ -499,7 +499,7 @@ jobs:
     name: Pester Tests (mb.ps1)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
 
       - name: Install Pester
         shell: pwsh
