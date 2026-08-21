@@ -119,16 +119,24 @@ assert_contains "$output" "\[WARN\] Not a git repository" "check 1: non-git dir 
 echo ""
 echo "--- check 2: templates not found ---"
 
-# Rename only a subdirectory rather than the whole templates/ dir — prevents
-# accidental data loss if the restore is interrupted
-TEMPLATES_SUB="$REPO_ROOT/templates/memory-bank"
-trap '[ -d "${TEMPLATES_SUB}.bak" ] && mv "${TEMPLATES_SUB}.bak" "$TEMPLATES_SUB" 2>/dev/null || true; trap - EXIT' EXIT
-mv "$TEMPLATES_SUB" "${TEMPLATES_SUB}.bak"
-output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
-[ -d "${TEMPLATES_SUB}.bak" ] && mv "${TEMPLATES_SUB}.bak" "$TEMPLATES_SUB"
-trap - EXIT
+# WHY MB_HOME points at an empty temp dir instead of renaming anything: doctor's check 2
+# tests `-d "$REPO_ROOT/templates"` — the templates PARENT. The previous fixture renamed
+# `templates/memory-bank` (a subdirectory, deliberately, since renaming the whole dir risks
+# data loss if a restore is interrupted), which left the parent in place, so doctor
+# correctly reported [OK] and [ERROR] never appeared. The assertion nevertheless "passed"
+# for the entire life of this test because its unescaped `[ERROR]` was a grep character
+# class matching almost any output. Escaping it surfaced the real failure.
+#
+# Pointing MB_HOME at a directory with no templates/ exercises the genuine [ERROR] branch
+# and touches no real files at all — no rename, no restore, no data-loss window.
+TMPDIR_NOTPL="$(mktemp -d 2>/dev/null || mktemp -d -t mb-doc-notpl)"
+output=$(cd "$TMPDIR_DOC" && MB_HOME="$TMPDIR_NOTPL" bash "$MB" doctor 2>&1)
+rm -rf "$TMPDIR_NOTPL"
 
-assert_contains "$output" "[ERROR]" "check 2: templates subdir missing → [ERROR]"
+# Brackets escaped: assert_contains uses `grep -qi`, so an unescaped `[ERROR]` is a
+# character class matching any one of E/R/O — it matched almost any output, making this
+# assertion vacuous (it passed regardless of whether doctor reported an error).
+assert_contains "$output" "\[ERROR\] Templates not found" "check 2: templates missing → [ERROR]"
 
 # ── Check 3: memory-bank files missing ───────────────────────────────────────
 echo ""

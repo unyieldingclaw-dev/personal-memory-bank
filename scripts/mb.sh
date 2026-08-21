@@ -241,7 +241,7 @@ show_status() {
                 DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
                 if [ "$DAYS_SINCE" -gt "$STALE_DAYS" ]; then
                     echo -e "  ${YELLOW}⚠${NC} Active Context ($DAYS_SINCE days)"
-                    ATTENTION_ITEMS+=("Active Context stale (${DAYS_SINCE}d, threshold ${STALE_DAYS}d) — run 'mb audit'")
+                    ATTENTION_ITEMS+=("Active Context stale (${DAYS_SINCE}d, threshold ${STALE_DAYS}d) — run 'mb doctor'")
                 else
                     echo -e "  ${GREEN}✓${NC} Active Context Current"
                 fi
@@ -919,7 +919,7 @@ show_doctor() {
         DETAIL=""
         [ "$STALE_VOLATILE" -gt 0 ] && DETAIL="${STALE_VOLATILE} volatile/accumulating"
         [ "$STALE_STABLE" -gt 0 ] && DETAIL="${DETAIL:+$DETAIL, }${STALE_STABLE} stable"
-        echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb audit' for details${NC}"
+        echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb doctor' for details${NC}"
     fi
 
     # 10. Placeholder residue
@@ -1649,7 +1649,7 @@ show_compact() {
 
     if [ "$TOTAL_KB" -lt 60 ]; then
         echo -e "${GREEN}memory-bank/ is ${TOTAL_KB} KB — below the 60 KB compaction threshold.${NC}"
-        echo -e "${YELLOW}Compaction is most valuable when size > 60 KB and mb audit shows stale files.${NC}"
+        echo -e "${YELLOW}Compaction is most valuable when size > 60 KB and mb doctor shows stale files.${NC}"
         echo ""
     fi
 
@@ -2657,15 +2657,26 @@ case "$COMMAND" in
     preflight)         show_preflight ;;
     change-check)      show_change_check ;;
     help)              show_help ;;
-    # Deprecated aliases — kept for backward compatibility, not shown in help
-    install-hooks) echo -e "${YELLOW}mb install-hooks is now part of mb upgrade. Run: mb upgrade${NC}" ;;
-    validate)      echo -e "${YELLOW}mb validate is now part of mb doctor. Run: mb doctor${NC}" ;;
-    audit)         echo -e "${YELLOW}mb audit is now part of mb doctor. Run: mb doctor${NC}" ;;
-    budget)        echo -e "${YELLOW}mb budget is now part of mb doctor. Run: mb doctor${NC}" ;;
-    compact)       echo -e "${YELLOW}mb compact is now part of mb clean. Run: mb clean${NC}" ;;
+    # Deprecated aliases — kept for backward compatibility, not shown in help.
+    #
+    # WHY the redirect-only shims exit 2 rather than 0: a shim that prints a notice and
+    # returns success is indistinguishable from a real success to any script reading the
+    # exit code. That is not hypothetical — the pre-push gate called `mb validate` and
+    # printed "[OK] mb validate passed" on every push in every managed project while
+    # validating nothing, because the shim returned 0. Exit 2 means "command moved":
+    # humans see the same notice, scripts can tell it did not run.
+    #
+    # NOTE `update` is deliberately NOT in this group. It is a LIVE alias that really
+    # performs the upgrade, not a redirect notice — giving it a non-zero exit would break
+    # a working command. Deprecated does not imply dead; check the body before changing.
+    install-hooks) echo -e "${YELLOW}mb install-hooks is now part of mb upgrade. Run: mb upgrade${NC}"; exit 2 ;;
+    validate)      echo -e "${YELLOW}mb validate is now part of mb doctor. Run: mb doctor${NC}"; exit 2 ;;
+    audit)         echo -e "${YELLOW}mb audit is now part of mb doctor. Run: mb doctor${NC}"; exit 2 ;;
+    budget)        echo -e "${YELLOW}mb budget is now part of mb doctor. Run: mb doctor${NC}"; exit 2 ;;
+    compact)       echo -e "${YELLOW}mb compact is now part of mb clean. Run: mb clean${NC}"; exit 2 ;;
     update)            invoke_upgrade ;;
-    archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}" ;;
-    slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}" ;;
+    archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}"; exit 2 ;;
+    slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}"; exit 2 ;;
     plan)
         SUBCMD="${2:-status}"
         ARG="${3:-}"

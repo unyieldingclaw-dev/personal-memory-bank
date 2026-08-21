@@ -39,7 +39,7 @@ At 80% context, type "Handoff" and the AI will:
 ### Quick Commands
 - `mb update` - Update all Memory Bank files
 - `mb status` - Show file sizes and health
-- `mb slim` - Trim activeContext.md
+- `mb clean` - Trim activeContext.md
 
 ## File Size Guidelines
 

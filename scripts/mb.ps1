@@ -456,7 +456,7 @@ function Show-Status {
                 $daysSince = ([datetime]::Today - $reviewedDate).Days
                 if ($daysSince -gt $staleDays) {
                     Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " Active Context ($daysSince days)"
-                    $attentionItems.Add("Active Context stale (${daysSince}d, threshold ${staleDays}d) — run 'mb audit'")
+                    $attentionItems.Add("Active Context stale (${daysSince}d, threshold ${staleDays}d) — run 'mb doctor'")
                 } else {
                     Write-Host "  " -NoNewline; Write-Host "✓" -ForegroundColor Green -NoNewline; Write-Host " Active Context Current"
                 }
@@ -725,7 +725,7 @@ function Show-Budget {
     Write-Host "    /model opus  ->  /model sonnet               (escalate then return)" -ForegroundColor White
     Write-Host ""
     if ($claudeKB -gt 8) { Write-Host "  CLAUDE.md is large. Trim unused sections." -ForegroundColor Yellow }
-    if ($mbKB -gt 40) { Write-Host "  memory-bank/ is large. Run 'mb slim' or 'mb archive'." -ForegroundColor Yellow }
+    if ($mbKB -gt 40) { Write-Host "  memory-bank/ is large. Run 'mb clean'." -ForegroundColor Yellow }
     Write-Host ""
 }
 
@@ -1189,7 +1189,7 @@ function Show-Doctor {
         if ($staleVolatile -gt 0) { $parts += "$staleVolatile volatile/accumulating" }
         if ($staleStable -gt 0) { $parts += "$staleStable stable" }
         $detail = $parts -join ", "
-        Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb audit' for details" -ForegroundColor Yellow
+        Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb doctor' for details" -ForegroundColor Yellow
     }
 
     # 10. Placeholder residue
@@ -1924,7 +1924,7 @@ function Show-Compact {
 
     if ($totalKB -lt 60) {
         Write-Host "memory-bank/ is $totalKB KB — below the 60 KB compaction threshold." -ForegroundColor Green
-        Write-Host "Compaction is most valuable when size > 60 KB and mb audit shows stale files." -ForegroundColor Yellow
+        Write-Host "Compaction is most valuable when size > 60 KB and mb doctor shows stale files." -ForegroundColor Yellow
         Write-Host ""
     }
 
@@ -2906,15 +2906,30 @@ switch ($Command) {
             }
         }
     }
-    # Deprecated aliases — kept for backward compatibility, not shown in help
-    "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow }
-    "validate"      { Write-Host "mb validate is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "audit"         { Write-Host "mb audit is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "budget"        { Write-Host "mb budget is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "compact"       { Write-Host "mb compact is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "update"        { Write-Host "mb update is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "archive"       { Write-Host "mb archive is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "slim"          { Write-Host "mb slim is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
+    # Deprecated aliases — kept for backward compatibility, not shown in help.
+    #
+    # WHY these exit 2 rather than 0: a shim that prints a notice and returns success is
+    # indistinguishable from a real success to any script reading the exit code. That is
+    # not hypothetical — the pre-push gate called `mb validate` and printed
+    # "[OK] mb validate passed" on every push in every managed project while validating
+    # nothing, because the shim returned 0. Exit 2 means "command moved": humans see the
+    # same notice, scripts can tell it did not run.
+    #
+    # KNOWN CROSS-SHELL DIVERGENCE (pre-existing, not introduced here): `mb update` is a
+    # dead redirect here but a LIVE alias for `invoke_upgrade` in mb.sh, and this file's
+    # redirect text ("part of mb clean") is wrong regardless — update maps to upgrade,
+    # not clean. Exiting 2 makes the divergence detectable instead of silent; it removes
+    # no working behaviour, since this path never upgraded anything. Reconciling which
+    # platform is correct is a deliberate cross-shell decision, not a side effect of this
+    # change — left for that decision.
+    "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow; exit 2 }
+    "validate"      { Write-Host "mb validate is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow; exit 2 }
+    "audit"         { Write-Host "mb audit is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow; exit 2 }
+    "budget"        { Write-Host "mb budget is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow; exit 2 }
+    "compact"       { Write-Host "mb compact is now part of mb clean. Run: mb clean" -ForegroundColor Yellow; exit 2 }
+    "update"        { Write-Host "mb update is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow; exit 2 }
+    "archive"       { Write-Host "mb archive is now part of mb clean. Run: mb clean" -ForegroundColor Yellow; exit 2 }
+    "slim"          { Write-Host "mb slim is now part of mb clean. Run: mb clean" -ForegroundColor Yellow; exit 2 }
 }
 
 # Update notifier — runs after every command except upgrade (has its own WARN

@@ -81,7 +81,7 @@ Set `PMB_CONTRACT_HARD_BLOCK=1` for sessions where scope discipline is critical.
 
 Fires after every `Write` or `Edit` tool call. Reads the edited file path from the tool input JSON, checks whether it is inside `memory-bank/`, and updates the `last-reviewed:` frontmatter line to today's date if present.
 
-**Why silent failure?** The hook must never block agent work. If the update fails (e.g. file not found, malformed frontmatter), the agent continues and the user can run `mb audit` to find stale files. Implemented in `scripts/update-reviewed.ps1` and `scripts/update-reviewed.sh`.
+**Why silent failure?** The hook must never block agent work. If the update fails (e.g. file not found, malformed frontmatter), the agent continues and the user can run `mb doctor` to find stale files. Implemented in `scripts/update-reviewed.ps1` and `scripts/update-reviewed.sh`.
 
 **Hook error logging (G2):** unexpected errors are logged to `.pmb-hook-errors.log`.
 
@@ -169,15 +169,40 @@ PMB distributes two git hooks through the `.githooks/` directory, which is versi
 ### The two hooks
 
 **`.githooks/pre-push`** — delegates to the 7-check push gate:
-- Unresolved merge conflicts or conflict markers
-- Uncommitted working tree changes
-- Missing `.gitattributes`
-- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs)
-- Files over 500 KB
-- `mb validate` result (if `mb` is in PATH)
-- Scans first pushes via `git log --not --remotes` when no upstream tracking ref exists
+- Unresolved merge conflicts or conflict markers *(blocking)*
+- Possible secrets in the push diff — AWS keys, API tokens, GitHub PATs *(blocking)*
+- Uncommitted working tree changes *(warn)*
+- Missing `.gitattributes` *(warn)*
+- Files over 500 KB *(warn)*
+- Memory-bank integrity via `mb doctor` *(warn, or UNKNOWN if `mb` is unavailable)*
+- Scans first pushes via `git log HEAD --not --remotes` when no upstream tracking ref exists
 
 Dispatches to `scripts/pre-push-check.ps1` (Windows/pwsh) or `scripts/pre-push-check.sh` (POSIX/bash). Fails open — if the script errors unexpectedly, the push is allowed through.
+
+#### Three result states
+
+Only 3 of the 7 checks can block. The gate therefore reports **three** states, not two, so an
+advisory finding is never rendered as a pass:
+
+| Summary | Meaning | Exit |
+|---|---|---|
+| `[PASS] All pre-push checks passed` | every check ran and passed | 0 |
+| `[PASS with N warning(s)]` | no blocking failure, but advisory findings exist | 0 |
+| `[DEGRADED — N check(s) could not run]` | at least one check could not be evaluated | 0 |
+| `[BLOCKED]` | a blocking check failed | 1 |
+
+Set `ENFORCE=true` to promote warnings and unknowns to blocking. Advisory is the default —
+a gate that blocks on a stale template tends to get disabled outright.
+
+**Why UNKNOWN exists.** A check has three outcomes — passed, failed, or *could not run* — and an
+exit code cannot distinguish the first from the last: a command that does nothing and returns 0
+looks exactly like success. Check 7 therefore derives its verdict from `mb doctor`'s structured
+output rather than its exit code, counting `[OK]`/`[WARN]`/`[ERROR]` lines to get both the result
+*and* positive evidence the command actually ran. Zero result lines means UNKNOWN, never success.
+
+Relatedly, deprecated redirect shims exit **2** ("command moved") rather than 0, so a script reading
+only an exit code can tell that nothing ran. Aliases that still perform real work keep exit 0 —
+check the implementation before assuming a deprecated name is inert.
 
 **`.githooks/pre-commit`** — lightweight two-check gate before every commit:
 - **Blocks** if `handoff.md` is staged (`handoff.md` is ephemeral and must not be committed)

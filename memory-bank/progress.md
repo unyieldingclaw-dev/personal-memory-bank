@@ -276,6 +276,46 @@ Full narrative: `docs/archive/progress-2026-08-18-tasks-33-35-and-handoff-redesi
 - 📌 **Still open after today:** the two branch-protection branches remain on `origin` despite an earlier
   record claiming deletion (`d864d99`, `8646bf3`) — `[NS-4]` carried that false claim until today too.
 
+## 2026-08-20 (continued) — Enforcement Integrity Bundle 1 (implemented, UNCOMMITTED at time of writing)
+
+Task contract `.claude/contracts/active-task.json` active, 24 files, user-approved. Working tree
+carries the full implementation; nothing committed yet. Full suite + CI-identical lint green.
+
+- 🔴 **The originating defect: the push gate reported success without checking.** `mb validate` was
+  deprecated into a shim that prints a notice and exits 0; Check 7 read only the exit code, so
+  `[OK] mb validate passed` printed on every push in every managed project while validating nothing.
+  Root cause is broader than that one check: the gate modelled two outcomes (pass/fail) where there
+  are three (passed / failed / **could not run**), so "could not run" rendered as "passed" — and only
+  3 of 7 checks can set `FAILED`, meaning four checks could never affect their own summary.
+- ✅ **Fix:** three-state model (`PASS` / `PASS with N warning(s)` / `DEGRADED`), advisory by default
+  with an `ENFORCE=true` opt-in matching `memory-bank-size.yml`'s precedent. Check 7 now runs
+  `mb doctor` and derives its verdict from that command's **structured output** — counting
+  `[OK]/[WARN]/[ERROR]` lines gives both the result and positive evidence the command ran (real run
+  ~51 lines, dead shim 0). Necessary because `mb doctor` *also* exits 0 regardless of findings, so
+  switching commands alone would have preserved the bug. Dead redirect shims now `exit 2`; `update`
+  deliberately excluded (live alias on POSIX).
+- 🔴 **Second, more serious defect found during implementation: a secret-scanning bypass.**
+  `git log --not --remotes` has no positive rev to walk from and returns NOTHING when no
+  remote-tracking refs exist — silently skipping the scan in exactly the first-push case that branch
+  exists to cover, while printing "no commits to push". Verified against a fresh repo with a planted
+  AKIA key: 0 lines before, caught after adding explicit `HEAD`. Mutation-tested.
+- 🔴 **A vacuous assertion had been hiding a broken test for the life of the file.**
+  `assert_contains` uses `grep -qi`, so an unescaped `[ERROR]` is a character *class* — it matched
+  almost any output. `test-mb-doctor.sh`'s check-2 assertion passed regardless of what doctor said.
+  Escaping it revealed the expectation was always wrong: the fixture renamed `templates/memory-bank`
+  (a subdirectory) while doctor tests the `templates/` **parent**, so `[ERROR]` never appeared.
+  Re-pointed `MB_HOME` at an empty temp dir — exercises the real branch and removes the rename/restore
+  data-loss window entirely. **Repo-wide implication: any test asserting a bracketed `[TAG]` may be
+  passing vacuously.** Only this one instance was found, but the class is worth a sweep.
+- ✅ First-ever test coverage for `pre-push-check` (28 assertions, mutation-tested against both the
+  `HEAD` fix and the UNKNOWN branch). Review found and fixed: a `catch` in the `.ps1` that discarded a
+  confirmed blocking finding when a later check threw; `ENFORCE` case-sensitivity divergence between
+  shells; a lines-vs-matches counting divergence; and the gate reporting "51 checks" when doctor has 25
+  — an unearned assertion inside the change that exists to stop unearned assertions.
+- 📌 **Deferred, disclosed:** no pwsh test suite (bash-only, against repo convention); `mb update`
+  cross-shell divergence documented but unresolved (live in `mb.sh`, dead shim in `mb.ps1`); extracting
+  "a check that could not run must never render as PASS" into `standards/`.
+
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
 - 📌 `ai-code-review-agent` drifted 2 versions behind PMB, ran a 13-task feature under stale

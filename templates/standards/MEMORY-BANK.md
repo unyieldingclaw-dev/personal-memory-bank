@@ -104,7 +104,7 @@ Every memory-bank file carries YAML frontmatter with two groups of fields:
 authority: immutable        # immutable | stable | volatile | accumulating
 review-cycle: never         # never | 7d | 30d | 90d
 retention: permanent        # permanent | archive-after-6m | archive-after-1y
-staleness-threshold: 365d   # age after last-reviewed before mb audit flags [STALE]
+staleness-threshold: 365d   # age after last-reviewed before mb doctor flags [STALE]
 tags:
   - requirements/core
 last-reviewed: YYYY-MM-DD
@@ -171,7 +171,7 @@ Content should leave Memory Bank files on objective criteria, not agent judgment
 | progress.md | Work completed > 6 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
 | progress.md | Bug fixed > 3 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
 
-Run `mb audit` to surface files that are stale or due for review.
+Run `mb doctor` to surface files that are stale or due for review.
 
 ## Archive Structure
 
@@ -344,8 +344,8 @@ Teach AI to recognize these shortcuts:
 |---------|--------|
 | `mb update` | Update all relevant Memory Bank files |
 | `mb status` | Show file sizes, timestamps, health check |
-| `mb archive` | Move old history to `docs/archive/` |
-| `mb slim` | Trim activeContext.md to essentials |
+| `mb clean` | Move old history to `docs/archive/` |
+| `mb clean` | Trim activeContext.md to essentials |
 | `mb commit` | Stage and commit Memory Bank changes |
 
 ## Auto-Update Behavior
@@ -381,7 +381,7 @@ Partial hierarchical matches work: `mb query auth` matches `auth/session`, `auth
 Compaction is distinct from eviction. Eviction removes stale entries. Compaction rewrites,
 summarizes, deduplicates, and resolves contradictions across all memory-bank files.
 
-**When to compact:** when `mb audit` shows ≥ 2 files stale AND `memory-bank/` total size
+**When to compact:** when `mb doctor` shows ≥ 2 files stale AND `memory-bank/` total size
 exceeds 60 KB. Run `mb clean` to get a structured AI prompt for the operation.
 
 **What compaction does (AI-driven):**
