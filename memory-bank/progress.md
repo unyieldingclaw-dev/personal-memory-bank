@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-08-20
+last-reviewed: 2026-08-21
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -65,79 +65,26 @@ Full narrative for all of the above (exact findings lists, before/after diffs, d
 
 Full narrative (exact bug descriptions, commit cycle detail): `docs/archive/progress-2026-08-review-gate-layered-enforcement-execution.md`.
 
-## 2026-08-17 (continued) — Branch-Ancestry Diagnosis, Handoff/Compaction Gap, Standards-Freshness Gap, Review-Gate Hardening Audit
+## 2026-08-17 (continued) — Branch-Ancestry Diagnosis, Handoff/Compaction Gap, Standards-Freshness Gap, Review-Gate Hardening Audit — condensed, full detail archived
 
-- 🔴 **`feature/review-gate-layered-enforcement` cannot be cleanly rebased onto `main`** — attempted, hit
-  immediate modify/delete conflicts on `_review-gate-lib.sh`/`.ps1` on the very first replayed commit.
-  Root cause, confirmed via `git cat-file -e main:scripts/_review-gate-lib.sh` (fails — file does not
-  exist on `main` at all) and `git merge-base --is-ancestor 39a8647 main` ("NOT an ancestor"): `main` is
-  missing entire prerequisite review-gate infrastructure going back to commit `39a8647`
-  (2026-07-16-ish), not just `docs/branch-protection-rollout`'s later commits. Rebase aborted cleanly
-  (`git rebase --abort`, verified clean + `HEAD` unchanged). Root cause: PR #8
-  (`docs/branch-protection-rollout` → `main`) has sat open, `MERGEABLE`/`CLEAN`, all 9 checks green,
-  since 2026-07-09 — over a month unmerged — while local work kept stacking on top (69 commits ahead of
-  `origin/docs/branch-protection-rollout` alone, confirmed via `git rev-list --left-right --count`).
-  Decision: merge PR #8 first (after refreshing its now-stale CI run), so `main` catches up and the
-  feature branch becomes a normal rebase — not yet executed as of this entry.
-- 🔴 **`[NS-22]` — handoff/compaction protocol gap.** Two stale `handoff.md` files found: repo root
-  (2026-08-03/04 session, confirmed untracked via `git ls-files --error-unmatch handoff.md` → error) and
-  `.claude/worktrees/mystifying-hertz-c54477/handoff.md` (2026-07-27, mtime-confirmed). Neither was
-  deleted per `CLAUDE.md:124`'s instruction ("merge its info into Memory Bank, delete `handoff.md`") —
-  nothing enforces that step. Triggered by the user asking whether a handoff was written before today's
-  compaction; the honest answer required manually diffing file mtimes against today's date, since no
-  hook surfaces handoff freshness. This session's own compaction was not actually harmed — the
-  `PreCompact` gate's alternate path (`progress.md` dated today) was already satisfied via this file's
-  own same-day entry — but the near-miss and the two-path ambiguity (handoff.md vs. progress.md-dated
-  gate, no way to tell from outside which fired) are real. Not designed yet.
-- 🔴 **`[NS-23]` — standards-freshness gap.** No mechanism checks `standards/*.md` content against the
-  external authorities it cites. Checked directly: only `PERFORMANCE-BUDGET.md`, `SECURITY-RULES.md`,
-  `TRUST-CLASSIFICATION.md` carry `review-cycle`/`staleness-threshold` frontmatter (all `last-reviewed:
-  2026-05-31`, ~2.5 months stale against their own 90-day cycle but not yet past the 180-day
-  staleness-threshold). `ACCESSIBILITY.md` (asserts WCAG 2.1 AA), `SECURITY-GUARDRAILS.md`,
-  `CODE-QUALITY.md` have no frontmatter at all — no tracked review cadence whatsoever. Even where the
-  frontmatter exists, `grep`-confirmed no `mb doctor`/CI check references WCAG or OWASP version numbers
-  — the mechanism only prompts a manual timer-based re-read, it does not verify against the standard's
-  actual current published version. Not designed yet.
-- 🔴 **`[NS-21]` update — review-gate command hardening audit.** Dispatched a focused, read-only audit of
-  `/code-review`, `/security-review`, `/change-review` (user-requested, prompted by re-observing the
-  `/code-review` Skill-tool shadowing bug live a third time during this session). Findings:
-  - `/security-review` — solid, no issues.
-  - `/code-review` — the 5 required domains (`standards/CODE-REVIEW.md:6-11`) are named but only
-    Architecture Drift has a concrete definition; Security/Correctness/Maintainability/Testing subagents
-    get the diff plus generic Severity/Blocking/Basis field defs and nothing else, so their findings rest
-    on unconstrained model judgment with zero shared criteria against `/security-review`'s explicit
-    9-pattern list. Marker-write hash logic and Opposition rigor are both solid.
-  - `/change-review` — Job 7's inline security fallback (used whenever ACR is unavailable or its exit
-    code is non-zero) has genuinely diverged from `/security-review`'s pattern list in **both**
-    directions: it drops the XSS check (`security-review.md:24`) and the unsafe eval/exec check
-    (`security-review.md:26`) entirely, while adding path traversal/template injection/dependency-audit
-    items `/security-review` doesn't have. Confirmed via direct line comparison, not speculative — this
-    means `/change-review` can silently produce weaker security coverage than running `/security-review`
-    directly, especially on UI-touching diffs. Job 4 "Runtime Semantics" also folds 5 distinct concerns
-    (env-defaults, async correctness, startup/shutdown ordering, rollback safety, race conditions) into
-    one lens with no dedicated pass each, unlike the narrower Job 8 Accessibility which got its own job.
-    Minor schema drift: `change-review.md` still carries both `Basis` and `Confidence` fields though
-    `standards/CODE-REVIEW.md:87` says `Confidence` was removed.
-  - Recommended first fix (not yet done): add the missing XSS and eval/exec patterns to Job 7's fallback
-    list in `change-review.md`. The `/code-review` domain-checklist-sharing question is a bigger design
-    call, deferred.
-- 🔴 **`[NS-14]` update — mb.sh/mb.ps1 setup/upgrade scripts verified.** `tests/test-mb-init.sh` (19/19)
-  and `tests/test-mb-upgrade.sh` (26/26) both green fresh, including the regression class that bit this
-  project three times before (files silently missing from `TEMPLATE_OWNED`). Cross-checked the
-  `TEMPLATE_OWNED` array against every file actually in `templates/` — full parity. One piece of debris
-  found, not fixed (low priority): `templates/hooks/pre-push` is orphaned, unreferenced anywhere. Confirmed
-  no global (`$HOME/.claude/`) install/upgrade path exists — every `TEMPLATE_OWNED` destination is
-  project-relative; the only `$HOME/.claude/` touch is a read-only `mb doctor` comparison. Practical
-  consequence: nothing in `mb.sh`/`mb.ps1` could push project-level fixes out to the user-level shadowing
-  twins found in `[NS-21]` — that's a manual operation today.
-  - Checked the version-check code directly per the user's "upgrade should look at local and the repo to
-    verify we have the latest" concern: three distinct version values exist (target's `.pmb-version`, the
-    local PMB source clone's `VERSION`, GitHub `main`'s true latest) and nothing compares all three —
-    `mb doctor` only checks target-vs-local-clone (WARN-only), a separate notifier only checks
-    local-clone-vs-GitHub. **Nothing compares target-vs-GitHub directly**, so a stale local PMB clone makes
-    `mb doctor` report "up to date" even when genuinely behind upstream. Sharpens `[NS-14]`'s existing
-    finding (nothing *triggers* a check) with a second gap: a triggered check can still give a false "OK"
-    if its own reference point is stale. Not designed yet.
+Full narrative: `docs/archive/progress-2026-08-17-branch-ancestry-and-review-gate-audit.md`.
+
+- ✅ **Branch-ancestry diagnosed:** `feature/review-gate-layered-enforcement` could not rebase onto
+  `main` — `main` was missing review-gate infrastructure going back to `39a8647`, because PR #8 had
+  sat open and `CLEAN` since 2026-07-09 while local work stacked on top. Rebase aborted cleanly. PR #8
+  merged 2026-08-19 (`b0490ef`); the rebase plan here is superseded by `[NS-26]` (port, do not merge).
+- 🔴 **`[NS-22]` handoff/compaction gap:** two stale untracked `handoff.md` files found; nothing
+  enforces `CLAUDE.md`'s "merge and delete" step and no hook surfaces handoff freshness. Still open.
+- 🔴 **`[NS-23]` standards-freshness gap:** only 3 of `standards/*.md` carry review frontmatter, and no
+  check verifies cited WCAG/OWASP versions against what those bodies actually publish. Still open.
+- 🔴 **`[NS-21]` review-gate audit:** `/change-review` Job 7's inline security fallback had diverged from
+  `/security-review` in both directions (dropped XSS and eval/exec, added items of its own), so it could
+  silently produce weaker coverage — **still open, never fixed.** `[NS-17]`'s Job 7 item was the ACR
+  exit-code path, a different fix. `/code-review`'s five domains remain named-but-undefined except
+  Architecture Drift; that design call stays deferred.
+- 🔴 **`[NS-14]` three-version finding:** target `.pmb-version`, local clone `VERSION`, and GitHub `main`
+  all exist and nothing compares all three, so a stale local clone makes `mb doctor` report "up to date"
+  while genuinely behind upstream. Restated in `[NS-14]`; still open.
 
 ## 2026-08-18 — `dangerous-commands.sh`/`.ps1` Git-Merge CONFIRM Hardening (Task #30, committed `499dbe5`) — condensed, full detail archived
 
@@ -276,10 +223,10 @@ Full narrative: `docs/archive/progress-2026-08-18-tasks-33-35-and-handoff-redesi
 - 📌 **Still open after today:** the two branch-protection branches remain on `origin` despite an earlier
   record claiming deletion (`d864d99`, `8646bf3`) — `[NS-4]` carried that false claim until today too.
 
-## 2026-08-20 (continued) — Enforcement Integrity Bundle 1 (implemented, UNCOMMITTED at time of writing)
+## 2026-08-20 (continued) — Enforcement Integrity Bundle 1 (committed 2026-08-21 as `4bc107c`)
 
-Task contract `.claude/contracts/active-task.json` active, 24 files, user-approved. Working tree
-carries the full implementation; nothing committed yet. Full suite + CI-identical lint green.
+Task contract (24 files, user-approved) governed this work. Working tree carried the full
+implementation, uncommitted as of this entry; committed 2026-08-21 as `4bc107c`. Lint + suite green.
 
 - 🔴 **The originating defect: the push gate reported success without checking.** `mb validate` was
   deprecated into a shim that prints a notice and exits 0; Check 7 read only the exit code, so
@@ -315,6 +262,25 @@ carries the full implementation; nothing committed yet. Full suite + CI-identica
 - 📌 **Deferred, disclosed:** no pwsh test suite (bash-only, against repo convention); `mb update`
   cross-shell divergence documented but unresolved (live in `mb.sh`, dead shim in `mb.ps1`); extracting
   "a check that could not run must never render as PASS" into `standards/`.
+
+## 2026-08-21 — Bundle 1 Committed; Hook-Wiring Fix Withdrawn by Its Own Review
+
+- ✅ **`[NS-32]` committed `4bc107c`.** Full gate (6 domains + opposition); opposition falsified all 3
+  blocking findings by experiment — the 58s `mb doctor` was Git-Bash fork overhead, ~0.65s on Linux.
+- 🔴 **Review-gate hole, proved:** the marker hashes `git diff HEAD`, excluding untracked files — a
+  reviewed new file cannot be committed, and post-review edits to it are invisible. Marker re-issued.
+- ❌ **Hook-wiring fix withdrawn by its own gate:** `command -v pwsh` tests existence, not viability —
+  worse than the chain it replaced. WIP patch in scratchpad; detail in the plan doc (untracked).
+- ✅ **`progress.md` archive pass, clearing `[NS-33]` (d):** cleared the 400/400-line deadlock by moving
+  the 2026-08-17 (continued) section verbatim to
+  `docs/archive/progress-2026-08-17-branch-ancestry-and-review-gate-audit.md`, leaving a condensed
+  pointer block — the swap itself removed ~54 lines net. (Deliberately no current line count here:
+  a self-referential total goes stale on the next edit, which is how the first draft of this entry got
+  it wrong.) Second cap deadlock in three days (`8847714` was the first); `mb clean` only prints advice
+  (`scripts/mb.sh:378`), so every breach is a manual pass behind a full gate. Note the line cap is the
+  **only** binding control on this file today — it runs near its 400-line cap while sitting around half
+  its 60 KB byte cap — so `[NS-28]`'s retire-the-line-cap idea needs its own pass; it would remove the
+  sole active constraint, not a redundant one.
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
