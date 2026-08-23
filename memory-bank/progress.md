@@ -253,9 +253,28 @@ Full narrative: `docs/archive/progress-2026-08-18-tasks-33-35-and-handoff-redesi
   (shebang → `bash`), not applied here to keep this docs-only. **The severity correction is itself the
   lesson:** all four review domains read the script statically and rated it live; only tracing
   hook-config → invocation site showed it was not. Static reads over-rate reachability.
+- 🔴 **Task #33's defect recurred (third occurrence) — in its milder form.** Staging the
+  previously-untracked archive file *genuinely* changed `git diff HEAD`, so the commit gate correctly
+  denied and re-review was warranted regardless; the marker was already stale for the new diff. What
+  the defect still cost: `consume_marker()` (`scripts/review-reminders.sh:74`) does its destructive `mv`
+  at line 77 **before** reading the content at line 81, so *any* denial consumes the marker whether or
+  not it was valid.
+  Distinct from the 2026-08-18 occurrence, where an unrelated hook (`dangerous-commands.sh`, matching
+  commit-*message* text) denied a commit whose diff had NOT changed — destroying a genuinely valid
+  marker, pure waste. Same root cause, different severity; an earlier draft of this entry conflated
+  them, corrected on independent review. **Fresh evidence for `[NS-26]`'s non-destructive
+  `peek_marker()` design, not only for `[NS-24]`.** Recorded because `[NS-24]` asserted this occurrence
+  and review found it uncorroborated here.
+- 📌 **`activeContext.md` archived the same day** (148→110 lines, 980→5,078 bytes of headroom), clearing
+  the same deadlock. Five narrative sections evicted to
+  `docs/archive/context-2026-08-20-narrative-sections.md`, each duplicating a live `[NS-N]` entry; four
+  resolved entries condensed. A first pass promoted the user-as-bypass rule into Architecture
+  Constraints; three review domains independently found it redundant against
+  `standards/SECURITY-GUARDRAILS.md:88`, and it was dropped. The "no lite path" rule *was* promoted —
+  verified absent from `standards/` entirely, so archiving it would have deleted it from the
+  always-read corpus.
 - 📌 **Still open after today:** the two branch-protection branches remain on `origin` despite an earlier
-  record claiming deletion (`d864d99`, `8646bf3`); and `activeContext.md` is now the tight file — under
-  1 KB and ~2 lines from its FAIL cap — carrying the same latent deadlock `progress.md` just escaped.
+  record claiming deletion (`d864d99`, `8646bf3`) — `[NS-4]` carried that false claim until today too.
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
