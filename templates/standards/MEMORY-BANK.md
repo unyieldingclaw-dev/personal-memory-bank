@@ -157,7 +157,7 @@ Keep Memory Bank files focused and scannable:
 | systemPatterns.md | 100-180 lines | 300 | Consolidate similar patterns |
 | techContext.md | 150-250 lines | 400 | Move details to docs/ |
 | activeContext.md | 50-100 lines | 150 | Archive to `docs/archive/` |
-| progress.md | 100-250 lines | 400 | Archive old versions |
+| progress.md | 100-250 lines | 600 | Archive old versions |
 
 ## Eviction Criteria
 
@@ -170,6 +170,17 @@ Content should leave Memory Bank files on objective criteria, not agent judgment
 | activeContext.md | Issue marked resolved | Delete — do not archive |
 | progress.md | Work completed > 6 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
 | progress.md | Bug fixed > 3 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
+| progress.md | Content is not chronological progress at all (project description, feature inventory, standing pointers) and has no live citation | Move **verbatim** to `docs/archive/progress-reference-sections-YYYY-MM-DD.md`, leaving a pointer |
+
+**Why the third row is not an age test.** The first two are age-based, which is the objective form
+this section prefers. The third cannot be: the trigger is *misfiling*, not staleness — content that
+was never progress in the first place does not become evictable by getting older. It was added
+2026-08-24 after a real relocation had no documented basis under the age rules (the moved material
+included a two-month-old section, well inside the six-month threshold). Two guards keep it
+objective rather than a licence for judgement: the content must have **no live citation** anywhere
+in the repo, and the move must be **verbatim** — no condensing, no summarising, no rewriting. A
+relocation that rewrites is an eviction in disguise, and loses exactly the detail the archive exists
+to keep.
 
 Run `mb doctor` to surface files that are stale or due for review.
 

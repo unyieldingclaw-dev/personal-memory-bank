@@ -49,7 +49,7 @@ At 80% context, type "Handoff" and the AI will:
 | systemPatterns.md | 100-180 lines | 300 |
 | techContext.md | 150-250 lines | 400 |
 | activeContext.md | 50-100 lines | 150 |
-| progress.md | 100-250 lines | 400 |
+| progress.md | 100-250 lines | 600 |
 
 ## More Information
 

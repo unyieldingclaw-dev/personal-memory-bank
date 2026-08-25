@@ -2,6 +2,134 @@
 
 ## [Unreleased]
 
+### Security
+- `scripts/dangerous-commands.sh`/`.ps1` (and `templates/` mirrors): commit-signing bypass is now
+  CONFIRM-tier, alongside the existing `--no-verify` entry. Covers `commit.gpgsign` set to any
+  value git resolves as false (`false`/`0`/`no`/`off`, any case, quoted or bare) via `git -c` or
+  any `git config` subcommand including `--global`/`--system`/`--local`/`--file`/`--replace-all`,
+  plus `--unset`/`--unset-all commit.gpgsign` and `--no-gpg-sign`. Reported from
+  `ai-code-review-agent`: an agent disabled signing twice in one session and the gate never
+  fired, because the class was governed only advisorily by `CLAUDE.md` with no deterministic
+  layer behind it. Commands that *enable* signing are deliberately not gated.
+- **Fixed a bypass that predated this feature and survived three review rounds:** backslash-newline
+  continuations are now removed before any tier matches. The shell removes a backslash-newline before
+  git sees the command, so `git config commit.gpgsign \`⏎`false` ran as the one-line form while the
+  hook — matching the raw two-line text — stayed silent. Verified live: `commit.gpgsign` moved
+  `true` → `false` with no prompt. This applies to **every** tier, because the same evasion defeated
+  literal BLOCK substrings: a wrapped `git push --force` was equally uncaught.
+- The continuation is **deleted**, with runs of blanks collapsed separately — matching shell elision,
+  which inserts nothing, and shell tokenization, which treats any run of blanks as one separator.
+  Two earlier attempts substituted a space instead and each shipped its own bypass, both caught by
+  review: leaving the continuation indent broke `git push \`⏎`  --force`, and stripping the indent
+  broke the no-whitespace case, letting a line break placed **mid-token** split every literal BLOCK
+  substring (`rm -r\`⏎`f` → `rm -r f`). Both are now pinned by tests in each suite.
+- The signing patterns accept an optional quote around the **key** as well as the value. A
+  backslash-newline inside double quotes concatenates with no space at all, so
+  `git config "commit.gpg`⏎`sign" false` is a working persistent bypass — and the join fix alone
+  did not close it, because the closing quote after the key blocked the match.
+- The signing key patterns anchor to the flag or subcommand that actually **sets** config, rather
+  than to any `git` token. An earlier version required only a leading `git`, which left every git
+  command carrying the key as *text* firing a CONFIRM — including, self-demonstrably, `git commit -m`
+  with a message describing this feature.
+- Documented, in `standards/SECURITY-GUARDRAILS.md`, what the gate does **not** cover:
+  `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` env vars, direct `.git/config`
+  writes, and `tag.gpgsign`/`push.gpgSign`. Gating the first two would not raise the floor — a
+  plain `>> .git/config` append is simpler and stays open — so they are stated rather than
+  matched, keeping the coverage claim honest. The accepted false positives are listed there too:
+  a quoted git invocation as text, a git command naming `--no-gpg-sign` in free text, and prose
+  containing the word `config` near the key.
+- An argument-stripping mechanism that removed `-m`/`--message`/`-S`/`--grep` payloads before
+  matching was built for those false positives and then **withdrawn**. Making the hook's view of a
+  command deliberately differ from what the shell will run introduced two defects of its own:
+  `sed` is line-based while .NET `-replace` is not, so the two shells returned different verdicts
+  on a multi-line commit message; and an unquoted multi-word argument was only partly removed.
+  Anchoring alone had already resolved three of the four cases it was built for.
+- New `confirm_regex()` helper in the `.sh` twin. The `.ps1` CONFIRM loop already supported a
+  `regex` flag; the `.sh` side had no regex path. The two shells share the same regexes,
+  restricted to the subset valid in both GNU ERE and .NET; only the string escaping differs
+  (sh needs `\"`, PowerShell needs `''`), and the parity block asserts equal behaviour.
+- `tests/test-dangerous-commands.sh` now runs 124 assertions and `tests/dangerous-commands.Tests.ps1`
+  58 tests (16 assertions and 13 tests respectively on `main`). Both figures are measured, not
+  estimated; an earlier version of this entry said 74 and 37, which was wrong in both halves and
+  disagreed with `memory-bank/progress.md` in the same commit. The sh total is environment-
+  dependent: the cross-shell `assert_parity` block is skipped when `pwsh` is not on `PATH`. Both
+  suites carry false-positive controls with a **git** carrier rather than only non-git ones, pin
+  every accepted limit so a future pattern change cannot move one silently, and pin the
+  continuation join at BLOCK tier as well as CONFIRM.
+
+- **Fixed a second bypass that predated this feature: the `.sh` hook's `python3` extraction ran
+  text-mode I/O under a `cp1252` locale on Windows, so any non-ASCII command silently degraded to
+  raw-stdin matching** — the exact false-positive mode the extraction exists to prevent. A CJK
+  payload made the `.sh` twin DENY (reporting the byte length of the whole JSON file as the command
+  length) while the `.ps1` twin allowed it: opposite verdicts on ordinary input. Extraction now reads
+  and writes binary with explicit UTF-8. **Both halves were required.** `stdin`/`stdout` carry
+  `errors='surrogateescape'`, so the two JSON encodings fail in opposite directions: `\uXXXX` escapes
+  break a text-mode write, while raw UTF-8 bytes break a text-mode read, and the original code only
+  survived raw payloads because `print()` re-encoded the mojibake through the same codec and it
+  round-tripped. Fixing only the write side — the form this branch carried as "designed and proven" —
+  passes the escaped case and reintroduces the bypass on the raw one.
+- `confirm_boundary()` now checks the de-escaped view of the command like the other four matchers.
+  It was the one function the retrofit missed, so `git m\erge main` and `git "merge" main` were
+  silent in `.sh` while `.ps1` confirmed both. The mutation proof had verified the mechanism where it
+  was wired, which says nothing about whether every matcher is wired to it.
+- **The two nested-gap CONFIRM regexes are bounded (`[^|;&]*` → `.{0,300}`), removing a hang.**
+  Backtracking on the `git (gap)config (gap)` shape is cubic (~8x per doubling, measured), so the
+  50,000-character length bound permitted roughly **47 minutes** of matching per pattern — and a
+  `PreToolUse` hook blocks the tool call, so this was a hang rather than a slow path, reachable by an
+  ordinary large heredoc writing prose about `git config`. Now ~0.75s at 50,000 characters, still
+  matching a 296-character `-C` path. `{0,300}` is valid in GNU ERE and .NET alike, so one regex still
+  serves both shells.
+- **Only the nested pair is bounded.** The `-c` and `--no-gpg-sign` patterns nest a single gap group,
+  measure ~4.3s at 50,000 characters on the payload shape that is worst for them, and are left
+  unbounded on purpose: in `git <gap> --no-gpg-sign`
+  that gap holds the **commit message**. Bounding all six groups uniformly — the first form of this
+  change — silently disabled the signing CONFIRM for any commit message longer than about 185
+  characters, on both shells, which is ordinary rather than adversarial. Bounding a gap is safe only
+  where the gap holds flags. Regression tests now pin 50-, 250- and 600-character messages.
+- A runtime regex timeout was rejected — it converts the hang into a denial and would be .NET-only.
+  The suites assert the *shape* instead (no pattern may carry more than one unbounded gap group),
+  structurally, on both platforms, in constant time.
+- **Fixed a live bypass in the gap character class itself: a shell separator in an ordinary commit
+  message silently defeated the signing gate on both shells.** The gaps were `[^|;&]*`, so any `|`,
+  `;` or `&` between `git` and the flag made the pattern unmatchable — and for the `-c` and
+  `--no-gpg-sign` patterns that gap holds the **commit message**. Verified: `git commit -m "docs: R&D
+  notes" --no-gpg-sign` was allowed with no prompt, as was `git -c "alias.x=a|b" -c
+  commit.gpgsign=false commit`. An ampersand in English prose is not an evasion attempt. The class
+  also never achieved its purpose — newline was never excluded, so the gap already spanned commands.
+  Those two gaps are now `.*`. The two nested-gap `config` patterns kept the separator-excluding
+  class for one round, on the argument that their gap holds flags and paths — see the following
+  entry, where that argument did not survive contact with `core.pager`.
+- The PowerShell twin now matches regex patterns with `Singleline` set. Under `grep -z` the bash
+  twin treats the payload as one record, so its `.` matches a newline while .NET's does not — latent
+  while no pattern contained a bare `.`, and activated by the change above. This is the third
+  appearance of the same line-vs-string mismatch in this file (`sed` vs `-replace`, then `grep` vs
+  `-imatch`, now `.` vs `.`), so it is fixed in the same commit as the change that would expose it.
+- **The same hole in the two `config` patterns is now closed too.** A separator between `git` and
+  `config` defeated them the same way — `git -c core.pager='less | head' config --global
+  commit.gpgsign false` permanently unsigns every commit in every repo, and `core.pager` with a pipe
+  is an ordinary configuration. Those gaps are now `.{0,300}`: still length-bounded, because these
+  two are the quadratic pair and bounding is what contains that, but no longer excluding separators.
+  Measured at 50,000 characters the bounded-dot form is **0.795s, slightly faster** than the class it
+  replaced (0.942s). **Accepted cost, now asserted in both suites so the trade stays visible:**
+  `git config user.name x | grep commit.gpgsign false` prompts. Telling that apart from the real
+  bypass requires tokenizing the shell, so the choice is only which way to be wrong — and a spurious
+  prompt is the honest direction where a silent miss is not.
+- Corrected two measured figures that were wrong in the shipped comments: the longest `-C` path the
+  `{0,300}` bound admits is **295** characters, not 490; and the single-gap patterns cost ~4.3s
+  rather than 1.6s at 50,000 characters, because the earlier measurement used the payload shape
+  that is worst for the *nested* patterns. The whole-hook worst case at the length bound is **17.5s**
+  — quadratic, not the former cubic hang, and now stated rather than left to be rediscovered.
+- The `.ps1` length bound counts UTF-8 bytes (`UTF8.GetByteCount`) rather than UTF-16 code units, so
+  it agrees with the `.sh` twin, which measures with `wc -c`. (`${#cmd}` counts characters in the
+  CURRENT LOCALE, not bytes — believing otherwise is what made the first version of this fix invert
+  the divergence instead of closing it.) The divergence ran
+  fail-open: `.Length` counted low, admitting payloads the `.sh` side refused.
+- Removed the redundant early tab-to-space normalization, leaving the blank-run collapse as the
+  single folding site. Two sufficient paths for one property meant the tab regression tests could not
+  discriminate either — neutering the original line left them byte-identically green, so the guard
+  for the NBSP platform-parity bug was already dead while still looking healthy. Redundant
+  normalization in a matcher does not add safety; it removes testability.
+
 ### Note — session-claims items below are in-flight, not shipped
 The four `Added` items below are implemented and committed on the not-yet-merged branch
 `worktree-concurrent-session-claims`, not on this branch/tag — see `[NS-18]` in

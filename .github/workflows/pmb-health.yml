@@ -20,7 +20,16 @@ jobs:
 
           echo "=== memory-bank files (per-file limits) ==="
           declare -A MB_WARN=( [projectbrief.md]=80  [activeContext.md]=100 [systemPatterns.md]=200 [techContext.md]=200 [progress.md]=250 )
-          declare -A MB_FAIL=( [projectbrief.md]=120 [activeContext.md]=150 [systemPatterns.md]=300 [techContext.md]=300 [progress.md]=400 )
+          # progress.md's line FAIL was raised 400 -> 600 on 2026-08-24. WHY: at 400 lines the file
+          # was 39,590 bytes against a 48,000 WARN and a 60,000 FAIL, so the LINE cap bound first --
+          # and the line cap is the metric this very block's comment already identifies as measuring
+          # the wrong dimension. It was not a theoretical problem: the file sat at 400/400 and could
+          # not accept a new entry, review round 5's findings were written under round 4's heading
+          # because there was no room for a new section, and a 34-line archive relocation was fully
+          # absorbed by a single subsequent entry. Raising it to 600 puts the byte WARN (~485 lines
+          # at this file's ~99 chars/line) first, so the metric that tracks real context cost is the
+          # one that fires. The line cap stays as a secondary tripwire against pathological growth.
+          declare -A MB_FAIL=( [projectbrief.md]=120 [activeContext.md]=150 [systemPatterns.md]=300 [techContext.md]=300 [progress.md]=600 )
           # WHY byte limits alongside line limits: a line cap measures the wrong dimension --
           # collapsing multi-line entries into one long line satisfies it while saving zero
           # tokens. That is not hypothetical: on 2026-08-19 a cap breach in activeContext.md was

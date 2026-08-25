@@ -152,12 +152,16 @@ fi
 
 # Check 7: memory-bank integrity via mb doctor
 #
-# WHY this no longer calls `mb validate`: that command was deprecated into `mb doctor`
-# and now resolves to a shim that prints a redirect notice and exits 0. The old check
-# tested only the exit code, so it printed "[OK] mb validate passed" on every push in
-# every managed project while validating nothing. An exit code cannot distinguish
-# "ran and passed" from "did nothing" — that is the general trap, and every deprecated
-# alias that echoes and returns 0 has the same property.
+# WHY this no longer calls `mb validate`: that command was deprecated into `mb doctor` and
+# now resolves to a shim that prints a redirect notice and exits 2 (measured, not assumed).
+# The old check treated any non-zero exit as a memory-bank problem, so every push in every
+# managed project emitted "[WARN] mb validate reported issues — memory bank may be
+# inconsistent:" and then quoted the redirect notice underneath it as though that were the
+# evidence. Nothing could clear it: the warning did not describe the memory bank at all, and
+# it was immediately followed by "[PASS] All pre-push checks passed" — a self-contradicting
+# gate. Observed on ai-code-review-agent, which is pinned at PMB 1.1.1 and still runs the old
+# check. An exit code cannot distinguish "ran and passed" from "ran and failed" from "never
+# ran" — that is the general trap, and every deprecated alias inherits it.
 #
 # WHY the verdict is parsed from output rather than taken from an exit code: `mb doctor`
 # also exits 0 regardless of what it finds, so switching commands alone would have

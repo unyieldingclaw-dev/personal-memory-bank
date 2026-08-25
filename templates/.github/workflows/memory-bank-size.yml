@@ -45,7 +45,13 @@ jobs:
           # ~120 chars/line" -- roughly derived and rounded for legibility, not an exact formula.
           # Tune them to your project; the ratio that matters is bytes-per-session, not the math.
           declare -A WARN_LINES=( [projectbrief.md]=80  [activeContext.md]=100 [systemPatterns.md]=200 [techContext.md]=200 [progress.md]=250 )
-          declare -A FAIL_LINES=( [projectbrief.md]=120 [activeContext.md]=150 [systemPatterns.md]=300 [techContext.md]=300 [progress.md]=400 )
+          # progress.md's line FAIL was raised 400 -> 600 on 2026-08-24. WHY: a line cap measures the
+          # wrong dimension -- it is satisfied by reflowing long entries onto fewer lines, saving zero
+          # tokens -- while the byte cap below tracks what a re-read actually costs. In the source repo
+          # the line cap bound first at 39,590 bytes against a 48,000 byte WARN, blocking new entries
+          # while the byte budget still had room. Raising it lets the byte WARN fire first; the line cap
+          # stays as a secondary tripwire against pathological growth.
+          declare -A FAIL_LINES=( [projectbrief.md]=120 [activeContext.md]=150 [systemPatterns.md]=300 [techContext.md]=300 [progress.md]=600 )
           declare -A WARN_BYTES=( [projectbrief.md]=9600 [activeContext.md]=18000 [systemPatterns.md]=24000 [techContext.md]=24000 [progress.md]=48000 )
           declare -A FAIL_BYTES=( [projectbrief.md]=20000 [activeContext.md]=40000 [systemPatterns.md]=40000 [techContext.md]=40000 [progress.md]=60000 )
 

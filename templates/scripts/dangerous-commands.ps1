@@ -58,18 +58,80 @@ try {
     }
 }
 
-# WHY normalize tabs to spaces here, once, before any tier matching: code review found
-# that this file's boundary regex used \s (Unicode-aware, matches NBSP and other
-# Unicode space separators) while dangerous-commands.sh's confirm_boundary() used the
-# POSIX [[:space:]] class (locale-dependent, typically ASCII-only) -- a single-character
-# substitution (e.g. an NBSP in place of the space after "git merge") silently bypassed
-# the CONFIRM gate on one platform but not the other, verified by direct execution.
-# Normalizing tabs to spaces up front lets both boundary checks compare against a plain
-# literal space -- no character classes, no locale/Unicode ambiguity, byte-identical
-# semantics on both platforms. This intentionally does NOT normalize other Unicode
-# whitespace (NBSP, em-space, etc.) to a boundary character on either side: those stay
+# WHY join backslash-newline continuations before any tier matching: the shell parser
+# removes a backslash followed by a newline before the command ever reaches git, so
+#     git config commit.gpgsign \
+#       false
+# executes exactly as `git config commit.gpgsign false`. The hook receives the raw two-line
+# text, and no pattern's key-to-value glue matches a backslash or a newline -- so the gate
+# stayed silent while signing was genuinely disabled. See dangerous-commands.sh for the live
+# verification and the full rationale; this predates the commit-signing patterns and is not
+# specific to them (a BLOCK substring such as "git push --force" was equally evadable).
+#
+# WHY $cmd globally rather than a separate copy for one tier: the goal is to make the hook's
+# view match what the shell will actually run, which is correct for every tier.
+#
+# WHY \r? is present: the payload may carry CRLF on Windows, and the backslash must still be
+# recognized as line-final. The sh twin's awk rule matches /\\[\r]?$/ for the same reason.
+#
+# The first attempt replaced only the backslash-newline and left the continuation line's
+# indentation. That works for the signing regexes, which glue with ` *`, but silently broke
+# the BLOCK tier -- those are literal substrings, so "git push \<newline>  --force" joined to
+# "git push   --force" and no longer contained "git push --force".
+# WHY the join DELETES rather than substitutes, with whitespace collapsed separately: shell
+# backslash-newline elision inserts nothing. Substituting a space broke the no-whitespace case
+# ("rm -r\<nl>f" -> "rm -r f", losing the literal "rm -rf"), while not stripping the indent broke
+# the indented case ("git push \<nl>  --force" -> "git push   --force"). Both were live bypasses
+# found by review. Deletion reproduces the shell; collapsing blank runs reproduces its
+# tokenization. See dangerous-commands.sh for the full history.
+# The property this protects, which must survive any future edit here: dangerous-commands.ps1's
+# boundary regex uses \s (Unicode-aware, matches NBSP and other Unicode space separators) while
+# dangerous-commands.sh's confirm_boundary() uses POSIX [[:space:]] (locale-dependent, typically
+# ASCII-only). A single-character substitution -- an NBSP in place of the space after "git merge"
+# -- therefore bypassed the CONFIRM gate on one platform but not the other, verified by direct
+# execution. Folding tabs to a plain literal space lets both boundary checks compare against one
+# ASCII character, with no character-class or locale ambiguity. This deliberately does NOT fold
+# other Unicode whitespace (NBSP, em-space) to a boundary character on either side: those stay
 # non-boundaries consistently everywhere, rather than a boundary on one platform only.
-$cmd = $cmd.Replace("`t", " ")
+#
+# WHY tab folding lives HERE and nowhere else, added round 8: it used to ALSO happen in a separate
+# earlier step. Two sufficient mechanisms for one property meant no behavioural test could
+# discriminate either -- neutering the earlier step left every tab assertion byte-identically
+# green, so the regression guard for the parity bug above was already dead while still looking
+# healthy. Redundant normalization in a matcher does not add safety; it removes testability.
+# Keep exactly ONE folding site so the tests can prove it.
+$cmd = $cmd -replace '\\\r?\n', ''
+$cmd = $cmd -replace '[ \t]+', ' '
+
+# WHY a second, aggressively de-escaped view: a shell strips a backslash before ANY character,
+# not only before a newline, and concatenates adjacent quoted segments with no separator. So
+# `r\m -r\f` runs as `rm -rf`, and `git config "commit."'gpgsign' false` runs as
+# `git config commit.gpgsign false`. The faithful view above models only backslash-NEWLINE
+# elision and cannot see either. Both were live, unprompted bypasses of the BLOCK and CONFIRM
+# tiers respectively, and both PRE-DATE the commit-signing work.
+#
+# WHY match both views rather than replacing the faithful one: this view is deliberately NOT
+# faithful -- it destroys information a real shell keeps. Matching it in ADDITION can only ever
+# ADD a match, never remove one, so the change is strictly fail-closed. Kept byte-identical in
+# intent with the sh twin's $cmd_loose; see dangerous-commands.sh for the full rationale.
+#
+# KNOWN COST, stated rather than hidden: stripping quotes creates matches a real shell would not
+# produce -- `echo "rm" "-rf"` collapses to `echo rm -rf` and now trips BLOCK. Same accepted
+# class as the documented quoted-invocation-as-text false positive.
+$cmdLoose = ($cmd -replace '[\\"'']', '') -replace ' +', ' '
+
+# WHY Singleline, added round 9 alongside the `.*` gaps: under `grep -z` the sh twin treats the
+# whole payload as ONE record, so its `.` matches a newline. .NET's `.` does NOT, unless
+# Singleline is set. With the gaps written as `[^|;&]*` that difference was latent -- no pattern
+# contained a bare `.`. Introducing `.*` would have activated it, giving opposite verdicts on any
+# multi-line command: verified, `git status<LF>echo hello --no-gpg-sign` matches in grep -z and
+# does not in .NET without this flag.
+#
+# This is the THIRD time this exact line-vs-string mismatch has come up in this file -- `sed`
+# vs .NET `-replace` in round 4, `grep` vs `-imatch` in round 6 (fixed with -z), and now `.`
+# vs `.`. confirm_regex()'s comment in the sh twin asked that a third instance be made harder
+# to write; this is that instance, handled at the same time as the change that would cause it.
+$DcRegexOpts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline'
 
 function Deny {
     param([string]$Reason)
@@ -80,6 +142,40 @@ function Deny {
             permissionDecisionReason = $Reason
         }
     } | ConvertTo-Json -Compress | Write-Output
+}
+
+# WHY a length bound before any matching, and why it is defined AFTER Deny: the CONFIRM regexes
+# contain gap groups of the shape `git (<gap>)config (<gap>)`, and .NET's backtracking engine
+# blows up on a long run containing many `config` tokens and none of `|`, `;` or `&`. GNU grep
+# uses a DFA and stays flat, so this blowup is .NET-side -- but the bound is applied identically
+# in BOTH shells, because a guard that behaves differently per platform is precisely the defect
+# class this file has already shipped twice.
+#
+# ROUND 8: growth was measured to be CUBIC, not quadratic (~8x per doubling), making the real
+# worst case at this bound ~47 minutes rather than the "roughly 8 seconds" previously claimed.
+# Only the two NESTED-gap `config` patterns blow up; they are bounded to {0,300}. The two
+# single-gap patterns are deliberately left unbounded -- bounding them broke the --no-gpg-sign
+# CONFIRM for any ordinary commit message, because that gap holds the message rather than flags.
+# See dangerous-commands.sh for the per-pattern measurements and why test assertions were
+# preferred to a regex timeout.
+#
+# WHY it denies rather than truncating: truncation is fail-OPEN -- a dangerous substring
+# straddling the cut point would simply vanish.
+#
+# WHY UTF8.GetByteCount and not .Length: .NET's .Length counts UTF-16 code units, so this side
+# used to count LOW on any non-ASCII command and admit payloads the sh twin refused -- a fail-open
+# divergence. Counting UTF-8 BYTES fixes this half.
+#
+# CORRECTED round 8: an earlier version of this comment claimed the change made the two shells
+# "agree by construction". It did not -- it inverted the divergence. The sh twin was using
+# `${#cmd}`, which counts characters in the CURRENT LOCALE, so under the UTF-8 locales CI actually
+# runs under bash counted LOW while this side counted bytes. The sh side now measures with
+# `wc -c`, which is byte-based in every locale; only that made the two units genuinely equal.
+$DcMaxCmd = if ($env:DC_MAX_CMD) { [int]$env:DC_MAX_CMD } else { 50000 }
+$cmdLen = [System.Text.Encoding]::UTF8.GetByteCount($cmd)
+if ($cmdLen -gt $DcMaxCmd) {
+    Deny "CONFIRM REQUIRED: command is $cmdLen bytes, above the $DcMaxCmd-byte limit this guard can analyze reliably. Run manually if intentional."
+    exit 0
 }
 
 # BLOCK: irreversible or highly destructive — refuse unconditionally
@@ -104,7 +200,7 @@ $blockPatterns = @(
 )
 
 foreach ($entry in $blockPatterns) {
-    $isMatch = if ($entry.regex) { $cmd -imatch $entry.pattern } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) }
+    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) }
     if ($isMatch) {
         Deny ($BLOCK_MSG -f $entry.reason)
         exit 0
@@ -118,13 +214,34 @@ $confirmPatterns = @(
     @{ pattern = "sudo rm";           reason = "privileged deletion" }                      # WHY: elevated deletion can remove system files
     @{ pattern = "chmod -R 777";      reason = "world-writable recursive chmod" }           # WHY: makes entire tree world-writable
     @{ pattern = "--no-verify";       reason = "bypasses pre-commit hooks (local governance)" } # WHY: skips safety hooks on commit
+    # WHY these sit beside the hook-skip flag above: same class of action -- routing around
+    # local governance. See dangerous-commands.sh for the full rationale and the incident.
+    # WHY regex and not plain substrings: `-c key=value` and `git config key value` are the
+    # same action with different separators, and neither is expressible as one literal. The
+    # REGEX is identical to the sh twin's, using only the subset valid in both .NET and GNU ERE
+    # -- no [[:space:]], which .NET does not support. The escaped string LITERALS are NOT
+    # byte-identical: sh double-quotes need \" where PowerShell single-quotes need ''. See the
+    # note below the pattern list; the parity block asserts equal behaviour, not equal text.
+    # WHY these require a `config` subcommand or a `-c` flag and not merely a `git` token:
+    # requiring only `git` made every git command carrying the key as TEXT fire, including
+    # `git commit -m "...commit.gpgsign false..."` -- which meant this feature could not be
+    # committed with a message describing it. See the sh twin for the measured cases, the
+    # --unset-all and quoted-value gaps this closes, and the full KNOWN LIMITS list
+    # (GIT_CONFIG_* env vars, direct .git/config writes, tag.gpgsign/push.gpgSign).
+    # WHY the escaping differs from the sh twin while the regex does not: sh double-quotes
+    # need \" and PowerShell single-quotes need '' for the same two characters. The
+    # engine-visible pattern is identical; the parity test asserts behaviour, not text.
+    @{ pattern = '(^|[^a-z])git (.*)-c *["'']?commit\.gpgsign["'']? *= *["'']?(false|no|off|0)([^a-z0-9]|$)'; regex = $true; reason = "bypasses commit signing (local governance)" }
+    @{ pattern = '(^|[^a-z])git (.{0,300})config (.{0,300})["'']?commit\.gpgsign["'']? *[= ] *["'']?(false|no|off|0)([^a-z0-9]|$)'; regex = $true; reason = "bypasses commit signing (local governance)" }
+    @{ pattern = '(^|[^a-z])git (.{0,300})config (.{0,300})--unset(-all)? +["'']?commit\.gpgsign'; regex = $true; reason = "bypasses commit signing (local governance)" }
+    @{ pattern = '(^|[^a-z])git (.*)--no-gpg-sign'; regex = $true; reason = "bypasses commit signing (local governance)" }
     # WHY regex, not a plain substring: "git merge" as a bare substring also matches
     # "git merge-base", a common, harmless read-only command — the character after
     # "merge" there is "-", not a word boundary in the usual sense. Requiring
     # space-or-end-of-string after "merge" excludes that case while still matching
     # "git merge <branch>", "git merge --no-ff <branch>", and bare "git merge". WHY a
     # literal space, not \s, on the trailing side: $cmd already had tabs normalized to
-    # spaces before this pattern ever runs (see the .Replace("`t"," ") call above), and
+    # spaces before this pattern ever runs (see the blank-run collapse above), and
     # dangerous-commands.sh does the same normalization -- so both sides only ever need
     # to check for a plain ASCII space here, with no \s-vs-[[:space:]] Unicode/locale
     # ambiguity to keep in parity (an earlier version used \s, which -- unlike bash's
@@ -143,7 +260,7 @@ $confirmPatterns = @(
 )
 
 foreach ($entry in $confirmPatterns) {
-    $isMatch = if ($entry.regex) { $cmd -imatch $entry.pattern } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) }
+    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) }
     if ($isMatch) {
         Deny ($CONFIRM_MSG -f $entry.reason)
         exit 0

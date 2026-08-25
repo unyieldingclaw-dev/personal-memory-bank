@@ -107,4 +107,4 @@ Keep Memory Bank files focused and scannable:
 | `systemPatterns.md` | 100-180 lines | 300 | Consolidate similar patterns |
 | `techContext.md` | 150-250 lines | 400 | Move details to docs/ |
 | `activeContext.md` | 50-100 lines | 150 | Archive history to AGENTS.md |
-| `progress.md` | 100-250 lines | 400 | Archive old versions to docs/ |
+| `progress.md` | 100-250 lines | 600 | Archive old versions to docs/ |

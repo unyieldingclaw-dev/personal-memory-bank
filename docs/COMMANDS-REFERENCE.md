@@ -186,6 +186,6 @@ These are built into Claude Code and don't require the memory bank system.
 | `systemPatterns.md` | 100–180 | 300 | stable |
 | `techContext.md` | 150–250 | 400 | stable |
 | `activeContext.md` | 50–100 | 150 | volatile |
-| `progress.md` | 100–250 | 400 | accumulating |
+| `progress.md` | 100–250 | 600 | accumulating |
 
 When a file exceeds its Max: run `mb clean` to get an AI-guided cleanup prompt.

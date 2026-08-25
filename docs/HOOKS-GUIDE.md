@@ -44,8 +44,18 @@ Intercepts both Bash and PowerShell tool calls before they run using `scripts/da
 *Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
 
-**CONFIRM** (6 patterns — surfaces confirmation dialog):
-`git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `git merge <branch>` (boundary-matched: excludes `git merge-base`)
+**CONFIRM** (10 patterns — surfaces confirmation dialog):
+`git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `git merge <branch>` (boundary-matched: excludes `git merge-base`) · commit-signing bypass (regex, four patterns: `commit.gpgsign` set to any falsey value — key or value quoted or bare — via `git -c`, the same via a `git config` subcommand, `--unset`/`--unset-all commit.gpgsign`, and `--no-gpg-sign`)
+
+The signing key patterns anchor to the flag or subcommand that actually sets config, so
+`git commit -m "...commit.gpgsign false..."`, `git log -S "..."` and trailing `#` comments do not
+fire. Before any tier matches, backslash-newline continuations are **deleted** and runs of blanks
+collapsed, so a wrapped command is matched as the shell will actually run it. Deletion rather than
+substitution matters: a line break placed mid-token would otherwise split a literal BLOCK
+substring (`rm -r\`⏎`f` → `rm -r f`), and a break inside double quotes concatenates with no space
+at all. This applies to every tier. See `standards/SECURITY-GUARDRAILS.md` for the accepted false
+positives and for what the gate deliberately does not cover (`GIT_CONFIG_*` env vars, direct
+`.git/config` writes, `tag.gpgsign`/`push.gpgSign`).
 
 **WARN** (4 patterns — exits 0, surfaces access alert):
 `id_rsa` · `.pem` · `.env.production` · `credentials.json`
@@ -221,8 +231,11 @@ template tends to get disabled outright.
 
 **Why UNKNOWN exists.** A check has three outcomes — passed, failed, or *could not run* — and an
 exit code cannot distinguish the first from the last. `mb validate` was deprecated into a shim that
-prints a redirect notice and exits 0, so the old Check 7 printed `[OK] mb validate passed` on every
-push in every managed project while validating nothing. Check 7 now runs `mb doctor` and derives its
+prints a redirect notice and exits **2** (measured 2026-08-23, not assumed), so the old Check 7
+emitted a permanent false `[WARN]` on every push in every managed project while validating nothing.
+An earlier version of this paragraph said the shim exited 0 and therefore printed a false `[OK]`;
+that was wrong in the same way the code was, and `scripts/pre-push-check.sh` was corrected in the
+same change without this file being updated alongside it. Check 7 now runs `mb doctor` and derives its
 verdict from that command's structured output: counting `[OK]`/`[WARN]`/`[ERROR]` lines yields both
 the result *and* positive evidence the command actually ran. Zero result lines means UNKNOWN, never
 success. (`mb doctor` also exits 0 regardless of findings, so switching commands alone would not

