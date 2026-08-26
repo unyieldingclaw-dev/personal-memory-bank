@@ -1,5 +1,8 @@
 # Memory Bank Paradigm Review — 2026-08-23
 
+**Living document — updated as findings land.** Started 2026-08-23; latest addition
+2026-08-25 (cross-shell divergence in the deterministic layer).
+
 **What this is:** a review of how instruction and memory files should be written and maintained,
 against current published guidance, and what that invalidates in this repo's design. It records
 findings and four decisions. It does not implement anything.
@@ -176,6 +179,136 @@ objection from the dependency constraint, and a harder one. Lumina's decay const
 answer to decision 3's deterministic prune, but time-decay fits this repo poorly: a two-month-old
 `[NS-N]` entry here can still be load-bearing, and age is not the signal that makes it evictable.
 
+### The deterministic layer forks on the shell — and the gate cannot see it
+
+**How this section was written matters to how you should read it.** Its first two drafts contained
+nine claims that the review gate found to be false or unfounded. Every one sat in the *interpretive*
+layer — instance counts, a family taxonomy, ordinals, and two opposite assertions about whether a
+parity check exists. None was in the measured findings. The section has been cut back to what was
+verified, with the means of verification stated per claim. The failure that produced those nine
+claims turned out to be the more useful finding, and it is recorded below the facts.
+
+#### Verified findings
+
+**1. `mb`'s integrity checksums are not portable across shells.** MEASURED — reproduced in both
+directions on unedited files, 2026-08-25.
+
+| | Hash source | Case written | Comparison | Case-sensitive? |
+|---|---|---|---|---|
+| `mb.sh` | `sha256sum` | lowercase | `[ "$a" != "$b" ]` | **yes** |
+| `mb.ps1` | `Get-FileHash` | UPPERCASE | `-ne` | no |
+
+Both `mb doctor` and `mb verify-integrity` rewrite the baseline unconditionally at the end of every
+run, in the running shell's case (`doctor`: `mb.sh:1163`, `mb.ps1:1449`; `verify-integrity`:
+`mb.sh:1996`, `mb.ps1:2283`). A `doctor` run under pwsh therefore reports correctly and then leaves
+a baseline that makes the next bash run flag **every** memory-bank file as "modified outside mb
+tools". Because that run refreshes the baseline from current content, **all** subsequent mismatches
+are case artifacts — the false-positive rate in the pwsh→bash direction is 100%, and a real external
+modification cannot be detected at all. The reverse direction silently passes.
+
+**2. Four of the six sh matcher call sites apply no case normalization.** MEASURED — read
+`scripts/dangerous-commands.sh`, 2026-08-25. The sites are `block()` `:293`, `block_boundary()`
+`:310`, `confirm()` `:332`, `confirm_regex()` `:349`, `confirm_boundary()` `:396`, `warn()` `:460`.
+Only `confirm_regex()` (`grep -i`) and `confirm_boundary()` (`tr 'A-Z' 'a-z'`, `:443-445`)
+normalize. The `.ps1` twin is uniformly case-insensitive (`OrdinalIgnoreCase` / `IgnoreCase` at
+`:203`, `:263`, `:280`), so the divergence always takes the form of sh being narrower — **across the
+BLOCK, CONFIRM and WARN tiers alike**, not only BLOCK as first recorded.
+
+**3. Both BLOCK-tier gaps reproduce by execution.** MEASURED — hook run against constructed
+payloads, 2026-08-25. A mixed-case SQL statement receives no verdict on sh and is denied on ps1. A
+piped-to-interpreter command split across a newline evades sh entirely; the ps1 twin catches it
+because its regex runs under `Singleline`. Both are present on `main` today.
+
+**4. A differential parity harness already exists, and does not run in CI.** MEASURED — read
+`tests/test-dangerous-commands.sh:573-633` and `.github/workflows/`, 2026-08-25. `assert_parity`
+pipes one payload into both hooks and asserts identical verdicts, across 11 call sites, and its own
+comment names an sh/ps1 case divergence as the precedent it exists for. **But** it covers 1 of the
+12 `.sh`/`.ps1` twin pairs in `scripts/`, asserts only the CONFIRM tier, and skips silently when
+`pwsh` is absent unless `PMB_REQUIRE_PARITY=1` — which nothing in `.github/workflows/` or
+`tests/run.sh` sets. On Linux CI it therefore never executes. That is a sufficient explanation for
+why finding 2 survived: the mechanism that would have caught it was present, narrow, and dormant.
+
+The actionable item is not "build a parity test". It is **widen the harness that exists to the other
+11 pairs and to the BLOCK and WARN tiers, and make CI set `PMB_REQUIRE_PARITY=1` so a skip cannot be
+mistaken for a pass.**
+
+#### The finding underneath: the gate validates diffs, never premises
+
+The review gate binds a SHA-256 of the diff (`scripts/review-reminders.sh`). It is therefore
+structurally unable to see that a line the diff did not touch is false, or that a line it did touch
+was derived from a false one. Premises are invisible to the only layer that always runs.
+
+The evidence that this is load-bearing rather than theoretical: the claim *"seven pairs stay
+byte-identical"* was written into the task contract governing this branch and **survived nine review
+rounds, six domains, and an Opposition pass.** It was wrong throughout — eight pairs are in scope and
+one, `standards/MEMORY-BANK.md`, had been divergent since 2026-06-18. No reviewer was careless; the
+claim was a premise, and nothing verifies premises.
+
+The record itself supplies no signal to compensate. MEASURED, 2026-08-25:
+
+- **The provenance frontmatter is inert.** All five `memory-bank/` files carry identical values —
+  `source_type: canonical`, `confidence: high`, `lineage: []`. A field whose value never varies
+  cannot distinguish a claim verified by execution from one written from a hunch. The schema shipped;
+  the discipline did not.
+- **Most claims are unsourced.** `activeContext.md`: 13 of 54 entries cite a file:line or SHA (24%).
+  `progress.md`: 15 of 107 (14%).
+- **This document has the missing mechanism and `memory-bank/` does not.** The verification ledger
+  below classifies every claim MEASURED / PRIMARY / SECONDARY. Nothing equivalent exists in the files
+  that are loaded into every session as premise.
+
+`confidence: high` sitting on a file where roughly 80% of claims are unsourced is not neutral — it
+launders guesses as verified. A field that always reads "high" is worse than no field at all.
+
+**This qualifies decision 3.** Entry lifecycle and deterministic prune are necessary but not
+sufficient: entries carry no verification status, so neither a prune nor the next session can tell a
+measured fact from a guess. Provenance has to vary per claim before lifecycle rules can act on it.
+
+**Not fixed.** `mb.{sh,ps1}` and `dangerous-commands.{sh,ps1}` are outside the in-flight branch's
+contract. Operator-facing caveat in `docs/COMMANDS-REFERENCE.md`; tracked as `[NS-36]` (checksums),
+`[NS-37]` / `[NS-38]` (the two BLOCK-tier gaps), and `[NS-39]` (the premise-verification gap).
+
+### Policy split across a per-user global file and a per-project file, with no arbitration
+
+**FOUND AND FIXED 2026-08-25 — the specific contradiction is closed; the structural gap is not.**
+`~/.claude/CLAUDE.md` now defers to the setting by name instead of hardcoding a value, and `mb
+doctor`'s check was rewritten to compare the value rather than test for the variable's name (both
+shells, mutation-proved). What remains open: **nothing states which file wins**, and the global file
+is still per-user and outside every repository, so the next contradiction has the same clear run.
+The record below is what was measured before the fix.
+
+MEASURED 2026-08-25. Rules live in two places: `~/.claude/CLAUDE.md` (per machine, outside every
+repo) and the project `CLAUDE.md` (committed). The relationship between them is asserted in one
+direction only and resolved in neither.
+
+- The global file states *"Project-level CLAUDE.md files add to these — they do not replace them."*
+- The project file defines an authority order for its `memory-bank/` files and **never mentions the
+  global file**. There is no rule for a direct contradiction.
+
+There is a live contradiction. `.claude/settings.json` sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` to
+**65**; the global file hardcodes **"50%"**; the project file defers to the setting by name and is
+correct. Under the global file's own precedence rule, **the stale constant outranks the correct
+deferral** — the advisory layer overriding the deterministic one, inverting the layering order this
+repo otherwise enforces. This is the same inversion recorded against `mb doctor`'s 400-line cap.
+
+The detector is blind to it. `mb.sh:859-869` / `mb.ps1` check "Token Budget drift" and, run against
+this contradiction, report `[OK] Token Budget section current`. The check tests only whether the
+string `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` appears in both files; it never compares values. A presence
+check reported as a correctness check — the same shape as the round-7 finding that coverage failures
+wear correctness clothing.
+
+The two files also duplicate each other: 4,855 B global + 16,212 B project load every session before
+`memory-bank/` is read, 1,976 B of it byte-identical, with *Karpathy Coding Principles* and *Token
+Budget* present in full in both.
+
+**The general fix was not a better drift check** — though the check was fixed too, and now warns on
+any instruction file whose stated threshold disagrees with `settings.json`. The defect underneath is
+prose restating machine state; every restatement is a drift bug that has not fired yet, and
+detecting drift after the fact is strictly worse than making it impossible. The rule that removes
+the class, and the one actually applied to the global file: **a document names a setting and never
+copies its value.** Applied here it also removes the duplication, because the duplicated
+sections are exactly the ones carrying restated constants. **Not yet tracked in `activeContext.md` — that file is at its cap and could not accept the entry (see `[NS-39]`).** The Work-MB delta
+is in `docs/WORK-MB-PARADIGM-DELTA-BRIEF.md`.
+
 ## Decisions taken 2026-08-23
 
 1. **Amend `projectbrief.md`.** "Memory Bank files are read at session start" becomes a goal
@@ -198,7 +331,8 @@ detail fetches anyway — the design has to earn the reduction.
 
 ## Verification ledger
 
-Status meanings: **MEASURED** — command run against this repo on 2026-08-23. **PRIMARY** — read
+Status meanings: **MEASURED** — command run against, or source read in, this repo, on the date given in
+the row (2026-08-23 unless stated). **PRIMARY** — read
 from the source document. **SECONDARY** — from a summary of a source not opened. Treat SECONDARY as
 unconfirmed.
 
@@ -235,6 +369,29 @@ unconfirmed.
 | SwitchYard `spinning` / `exploring` signals as escalation triggers | SwitchYard README | SECONDARY — README only; the promotion argument is this repo's, not SwitchYard's |
 | SwitchYard corroboration threshold (two signals required to fire) | SwitchYard README | SECONDARY — README only; REJECTED here, see `[NS-35]` |
 | This repo's auto-memory store already implements index-plus-detail | Observed in this session's own loaded context | MEASURED |
+| sh/ps1 checksum case divergence; 100% false-positive rate pwsh→bash | reproduced both directions, 2026-08-25 | MEASURED |
+| `doctor`/`verify-integrity` rewrite the baseline every run | read `mb.sh:1163`, `mb.ps1:1449`, `mb.sh:1996`, `mb.ps1:2283`, 2026-08-25 | MEASURED |
+| 4 of 6 sh matcher sites apply no case normalization; ps1 uniformly insensitive | read `dangerous-commands.sh` `:293`-`:460`, `.ps1:203,263,280`, 2026-08-25 | MEASURED |
+| `assert_parity` exists (11 cases, 1 of 12 pairs, CONFIRM tier) and never runs in CI | read `tests/test-dangerous-commands.sh:573-633`, `.github/workflows/`, 2026-08-25 | MEASURED |
+| memory-bank provenance fields are identical across all 5 files | read frontmatter, 2026-08-25 | MEASURED |
+| 24% / 14% of activeContext / progress entries cite a file:line or SHA | counted, 2026-08-25 | MEASURED |
+| Global file hardcodes 50 while settings.json sets 65; `mb doctor` reports OK | read both `CLAUDE.md`s + `.claude/settings.json`, ran `mb doctor`, 2026-08-25 | MEASURED |
+| `block()` matches case-sensitively while the ps1 twin does not | read `dangerous-commands.sh:293`, `.ps1:203`, 2026-08-25 | MEASURED |
+| Round 6's blocker was line-vs-string (`-z`), not case | read `dangerous-commands.sh:374`, 2026-08-25 | MEASURED |
+
+**Withdrawn:** an earlier draft of the 2026-08-25 section stated that no mechanical parity
+check exists for the `.sh`/`.ps1` twins, and that behavioural parity has "no check at all".
+Both are false: `tests/test-dangerous-commands.sh:573-633` is exactly such a test. The
+accurate claim is that it is narrow and dormant in CI — see finding 4. The same draft also
+claimed a mechanical `scripts/` vs `templates/scripts/` byte-identity check exists; that one
+does not. Two opposite errors about verification infrastructure in consecutive drafts is the
+observation that motivated the premise-verification finding above.
+
+**Withdrawn:** an earlier draft of the 2026-08-25 section called the checksum divergence the
+*third* instance of case divergence, counting round 6's `confirm_regex` finding as the first. Round
+6's blocker was line-vs-string, fixed with `-z` (`dangerous-commands.sh:374`); the `-i` on the same
+call is separately justified at `:358` as design-time case parity and was never a round-6 fix. The
+corrected tally is 2 case + 3 line-vs-string.
 
 **Withdrawn:** an earlier draft cited "FLenQA accuracy 0.92 → 0.68" attributed to the Chroma
 report. That figure is not in the Chroma report; a search summary conflated two papers. Do not use
@@ -243,6 +400,51 @@ it. The LongMemEval result above replaces it and is better supported.
 > This paragraph previously sat BETWEEN two runs of table rows, which silently terminated the
 > Markdown table and rendered the six rows after it as literal text — the rows were present in the
 > source but invisible as ledger entries. Keep prose out of the table body; notes go after it.
+
+## Round 10 — the gate pass that landed PR #21 (2026-08-26)
+
+Six independent agents (five lenses plus Opposition) reviewed the 11-file follow-up diff.
+Verdict: **Approve with four must-fixes**, all applied before commit. Recorded here because
+`memory-bank/progress.md` has ~6 bytes of headroom and cannot hold it.
+
+### Why the verdict was not "Request Changes"
+
+The rewritten check 5 is a **net improvement**, and that reframing downgraded half the findings.
+The old check only ever compared *presence* of a variable name, and its one real branch was gated
+on a global `~/.claude/CLAUDE.md` that `mb` never creates — so for essentially every adopter it
+printed nothing at all, while the bug that actually shipped (a hardcoded 50% against a live 65)
+reported `[OK]`. Its remediation string, "copy the Token Budget section from global", is the exact
+practice the new code now warns against.
+
+### Must-fixes applied
+
+| # | Fix | Evidence it was needed |
+|---|-----|------------------------|
+| 1 | `activeContext.md` headroom figure → 599/60,000, **ZERO** bytes | Said "37 bytes"; actual is 0 against a `-gt 60000` CI FAIL. A self-referential figure stale inside its own diff — the defect class `da62ad2` blocked on. |
+| 2 | `COMMANDS-REFERENCE.md` row 5 rewritten; `mb upgrade` row now names `.gitignore` | Row 5 documented the *deleted* presence-check and prescribed the practice the new code flags as drift. The file mentioned `.gitignore` **zero** times although upgrade now writes that tracked file. |
+| 3 | `mb.ps1` `-notcontains` → `-cnotcontains` | `@('Handoff.md') -notcontains 'handoff.md'` → `False`: pwsh silently skipped an entry bash would add. A **third** instance of the sh/ps1 case family (`[NS-37]`/`[NS-38]`), in code whose own comment says the two must be identical. |
+| 4 | Honest `KNOWN LIMITS` block in both shells | The prior comment claimed the `auto-compact` gate had closed the "quality at 90%" false-positive class. It had not — verified, that line still yields 90. |
+
+### The one departure from Opposition
+
+Opposition said leave the matcher untouched and document both defects. That is right for the
+**false OK** — closing it needs open-ended phrase matching, and widening is what produced the
+false positives in the first place. It is wrong for the **false WARN**, because `at ` → `\bat `
+is a *narrowing*: it can only remove matches, so it cannot re-open the 40%-handoff false positive
+that motivated the "don't widen" rule. Validated before applying — all three real spellings
+(`fires at 40%`, `at approximately 50%`, `at 65%`) still detected; `th(at)`, `form(at)`, `gre(at) N%`
+all eliminated. Both shells verified to agree afterwards.
+
+### Deferred, with the reason each is not blocking
+
+- **`standards/` vs `templates/` parity check.** Check 5 does not scan `templates/standards/MEMORY-BANK.md`. In an *adopter* that gap does not exist — `_upgrade_src` copies `templates/standards/*` into `standards/*`, so the scanned file **is** the shipped copy. PMB-source-only. Would also catch the pre-existing `mb compact`/`mb clean` divergence at lines 131/396.
+- **`mb.ps1` has zero test coverage** for `Sync-Gitignore` and check 5. The mechanism already exists and is unused: `tests/test-dangerous-commands.sh` has a `command -v pwsh` parity block with `PMB_REQUIRE_PARITY=1` to convert skip→fail. It would have caught must-fix #3.
+- **`grep -c … || echo 0`** at `tests/test-mb-upgrade.sh` yields `0
+0` (verified) — the construct `tests/test-mb-doctor.sh` documents as a fixed Git Bash bug. Passes only because `assert_contains` matches line-wise. Safe to drop: the file sets `set -u`, not `set -e`.
+- **Temp-dir leak.** Four new `trap … EXIT` each replace the prior one; measured **5** dirs leaked per run. *Not* introduced by this diff as first filed — `test-mb-doctor.sh` already carries 29 traps at HEAD. Pre-existing repo-wide convention; fixing it is a suite-wide cleanup.
+- **Test-comment overclaims.** "The three below assert the MECHANISM" — only the third is coupled to the implementation, and it greps `mb.sh` source text, so an equivalent refactor breaks it while a behaviour change may not. Also `test-mb-doctor.sh` still credits an implementation this diff deleted.
+- **Double `# Memory Bank` header** on a freshly created `.gitignore` (verified, cosmetic).
+- **Prose corrections** — five false claims, seven stale `file:line` citations, two dead heading pointers. Deferred by explicit user direction; the agreed fix is to strip line numbers from prose and cite function/heading names. One is worth separating from the rest: `WORK-MB-PARADIGM-DELTA-BRIEF.md` asserts as *verified* a claim this same commit **withdraws as false** — a self-contradiction inside one commit, not a moved line number.
 
 ## Sources
 

@@ -247,22 +247,46 @@ echo "--- check 5: token budget drift ---"
 # WHY: Previously mb.sh used `grep -c ... || echo 0` which on Git Bash produced "0\n0"
 # on no-match (grep exits 1, || fires, appending a second 0). Fixed in mb.sh to use
 # grep -q + explicit 0/1 assignment. Check 5 now runs correctly on all platforms.
+#
+# WHY this fixture writes a settings.json value: check 5 was rewritten 2026-08-25 to compare
+# the THRESHOLD each instruction file states against the live setting, rather than testing
+# whether the variable NAME appears in both files. The old form reported "[OK] Token Budget
+# section current" while ~/.claude/CLAUDE.md hardcoded 50% against a settings.json of 65 --
+# a presence check reported as a correctness check. With no value in settings.json there is
+# no ground truth to compare against and the check correctly SKIPs, so the fixture has to
+# supply one.
 
 TMPDIR_DRIFT="$(mktemp -d 2>/dev/null || mktemp -d -t mb-drift-test)"
 trap 'rm -rf "$TMPDIR_DRIFT"' EXIT
 
 setup_doctor_project "$TMPDIR_DRIFT"
-# Set up a global CLAUDE.md with the token budget marker
+# Ground truth for the comparison: 65.
+cat > "$TMPDIR_DRIFT/.claude/settings.json" <<'JSON'
+{
+  "env": {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "65"},
+  "hooks": {
+    "PostToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "scripts/update-last-reviewed.sh"}]}]
+  }
+}
+JSON
 FAKE_HOME="$(mktemp -d 2>/dev/null || mktemp -d -t mb-drift-home)"
 trap 'rm -rf "$FAKE_HOME"' EXIT
 mkdir -p "$FAKE_HOME/.claude"
-echo "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40" > "$FAKE_HOME/.claude/CLAUDE.md"
-# Local CLAUDE.md without the marker — should warn
+# Global file states a threshold that disagrees with settings.json — this is the drift.
+echo "auto-compact fires at 40% context" > "$FAKE_HOME/.claude/CLAUDE.md"
+# Local file states no number at all: deferring is correct and must NOT be flagged.
 echo "# Project" > "$TMPDIR_DRIFT/CLAUDE.md"
 
 output=$(cd "$TMPDIR_DRIFT" && HOME="$FAKE_HOME" MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
-assert_contains "$output" "\[WARN\].*Token Budget\|Token Budget.*\[WARN\]" "check 5: token budget drift → [WARN]" || \
-    assert_contains "$output" "Token Budget" "check 5: token budget section mentioned"
+assert_contains "$output" "\[WARN\].*Token Budget drift" "check 5: stated 40% vs live 65% → [WARN]"
+assert_contains "$output" "states 40%" "check 5: names the drifted value"
+
+# Discrimination: a stated value that AGREES must not warn. WHY this case exists: without it
+# the assertion above passes just as well for a check that warns unconditionally, which is
+# exactly the defect being fixed here -- a check that cannot fail does not count as a check.
+echo "auto-compact fires at 65% context" > "$FAKE_HOME/.claude/CLAUDE.md"
+output=$(cd "$TMPDIR_DRIFT" && HOME="$FAKE_HOME" MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "\[OK\].*Token Budget" "check 5: agreeing value → [OK] (discrimination)"
 
 # ── Check 6: File size over limit ─────────────────────────────────────────────
 echo ""

