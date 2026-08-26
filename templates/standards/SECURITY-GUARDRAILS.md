@@ -109,9 +109,103 @@ This can't be hook-enforced either: a `PreToolUse` hook only fires on tool calls
 |------|---------|-----------|
 | Amend commits | Any `git commit --amend` | Can confuse history |
 | Skip hooks | `--no-verify` flag | Bypasses safety checks |
+| Skip commit signing | `--no-gpg-sign`, or `commit.gpgsign` set to a falsey value (`false`/`0`/`no`/`off`, quoted or bare, any case) via `git -c` or a `git config` subcommand, or `--unset`/`--unset-all commit.gpgsign` | Same class as skipping hooks — routes around local governance. `--global` is the sharper case: it silently unsigns every commit in every repo thereafter. **Not covered** (see below) |
 | Force push (non-protected) | `--force` to feature branch | Still risky |
 | Interactive rebase | `git rebase -i` | Complex history changes |
 | Merge into a shared/base branch | Any local `git merge` onto a branch that has a remote or an open PR — not just `git push` | Combines history irreversibly; a hook can't verify authorization for this the way it can verify a diff hash (see "What Counts as Approval" below) |
+
+**What the commit-signing gate does not cover.** The pattern matches a git *invocation* that sets
+the config. These reach the same outcome and are deliberately not matched:
+
+- `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` environment variables. **Corrected
+  2026-08-24:** an earlier version of this list said these "set the key before `git` appears in the
+  command string", which implied a re-anchored pattern could catch them. It cannot. The env-var
+  mechanism is a *substitute* for `-c`/`config`, so the anchor token the patterns require is absent
+  from the invocation entirely (verified against git 2.55).
+- Appending `[commit]` / `gpgsign=false` directly into `.git/config`, which never invokes git.
+- `tag.gpgsign` and `push.gpgSign` — a different config namespace, out of scope for a
+  commit-signing gate.
+- A **computed value** — `git config commit.gpgsign $(echo false)`. The literal `(false|no|off|0)`
+  alternation cannot see through command substitution.
+- An **indirected key** — `K=commit.gpgsign; git config "$K" false`. Resolving it requires
+  *evaluating* the shell rather than reading it.
+- **(added 2026-08-24)** More than 300 characters between `git` and `config`, or between `config`
+  and the key. Those two patterns nest two gap groups, which made matching **cubic** (~8x per
+  doubling, measured): at the 50,000-character input limit the guard could spend roughly **47
+  minutes** inside a single pattern, and a `PreToolUse` hook blocks the tool call while it runs — so
+  an oversized command hung the agent outright rather than merely running slowly. That was reachable
+  without an attacker: a large heredoc writing prose *about* `git config`, containing no `|`, `;` or
+  `&`, has exactly that shape. Those four gap groups are now bounded to `{0,300}`. **The longest
+  `-C` path that still matches is 296 characters** — measured, and it follows from the arithmetic:
+  the gap must also hold `-C `, the leading `/` and the trailing space, so path + 4 <= 300; an earlier version of this paragraph
+  said 490, which was wrong because the gap must also hold `-C ` and the trailing space. The cost is
+  flag-and-path territory, where real gaps are short (`--global` is 9 characters), and it does not
+  lower the floor — anyone able to pad the command text already has the two unclosable cases above,
+  which are strictly easier.
+
+  **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
+  costs about **17.5 seconds** in the PowerShell hook, which blocks the tool call for that whole
+  time. It is quadratic now, so halving the 50,000-byte limit would quarter it; that trade has not
+  been made, and is recorded here rather than left for the next person to rediscover.
+
+  **The `-c` and `--no-gpg-sign` patterns are deliberately NOT bounded**, and this distinction is
+  load-bearing. Each nests only one gap group and is quadratic at worst (**4.3s** at 50,000
+  characters on dense `git ` text, measured — an earlier version of this line said 1.6s, which was
+  measured on dense `git config ` text, the shape that is worst for the NESTED patterns and not for
+  these two), so neither needs a bound — and in `git <gap> --no-gpg-sign` the gap holds the **commit
+  message**, not flags. An earlier attempt bounded all six groups uniformly and thereby disabled the
+  signing CONFIRM for any commit message longer than about 185 characters, on both shells. Bounding
+  a gap is only safe where the gap holds flags.
+
+The last two are not closable by a text matcher at any level of effort, which is why they are listed
+rather than chased. Writing patterns that appeared to cover them would be a false claim of coverage.
+
+Matching the first two would not raise the floor: a plain `>> .git/config` append is simpler than
+either and stays open regardless, so gating them would convert an honest limit into a false claim
+of coverage. The same is true of the pre-existing `--no-verify` row, which
+`git -c core.hooksPath=/dev/null commit` defeats.
+
+**Accepted false positives.** The key patterns require a `config` subcommand or a `-c` flag, so a
+git command that merely mentions `commit.gpgsign` in a message or a search argument does not fire —
+`git commit -m "...commit.gpgsign false..."`, `git log -S "..."` and a trailing `#` comment are all
+clear. Three cases do still trip, and are accepted rather than chased:
+
+- a command quoting a git config invocation as *text* (`echo "git config commit.gpgsign false"`);
+- a git command naming `--no-gpg-sign` in free text (`git commit -m "detect --no-gpg-sign bypass"`,
+  `git log --grep=--no-gpg-sign`) — that pattern cannot require a `config` subcommand, because the
+  flag is genuinely used on `commit`, `tag` and `rebase`;
+- a command whose prose happens to contain the word `config` near the key;
+- **(added 2026-08-25)** a command where the key appears after a shell separator, in a *later*
+  command — `git config user.name x | grep commit.gpgsign false`, or `git status | grep --
+  --no-gpg-sign`. The gaps in these patterns used to exclude `|`, `;` and `&`, which kept those
+  quiet — but the same exclusion silently allowed real bypasses whose separator sat inside a
+  *quoted value*: `git -c core.pager='less | head' config --global commit.gpgsign false`
+  permanently unsigns every commit in every repo, and `core.pager` with a pipe is an ordinary
+  configuration. Distinguishing "separator inside a quoted argument" from "separator that ends the
+  command" requires tokenizing the shell, which this matcher deliberately does not do. So the
+  choice is which way to be wrong; a spurious prompt was taken over a silent miss. The gaps stay
+  length-bounded (`.{0,300}`) because those two patterns are the ones with the quadratic blowup —
+  bounding is what contains that, not the character class, and the bounded form measured slightly
+  faster than the class it replaced.
+- **(added 2026-08-24)** a command whose meaning changes when backslashes and quotes are stripped.
+  The guard matches a second, deliberately de-escaped view of the command in addition to the
+  faithful one, because a shell strips a backslash before *any* character and concatenates adjacent
+  quoted segments — `r\m -r\f` really does run as `rm -rf`, and `git config "commit."'gpgsign'
+  false` really does disable signing. Both were live, unprompted bypasses. The cost is that
+  `echo "rm" "-rf"` now collapses to `echo rm -rf` and trips BLOCK. The extra view can only ever
+  *add* a match, never remove one, so the error direction is refusal rather than silence.
+
+A mechanism that stripped `-m`/`--message`/`-S`/`--grep` payloads before matching was built for
+these and then withdrawn: making the hook's view of a command deliberately differ from what the
+shell will run introduced two defects of its own — `sed` is line-based while .NET `-replace` is not,
+so the two shells disagreed on multi-line input, and an unquoted multi-word argument was only
+partly removed. Anchoring alone had already resolved three of the four cases it was built for.
+
+**Backslash line-continuation is normalized before matching.** The shell removes a backslash-newline
+before git sees the command, so a wrapped invocation runs exactly as its one-line form. Until review
+round 4 the hook matched the raw two-line text and no pattern's glue matched a backslash or a
+newline — `git config commit.gpgsign \`⏎`false` disabled signing with no prompt. The join applies to
+every tier, because the same evasion defeated literal BLOCK substrings such as `git push --force`.
 
 ### Database Operations
 

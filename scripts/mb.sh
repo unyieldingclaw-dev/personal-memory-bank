@@ -241,7 +241,7 @@ show_status() {
                 DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
                 if [ "$DAYS_SINCE" -gt "$STALE_DAYS" ]; then
                     echo -e "  ${YELLOW}⚠${NC} Active Context ($DAYS_SINCE days)"
-                    ATTENTION_ITEMS+=("Active Context stale (${DAYS_SINCE}d, threshold ${STALE_DAYS}d) — run 'mb audit'")
+                    ATTENTION_ITEMS+=("Active Context stale (${DAYS_SINCE}d, threshold ${STALE_DAYS}d) — run 'mb doctor'")
                 else
                     echo -e "  ${GREEN}✓${NC} Active Context Current"
                 fi
@@ -500,6 +500,71 @@ invoke_commit() {
     echo ""
 }
 
+# Canonical .gitignore entries every mb-managed project needs: the review gate's runtime
+# markers, the integrity baseline, the delegation counter, the ephemeral handoff note, and
+# per-task contracts. All are machine-local state that must never be committed.
+#
+# WHY a shared helper called from BOTH init and upgrade: this list previously lived inline in
+# invoke_init only, and invoke_upgrade never touched .gitignore at all -- so an entry added
+# here could never reach a project that had already been initialized, however many times it
+# upgraded. That is the same fix-the-template-and-the-fleet-never-receives-it shape as the
+# fleet version-drift incident. Measured across 12 sibling projects on 2026-08-25:
+# `.claude/contracts/*.json` was ignored in PMB and in NONE of five checked adopters, so every
+# project that had ever written a task contract carried permanent untracked noise in
+# `git status`.
+#
+# WHY this list and the .ps1 twin's must stay identical: they had drifted. mb.ps1 already
+# ignored the six review-gate runtime paths below and mb.sh did not, so a bash adopter got a
+# dirtier working tree than a pwsh adopter from the same command -- observed as an untracked
+# .claude/.code-review-ok in a sibling project.
+PMB_GITIGNORE_ENTRIES=(
+    "handoff.md"
+    ".pmb-hook-errors.log"
+    ".pmb-checksums"
+    ".pmb-delegation-depth"
+    ".claude/.code-review-ok"
+    ".claude/.change-review-ok"
+    ".claude/.code-review-ok.claimed*"
+    ".claude/.change-review-ok.claimed*"
+    ".claude/.pending-commit-presha"
+    ".claude/.pending-push-presha"
+    ".claude/contracts/*.json"
+)
+
+# Appends any missing canonical entries to $1/.gitignore. Sets GITIGNORE_ADDS to what was
+# (or would be) added; returns 0 if there was anything, 1 if the file is already complete.
+# Pass "true" as $2 to compute without writing. Callers must invoke this inside an `if`:
+# the script runs under `set -e`, where a bare 1 return would abort.
+#
+# WHY grep -qxF (whole-line, fixed-string) and not the previous escaped-regex grep: these
+# entries contain both `.` and `*`, and a substring match makes ".claude/.code-review-ok"
+# register as already present when only ".claude/.code-review-ok.claimed*" is in the file --
+# silently skipping a needed entry. Whole-line fixed matching cannot collide that way. The
+# list is append-only, so a false miss costs a duplicate line, never a behaviour change.
+sync_gitignore() {
+    _gi_dir="$1"
+    _gi_dry="${2:-false}"
+    GITIGNORE="$_gi_dir/.gitignore"
+    # WHY the sed: a bare `grep -qxF` against a CRLF-terminated .gitignore MISSES every
+    # entry under real GNU grep -- the trailing \r is part of the line. Git Bash's grep runs
+    # in text mode and strips it, which hides the bug on Windows; this repo's own .gitignore
+    # is CRLF, so an `mb upgrade` from WSL or Linux CI would re-append all 11 entries on
+    # every run, unbounded. Trailing whitespace is stripped for the same reason, and only
+    # TRAILING: a .gitignore line's LEADING whitespace is significant to git, so `  foo` does
+    # not ignore `foo` and must not be treated as already present. Must match Sync-Gitignore.
+    GITIGNORE_CONTENT=$(sed 's/[[:space:]]*$//' "$GITIGNORE" 2>/dev/null || echo "")
+    GITIGNORE_ADDS=()
+    for entry in "${PMB_GITIGNORE_ENTRIES[@]}"; do
+        printf '%s\n' "$GITIGNORE_CONTENT" | grep -qxF -- "$entry" || GITIGNORE_ADDS+=("$entry")
+    done
+    [ "${#GITIGNORE_ADDS[@]}" -eq 0 ] && return 1
+    [ "$_gi_dry" = true ] && return 0
+    if [ ! -f "$GITIGNORE" ]; then printf "# Memory Bank\n" > "$GITIGNORE"; fi
+    printf "\n# Memory Bank\n" >> "$GITIGNORE"
+    for entry in "${GITIGNORE_ADDS[@]}"; do printf "%s\n" "$entry" >> "$GITIGNORE"; done
+    return 0
+}
+
 invoke_init() {
     echo ""
     echo -e "${CYAN}Memory Bank${NC}"
@@ -607,18 +672,8 @@ invoke_init() {
         done
     fi
 
-    # .gitignore
-    GITIGNORE="$TARGET/.gitignore"
-    GITIGNORE_CONTENT=$(cat "$GITIGNORE" 2>/dev/null || echo "")
-    GITIGNORE_ADDS=()
-    echo "$GITIGNORE_CONTENT" | grep -q "handoff\.md" || GITIGNORE_ADDS+=("handoff.md")
-    echo "$GITIGNORE_CONTENT" | grep -q "\.pmb-hook-errors\.log" || GITIGNORE_ADDS+=(".pmb-hook-errors.log")
-    echo "$GITIGNORE_CONTENT" | grep -q "\.pmb-checksums" || GITIGNORE_ADDS+=(".pmb-checksums")
-    echo "$GITIGNORE_CONTENT" | grep -q "\.pmb-delegation-depth" || GITIGNORE_ADDS+=(".pmb-delegation-depth")
-    if [ "${#GITIGNORE_ADDS[@]}" -gt 0 ]; then
-        if [ ! -f "$GITIGNORE" ]; then printf "# Memory Bank\n" > "$GITIGNORE"; fi
-        printf "\n# Memory Bank\n" >> "$GITIGNORE"
-        for entry in "${GITIGNORE_ADDS[@]}"; do printf "%s\n" "$entry" >> "$GITIGNORE"; done
+    # .gitignore — see sync_gitignore for the canonical entry list and why it is shared.
+    if sync_gitignore "$TARGET"; then
         CREATED+=(".gitignore (${GITIGNORE_ADDS[*]})")
     fi
 
@@ -808,16 +863,97 @@ show_doctor() {
         echo -e "${YELLOW}[WARN] No .claude/settings.json — safety hooks inactive${NC}"
     fi
 
-    # 5. Token Budget drift
+    # 5. Token Budget drift — do the instruction files agree with the LIVE setting?
+    #
+    # WHY this compares values and not the presence of a variable name: it used to test only
+    # whether the string CLAUDE_AUTOCOMPACT_PCT_OVERRIDE appeared in both CLAUDE.md files, and
+    # reported "[OK] Token Budget section current" whenever it did. Measured 2026-08-25, that
+    # passed while ~/.claude/CLAUDE.md hardcoded "50%" against a settings.json value of 65 —
+    # a presence check reported as a correctness check, the same shape as the round-7 finding
+    # that coverage failures wear correctness clothing. Naming the variable is not the property
+    # worth checking; agreeing with it is.
+    #
+    # WHY a document that states NO number passes: deferring to the setting by name is the
+    # correct way to write it, and is what the project CLAUDE.md already does. This check exists
+    # to catch a COPIED value that has gone stale, so having nothing to copy is a pass, not a gap.
     GLOBAL_CLAUDE="$HOME/.claude/CLAUDE.md"
-    if [ -f "CLAUDE.md" ] && [ -f "$GLOBAL_CLAUDE" ]; then
-        LOCAL_HAS=0; grep -q "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "CLAUDE.md" 2>/dev/null && LOCAL_HAS=1 || true
-        GLOBAL_HAS=0; grep -q "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "$GLOBAL_CLAUDE" 2>/dev/null && GLOBAL_HAS=1 || true
-        if [ "$GLOBAL_HAS" -gt 0 ] && [ "$LOCAL_HAS" -eq 0 ]; then
-            echo -e "${YELLOW}[WARN] Token Budget section may have drifted from ~/.claude/CLAUDE.md${NC}"
-            echo -e "       Run 'mb init' to refresh or manually copy the Token Budget section"
-        elif [ "$LOCAL_HAS" -gt 0 ]; then
-            echo -e "${GREEN}[OK]   Token Budget section current${NC}"
+    TB_SETTINGS=".claude/settings.json"
+    TB_TRUE=""
+    if [ -f "$TB_SETTINGS" ]; then
+        # head -1: grep -o emits every match, so a settings.json carrying the key twice would
+        # make TB_TRUE multi-line and warn against a document that is actually correct.
+        TB_TRUE=$(grep -o '"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"[[:space:]]*:[[:space:]]*"\{0,1\}[0-9]\{1,3\}' "$TB_SETTINGS" 2>/dev/null | grep -o '[0-9]\{1,3\}$' | head -1 || true)
+    fi
+    if [ -z "$TB_TRUE" ]; then
+        echo -e "${GRAY}[SKIP] Token Budget drift — no CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in $TB_SETTINGS${NC}"
+    else
+        TB_DRIFT=()
+        # WHY standards/MEMORY-BANK.md is in this list: it hardcoded the threshold too, and the
+        # first version of this check could not see it. NOTE the boundary, since an earlier draft
+        # of this comment overstated it: the templates/ MIRROR is NOT scanned. In an adopter
+        # standards/MEMORY-BANK.md IS the shipped copy (upgrade copies templates/standards/* into
+        # standards/*), so the gap exists only in the PMB source repo, where a stale constant
+        # could live in templates/ alone. A standards/-vs-templates parity check is tracked
+        # follow-up. Keep in step with mb.ps1.
+        for tb_file in "CLAUDE.md" "$GLOBAL_CLAUDE" "standards/MEMORY-BANK.md"; do
+            [ -f "$tb_file" ] || continue
+            # Any concrete threshold this file asserts: an explicit assignment, or prose of the
+            # form "... at N%" on a line that also mentions compaction.
+            # WHY the gate is the feature name and not a verb or a bare percentage: gating on
+            # 'at N%' over any line mentioning compaction harvested ordinary prose ("keep quality
+            # at 90% while cutting tokens"); gating on the verb 'fires' then missed
+            # "auto-compacts at approximately 50% context", which is how standards/MEMORY-BANK.md
+            # spelled it -- the very file this check was widened to cover. 'auto-compact' matches
+            # all three real spellings and neither near-miss.
+            #
+            # WHY the number must follow "at": sharing a line with "auto-compact" is not
+            # enough. The handoff table reads "| **40%** | Manual compact before auto-compact
+            # fires |", where 40% is the HANDOFF threshold -- a different, legitimate constant
+            # that a bare percentage scan wrongly reported as drift. Binding to "at [qualifier]
+            # N%" keeps every real spelling ("...at 50%", "...at approximately 50%", "...fires
+            # at 50%") and drops both the handoff number and a trailing "~95%" default mention.
+            #
+            # WHY \b before "at": without it the match ran INSIDE other words -- "th(at) 50%",
+            # "form(at) 50%", "gre(at) 90%" each yielded a bogus claim and a false WARN. This is
+            # a narrowing only: it removes false positives and can introduce none. Must match
+            # mb.ps1's '(?i)\bat ...'.
+            #
+            # KNOWN LIMITS -- measured 2026-08-26 and recorded rather than patched, matching how
+            # the S4/S5 matcher limits were handled. Widening this matcher is what produced the
+            # false positives above, so the bar for changing it is a real corpus miss, not a
+            # hypothetical spelling.
+            #   (a) FALSE OK. A threshold is invisible unless its digits follow "at". The table
+            #       row THIS COMMIT hand-fixed -- "Manual compact before 50% auto-compact fires"
+            #       -- states 50% and yields no claim; so do "threshold is 50%" and "at 50
+            #       percent". The check catches the common spellings of the defect it exists to
+            #       catch, not all of them. Do not read [OK] as proof no constant is restated.
+            #   (b) FALSE WARN. A line that legitimately says "at N%" about something else while
+            #       also mentioning auto-compaction still registers ("auto-compact keeps quality
+            #       at 90%"). \b does NOT close this; only sentence parsing would.
+            #   (c) An earlier draft of this comment claimed the 'auto-compact' gate had closed
+            #       (b). It had not -- that gate only helps when the offending line does NOT also
+            #       mention the feature. Corrected here rather than left standing.
+            #   (d) NOT SCANNED: templates/standards/MEMORY-BANK.md. In an adopter,
+            #       standards/MEMORY-BANK.md IS the shipped copy, so this gap is PMB-source-only;
+            #       a standards/-vs-templates parity check is tracked follow-up work.
+            #   (e) REMOVED BEHAVIOUR: the pre-2026-08-25 check WARNed when ~/.claude/CLAUDE.md
+            #       carried the sentinel and the project CLAUDE.md did not, so a CLAUDE.md that
+            #       loses its Token Budget section entirely now reports [OK]. Deliberate: that
+            #       branch required a global CLAUDE.md, which mb never creates, so it was silent
+            #       for essentially every adopter -- and its remediation ("copy the section from
+            #       global") is the exact practice this check now warns against.
+            TB_CLAIMS=$( { grep -o 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE[[:space:]]*=[[:space:]]*[0-9]\{1,3\}' "$tb_file" 2>/dev/null | grep -o '[0-9]\{1,3\}$'
+                           grep -i 'auto-compact' "$tb_file" 2>/dev/null | grep -io '\bat [a-z]* *~*[0-9]\{1,3\}%' | grep -o '[0-9]\{1,3\}'; } | sort -u || true)
+            for claim in $TB_CLAIMS; do
+                [ "$claim" = "$TB_TRUE" ] || TB_DRIFT+=("$tb_file states ${claim}%")
+            done
+        done
+        if [ "${#TB_DRIFT[@]}" -gt 0 ]; then
+            echo -e "${YELLOW}[WARN] Token Budget drift — instruction files disagree with $TB_SETTINGS (${TB_TRUE}%)${NC}"
+            for d in "${TB_DRIFT[@]}"; do echo -e "       $d"; done
+            echo -e "       Name the setting instead of copying its value — a restated constant goes stale silently."
+        else
+            echo -e "${GREEN}[OK]   Token Budget — no instruction file contradicts $TB_SETTINGS (${TB_TRUE}%)${NC}"
         fi
     fi
 
@@ -919,7 +1055,7 @@ show_doctor() {
         DETAIL=""
         [ "$STALE_VOLATILE" -gt 0 ] && DETAIL="${STALE_VOLATILE} volatile/accumulating"
         [ "$STALE_STABLE" -gt 0 ] && DETAIL="${DETAIL:+$DETAIL, }${STALE_STABLE} stable"
-        echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb audit' for details${NC}"
+        echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb doctor' for details${NC}"
     fi
 
     # 10. Placeholder residue
@@ -1649,7 +1785,7 @@ show_compact() {
 
     if [ "$TOTAL_KB" -lt 60 ]; then
         echo -e "${GREEN}memory-bank/ is ${TOTAL_KB} KB — below the 60 KB compaction threshold.${NC}"
-        echo -e "${YELLOW}Compaction is most valuable when size > 60 KB and mb audit shows stale files.${NC}"
+        echo -e "${YELLOW}Compaction is most valuable when size > 60 KB and mb doctor shows stale files.${NC}"
         echo ""
     fi
 
@@ -1946,6 +2082,18 @@ invoke_upgrade() {
         fi
     done
 
+
+    # .gitignore — reconcile the canonical entry list. WHY upgrade does this at all: it did
+    # not before, so any entry added after a project was initialized could never reach it.
+    if sync_gitignore "." "$DRY_RUN"; then
+        if [ "$DRY_RUN" = true ]; then
+            echo -e "${GREEN}[+?] .gitignore (would add: ${GITIGNORE_ADDS[*]})${NC}"
+        else
+            echo -e "${GREEN}[+] .gitignore (added: ${GITIGNORE_ADDS[*]})${NC}"
+        fi
+    else
+        echo -e "${GRAY}[=] .gitignore (all mb entries present)${NC}"
+    fi
 
     # Write .pmb-version — records which PMB version this project was last upgraded with
     if [ -f "$REPO_ROOT/VERSION" ] && [ "$DRY_RUN" = false ]; then
@@ -2657,15 +2805,26 @@ case "$COMMAND" in
     preflight)         show_preflight ;;
     change-check)      show_change_check ;;
     help)              show_help ;;
-    # Deprecated aliases — kept for backward compatibility, not shown in help
-    install-hooks) echo -e "${YELLOW}mb install-hooks is now part of mb upgrade. Run: mb upgrade${NC}" ;;
-    validate)      echo -e "${YELLOW}mb validate is now part of mb doctor. Run: mb doctor${NC}" ;;
-    audit)         echo -e "${YELLOW}mb audit is now part of mb doctor. Run: mb doctor${NC}" ;;
-    budget)        echo -e "${YELLOW}mb budget is now part of mb doctor. Run: mb doctor${NC}" ;;
-    compact)       echo -e "${YELLOW}mb compact is now part of mb clean. Run: mb clean${NC}" ;;
+    # Deprecated aliases — kept for backward compatibility, not shown in help.
+    #
+    # WHY the redirect-only shims exit 2 rather than 0: a shim that prints a notice and
+    # returns success is indistinguishable from a real success to any script reading the
+    # exit code. That is not hypothetical — the pre-push gate called `mb validate` and
+    # printed "[OK] mb validate passed" on every push in every managed project while
+    # validating nothing, because the shim returned 0. Exit 2 means "command moved":
+    # humans see the same notice, scripts can tell it did not run.
+    #
+    # NOTE `update` is deliberately NOT in this group. It is a LIVE alias that really
+    # performs the upgrade, not a redirect notice — giving it a non-zero exit would break
+    # a working command. Deprecated does not imply dead; check the body before changing.
+    install-hooks) echo -e "${YELLOW}mb install-hooks is now part of mb upgrade. Run: mb upgrade${NC}"; exit 2 ;;
+    validate)      echo -e "${YELLOW}mb validate is now part of mb doctor. Run: mb doctor${NC}"; exit 2 ;;
+    audit)         echo -e "${YELLOW}mb audit is now part of mb doctor. Run: mb doctor${NC}"; exit 2 ;;
+    budget)        echo -e "${YELLOW}mb budget is now part of mb doctor. Run: mb doctor${NC}"; exit 2 ;;
+    compact)       echo -e "${YELLOW}mb compact is now part of mb clean. Run: mb clean${NC}"; exit 2 ;;
     update)            invoke_upgrade ;;
-    archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}" ;;
-    slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}" ;;
+    archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}"; exit 2 ;;
+    slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}"; exit 2 ;;
     plan)
         SUBCMD="${2:-status}"
         ARG="${3:-}"

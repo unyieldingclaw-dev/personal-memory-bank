@@ -100,7 +100,7 @@ mb change-check  Validates a change package against its declared plan before rev
 mb help          Full command list
 ```
 
-> Deprecated commands (`validate`, `audit`, `budget`, `compact`, `update`, `archive`, `slim`, `install-hooks`) still work as redirects to their absorbing command. They are not shown in `mb help` but will not error.
+> Deprecated commands (`validate`, `audit`, `budget`, `compact`, `archive`, `slim`, `install-hooks`) print a notice naming their absorbing command and **exit 2** ("command moved"). They are not shown in `mb help`. The non-zero exit is deliberate: a redirect that exits 0 is indistinguishable from real success to any script reading the exit code, which is how a pre-push check came to report `[OK] mb validate passed` while validating nothing. Run the absorbing command instead. (`update` is the exception on POSIX — there it is a live alias for `mb upgrade`, not a redirect.)
 
 ## Slash Commands
 
@@ -273,16 +273,22 @@ PMB installs two git hooks automatically — no manual copying needed.
 
 **`mb init`** creates `.githooks/pre-push` and `.githooks/pre-commit` in the project and sets `core.hooksPath = .githooks` (a local git config, not committed), so git resolves hooks from the versioned `.githooks/` directory. **`mb upgrade`** keeps them current (both hooks are `TEMPLATE_OWNED` — overwritten if stale).
 
-**`.githooks/pre-push`** — runs before every `git push`, blocks on errors:
+**`.githooks/pre-push`** — runs before every `git push`. Only 3 of its 7 checks block:
 
-- Unresolved merge conflicts or conflict markers in staged files
-- Uncommitted changes in the working tree
-- Missing `.gitattributes`
-- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs) — scans first pushes via `git log --not --remotes` when no upstream tracking ref exists
-- Files over 500 KB
-- `mb validate` result (if `mb` is in PATH)
+- Unresolved merge conflicts or conflict markers in staged files — **blocks**
+- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs) — **blocks**; scans first pushes via `git log HEAD --not --remotes` when no upstream tracking ref exists
+- Uncommitted changes in the working tree — warns
+- Missing `.gitattributes` — warns
+- Files over 500 KB — warns
+- Memory-bank integrity via `mb doctor` — warns, or reports `UNKNOWN` if `mb` is unavailable
 
-Fails open — if the script errors unexpectedly, the push is allowed through.
+Because most checks are advisory, the summary reports three states rather than two — `[PASS]`
+only when every check ran and passed, `[PASS with N warning(s)]`, or `[DEGRADED]` when a check
+could not be evaluated at all. A check that did not run is never reported as one that passed.
+Set `ENFORCE=true` to promote warnings and unknowns to blocking.
+
+Fails open — if the script errors unexpectedly, the push is allowed through, except that an
+already-confirmed blocking finding is still honoured.
 
 **`.githooks/pre-commit`** — runs before every `git commit`:
 

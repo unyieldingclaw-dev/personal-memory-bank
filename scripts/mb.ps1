@@ -456,7 +456,7 @@ function Show-Status {
                 $daysSince = ([datetime]::Today - $reviewedDate).Days
                 if ($daysSince -gt $staleDays) {
                     Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " Active Context ($daysSince days)"
-                    $attentionItems.Add("Active Context stale (${daysSince}d, threshold ${staleDays}d) — run 'mb audit'")
+                    $attentionItems.Add("Active Context stale (${daysSince}d, threshold ${staleDays}d) — run 'mb doctor'")
                 } else {
                     Write-Host "  " -NoNewline; Write-Host "✓" -ForegroundColor Green -NoNewline; Write-Host " Active Context Current"
                 }
@@ -725,8 +725,67 @@ function Show-Budget {
     Write-Host "    /model opus  ->  /model sonnet               (escalate then return)" -ForegroundColor White
     Write-Host ""
     if ($claudeKB -gt 8) { Write-Host "  CLAUDE.md is large. Trim unused sections." -ForegroundColor Yellow }
-    if ($mbKB -gt 40) { Write-Host "  memory-bank/ is large. Run 'mb slim' or 'mb archive'." -ForegroundColor Yellow }
+    if ($mbKB -gt 40) { Write-Host "  memory-bank/ is large. Run 'mb clean'." -ForegroundColor Yellow }
     Write-Host ""
+}
+
+# Canonical .gitignore entries every mb-managed project needs: the review gate's runtime
+# markers, the integrity baseline, the delegation counter, the ephemeral handoff note, and
+# per-task contracts. All are machine-local state that must never be committed.
+#
+# WHY a shared helper called from BOTH init and upgrade: this list previously lived inline in
+# Invoke-Init only, and Invoke-Upgrade never touched .gitignore at all -- so an entry added
+# here could never reach a project that had already been initialized, however many times it
+# upgraded. Measured across 12 sibling projects on 2026-08-25: `.claude/contracts/*.json` was
+# ignored in PMB and in NONE of five checked adopters, so every project that had ever written
+# a task contract carried permanent untracked noise in `git status`.
+#
+# WHY this list must stay identical to mb.sh's PMB_GITIGNORE_ENTRIES: they had drifted. This
+# file already carried the six review-gate runtime paths and mb.sh did not, so a bash adopter
+# got a dirtier working tree than a pwsh adopter from the same command.
+$PmbGitignoreEntries = @(
+    "handoff.md"
+    ".pmb-hook-errors.log"
+    ".pmb-checksums"
+    ".pmb-delegation-depth"
+    ".claude/.code-review-ok"
+    ".claude/.change-review-ok"
+    ".claude/.code-review-ok.claimed*"
+    ".claude/.change-review-ok.claimed*"
+    ".claude/.pending-commit-presha"
+    ".claude/.pending-push-presha"
+    ".claude/contracts/*.json"
+)
+
+# Appends any missing canonical entries to <dir>/.gitignore. Returns the list of entries that
+# were (or with -WhatIfOnly, would be) added; an empty array means the file is already complete.
+#
+# WHY an exact whole-line comparison rather than the previous -notmatch regex: these entries
+# contain both `.` and `*`, and a substring/regex match makes ".claude/.code-review-ok"
+# register as already present when only ".claude/.code-review-ok.claimed*" is in the file --
+# silently skipping a needed entry. The list is append-only, so a false miss costs a duplicate
+# line, never a behaviour change.
+function Sync-Gitignore {
+    param([string]$Dir, [switch]$WhatIfOnly)
+    $gitignore = Join-Path $Dir ".gitignore"
+    # TrimEnd, not Trim: a .gitignore line's LEADING whitespace is significant to git, so
+    # `  foo` does not ignore `foo` and must not count as already present. Trailing whitespace
+    # and CR are insignificant and are stripped -- matching mb.sh's sed, which exists because
+    # a CRLF file otherwise misses every entry under real GNU grep.
+    $existing = if (Test-Path $gitignore) {
+        @(Get-Content $gitignore | ForEach-Object { $_.TrimEnd() })
+    } else { @() }
+    $added = @()
+    foreach ($entry in $PmbGitignoreEntries) {
+        if ($existing -cnotcontains $entry) { $added += $entry }
+    }
+    if ($added.Count -eq 0) { return @() }
+    if ($WhatIfOnly) { return $added }
+    if (-not (Test-Path $gitignore)) {
+        Set-Content -Path $gitignore -Value "# Memory Bank"
+    }
+    Add-Content -Path $gitignore -Value "`n# Memory Bank`n$($added -join "`n")"
+    return $added
 }
 
 function Invoke-Init {
@@ -832,25 +891,9 @@ function Invoke-Init {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target "docs\$($f.Name)") -Label "docs/$($f.Name)"
     }
 
-    # .gitignore
-    $gitignore = Join-Path $Target ".gitignore"
-    $gitignoreContent = if (Test-Path $gitignore) { Get-Content $gitignore -Raw } else { "" }
-    $gitignoreAdded = @()
-    if ($gitignoreContent -notmatch "handoff\.md") { $gitignoreAdded += "handoff.md" }
-    if ($gitignoreContent -notmatch "\.pmb-hook-errors\.log") { $gitignoreAdded += ".pmb-hook-errors.log" }
-    if ($gitignoreContent -notmatch "\.pmb-checksums") { $gitignoreAdded += ".pmb-checksums" }
-    if ($gitignoreContent -notmatch "\.pmb-delegation-depth") { $gitignoreAdded += ".pmb-delegation-depth" }
-    if ($gitignoreContent -notmatch "\.claude/\.code-review-ok") { $gitignoreAdded += ".claude/.code-review-ok" }
-    if ($gitignoreContent -notmatch "\.claude/\.change-review-ok") { $gitignoreAdded += ".claude/.change-review-ok" }
-    if ($gitignoreContent -notmatch "\.claude/\.code-review-ok\.claimed") { $gitignoreAdded += ".claude/.code-review-ok.claimed*" }
-    if ($gitignoreContent -notmatch "\.claude/\.change-review-ok\.claimed") { $gitignoreAdded += ".claude/.change-review-ok.claimed*" }
-    if ($gitignoreContent -notmatch "\.claude/\.pending-commit-presha") { $gitignoreAdded += ".claude/.pending-commit-presha" }
-    if ($gitignoreContent -notmatch "\.claude/\.pending-push-presha") { $gitignoreAdded += ".claude/.pending-push-presha" }
+    # .gitignore — see Sync-Gitignore for the canonical entry list and why it is shared.
+    $gitignoreAdded = Sync-Gitignore -Dir $Target
     if ($gitignoreAdded.Count -gt 0) {
-        if (-not (Test-Path $gitignore)) {
-            Set-Content -Path $gitignore -Value "# Memory Bank"
-        }
-        Add-Content -Path $gitignore -Value "`n# Memory Bank`n$($gitignoreAdded -join "`n")"
         $Created += ".gitignore ($($gitignoreAdded -join ', '))"
     }
 
@@ -1065,18 +1108,74 @@ function Show-Doctor {
         Write-Host "       Copy templates/.claude/settings.json to enable" -ForegroundColor DarkGray
     }
 
-    # 5. Token Budget drift
+    # 5. Token Budget drift — do the instruction files agree with the LIVE setting?
+    #
+    # WHY this compares values and not the presence of a variable name: it used to test only
+    # whether the string CLAUDE_AUTOCOMPACT_PCT_OVERRIDE appeared in both CLAUDE.md files, and
+    # reported "[OK] Token Budget section current" whenever it did. Measured 2026-08-25, that
+    # passed while ~/.claude/CLAUDE.md hardcoded "50%" against a settings.json value of 65 —
+    # a presence check reported as a correctness check. Naming the variable is not the property
+    # worth checking; agreeing with it is. Must stay behaviourally identical to mb.sh's check 5.
+    #
+    # WHY a document that states NO number passes: deferring to the setting by name is the
+    # correct way to write it, and is what the project CLAUDE.md already does. This check exists
+    # to catch a COPIED value that has gone stale, so having nothing to copy is a pass, not a gap.
     $globalClaude = Join-Path $env:USERPROFILE ".claude\CLAUDE.md"
-    if ((Test-Path "CLAUDE.md") -and (Test-Path $globalClaude)) {
-        $localContent = Get-Content "CLAUDE.md" -Raw
-        $globalContent = Get-Content $globalClaude -Raw
-        $localHasSentinel = $localContent -match "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
-        $globalHasSentinel = $globalContent -match "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
-        if ($globalHasSentinel -and -not $localHasSentinel) {
-            Write-Host "[WARN] Token Budget section may have drifted from ~/.claude/CLAUDE.md" -ForegroundColor Yellow
-            Write-Host "       Run 'mb init' to refresh or manually copy the Token Budget section" -ForegroundColor DarkGray
-        } elseif ($localHasSentinel) {
-            Write-Host "[OK]   Token Budget section current" -ForegroundColor Green
+    $tbSettings = ".claude/settings.json"
+    $tbTrue = $null
+    if (Test-Path $tbSettings) {
+        # [^\S\r\n] not \s: .NET \s crosses newlines on -Raw input while grep's [[:space:]]
+        # is line-bounded, so the two shells disagreed when the value sat on the next line.
+        # Match() already takes only the first hit, mirroring mb.sh's head -1.
+        $m = [regex]::Match((Get-Content $tbSettings -Raw), '"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"[^\S\r\n]*:[^\S\r\n]*"?(\d{1,3})')
+        if ($m.Success) { $tbTrue = $m.Groups[1].Value }
+    }
+    if (-not $tbTrue) {
+        Write-Host "[SKIP] Token Budget drift — no CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in $tbSettings" -ForegroundColor DarkGray
+    } else {
+        $tbDrift = @()
+        # WHY standards/MEMORY-BANK.md is in this list: it hardcoded the threshold too, and the
+        # first version of this check could not see it. NOTE the boundary, since an earlier draft
+        # of this comment overstated it: the templates/ MIRROR is NOT scanned. In an adopter
+        # standards/MEMORY-BANK.md IS the shipped copy (upgrade copies templates/standards/* into
+        # standards/*), so the gap exists only in the PMB source repo, where a stale constant
+        # could live in templates/ alone. A standards/-vs-templates parity check is tracked
+        # follow-up. Keep in step with mb.sh.
+        foreach ($tbFile in @("CLAUDE.md", $globalClaude, "standards/MEMORY-BANK.md")) {
+            if (-not (Test-Path $tbFile)) { continue }
+            $claims = @()
+            foreach ($line in (Get-Content $tbFile)) {
+                foreach ($mm in [regex]::Matches($line, 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE\s*=\s*(\d{1,3})')) {
+                    $claims += $mm.Groups[1].Value
+                }
+                # The number must follow "at" -- see mb.sh: sharing a line with the feature
+                # name also matched the 40% HANDOFF threshold in the same table. \b keeps the
+                # match from running inside "th(at)/form(at)/gre(at) N%" -- a narrowing that
+                # removes false positives and can add none. Must match mb.sh's '\bat ...'.
+                # KNOWN LIMITS (identical to mb.sh -- its block carries the full reasoning):
+                # (a) a threshold whose digits do NOT follow "at" is invisible, including the
+                # "before 50% auto-compact fires" table form this commit hand-fixed, so [OK] is
+                # not proof no constant is restated; (b) a line legitimately saying "at N%"
+                # about something else while also naming the feature still registers -- \b does
+                # not close that; (c) an earlier draft wrongly claimed the 'auto-compact' gate
+                # had closed (b); (d) templates/standards/MEMORY-BANK.md is not scanned; (e) the
+                # old "project CLAUDE.md lost the section" WARN is gone, nothing replaces it.
+                if ($line -match '(?i)auto-compact') {
+                    foreach ($mm in [regex]::Matches($line, '(?i)\bat [a-z]* *~*(\d{1,3})%')) {
+                        $claims += $mm.Groups[1].Value
+                    }
+                }
+            }
+            foreach ($claim in ($claims | Sort-Object -Unique)) {
+                if ($claim -ne $tbTrue) { $tbDrift += "$tbFile states $claim%" }
+            }
+        }
+        if ($tbDrift.Count -gt 0) {
+            Write-Host "[WARN] Token Budget drift — instruction files disagree with $tbSettings ($tbTrue%)" -ForegroundColor Yellow
+            foreach ($d in $tbDrift) { Write-Host "       $d" }
+            Write-Host "       Name the setting instead of copying its value — a restated constant goes stale silently." -ForegroundColor DarkGray
+        } else {
+            Write-Host "[OK]   Token Budget — no instruction file contradicts $tbSettings ($tbTrue%)" -ForegroundColor Green
         }
     }
 
@@ -1189,7 +1288,7 @@ function Show-Doctor {
         if ($staleVolatile -gt 0) { $parts += "$staleVolatile volatile/accumulating" }
         if ($staleStable -gt 0) { $parts += "$staleStable stable" }
         $detail = $parts -join ", "
-        Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb audit' for details" -ForegroundColor Yellow
+        Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb doctor' for details" -ForegroundColor Yellow
     }
 
     # 10. Placeholder residue
@@ -1924,7 +2023,7 @@ function Show-Compact {
 
     if ($totalKB -lt 60) {
         Write-Host "memory-bank/ is $totalKB KB — below the 60 KB compaction threshold." -ForegroundColor Green
-        Write-Host "Compaction is most valuable when size > 60 KB and mb audit shows stale files." -ForegroundColor Yellow
+        Write-Host "Compaction is most valuable when size > 60 KB and mb doctor shows stale files." -ForegroundColor Yellow
         Write-Host ""
     }
 
@@ -2230,6 +2329,17 @@ function Invoke-Upgrade {
         }
     }
 
+
+    # .gitignore — reconcile the canonical entry list. WHY upgrade does this at all: it did
+    # not before, so any entry added after a project was initialized could never reach it.
+    $giAdded = if ($dryRun) { Sync-Gitignore -Dir "." -WhatIfOnly } else { Sync-Gitignore -Dir "." }
+    if ($giAdded.Count -gt 0) {
+        $marker = if ($dryRun) { "[+?]" } else { "[+]" }
+        $verb = if ($dryRun) { "would add" } else { "added" }
+        Write-Host "$marker .gitignore ($verb`: $($giAdded -join ', '))" -ForegroundColor Green
+    } else {
+        Write-Host "[=] .gitignore (all mb entries present)" -ForegroundColor DarkGray
+    }
 
     # Write .pmb-version — records which PMB version this project was last upgraded with
     $versionFile = Join-Path $RepoRoot "VERSION"
@@ -2906,15 +3016,30 @@ switch ($Command) {
             }
         }
     }
-    # Deprecated aliases — kept for backward compatibility, not shown in help
-    "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow }
-    "validate"      { Write-Host "mb validate is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "audit"         { Write-Host "mb audit is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "budget"        { Write-Host "mb budget is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "compact"       { Write-Host "mb compact is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "update"        { Write-Host "mb update is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "archive"       { Write-Host "mb archive is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "slim"          { Write-Host "mb slim is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
+    # Deprecated aliases — kept for backward compatibility, not shown in help.
+    #
+    # WHY these exit 2 rather than 0: a shim that prints a notice and returns success is
+    # indistinguishable from a real success to any script reading the exit code. That is
+    # not hypothetical — the pre-push gate called `mb validate` and printed
+    # "[OK] mb validate passed" on every push in every managed project while validating
+    # nothing, because the shim returned 0. Exit 2 means "command moved": humans see the
+    # same notice, scripts can tell it did not run.
+    #
+    # KNOWN CROSS-SHELL DIVERGENCE (pre-existing, not introduced here): `mb update` is a
+    # dead redirect here but a LIVE alias for `invoke_upgrade` in mb.sh, and this file's
+    # redirect text ("part of mb clean") is wrong regardless — update maps to upgrade,
+    # not clean. Exiting 2 makes the divergence detectable instead of silent; it removes
+    # no working behaviour, since this path never upgraded anything. Reconciling which
+    # platform is correct is a deliberate cross-shell decision, not a side effect of this
+    # change — left for that decision.
+    "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow; exit 2 }
+    "validate"      { Write-Host "mb validate is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow; exit 2 }
+    "audit"         { Write-Host "mb audit is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow; exit 2 }
+    "budget"        { Write-Host "mb budget is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow; exit 2 }
+    "compact"       { Write-Host "mb compact is now part of mb clean. Run: mb clean" -ForegroundColor Yellow; exit 2 }
+    "update"        { Write-Host "mb update is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow; exit 2 }
+    "archive"       { Write-Host "mb archive is now part of mb clean. Run: mb clean" -ForegroundColor Yellow; exit 2 }
+    "slim"          { Write-Host "mb slim is now part of mb clean. Run: mb clean" -ForegroundColor Yellow; exit 2 }
 }
 
 # Update notifier — runs after every command except upgrade (has its own WARN

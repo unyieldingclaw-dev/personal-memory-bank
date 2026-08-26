@@ -76,8 +76,8 @@ Recognize these shortcuts and respond accordingly:
 |---------|--------|
 | `mb update` | Update all relevant Memory Bank files based on current session |
 | `mb status` | Show file sizes, last updated timestamps, and health check |
-| `mb archive` | Move old session history from activeContext.md to AGENTS.md |
-| `mb slim` | Trim activeContext.md to essentials (<100 lines target) |
+| `mb clean` | Move old session history from activeContext.md to AGENTS.md |
+| `mb clean` | Trim activeContext.md to essentials (<100 lines target) |
 | `mb commit` | Stage and commit all Memory Bank changes |
 
 ## Auto-Update Behavior
@@ -107,4 +107,4 @@ Keep Memory Bank files focused and scannable:
 | `systemPatterns.md` | 100-180 lines | 300 | Consolidate similar patterns |
 | `techContext.md` | 150-250 lines | 400 | Move details to docs/ |
 | `activeContext.md` | 50-100 lines | 150 | Archive history to AGENTS.md |
-| `progress.md` | 100-250 lines | 400 | Archive old versions to docs/ |
+| `progress.md` | 100-250 lines | 600 | Archive old versions to docs/ |

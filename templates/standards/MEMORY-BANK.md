@@ -104,7 +104,7 @@ Every memory-bank file carries YAML frontmatter with two groups of fields:
 authority: immutable        # immutable | stable | volatile | accumulating
 review-cycle: never         # never | 7d | 30d | 90d
 retention: permanent        # permanent | archive-after-6m | archive-after-1y
-staleness-threshold: 365d   # age after last-reviewed before mb audit flags [STALE]
+staleness-threshold: 365d   # age after last-reviewed before mb doctor flags [STALE]
 tags:
   - requirements/core
 last-reviewed: YYYY-MM-DD
@@ -157,7 +157,7 @@ Keep Memory Bank files focused and scannable:
 | systemPatterns.md | 100-180 lines | 300 | Consolidate similar patterns |
 | techContext.md | 150-250 lines | 400 | Move details to docs/ |
 | activeContext.md | 50-100 lines | 150 | Archive to `docs/archive/` |
-| progress.md | 100-250 lines | 400 | Archive old versions |
+| progress.md | 100-250 lines | 600 | Archive old versions |
 
 ## Eviction Criteria
 
@@ -170,8 +170,19 @@ Content should leave Memory Bank files on objective criteria, not agent judgment
 | activeContext.md | Issue marked resolved | Delete — do not archive |
 | progress.md | Work completed > 6 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
 | progress.md | Bug fixed > 3 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
+| progress.md | Content is not chronological progress at all (project description, feature inventory, standing pointers) and has no live citation | Move **verbatim** to `docs/archive/progress-reference-sections-YYYY-MM-DD.md`, leaving a pointer |
 
-Run `mb audit` to surface files that are stale or due for review.
+**Why the third row is not an age test.** The first two are age-based, which is the objective form
+this section prefers. The third cannot be: the trigger is *misfiling*, not staleness — content that
+was never progress in the first place does not become evictable by getting older. It was added
+2026-08-24 after a real relocation had no documented basis under the age rules (the moved material
+included a two-month-old section, well inside the six-month threshold). Two guards keep it
+objective rather than a licence for judgement: the content must have **no live citation** anywhere
+in the repo, and the move must be **verbatim** — no condensing, no summarising, no rewriting. A
+relocation that rewrites is an eviction in disguise, and loses exactly the detail the archive exists
+to keep.
+
+Run `mb doctor` to surface files that are stale or due for review.
 
 ## Archive Structure
 
@@ -258,13 +269,13 @@ These two tools load memory-bank rules differently — the difference matters fo
 ### Claude Code
 `CLAUDE.md` loads **once at session start** as part of the system prompt. It is NOT re-injected after auto-compaction.
 
-Claude Code auto-compacts at approximately **50% context** (via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` in settings.json; default without override is ~95%) — silently, with no hook or notification to the agent. The session continues with a compressed summary; detailed history is lost.
+Claude Code auto-compacts at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json (without an override, ~95%) — silently, with no hook or notification to the agent. **Read the configured value; do not assume one.** This sentence previously hardcoded 50%, which had drifted from the live setting and shipped that way to every adopter. The session continues with a compressed summary; detailed history is lost.
 
 ### Implications for Handoff Thresholds
 
 | Tool | Handoff Threshold | Why |
 |------|------------------|-----|
-| Claude Code | **40%** | Manual compact before 50% auto-compact fires |
+| Claude Code | **40%** | Manual compact before auto-compact fires |
 | Cursor | **80%** | Rules re-inject automatically; compaction less critical |
 
 ### Post-Compaction Recovery (Claude Code)
@@ -281,7 +292,7 @@ When context fills up (user reports 40% in Claude Code, 80% in Cursor), create a
 ### Trigger
 - User types "Handoff"
 - User reports context >= 40% (Claude Code) or >= 80% (Cursor)
-  - Claude Code auto-compacts at ~50%; 40% fires before that
+  - Claude Code auto-compacts at the configured threshold; 40% fires before that
   - Cursor rules re-inject on every response; 80% is safe
 
 ### Agent Actions
@@ -344,8 +355,8 @@ Teach AI to recognize these shortcuts:
 |---------|--------|
 | `mb update` | Update all relevant Memory Bank files |
 | `mb status` | Show file sizes, timestamps, health check |
-| `mb archive` | Move old history to `docs/archive/` |
-| `mb slim` | Trim activeContext.md to essentials |
+| `mb clean` | Move old history to `docs/archive/` |
+| `mb clean` | Trim activeContext.md to essentials |
 | `mb commit` | Stage and commit Memory Bank changes |
 
 ## Auto-Update Behavior
@@ -381,7 +392,7 @@ Partial hierarchical matches work: `mb query auth` matches `auth/session`, `auth
 Compaction is distinct from eviction. Eviction removes stale entries. Compaction rewrites,
 summarizes, deduplicates, and resolves contradictions across all memory-bank files.
 
-**When to compact:** when `mb audit` shows ≥ 2 files stale AND `memory-bank/` total size
+**When to compact:** when `mb doctor` shows ≥ 2 files stale AND `memory-bank/` total size
 exceeds 60 KB. Run `mb clean` to get a structured AI prompt for the operation.
 
 **What compaction does (AI-driven):**

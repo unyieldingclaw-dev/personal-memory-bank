@@ -23,7 +23,7 @@ This document defines explicit limits to prevent gradual context bloat.
 | Dimension | Limit | Action if Exceeded |
 |-----------|-------|-------------------|
 | Standards files (`standards/`) | ≤ 20 | Archive or merge redundant standards |
-| Memory bank entries (lines in `progress.md`) | ≤ 50 | Run `mb archive` |
+| Memory bank entries (lines in `progress.md`) | ≤ 50 | Run `mb clean` |
 | Agent delegations per command | ≤ 1 | Refactor to inline or batch |
 | Default scan scope | Changed files first | Full-repo is explicit opt-in only |
 | Full-repo scan | Explicit request only | Never triggered automatically |
@@ -49,5 +49,5 @@ The current count is shown at runtime — run `mb doctor` to see it.
 ## What to Do When Limits Are Reached
 
 - **Standards > 20:** Review for overlap. Can two standards merge? Is one superseded?
-- **Memory entries > 50:** Run `mb archive` on `progress.md` to move completed items.
+- **Memory entries > 50:** Run `mb clean` on `progress.md` to move completed items.
 - **Agent chain > 1:** Inline the sub-task or make it a separate user-invoked command.
