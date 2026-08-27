@@ -1,8 +1,8 @@
 # Personal Memory Bank
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.2.1-blue)  ![License](https://img.shields.io/badge/license-MIT-green)
 
-Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (11 commands), a `/test-audit` coverage suite, 5-agent `/code-review`, `/security-review`, and governed automation hooks.
+Persistent project memory for AI coding assistants (Claude Code, Cursor). Five structured files your AI reads at session start. Includes the `mb` CLI (13 commands, including `plan` and `backlog` subcommand groups), 8 slash commands (`/test-audit`, `/code-review`, `/change-review`, `/accessibility-review`, and more), and governed automation hooks.
 
 ## The Problem It Solves
 
@@ -15,9 +15,9 @@ Memory Bank solves this by keeping a small set of structured files in your proje
 | Area | What you get |
 |------|-------------|
 | Memory system | 5-file structured context, authority hierarchy, freshness tracking, provenance frontmatter |
-| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, setup, verify-integrity, plan, preflight, change-check (12 commands; `mb update` aliases `mb upgrade`) |
-| Slash commands | `/test-audit`, `/code-review`, `/security-review`, `/feature-dev`, `/health-check` |
-| Governance | Pre/PostToolUse hooks, CI pipeline, task contracts, subagents |
+| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, verify-integrity, plan, backlog, preflight, change-check, help (13 commands; `mb update` aliases `mb upgrade`). `mb setup` (GUI folder picker) is Windows/PowerShell-only. |
+| Slash commands | `/pmb-status`, `/test-audit`, `/code-review`, `/change-review`, `/security-review`, `/accessibility-review`, `/feature-dev`, `/health-check` (8 total) |
+| Governance | Pre/PostToolUse hooks, CI pipeline (10 jobs), task contracts, subagents |
 
 ## Install (Windows)
 
@@ -90,11 +90,13 @@ to confirm the memory bank is healthy before you start.
 
 ```
 mb status     Quick state check — initialized, memory, context, standards, tasks
-mb doctor     Full 25-point diagnostic — git, templates, hooks, file sizes, version, drift detection, checksums, context ceiling
+mb doctor     Full 26-point diagnostic (checks 0-25) — git, templates, hooks, file sizes, version, drift detection, checksums, context ceiling
 mb query TAG  Find all memory tagged with TAG (e.g. mb query auth)
 mb clean      Memory bank maintenance — slim check + guided cleanup prompt
 mb commit     Commit memory bank changes separately from feature code
 mb upgrade       Propagate latest governance templates to this project; checks remote for newer PMB version
+mb plan          Manage plan lifecycle (status/list/promote/archive)
+mb backlog       Manage backlog items (add/list/show/promote/dismiss)
 mb preflight     Pre-task readiness check: memory bank state, git status, plan hygiene
 mb change-check  Validates a change package against its declared plan before review
 mb help          Full command list
@@ -104,7 +106,7 @@ mb help          Full command list
 
 ## Slash Commands
 
-Five commands are distributed to every new project via `mb init`. One additional command (`/health-check`) is installed in the PMB repo itself for self-diagnostics.
+All 8 slash commands are auto-discovered from `templates/claude-commands/` and distributed to every new project via `mb init` — there's no separate hardcoded list to keep in sync. `/health-check` runs `mb doctor` and is most useful for self-diagnostics in a PMB-governed repo, but the file itself ships everywhere like the rest.
 
 ### Testing Suite
 
@@ -128,9 +130,11 @@ Together: `/test-audit` tells you *what's missing*. `/code-review` tells you *wh
 | `/pmb-status` | Quick state check — the `git status` of PMB; run at session start or before beginning work |
 | `/test-audit` | Coverage gap diagnostic — framework detection, source-to-test mapping, CI check |
 | `/code-review` | 6–8 subagent review — 5 always-on domains (Security, Correctness, Maintainability, Testing, Architecture Drift) + up to 2 conditional (Performance, Accessibility) + Opposition audit |
+| `/change-review` | Reviews the current branch, PR, or diff as a complete change package using 9 parallel review jobs |
 | `/security-review` | Scans current diff for 9 security patterns (secrets, injection, auth, crypto, etc.) |
+| `/accessibility-review` | Reviews changed UI files for WCAG 2.1 AA compliance; called by `/change-review` Job 8 when UI files are present, also runnable standalone |
 | `/feature-dev` | Runs the full 7-phase feature development workflow (brainstorm → spec → plan → implement → review → commit) |
-| `/health-check` | PMB-only: runs `mb doctor` (25 checks) and prints a labeled summary |
+| `/health-check` | Runs `mb doctor` (26 checks) and prints a labeled summary |
 
 ## How It Works
 
@@ -233,7 +237,7 @@ Memory bank lives in the main worktree only. `mb commit` detects and refuses mut
 <details>
 <summary>CI / governance pipeline</summary>
 
-The `pmb-health` CI workflow runs on every push and PR with six jobs:
+The `pmb-health` CI workflow runs on every push and PR with ten jobs:
 
 | Job | What it checks |
 |-----|---------------|
@@ -243,6 +247,10 @@ The `pmb-health` CI workflow runs on every push and PR with six jobs:
 | `template-integrity` | every hook script referenced in `templates/.claude/settings.json` exists in `templates/scripts/` |
 | `rules-file-integrity` | invisible Unicode chars, hidden HTML comments, LLM bypass phrases in `CLAUDE.md` and `standards/` |
 | `sast` | Semgrep `p/bash` scan of `scripts/` and `templates/scripts/` |
+| `mb-command-tests` | bash test suite for `mb.sh` commands |
+| `powershell-lint` | PSScriptAnalyzer over `mb.ps1` and other `.ps1` scripts |
+| `mb-doctor-self-check` | runs `mb doctor` against this repo's own memory bank |
+| `pester-tests` | Pester test suite for `mb.ps1` |
 
 The same checks `mb doctor` runs locally are enforced in CI so drift is caught before merge.
 
