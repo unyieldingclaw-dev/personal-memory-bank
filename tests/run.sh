@@ -37,6 +37,7 @@ run_suite "dangerous-commands"   "$REPO_ROOT/tests/test-dangerous-commands.sh"
 run_suite "mb-backlog"           "$REPO_ROOT/tests/test-mb-backlog.sh"
 run_suite "pre-push-check"       "$REPO_ROOT/tests/test-pre-push-check.sh"
 run_suite "threshold-parity"     "$REPO_ROOT/tests/test-threshold-parity.sh"
+run_suite "pre-compact-check"    "$REPO_ROOT/tests/test-pre-compact-check.sh"
 
 # ── completeness: every tracked test suite must be registered above ──────────────────
 # WHY: the list above is hand-maintained, which is the THIRD instance of the stale-hardcoded

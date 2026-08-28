@@ -25,6 +25,12 @@
   registered size cap.
 
 ### Fixed
+- **The PreCompact memory-bank freshness gate was bypassed by any `handoff.md`, however old.**
+  `pre-compact-check.sh`/`.ps1` short-circuited on a bare existence check with no staleness test, so a
+  spent handoff left in the repo root silently disabled the gate for every compaction. Both shells now
+  require the handoff to be dated today. A stale handoff removes only the *bypass* — it is not itself a
+  failure, so a genuinely fresh memory bank still passes. The hook had **no test coverage in either
+  shell**; `tests/test-pre-compact-check.sh` now covers it.
 - **`mb upgrade` would never have delivered a newly-added agent.** `ADVISORY_DIFF` hard-coded two
   agent paths in both shells — the same stale-list bug already documented for slash commands in
   1.2.0. Agents are now auto-discovered from `templates/.claude/agents/*.md` into

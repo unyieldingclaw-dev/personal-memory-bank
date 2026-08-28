@@ -141,18 +141,20 @@ Fires after every `Write` or `Edit` tool call. Reads the edited file path from t
 
 ### 5. PreCompact Memory Gate (`PreCompact`)
 
-Fires before Claude Code compacts context. Runs two content-based quality checks on the memory bank **or** bypasses via `handoff.md`.
+Fires before Claude Code compacts context. Runs two content-based quality checks on the memory bank **or** bypasses via a `handoff.md` dated today.
 
 **Exit codes:**
-- **Exits 0** — both checks pass (or `handoff.md` bypass is present). Compaction proceeds normally.
+- **Exits 0** — both checks pass (or a `handoff.md` dated today is present). Compaction proceeds normally.
 - **Exits 2** — one or more checks fail. **Compaction is blocked.** Claude Code treats a non-zero exit from a PreCompact hook as a block signal. The hook prints an actionable message explaining what to do.
 
-**To unblock:** address the failing check (see below), then retry. Alternatively, create `handoff.md` to bypass the gate (the handoff file signals that session state has been captured via the Handoff Protocol).
+**To unblock:** address the failing check (see below), then retry. Alternatively, create a `handoff.md` **dated today** to bypass the gate (the handoff file signals that session state has been captured via the Handoff Protocol).
+
+**Why the date matters.** Until 2026-08-27 the bypass triggered on the file merely existing. A handoff is meant to be deleted once merged into `memory-bank/` (Handoff Protocol step 5), so one that outlives its session is spent — yet it kept handing out a free pass. A handoff dated 2026-08-26 was found still in a repo root on 2026-08-27, silently disabling this gate for every compaction in a long session. The bypass was inverted: the staler the handoff, the more likely the memory bank actually needed checking. A stale handoff now removes only the *bypass* — it is not itself a failure, so a genuinely fresh memory bank still passes.
 
 **Detection logic (content-based, not mtime):**
 - **Check 1 — `activeContext.md` substantive content:** counts non-frontmatter, non-heading, non-empty lines with ≥20 characters. Requires ≥3 such lines. A file that was only touched (e.g. `last-reviewed` timestamp updated) fails this check.
 - **Check 2 — `progress.md` dated entry:** looks for at least one line starting with today's date (or a markdown heading/list prefix followed by today's date). The date must appear at the start of a line — embedded dates in prose do not count.
-- **Bypass:** `handoff.md` present in the project root skips both checks.
+- **Bypass:** `handoff.md` dated today in the project root skips both checks.
 
 **Fails open:** unexpected errors (missing runtimes, unreadable files) exit 0 silently and log to `.pmb-hook-errors.log`.
 
