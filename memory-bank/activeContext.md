@@ -16,7 +16,7 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-08-26 (PR #21 merged `030662c`; five concerns uncommitted on `fix/block-tier-case-sensitivity`)
+## Last Updated: 2026-08-28 (`2052c3c` committed; branch `fix/block-tier-case-sensitivity` 3 ahead of `main`, none merged)
 
 ## Trim History
 
@@ -44,11 +44,11 @@ four matcher bypasses it exposed are on `main`. The port-only trap that stranded
 full 588-line file, so BLOCK-tier work branches off `main` normally now. Rounds 1-10:
 `progress.md` 2026-08-24/26.
 
-**Branch `fix/block-tier-case-sensitivity` carries FIVE concerns, ALL UNCOMMITTED, none merged:**
-`[NS-37]`, the memory-bank relocation, the Work-MB brief, review-agent model pinning, and the
-`mb upgrade` agent-delivery fix. Full record: `progress.md` 2026-08-26 entries. `[NS-38]` follows
-after it merges — same file. This agent cannot merge PRs; `review-reminders.sh` denies that
-unconditionally, by design.
+**Branch `fix/block-tier-case-sensitivity` is 3 commits ahead of `main`, NONE merged:** `d795abb`
+(`[NS-37]`, review-agent model pinning, `mb upgrade` agent delivery), `7917905` (PreCompact staleness
+gate), `2052c3c` (Cursor 80→40 + Handoff Protocol reconciliation; round-3 five-domain pass, Opposition
+Approve). Records: `progress.md` 2026-08-26/28. `[NS-38]` follows after merge — same file. This agent
+cannot merge PRs; `review-reminders.sh` denies that unconditionally, by design.
 
 
 **`progress.md` cap — metric fixed 2026-08-24, standard reconciled 2026-08-27.** Line FAIL raised
@@ -96,7 +96,7 @@ now guards all three sources.
 11. [NS-11] **NPM_TOKEN renewal** (ACR) — expires 2026-09-08. Create new Automation token on npmjs.com and update ACR GitHub secret before this date.
 12. [NS-12] **Fleet-wide `mb` command gap:** no `mb upgrade-all`/project registry exists. Worth a real design pass if drift recurs — see `[NS-14]`, which is the recurrence.
 13. [NS-13] **Write the implementation plan for the memory-bank freshness hook** (spec: `docs/superpowers/specs/2026-08-10-memory-bank-freshness-hook-design.md`, committed `3e475ae`) via `superpowers:writing-plans`. Not started.
-14. [NS-14] **Fleet version-drift, real incident (2026-08-12):** narrative archived — `docs/archive/context-2026-08-20-narrative-sections.md`. Blocked on ACR resyncing first (cross-repo write boundary) — the detection-gap design work can start independently of that block. **Update (2026-08-17):** checked `mb.sh`'s actual version-check code directly — three distinct version values exist (target project's `.pmb-version`, the local PMB source clone's `$REPO_ROOT/VERSION`, GitHub `main`'s true latest) and nothing compares all three; `mb doctor` only checks target-vs-local-clone (WARN-only), a separate notifier only checks local-clone-vs-GitHub, so a stale local PMB clone makes `mb doctor` report "up to date" even when genuinely behind upstream. Full detail in `progress.md`'s 2026-08-17 entry, not repeated here.
+14. [NS-14] **Fleet version-drift, real incident (2026-08-12):** narrative archived — `docs/archive/context-2026-08-20-narrative-sections.md`. Blocked on ACR resyncing first (cross-repo write boundary) — the detection-gap design work can start independently of that block. **Update (2026-08-17):** checked `mb.sh`'s actual version-check code directly — three distinct version values exist (target project's `.pmb-version`, the local PMB source clone's `$REPO_ROOT/VERSION`, GitHub `main`'s true latest) and nothing compares all three; `mb doctor` only checks target-vs-local-clone (WARN-only), a separate notifier only checks local-clone-vs-GitHub, so a stale local PMB clone makes `mb doctor` report "up to date" even when genuinely behind upstream. Full detail in `progress.md`'s 2026-08-17 entry, not repeated here. **Owed to ACR — two signals still DUE, and they are SEPARATE events:** (a) work reaches `main`; (b) a tag exists. (b) is the one that unblocks their `mb upgrade`. Never send "committed on a branch" as though it were either. The version/tag facts behind this are in `progress.md`'s 2026-08-28 entries — not repeated here.
 15. [NS-15] **Execute the review-gate layered enforcement plan** (`docs/superpowers/plans/2026-08-12-review-gate-layered-enforcement.md`, 14 tasks, self-reviewed AND independently reviewed — superseded by `[NS-26]`; spec/plan narrative archived in `docs/archive/context-2026-08-20-narrative-sections.md`). Not started (no code changes made, plan still untracked). The independent pre-implementation review (interrupted twice by a spend-limit error, per the prior version of this entry) was re-run to completion on 2026-08-14 and found 8 real defects (3 Blocking, 2 High, 1 Medium, 2 Low) the self-review missed, including a `set -e` crash on a mainline push path. All 8 are now fixed directly in the plan document, within its existing Design Note section (matching the plan's existing self-review-gap convention). The plan itself has not been executed yet — still needs a Subagent-Driven vs. Inline execution decision before starting Task 1.
 16. [NS-16] **Commit and hand off `investigation-integrity` design + the portable work-MB briefs.** Design committed `15df2c2`; the third mechanism (independent review discipline) plus 3 portable briefs — `docs/WORK-MB-INVESTIGATION-BRIEF.md`, `docs/WORK-MB-HOOKS-AND-SKILLS-BRIEF.md`, `docs/WORK-MB-DOCUMENT-STRUCTURE-BRIEF.md` — committed `70a06c1`. Run `superpowers:writing-plans` on the investigation-integrity spec next (still not started — `.claude/skills/investigation-integrity/SKILL.md` does not exist). Confirm with the user when the *current* 3-brief set should be delivered to the work-MB session — that specific set has not been sent in this form (an earlier, 2026-08-12 version of `docs/WORK-MB-INVESTIGATION-BRIEF.md` was already sent and its response already actioned — see `[NS-17]`; that is a different, older artifact from the one committed here). This entry's own correction history (two rounds of independent review, both finding this entry's *own* text inaccurate) is recorded in `progress.md`'s 2026-08-14 entry, not repeated here — that file is the accumulating/historical record per this project's authority-order convention; this entry now states only current state.
 17. [NS-17] **Act on the confirmed findings from independently verifying the imported MB governance brief (2026-08-14)** — full detail in `progress.md`'s 2026-08-14 entry. Under an active task contract as of this entry: memory-bank trim (this file, in progress), ACR exit-code failure path in `/change-review` Job 7 (done), `mb clean` progress.md display (done). Optional, lower-priority: warn before `mb init`/`mb upgrade` overwrites a pre-existing non-default `core.hooksPath`.
