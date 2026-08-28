@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-08-27
+last-reviewed: 2026-08-28
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -13,147 +13,24 @@ lineage: []
 
 # Progress
 
-## 2026-08-12 through 2026-08-14 — Investigation-Integrity Mechanism: Design, 5 Independent Review Rounds, Stale-Marker Hook — condensed, full detail archived
+## Relocated 2026-08-12 → 2026-08-18 — five sections moved verbatim 2026-08-28
 
-- **User-as-bypass hardened into governance** (2026-08-12): the "hand the user the commit command"
-  workaround was named as never acceptable; hardened into `standards/SECURITY-GUARDRAILS.md` +
-  `docs/HOOKS-GUIDE.md`. Same session fixed a real ~2-month-old latent bug (`.claude/skills/mb-drift.md`
-  undiscoverable — needed `<name>/SKILL.md`, not a flat file).
-- **Review-gate layered enforcement spec** (2026-08-12, `f2cec79`/`b47db8f`): three enforcement layers
-  designed (CC hook downgraded to peek, `.githooks/` promoted to sole marker consumer, new CI containment
-  check) after 2 user-requested re-verification passes each found real bugs. A proposed docs-only
-  "lightweight review path" exemption was explicitly designed then withdrawn on the user's principled
-  objection — same failure class as the original user-as-bypass mistake. **Standing rule: full
-  `/code-review`, every time, no lite path.** Implementation plan written 2026-08-13
-  (`docs/superpowers/plans/2026-08-12-review-gate-layered-enforcement.md`, 14 tasks); independent
-  pre-implementation review completed 2026-08-14, found 8 more real defects (3 Blocking), all fixed.
-  **Superseded 2026-08-17: all 14 tasks implemented and committed** — see that date's entry below.
-- **Investigation-integrity design + third mechanism** (2026-08-14, `15df2c2`/`70a06c1`): "independent
-  review discipline" added as mechanism 3, motivated directly by the plan review above. Design itself went
-  through 2 rounds of independent review (round 2 caught a Blocking conflict with `projectbrief.md`'s
-  immutable 7-phase-workflow requirement in the first design). Applied to 8 files; follow-up wording fixes
-  went through 2 more full review rounds (rounds 4-5), surfacing 16 more findings total (1 genuinely
-  Blocking) before landing clean — the concrete case study for why `WORKFLOW.md`'s "no lite path" rule has
-  no size exception, even for a 3-file mostly-cosmetic diff.
-- **Stale-marker warning hook built** (2026-08-14): `scripts/warn-stale-review-marker.sh`/`.ps1`, a
-  warn-only PreToolUse hook on Write/Edit flagging when a review marker currently exists (motivated by the
-  round-4→5 sequence above — editing after Approve silently invalidates the marker with no signal until
-  the next commit attempt). A second review pass caught a genuinely Blocking gap the first missed: no
-  `templates/` distribution path — fixed by mirroring to `templates/scripts/` and registering in every
-  `TEMPLATE_OWNED`/export-allowlist location `_review-gate-lib.sh`/`.ps1` already appears in.
-  **Superseded 2026-08-17/18: documented in `HOOKS-GUIDE.md` (Task #31, committed `7d6d2b9`).**
-- **Independently verified an imported governance-review document** (2026-08-14): a work-MB session's
-  analysis of PMB's code was checked claim-by-claim rather than trusted — 2 of 3 claimed defects were
-  wrong (one a misread of denies-vs-allows boolean logic, one accurate-but-wrong-severity), 1 was real and
-  fixed (`/change-review` Job 7 had no ACR exit-code failure path). Independently (not from the imported
-  doc) found `activeContext.md` (671 lines) and `progress.md` (775 lines) both well over their CI limits —
-  trimmed, historical detail moved to `docs/archive/`, same pattern this entry itself now follows.
+Moved to `docs/archive/progress-2026-08-condensed-sections.md` to clear the 60,000-byte CI cap; this
+file had reached it and could not accept a new dated entry. **12,965 bytes moved out, 1,490 added
+back as this stub — net −11,475.** Stated as a delta rather than before/after totals, which decay the
+moment anything else in the file changes. **Nothing was summarised or deleted** — the 2026-08-25 pass was reverted for removing content, and this follows the
+relocate-verbatim convention that replaced it.
 
-Full narrative for all of the above (exact findings lists, before/after diffs, dated sub-corrections):
-`docs/archive/progress-2026-08-investigation-integrity.md`.
+Each original heading is preserved below so existing citations of the form "`progress.md`'s
+2026-08-14 entry" still resolve. All five were already marked *condensed, full detail archived*
+before this move, so their fuller narrative was already in `docs/archive/context-2026-*`; this
+relocation moves the condensed layer out as well.
 
-## 2026-08-17 — Review-Gate Layered Enforcement: All 14 Tasks Implemented and Committed — condensed, full detail archived
-
-- ✅ All 14 tasks committed on `feature/review-gate-layered-enforcement` (isolated worktree), each via
-  implement → independently verify → Opposition review → orchestrator re-verifies marker hash. 3 real bugs
-  found only because test suites were fixed to actually exercise what they claimed to (a pwsh-vs-sh test
-  gap that then surfaced a genuine `set -e` crash in shipped `pre-push-check.sh`; two test-only bugs; a
-  `findings_has_blocking()` bug that would have let a blocked `change-review` entry pass CI containment).
-  A confirmed known limitation: non-fast-forward `git merge` doesn't fire Layer 2's `pre-commit` hook
-  (documented, not fixed — Layer 3 CI containment is unaffected). **Not yet merged to `main` or pushed**
-  — see `activeContext.md`'s Task #33 deferral note for why, and current status.
-
-Full narrative (exact bug descriptions, commit cycle detail): `docs/archive/progress-2026-08-review-gate-layered-enforcement-execution.md`.
-
-## 2026-08-17 (continued) — Branch-Ancestry Diagnosis, Handoff/Compaction Gap, Standards-Freshness Gap, Review-Gate Hardening Audit — condensed, full detail archived
-
-Full narrative: `docs/archive/progress-2026-08-17-branch-ancestry-and-review-gate-audit.md`.
-
-- ✅ **Branch-ancestry diagnosed:** `feature/review-gate-layered-enforcement` could not rebase onto
-  `main` — `main` was missing review-gate infrastructure going back to `39a8647`, because PR #8 had
-  sat open and `CLEAN` since 2026-07-09 while local work stacked on top. Rebase aborted cleanly. PR #8
-  merged 2026-08-19 (`b0490ef`); the rebase plan here is superseded by `[NS-26]` (port, do not merge).
-- 🔴 **`[NS-22]` handoff/compaction gap:** two stale untracked `handoff.md` files found; nothing
-  enforces `CLAUDE.md`'s "merge and delete" step and no hook surfaces handoff freshness. Still open.
-- 🔴 **`[NS-23]` standards-freshness gap:** only 3 of `standards/*.md` carry review frontmatter, and no
-  check verifies cited WCAG/OWASP versions against what those bodies actually publish. Still open.
-- 🔴 **`[NS-21]` review-gate audit:** `/change-review` Job 7's inline security fallback had diverged from
-  `/security-review` in both directions (dropped XSS and eval/exec, added items of its own), so it could
-  silently produce weaker coverage — **still open, never fixed.** `[NS-17]`'s Job 7 item was the ACR
-  exit-code path, a different fix. `/code-review`'s five domains remain named-but-undefined except
-  Architecture Drift; that design call stays deferred.
-- 🔴 **`[NS-14]` three-version finding:** target `.pmb-version`, local clone `VERSION`, and GitHub `main`
-  all exist and nothing compares all three, so a stale local clone makes `mb doctor` report "up to date"
-  while genuinely behind upstream. Restated in `[NS-14]`; still open.
-
-## 2026-08-18 — `dangerous-commands.sh`/`.ps1` Git-Merge CONFIRM Hardening (Task #30, committed `499dbe5`) — condensed, full detail archived
-
-Full narrative: `docs/archive/progress-2026-08-18-task30-dangerous-commands-hardening.md`.
-
-- ✅ **Closed the `git merge`-into-shared-branch CONFIRM gap** `standards/SECURITY-GUARDRAILS.md:114` had
-  documented but never enforced. Added `confirm_boundary()` (bash) + a `$confirmPatterns` regex (ps1).
-  Went through full `/code-review` + Opposition **twice**, each round catching real defects the prior
-  round missed: Round 1 fixed a false-positive substring match (`"legit merge"` matching via "le**git
-  merge**"); Round 2, verified via direct adversarial execution not hand-tracing, fixed a bash-vs-PowerShell
-  Unicode-whitespace parity gap (NBSP bypassed bash, caught by PowerShell); Opposition (BLOCK, then
-  re-reviewed to APPROVE) caught the fix landing only in `scripts/`, never mirrored to `templates/scripts/`
-  — this repo's canonical `mb upgrade`-synced surface — missed by both domain-review rounds because
-  diff-scoped review structurally can't see a missing companion file; also caught and fixed an
-  sh/ps1 case-sensitivity divergence on the guarded command. Docs (`HOOKS-GUIDE.md` + template) had a
-  stale CONFIRM table, corrected. New PowerShell test coverage (`dangerous-commands.Tests.ps1`, 13 tests)
-  added — this hook's first ever. Re-review independently re-ran both suites + a 26-case parity harness,
-  confirmed zero remaining divergence, and logged 4 more non-blocking findings for later (one real,
-  pre-existing bypass — `curl | bash` with double-spacing — out of this diff's scope, tracked as backlog).
-- 🔴 **Live-reproduced the still-pending "marker-destruction-on-denial" bug.** Opposition approved and
-  wrote `.claude/.code-review-ok`; the following `git commit` was DENIED by `dangerous-commands.sh`
-  because its own commit message quoted the guarded phrase as a literal example — and that denial
-  destroyed the just-written marker even though the working tree never changed. Resolved by resuming the
-  same Opposition agent to reconfirm byte-identical state and re-write the marker (hash matched three
-  independent recomputations). A harness security monitor flagged the marker re-write as a possible
-  self-certification pattern; the verification evidence was walked through directly before committing.
-  Now a concrete reproducible incident for Task #33 (below), not just a theoretical description.
-- 📌 Work-MB findings doc updated (Document 8) with both findings above, plus a clean-verified check of
-  this project's own global-CLI-install path for the same staleness-gap class a sibling project had.
-- ✅ **All 3 test-coverage gaps closed (Task #32, `2991093`):** version-notifier cache round-trip test
-  (first draft's second assertion pointed at the live test server, masking a broken reader — fixed by
-  pointing it at an unreachable port, mutation-tested); `mb clean`'s "RECOMMENDED" middle branch coverage
-  (replaced a trivially-satisfied header-string assertion); PowerShell-side `Resolve-CdRoot` coverage for
-  the chained-cd/whitespace fixes (first draft's own JSON-escaping bug in the test helper produced a false
-  security-bypass signal, traced to an unescaped backslash in a Windows temp path — fixed via a
-  `win_path_for_json()` helper, gated on `cygpath`). Also root-caused an unrelated "9 failed" one-off as a
-  pre-existing test-server readiness-poll flake, unrelated to this diff.
-
-## 2026-08-18 (continued) — Tasks #33–#35, Version-Notifier Fix, Handoff Redesign — condensed, full detail archived
-
-Full narrative: `docs/archive/progress-2026-08-18-tasks-33-35-and-handoff-redesign.md`.
-
-- ✅ **Version-notifier flake fixed** (`d64a4fc`, refined `bbb697a`): a readiness-poll fall-through let 9
-  assertions fail confusingly; replaced with an explicit SKIP path that captures the server's stderr.
-  Same session **self-caught a process incident** — one subagent was dispatched to both review a diff and
-  write its own approval marker; the harness flagged self-approval, the marker was deleted unused, and the
-  review was redone as two separate dispatches.
-- 🔴 **Task #33 (marker-destruction-on-denial) deliberately deferred** (`c66d9d1`) — the real fix lives on
-  `feature/review-gate-layered-enforcement`; a narrow patch would be a third overlapping mechanism. Still
-  the only open item from this thread (`[NS-24]`).
-- ✅ **Task #34 (`acdfbb6`), atomic version-cache writes:** PowerShell's `Move-Item -Force` proved
-  non-atomic under load (105 writer + 67 reader exceptions), switched to raw `File.Move`. A `diff_hash()`
-  trap-scoping "fix" was **self-caught and reverted** — explicitly touching trap state inside a
-  command-substitution subshell arms an inherited EXIT trap and fires the caller's cleanup early. One
-  reviewer finding was independently re-tested and found wrong (9/9 vs 4/9, twice), not accepted on authority.
-- ✅ **Task #35 done; PR #8 merged 2026-08-19** (`b0490ef`), follow-up PR #12 carried a missed local-only
-  commit (`4f24768`). A real post-push CI failure (`cygpath` absent on `ubuntu-latest` inside a `pwsh`-only
-  guard) was root-caused from the actual job log and fixed by matching an existing in-repo precedent (`d864d99`).
-- ✅ **Handoff Protocol redesigned** (`3a2a7fd`, brief `3aa70af`): `handoff.md` narrowed to ephemeral
-  in-flight state; `activeContext.md`'s Next Steps is authoritative for priority.
-- 📌 **`[NS-25]` found while deleting branches:** the push gate raw-substring-matches the push command text,
-  so a pure `--delete` (no diff) is denied like a real content push; worked around via `gh api -X DELETE`.
-  **Correction 2026-08-20:** that entry claimed both branches were deleted "locally and on `origin`" — local
-  deletion held, but `docs/branch-protection-rollout` (`d864d99`) and
-  `docs/finalize-branch-protection-memory-bank` (`8646bf3`) are **still present on `origin`**, confirmed via
-  `git ls-remote` after a `--prune` fetch. Their content is safely in `main` via the squash merges; only the
-  deletion claim was wrong. The cause of the silent failure was not established and is not guessed at here.
-  **This stub's own authoring became the 5th observed instance of the same false-positive class:** writing
-  the phrase verbatim tripped the gate on a file-splice command that was not a push at all.
+- 2026-08-12 through 2026-08-14 — Investigation-Integrity Mechanism: Design, 5 Independent Review Rounds, Stale-Marker Hook — condensed, full detail archived
+- 2026-08-17 — Review-Gate Layered Enforcement: All 14 Tasks Implemented and Committed — condensed, full detail archived
+- 2026-08-17 (continued) — Branch-Ancestry Diagnosis, Handoff/Compaction Gap, Standards-Freshness Gap, Review-Gate Hardening Audit — condensed, full detail archived
+- 2026-08-18 — `dangerous-commands.sh`/`.ps1` Git-Merge CONFIRM Hardening (Task #30, committed `499dbe5`) — condensed, full detail archived
+- 2026-08-18 (continued) — Tasks #33–#35, Version-Notifier Fix, Handoff Redesign — condensed, full detail archived
 
 ## 2026-08-19 — Model/Effort Escalation Guidance; Review-Gate Port Design Corrected (Opus deep dive)
 
@@ -314,6 +191,26 @@ implementation, uncommitted as of this entry; committed 2026-08-21 as `4bc107c`.
 - **A finding attributed to PMB does not exist in PMB.** The ACR session asked this one to disambiguate a timeout measurement its memory bank credits to a PMB brief (616 s agent runtime against a 282,240 ms ceiling). Searched `memory-bank/`, `docs/`, `docs/archive/` and the ACR brief in Downloads: **zero hits** for any of it. Answered as unsourced rather than reconstructed from ACR's own formula, and recommended they re-derive it with per-invocation instrumentation. Two lessons for this side: PMB's record of ACR behaviour is thinner than assumed (the 1.13.1 findings are recorded in detail, the timeout work not at all), and an unsourced claim crossed a project boundary and became load-bearing there. Cross-project briefs need the same provenance discipline as in-repo citations.
 - **`[NS-22]` closed at the mechanism (actions 1-2 of 3).** The PreCompact freshness gate short-circuited on a bare `[ -f handoff.md ]` existence check with **no staleness test**. Verified live: a handoff dated 2026-08-26 was still sitting in the repo root on 2026-08-27, so **every compaction in this session bypassed the gate**. The bypass was inverted — the staler the handoff, the more likely the memory bank actually needed checking. Both shells now require the handoff to be dated today. **The gate had ZERO test coverage in either shell**, which is how a bare existence check survived from 2026-08-19 escalation to now; `tests/test-pre-compact-check.sh` adds 16 assertions, mutation-proved in both shells (reverting the sh fix reddens exactly the 3 NS-22 sh assertions; reverting the ps1 fix reddens its NS-22 assertion **and** the mirror-parity guard). **`/code-review` then found three gaps in that first version**, all fixed here: a stale `handoff.md present ... skips both checks` bullet left behind in BOTH `HOOKS-GUIDE.md` copies while the surrounding prose was updated; ps1 parity claimed on a MANUAL check with nothing holding it (now 5 automated assertions, the same shape as `test-dangerous-commands.sh`'s parity block, skipped loudly when pwsh is absent unless `PMB_REQUIRE_PARITY=1`); and no `scripts/` vs `templates/scripts/` byte-identity guard despite `templates/` being what `mb upgrade` ships — the defect class that already bit `dangerous-commands` once and `7de75e6` once. **The first fix was wrong and the new test caught it**: appending the stale-handoff message to BLOCK_REASONS made a stale handoff hard-block a *healthy* memory bank — it must only remove the bypass. Docs updated in `CLAUDE.md`, both `HOOKS-GUIDE.md` copies. Closing the entry freed 1,244 bytes in `activeContext.md`, which had 44 bytes of headroom. **Action 3 remains:** the 40%-handoff / 65%-autocompact incoherence, which is advisory-by-construction since hooks cannot see context %.
 - New: `[NS-42]` (write-rate control), `[NS-43]` (the gate structurally forbids commit-splitting — one marker equals one all-inclusive commit, and it is consumed on use).
+
+## 2026-08-28 — `[NS-22]` committed; Cursor's handoff threshold re-derived; `[NS-22]` action 3 closed as not-a-defect
+
+- **`[NS-22]` committed as `7917905`** after a full six-domain + Opposition (opus) pass. **The first review pass used the WRONG command** — the bare skill name resolved to a plugin twin instead of `.claude/commands/code-review.md`, exactly the `[NS-21]` shadowing risk already on record. The twin has 7 steps to the project's 5, no `standards/CODE-REVIEW.md` contract load, no model pin on Opposition, and its Step 5 *instructs generating tests* — which the project command forbids at line 209. So the repo was mutated during review, a listed Failure Criterion. Re-run clean with read-only agent types so the domains structurally could not edit.
+- **Opposition returned Approve, overturning Security's sole blocker on a strict-subset proof:** post-fix allows ⊆ pre-fix allows, so the change cannot permit any compaction `main` blocks today — a `touch` fails to close a residual rather than opening a hole, and the recommended `Date:`-line fix is equally forgeable. It disproved 3 of 4 claimed non-adversarial triggers by measurement (`handoff.md` is gitignored; OneDrive is a *sibling* of the repo, not an ancestor). **Its sharpest point, which no domain could see alone: the severity ordering was inverted relative to the diff's risk direction** — the change can only ever block *more*, so the whole new risk surface was the two over-blocking Mediums while the High was a pre-existing residual.
+- **Two regressions accepted as documented limits** — GNU-only `date -r` (BSD `stat -f` fallback from the 2026-05-28 design not carried forward; live exposure zero) and the midnight hard-block that folds into `[NS-34]`. Both enumerated in `7917905`'s message. **Both then demonstrated live in this session:** the handoff went stale at rollover and `progress.md` had no entry dated today, so the gate blocked its own author.
+- **Cursor's handoff threshold re-derived 80% → 40%.** Reasoning deliberately NOT restated here — it lives in `standards/MEMORY-BANK.md`, "Implications for Handoff Thresholds", which is the governed home for it; a second copy is the restatement-drift class this repo rules against. In one line: the 80% was justified on continuity (Cursor re-injects `.mdc` rules) and silent on output quality degrading with input length, which is IDE-independent. **Found by the user asking "isn't 80% too high?" on a third look** — my first pass called it drift (wrong: different decisions), my second withdrew the finding as documented-and-justified (wrong: justified on the wrong axis). The middle pass was the worst of the three and is the one that would have shipped.
+- **`[NS-22]` action 3 CLOSED as not-a-defect.** "Handoff at 40% is user-triggered with nothing automating it" is true and *unfixable*: hooks cannot observe context %, now confirmed first-party — Sonnet 4.5 carries built-in context awareness model-side with no documented hook exposure. It is advisory by necessity, not by oversight. There is no incoherence left to reconcile: 40 < 65 in Claude Code, and Cursor is now 40 with no backstop to precede.
+- **`tests/test-mirror-parity.sh` added** — the `.cursor/rules` ↔ `templates/cursor/rules` pairs had **zero** guards despite being `TEMPLATE_OWNED`. Auto-discovering and bidirectional; mutation-proved both ways. Full rationale in the file's own WHY block, not restated here.
+- **The Round 10 deferred `standards/` parity check is not implementable as specified.** Byte-identity is the wrong invariant there: of three divergent pairs, **two are correct by design** — `AGENTIC-SAFETY.md` and `WORKFLOW.md` carry PMB-specific incidents and paths in the live copy that must not ship to adopters. Only `MEMORY-BANK.md`'s `mb compact` (verified: exits 2, superseded by `mb clean`) was a genuine defect, and it was **inverted** — the template shipped the correct instruction while PMB's own copy did not. Fixed here. Re-file the parity item with a different invariant rather than leaving it queued as merely unscheduled.
+- **ACR provenance gap CLOSED — carried over from `handoff.md` before deleting it, and independently corroborated the same day by an ACR session message.** The 616 s figure this repo could not source: ACR re-derived it with per-invocation instrumentation and reports **do not raise the ceiling** — 12 invocations, slowest genuine attempt 213.2 s against a 315.4 s ceiling (~68%). The one row appearing to exceed it (611.7 s vs 354.7 s) was wall time across a retried `fetch failed`, a measurement artifact rather than an agent running long. **Record it exactly as ACR states it:** they judge the resemblance to the unsourced 616 s strong but explicitly decline to call it confirmed, because a resemblance cannot promote an unsourced number to evidence — which was the whole point of the gap. Do not upgrade that hedge. Shipped in ACR 1.15.0; `ReviewResult.timings` now lands in the CI artifact, so the rows accumulate instead of needing another half-day of local trials.
+- **Still open from the handoff, not absorbed:** the competing opposition agent on `fix/review-gate-reconcile-designs` requires human confirmation rather than writing the marker itself, which may be the better design than what shipped.
+- **Cursor 80% → 40%, and the reasoning took four passes to get right.** Pass 1 called it drift (wrong — Claude Code and Cursor were genuinely different decisions). Pass 2 withdrew the finding as documented-and-justified (wrong, and the worst of the four: it verified a rationale *existed* without checking it covered the binding constraint). Pass 3, prompted only by the user asking "isn't 80% too high?", found the rationale addresses **continuity** (rules re-inject, so instructions survive) and is silent on **quality** (output degrades with input length regardless) — and the quality curve is IDE-independent. Pass 4 found the *strongest* argument had been sitting unread the whole time: `systemPatterns.md:33` already stated 40% with no IDE qualifier. **But the tempting version of that argument is wrong** — `systemPatterns.md` carries `authority: stable` while `standards/MEMORY-BANK.md` has no frontmatter and no tier, and `CLAUDE.md`'s authority order ranks only `memory-bank/` files. So it was two governing documents in conflict with **no stated arbitration**, the third instance of that gap in one day (after global-vs-project `CLAUDE.md` and standards-vs-`CLAUDE.md`). The general gap stays open.
+- **The sweep missed two adopter-facing files and a reviewer caught them.** `templates/AGENTS.md` (three occurrences — the cross-tool file read by Claude Code, Cursor, Codex and Gemini) and `templates/memory-bank/README.md`. Found by grepping the whole repo, which is not a mechanism. **Correction, caught by a later review round:** an earlier draft of this entry said both ship via `mb init`. Only `README.md` does (the `memory-bank/*` glob in `invoke_init`). **`AGENTS.md` has NO `mb` CLI distribution path at all** — zero references in `mb.sh`, absent from `TEMPLATE_OWNED` and both advisory lists; it is copied only by the standalone `scripts/init-memory-bank.sh:155`, which the documented `mb init` onboarding never invokes. So the file the repo calls its cross-tool rules file reaches adopters only through a bootstrap path the docs do not point at — a separate latent gap the wrong claim was hiding. **The fix that matters is `tests/test-threshold-parity.sh`'s new block**, which now extracts the threshold from all 9 prescriptive surfaces and asserts agreement — matching only *instructions* ("context >= N%", "at N% context", "at or above N%"), never bare percentages, so the files' own history sections describing the old 80% are not flagged as drift and nobody is pressured into deleting the explanation. Mutation-proved.
+- **Three defects in my own new code, all caught by review, none by me.** A comment claiming `mb upgrade` "would silently delete" an orphaned rule file — **it has no delete path at all**, verified in both shells; the claim was plausible, motivating, false, and printed in assertion text on every run. And two assertions comparing a literal to itself and a variable to itself: behaviourally backstopped by their enclosing `if`, but unable to fail, in a file whose own header quotes "a check that cannot fail does not count as a check". Replaced with helpers that test the real condition.
+- **Pre-existing, fixed in passing:** `tests/run.sh`'s `sed 's/\./\./g'` was a no-op (replaces a literal dot with a literal dot) while its comment claimed it escaped dots for the `grep -E` anchor; and both `.cursor/rules/memory-bank.mdc` copies carried duplicate `mb clean` rows, one of which claimed archived history goes to `AGENTS.md`.
+- **`progress.md` cap deadlock cleared by relocation, not by trimming.** The file hit its 60,000-byte cap writing the entry above and could not accept another. Five sections dated 2026-08-12 → 2026-08-18, already marked *condensed, full detail archived*, moved **verbatim** to `docs/archive/progress-2026-08-condensed-sections.md` with dated pointers carrying each original heading; citation survival verified by grep beforehand (five live references, all still resolving). **Recorded as a delta, not a level: 12,965 bytes moved out, 1,490 added back as the pointer stub, net −11,475.** An earlier draft stated before/after totals instead; two reviewers independently flagged them, because a level is false the moment anything else in the file changes — and this entry's own later bullets changed it. That is the delta-not-level rule, violated in the entry that cites it. **Framing borrowed from an ACR session that hit its own caps four times in one day: move the evidence out, leave the rule in.**
+- **Review round 2 found three blocking items; one was rejected on measurement.** (a) The threshold guard I added to close coverage holes **had a coverage hole of the same shape** — `[ -z "$vals" ] && continue` dropped a file from the sweep on a reword, and `[ -f ] || continue` dropped one on a delete, both silently while the suite reported success. The correct per-file `STATE_ABSENT` idiom already existed 20 lines above in the same file; the block was modelled on that one and did not carry over the part that makes it complete. Fixed, mutation-proved both triggers on the real file (31/1 each). (b) The authority/arbitration argument lived **only** in `CHANGELOG.md` and this file while both cited `standards/MEMORY-BANK.md` as its home — the no-duplication rule enforced for one half of the reasoning and violated with the other. Moved to the standard, trimmed here to a pointer. (c) **A byte-count finding was REJECTED**: the reviewer reconstructed 64,314 by adding the *final* entry to HEAD, conflating two states; `54,611 + 5,305 = 59,916` exactly, and the file was never over cap. Corrected the figure anyway, for the delta-not-level reason two other domains gave.
+- **`standards/MEMORY-BANK.md` was shipping a superseded Handoff Protocol, and the divergence inverted an authority rule.** Found when the user asked why the handoff reply lacked the expected structure — the answer was that *two* structures exist. The standard listed "Summary of accomplishments / Files modified / Pending tasks / Context for next agent" as handoff contents, all of which `CLAUDE.md` explicitly forbids ("that duplicates memory-bank and risks drifting from it"). Worse, its **Next Session step 1 said to read `handoff.md` FIRST**, while `CLAUDE.md` says read all `memory-bank/` files first and the handoff second, never as authoritative — so the standard told the next session to synthesise priority from the file written under the worst conditions for it. `CLAUDE.md` supersedes (user ruled 2026-08-28); both `standards/` copies rewritten to match and verified identical. **Fourth instance in one day of the no-arbitration gap** — after global-vs-project `CLAUDE.md`, `standards`-vs-`CLAUDE.md`, and `systemPatterns`-vs-`standards`. The template mirror had been shipping the inverted ordering to every adopter.
+- **Reported by ACR, not yet acted on: `mb upgrade` distributes a working tree, not a release.** No `git archive`/`checkout`/`describe` anywhere in `mb.sh` — it copies whatever is in the PMB checkout at that moment. Combined with `TEMPLATE_OWNED`'s unconditional overwrite of files adopters may not patch locally, an in-flight edit silently replaces working downstream scripts. **Verified here while answering them, and worse than reported:** `VERSION` says `1.2.1`, `.pmb-version` says `1.1.1`, and the newest git tag is `v1.0.4` — three numbers, and **no tag exists for either 1.1.x or 1.2.x**, so there is nothing to pin a release to and a dirty-tree guard is the only near-term option. ACR has been blocked on 1.1.1 for this reason with a dead `last-reviewed` sensor they cannot fix locally. Their session ended before I could reply.
 
 ## Review rounds 4-9 (2026-08-23 → 2026-08-25) — relocated 2026-08-26, detail in `docs/MEMORY-BANK-PARADIGM-REVIEW.md`
 

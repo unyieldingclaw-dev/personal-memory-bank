@@ -21,7 +21,7 @@ At the start of every conversation, and again after any context compaction, sile
 
 ## Context Compaction Recovery
 
-Claude Code compacts at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json. The `PreCompact` hook fires first and warns if neither the memory bank nor a handoff has been captured this session. A "context was compacted" summary may appear at the top of the conversation.
+Claude Code compacts at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json. The `PreCompact` hook fires first and **blocks** compaction unless: `activeContext.md` has ≥3 substantive content lines AND `progress.md` has an entry dated today. A `handoff.md` **dated today** bypasses the gate; a stale one does not. A "context was compacted" summary may appear at the top of the conversation.
 
 **If you observe a compaction summary:** Re-read ALL `memory-bank/` files immediately, summarize recovered context to the user, confirm where to resume if mid-task. **Do not continue from memory alone.**
 
@@ -156,7 +156,7 @@ Nominal defaults are per-model: `high` for Sonnet, `xhigh` for Opus. **An explic
 **Also check `MAX_THINKING_TOKENS`** (`.claude/settings.json` env block). Exact interaction with model and effort is not verifiable from inside the repo, but it plausibly bounds reasoning depth independently of both — so a raised effort level may still be capped by it. Worth revisiting before deep architecture or security-boundary work.
 
 **Compact at task boundaries — auto-compact fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`:**
-- Auto-compaction fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json; the `PreCompact` hook warns first if memory bank is stale
+- Auto-compaction fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json; the `PreCompact` hook fires first and **blocks** if the memory bank is stale (see Context Compaction Recovery above for the exact conditions)
 - Compact manually at natural boundaries before that point:
   - After planning: `/compact Focus on decisions and file paths`
   - After debugging: `/compact Focus on what was tried and what worked`

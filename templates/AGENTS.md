@@ -12,10 +12,10 @@ At the start of every session, if `memory-bank/` exists in the project root:
 Never ask for information already in Memory Bank. Never violate constraints in projectbrief.md.
 Never write secrets, credentials, API keys, PII, production data, or full code dumps to memory-bank/ files.
 
-At session end or before context hits 80%:
+At session end or before context hits 40%:
 1. Update `memory-bank/activeContext.md` — current state, key decisions, blockers
 2. Update `memory-bank/progress.md` — what shipped, what is queued
-3. If context is at 80%, create `handoff.md` and stop (see Handoff Protocol below)
+3. If context is at 40%, create `handoff.md` and stop (see Handoff Protocol below)
 
 ## Verification-First
 
@@ -56,7 +56,7 @@ Always follow this sequence for any non-trivial feature:
 
 ## Handoff Protocol
 
-When context hits 80% or user types "Handoff":
+When context hits 40% or user types "Handoff":
 1. STOP all work immediately
 2. CREATE `handoff.md` with: accomplishments, files modified, service state, commands to resume, pending tasks
 3. RESPOND only: "Handoff ready at `handoff.md`. Start a new conversation."

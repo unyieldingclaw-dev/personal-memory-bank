@@ -128,7 +128,7 @@ lineage: []                 # additive chain of all ancestor files (empty for ca
 | 3+ | Degraded | Regenerate from lower-generation sources |
 | 5+ | Unreliable | Likely information loss; do not trust without verification |
 
-When `mb compact` rewrites a file, increment `compaction_generation` and add parent files to `lineage`.
+When `mb clean` rewrites a file, increment `compaction_generation` and add parent files to `lineage`.
 Use git commit refs for verifiability: `activeContext.md@a81d2f`.
 
 **Note on field orthogonality:** `source_type` (origin) and `compaction_generation` (transformation
@@ -325,7 +325,42 @@ Claude Code auto-compacts at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERR
 | Tool | Handoff Threshold | Why |
 |------|------------------|-----|
 | Claude Code | **40%** | Manual compact before auto-compact fires |
-| Cursor | **80%** | Rules re-inject automatically; compaction less critical |
+| Cursor | **40%** | Same quality curve; rule re-injection does not address it |
+
+**Why both are 40%, and why Cursor's was 80% until 2026-08-28.** The old Cursor figure was justified
+as "rules re-inject automatically; compaction less critical." That reasoning is sound but covers only
+one of the two costs of a full context:
+
+- **Continuity cost** — will the agent lose its instructions when context is squeezed? Cursor
+  genuinely mitigates this by re-injecting `.mdc` rules on every response. This is what 80% was
+  reasoning about, and it was correct about it.
+- **Quality cost** — output degrades as input length grows, whether or not the rules survive.
+  Re-injection does nothing for this, and `docs/MEMORY-BANK-PARADIGM-REVIEW.md` identifies it as the
+  *load-bearing* reason to keep context small (Chroma, 18 models across four providers — see that
+  document's source table, where the claim is marked PRIMARY).
+
+The quality curve is a property of the model and the input length, not of the IDE. So it does not
+move when rules re-inject, and there is no basis for permitting a longer context in Cursor than in
+Claude Code. 80% also sat *above* the value `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is set to, i.e. beyond
+the point this project already treats as unacceptable in the other IDE.
+
+**Do not re-derive a Cursor-specific number from rule-persistence behaviour.** That is the reasoning
+that produced 80%. If this threshold changes, it should change for both tools together, because the
+constraint that binds is shared.
+
+**A second, independent reason the number is 40 — and a caution about how to state it.**
+`memory-bank/systemPatterns.md` already gave the trigger as "At 40% context (or user types
+'Handoff')" with **no IDE qualifier**, while this file said 80% for Cursor. Two governing documents
+disagreed, and the 40 side needed no research argument at all.
+
+State that carefully, because the tempting version is wrong. This is **not** a higher authority tier
+overruling a lower one. `systemPatterns.md` carries `authority: stable`; this file carries no
+frontmatter and therefore no tier; and `CLAUDE.md`'s authority order ranks only `memory-bank/` files
+— it does not place `standards/` anywhere. So the two were in conflict with **no stated arbitration
+between them**. The conflict is resolved here in the direction both the quality argument and
+`systemPatterns.md` independently point. **The general gap remains open:** nothing states whether a
+`standards/` document outranks a `memory-bank/` one, and this file is one of several under
+`standards/` carrying no tier at all.
 
 ### Post-Compaction Recovery (Claude Code)
 If compaction fires before handoff, instruct the agent to re-read all `memory-bank/` files:
@@ -336,31 +371,63 @@ The `templates/CLAUDE.md` includes a compaction recovery instruction block that 
 
 ## Handoff Protocol
 
-When context fills up (user reports 40% in Claude Code, 80% in Cursor), create a handoff:
+When context fills up (user reports 40% in either tool), create a handoff:
 
 ### Trigger
 - User types "Handoff"
-- User reports context >= 40% (Claude Code) or >= 80% (Cursor)
+- User reports context >= 40% (both Claude Code and Cursor)
   - Claude Code auto-compacts at the configured threshold; 40% fires before that
-  - Cursor rules re-inject on every response; 80% is safe
+  - Cursor exposes no auto-compact threshold this project can configure, so 40% is the only
+    intervention point rather than the first of two. (Whether Cursor performs any internal
+    summarisation of its own is **not observable from here and has not been verified** — do not
+    read this as "Cursor never compacts".)
+
+### Scope is deliberately narrow
+
+`memory-bank/` — especially `activeContext.md`'s Next Steps — is the durable source of truth for
+priority and rationale, and is supposed to be current *throughout* the session, not only at the end.
+`handoff.md` exists ONLY to carry genuinely ephemeral in-flight state that a memory-bank update
+would not naturally hold: where an edit was interrupted, uncommitted diff state, what was about to
+be run next.
+
+**Do not use `handoff.md` to summarise accomplishments, decisions, priorities, or task ordering.**
+That duplicates the memory bank, and the duplicate is written under the worst possible conditions
+for careful synthesis — an imminent compaction or context limit. A duplicate written there will
+drift from the original, and the next session is instructed to trust the original.
 
 ### Agent Actions
 1. **STOP** all work immediately
-2. **CREATE** `handoff.md` in project root:
-   - Summary of accomplishments
-   - Files modified this session
-   - Current service state
-   - Commands to resume
-   - Pending tasks
-   - Context for next agent
-3. **RESPOND** only: "Handoff ready at `handoff.md`. Start a new conversation."
-4. **STOP RESPONDING** - do not continue
+2. **VERIFY** `activeContext.md` and `progress.md` are actually current. If stale, update them
+   FIRST — a rich `handoff.md` cannot compensate for a stale memory bank, because the next session
+   is told to treat the memory bank as authoritative and this file as a supplement
+3. **CREATE** `handoff.md` in project root, scoped ONLY to:
+   - Exact in-flight state — file and line being edited, uncommitted diffs, what was about to run
+   - Any running process or service left in a non-default state
+   - Any command needed to resume
+   - The branch, and whether a worktree is in use
+   - An explicit pointer: "See `memory-bank/activeContext.md`'s Next Steps for priority and
+     rationale; this file covers only what was not captured there yet."
+4. **RESPOND** only: "Handoff ready at `handoff.md`. Start a new conversation." — with the title for
+   the next session, the branch, and the worktree state
+5. **STOP** — do not continue
 
 ### Next Session
-1. Check for `handoff.md` - if exists, read it FIRST
-2. Continue work from where previous agent stopped
-3. Merge handoff info into Memory Bank when appropriate
-4. Delete `handoff.md` after merging
+1. Read ALL files in `memory-bank/` **FIRST**. This is the authoritative source for priority,
+   rationale, and what has already been tried. **Do not treat `handoff.md` as authoritative for any
+   of those.**
+2. Read `handoff.md` **SECOND**, treating it only as the narrow ephemeral-state supplement above —
+   never as a summary to synthesise task priority from
+3. Reconcile: does the handoff's in-flight state match what `activeContext.md`'s Next Steps implies
+   should be happening? **If they conflict, surface the conflict — do not silently pick one**
+4. Merge the handoff into the memory bank, then **delete `handoff.md`**
+5. Confirm where to resume if mid-task
+
+**Why the ordering matters, and why it changed.** An earlier version of this standard said to read
+`handoff.md` first and listed "summary of accomplishments" among its contents. Both were superseded:
+reading the handoff first inverts the authority order, making a hurriedly-written file the primary
+source over the continuously-maintained one. Deleting the handoff after merging is also not
+housekeeping — a handoff left in place is a spent bypass of the PreCompact freshness gate, which is
+why that gate now requires the file to be dated today.
 
 ## Task Decomposition
 
@@ -442,7 +509,7 @@ Compaction is distinct from eviction. Eviction removes stale entries. Compaction
 summarizes, deduplicates, and resolves contradictions across all memory-bank files.
 
 **When to compact:** when `mb doctor` shows ≥ 2 files stale AND `memory-bank/` total size
-exceeds 60 KB. Run `mb compact` to get a structured AI prompt for the operation.
+exceeds 60 KB. Run `mb clean` to get a structured AI prompt for the operation.
 
 **What compaction does (AI-driven):**
 1. Reads all files in authority order

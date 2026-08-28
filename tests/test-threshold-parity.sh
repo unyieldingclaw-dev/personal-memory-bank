@@ -79,4 +79,60 @@ for f in $FIGURE_FILES; do
     assert_contains "$verdict" "SAME" "$f figure ($pair) agrees with $CANON_SRC ($CANON)"
 done
 
+# ── the handoff threshold must be the same number everywhere it is PRESCRIBED ───────────────
+# WHY this block exists: on 2026-08-28 the Cursor handoff threshold moved 80% -> 40% across
+# standards/MEMORY-BANK.md, its templates/ mirror, and both .cursor/rules/memory-bank.mdc copies --
+# and the sweep MISSED templates/AGENTS.md (three occurrences) and templates/memory-bank/README.md.
+# Both are written into every new project by `mb init`, so the stale figure kept shipping to adopters
+# through a path nobody checked. It was found by a reviewer grepping the whole repo, which is not a
+# mechanism. Nothing compared these surfaces to each other, exactly as the line-cap block above was
+# written because nothing compared CI to the two runtimes.
+#
+# WHY match only PRESCRIPTIVE spellings and not every "NN%": the same files legitimately discuss the
+# OLD value in prose ("This was 80% until 2026-08-28", "why Cursor's was 80%"). A bare percentage
+# scan would flag that history as drift and push a future maintainer to delete the explanation --
+# the brevity-bias failure this repo already rules against. So the patterns below bind the number to
+# an instruction ("context >= N%", "At N% context", "context hits N%", "at or above N%", and the
+# threshold table rows), never to narrative.
+echo ""
+echo "--- handoff threshold parity across prescriptive surfaces ---"
+HANDOFF_CANON=40
+HANDOFF_FILES="CLAUDE.md templates/CLAUDE.md memory-bank/systemPatterns.md standards/MEMORY-BANK.md templates/standards/MEMORY-BANK.md .cursor/rules/memory-bank.mdc templates/cursor/rules/memory-bank.mdc templates/AGENTS.md templates/memory-bank/README.md"
+HANDOFF_SEEN=0
+# WHY both absence cases assert instead of `continue`: an aggregate "the sweep found something"
+# guard proves the sweep is not entirely dead. It does NOT prove each declared surface was checked.
+# Skipping silently on either absence lets a file drop out of coverage while the suite still reports
+# success — which is the exact defect this block exists to catch, one level up. Both were reproduced:
+# with plain `continue`, deleting one declared file and rewording another left the suite GREEN while
+# its assertion count fell from 10 to 8. The per-file STATE_ABSENT idiom is borrowed from the
+# figure-parity block above, which already had it; this block was modelled on that one and failed to
+# carry over the part that makes it complete.
+for f in $HANDOFF_FILES; do
+    # Absence case 1 — a declared surface has vanished (deleted or renamed), so HANDOFF_FILES is stale.
+    if [ ! -f "$REPO_ROOT/$f" ]; then
+        echo "    $f: <file absent>"
+        assert_contains "STATE_ABSENT" "STATE_PRESENT" "$f exists to state the handoff threshold"
+        continue
+    fi
+    vals=$(grep -oiE "context (is at|>=|hits) [0-9]+%|at [0-9]+% context|at or above [0-9]+%|\| (Cursor|Claude Code) \| \*\*[0-9]+%\*\*" "$REPO_ROOT/$f" 2>/dev/null \
+           | grep -oE '[0-9]+' | sort -u)
+    # Absence case 2 — the file is present but its wording drifted out of every pattern above, so the
+    # value is no longer being compared even though the file still claims to state it.
+    if [ -z "$vals" ]; then
+        echo "    $f: <no prescriptive threshold found>"
+        assert_contains "STATE_ABSENT" "STATE_PRESENT" "$f states the handoff threshold in a recognised form"
+        continue
+    fi
+    for v in $vals; do
+        HANDOFF_SEEN=$((HANDOFF_SEEN + 1))
+        if [ "$v" = "$HANDOFF_CANON" ]; then verdict=SAME; else verdict=DIFFERENT; fi
+        assert_contains "$verdict" "SAME" "$f prescribes ${v}% (canon ${HANDOFF_CANON}%)"
+    done
+done
+
+# WHY assert the sweep found something: if every pattern above stopped matching -- a reword, a moved
+# file -- the loop would silently assert nothing and the suite would still be green.
+[ "$HANDOFF_SEEN" -gt 0 ]
+assert_exit_zero "$?" "handoff-threshold sweep matched at least one prescriptive statement (found $HANDOFF_SEEN)"
+
 print_summary

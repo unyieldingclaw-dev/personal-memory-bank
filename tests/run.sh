@@ -38,6 +38,7 @@ run_suite "mb-backlog"           "$REPO_ROOT/tests/test-mb-backlog.sh"
 run_suite "pre-push-check"       "$REPO_ROOT/tests/test-pre-push-check.sh"
 run_suite "threshold-parity"     "$REPO_ROOT/tests/test-threshold-parity.sh"
 run_suite "pre-compact-check"    "$REPO_ROOT/tests/test-pre-compact-check.sh"
+run_suite "mirror-parity"        "$REPO_ROOT/tests/test-mirror-parity.sh"
 
 # ── completeness: every tracked test suite must be registered above ──────────────────
 # WHY: the list above is hand-maintained, which is the THIRD instance of the stale-hardcoded
@@ -61,7 +62,7 @@ run_suite "pre-compact-check"    "$REPO_ROOT/tests/test-pre-compact-check.sh"
 UNREGISTERED=""
 if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   for f in $(git -C "$REPO_ROOT" ls-files 'tests/test-*.sh'); do
-    base_esc=$(basename "$f" | sed 's/\./\./g')
+    base_esc=$(basename "$f" | sed 's/\./\\./g')
     grep -qE "^run_suite .*/tests/${base_esc}\"" "$REPO_ROOT/tests/run.sh"       || UNREGISTERED="$UNREGISTERED $f"
   done
 else

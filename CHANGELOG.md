@@ -3,6 +3,25 @@
 ## [Unreleased]
 
 ### Changed
+- **Cursor's handoff threshold lowered from 80% to 40%, matching Claude Code.** The 80% was
+  documented and deliberate — justified on rule re-injection, which addresses the *continuity* cost
+  of a full context but not the *quality* cost. **Adopters using Cursor: you will be prompted to
+  hand off considerably earlier than before.** The reasoning is deliberately not restated here; it
+  lives in `standards/MEMORY-BANK.md` under "Implications for Handoff Thresholds", including why a
+  Cursor-specific number should not be re-derived from rule-persistence behaviour.
+
+  A second, independent reason applies: `memory-bank/systemPatterns.md` already stated the trigger
+  as 40% with no IDE qualifier, so two governing documents were in conflict with no stated
+  arbitration between them. That reasoning is **not restated here** — it now lives alongside the
+  rest in `standards/MEMORY-BANK.md`, which is the governed home for it. The *general* gap it
+  exposes (nothing states whether a `standards/` document outranks a `memory-bank/` one) remains
+  open and is tracked separately.
+
+  **The two scaffold templates that also carried the old 80% are corrected here:**
+  `templates/AGENTS.md` (three places) and `templates/memory-bank/README.md`. Note their
+  distribution differs — `README.md` ships via `mb init`; **`AGENTS.md` has no `mb` CLI
+  distribution path at all** and reaches projects only through the standalone
+  `scripts/init-memory-bank.sh`, which is a separate pre-existing gap.
 - **Review agents now pin their model in frontmatter.** `.claude/agents/security-reviewer.md`
   pins `sonnet`, the new `.claude/agents/opposition.md` pins `opus`, and `researcher.md` states
   `haiku` deliberately. Previously none declared a model, so all three silently inherited
@@ -25,6 +44,19 @@
   registered size cap.
 
 ### Fixed
+- **`templates/CLAUDE.md` described the PreCompact hook as warning when it blocks.** The shipped
+  copy still documented the original 2026-05-28 design ("the hook always exits 0 — compaction is
+  never blocked"); the behaviour changed to a hard exit-2 block and the template was never updated,
+  so adopters were told to expect a warning and got a refused compaction with no explanation. Now
+  states the real conditions, including the dated-handoff bypass.
+- **`standards/MEMORY-BANK.md` instructed `mb compact`, which exits 2.** The command was folded into
+  `mb clean` and now only prints a redirect. Inverted drift: `templates/standards/MEMORY-BANK.md`
+  already carried the correct instruction, so adopters were right and this repo's own copy was wrong.
+- **The `.cursor/rules` mirrors had no drift guard.** Those files are `TEMPLATE_OWNED` — `mb upgrade`
+  overwrites the live copies from `templates/cursor/rules/` unconditionally — yet nothing verified
+  the two agreed, so a stale governance rule could ship to every adopter with no signal.
+  `tests/test-mirror-parity.sh` now compares them in both directions, auto-discovering the files
+  rather than hard-coding a list.
 - **The PreCompact memory-bank freshness gate was bypassed by any `handoff.md`, however old.**
   `pre-compact-check.sh`/`.ps1` short-circuited on a bare existence check with no staleness test, so a
   spent handoff left in the repo root silently disabled the gate for every compaction. Both shells now
