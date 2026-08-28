@@ -79,6 +79,39 @@ jobs:
             fi
           done < <(find memory-bank -name "*.md" -print0 2>/dev/null)
 
+          # === relocation destinations (living documents only) ===
+          # WHY this block exists: `standards/MEMORY-BANK.md`'s Eviction Criteria permit moving
+          # completed progress.md entries verbatim to a bounded destination. "Bounded" has two
+          # branches. Archive files under Archive Structure are bounded by construction -- one
+          # topic or period per file, never appended -- so they are deliberately NOT checked here.
+          # A *living* destination is the hazard: it is appended to indefinitely, so without a cap
+          # a relocation just moves content from a capped file into an unbounded one and reports
+          # the cap "resolved". That was live on 2026-08-26: docs/MEMORY-BANK-PARADIGM-REVIEW.md
+          # had taken two relocations and stood at 693 lines / 56,732 bytes under no cap at all.
+          #
+          # WHY the thresholds differ in KIND from the memory-bank ones above: these files are NOT
+          # re-read at session start -- that is the entire point of relocating into them -- so the
+          # number does not bound startup context cost. It bounds unchecked accretion. Set above
+          # present size per this workflow's existing ratchet convention, and RATCHET DOWN as the
+          # file is genuinely trimmed; a ceiling that only ever moves up is not a cap.
+          declare -A DEST_WARN_BYTES=( [MEMORY-BANK-PARADIGM-REVIEW.md]=64000 )
+          declare -A DEST_FAIL_BYTES=( [MEMORY-BANK-PARADIGM-REVIEW.md]=96000 )
+          for dest in "${!DEST_WARN_BYTES[@]}"; do
+            f="docs/$dest"
+            [ -f "$f" ] || continue
+            bytes=$(wc -c < "$f")
+            warnb=${DEST_WARN_BYTES[$dest]}
+            failb=${DEST_FAIL_BYTES[$dest]}
+            if [ "$bytes" -gt "$failb" ]; then
+              echo "FAIL: $f ($bytes bytes -- limit $failb)"
+              FAIL=1
+            elif [ "$bytes" -gt "$warnb" ]; then
+              echo "WARN: $f ($bytes bytes -- warn $warnb)"
+            else
+              echo "OK:   $f ($bytes bytes)"
+            fi
+          done
+
           # === Aggregate startup-context budget ===
           # WHY this exists in addition to the per-file caps above: `mb doctor` check 15 has long
           # declared an AGGREGATE ceiling (WARN >15 KB, ERROR >25 KB across CLAUDE.md plus the five

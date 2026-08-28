@@ -62,6 +62,35 @@ positives and for what the gate deliberately does not cover (`GIT_CONFIG_*` env 
 
 If BLOCK or CONFIRM is triggered, the tool call is denied before it executes. WARN surfaces the access as advisory text and lets the command proceed.
 
+#### Matching is case-insensitive — and in `.sh`, **patterns must be written in lower case**
+
+Every tier matches without regard to case, in both shells. `.ps1` gets this from
+`OrdinalIgnoreCase` / `RegexOptions.IgnoreCase` at each site. `.sh` gets it by folding the command
+to lower case **once** — `cmd_lc` and `cmd_loose_lc`, built beside `cmd_loose` — and matching every
+`case` against those folded views.
+
+**The rule when adding a pattern to `dangerous-commands.sh`: write it in lower case.** `block`,
+`block_boundary`, `confirm`, `confirm_boundary` and `warn` compare `$1` against an already-folded
+subject and do **not** fold `$1` themselves. An upper-case pattern therefore matches nothing, ever —
+silently, and **fail-open**. Nothing at the call site looks wrong; the guard simply stops guarding.
+This is why `chmod -R 777` is spelled `chmod -r 777` in **the script's** pattern list, while the
+tier lists above show the command as an operator would actually type it. The real `chmod -R 777` is
+still caught, because the *subject* is folded before comparison.
+
+`confirm_regex` is the exception — its patterns go to `grep -qziE`, which folds via `-i`, so case
+there is unconstrained.
+
+**Why the patterns aren't just folded per call** (the obvious alternative, which was built and then
+reverted): folding `$1` inside each matcher costs a `printf | tr` subshell per matcher *call* —
+about 25 per invocation, on a hook that runs on **every single Bash tool call**. Measured over 10
+runs of one benign command: **1.07s → 2.33s per invocation**. Folding the two subjects once instead
+costs two subshells total and measures at parity with the pre-fold baseline.
+
+Both suites assert this structurally, so the fail-open trap is a red test rather than a silent
+hole: no matcher may match against an unfolded view, and no pattern argument may contain an
+upper-case letter. Both mirrors (`scripts/` and `templates/scripts/`) are checked, plus a
+byte-identity assertion between them.
+
 Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). Configured in `.claude/settings.json` with two matchers — one for `Bash` (with sh fallback) and one for `PowerShell` (PS-only):
 
 ```json

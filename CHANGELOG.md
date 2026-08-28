@@ -2,6 +2,70 @@
 
 ## [Unreleased]
 
+### Changed
+- **Review agents now pin their model in frontmatter.** `.claude/agents/security-reviewer.md`
+  pins `sonnet`, the new `.claude/agents/opposition.md` pins `opus`, and `researcher.md` states
+  `haiku` deliberately. Previously none declared a model, so all three silently inherited
+  `CLAUDE_CODE_SUBAGENT_MODEL=haiku` from `.claude/settings.json` — a security review and the
+  opposition gate were running cost-optimized, producing output shaped identically to a thorough
+  pass with nothing recording which model produced it. **Adopters: your `security-reviewer` will
+  now run on a more capable model than before.**
+- **`mb doctor` check 25 additionally warns when `security-reviewer` or `opposition` is missing a
+  `model:` field, or pins `haiku`.** `researcher` is deliberately exempt. Both shells.
+- **Memory-bank line caps aligned to CI in both runtimes.** An audit found three divergences
+  running in both directions: `progress.md` was stricter at runtime (400) than in CI (600), while
+  `projectbrief.md` (150 vs 120) and `techContext.md` (400 vs 300) were LOOSER at runtime than in
+  CI — so a clean `mb doctor` could be followed by a red build. Only the first had been recorded.
+  `tests/test-threshold-parity.sh` now fails if the three sources drift again.
+- **`standards/MEMORY-BANK.md` eviction criteria amended.** The two age-based `progress.md` rows
+  (>6 months, >3 months) were removed: they had never fired and could not, since the repo is four
+  months old while `progress.md` measurably grows ~8 KB/day. They are replaced by a
+  citation-survival test, chosen because it reproduces all four historical relocation outcomes
+  including the one that was reverted. Destinations that are living documents must now carry a
+  registered size cap.
+
+### Fixed
+- **`mb upgrade` would never have delivered a newly-added agent.** `ADVISORY_DIFF` hard-coded two
+  agent paths in both shells — the same stale-list bug already documented for slash commands in
+  1.2.0. Agents are now auto-discovered from `templates/.claude/agents/*.md` into
+  `ADVISORY_CREATE` (not `ADVISORY_DIFF`, which skips targets that are missing — and a
+  newly-shipped agent is missing for every adopter by definition).
+- **`mb upgrade` (PowerShell only) could deliver non-agent files into `.claude/agents/`.**
+  `Get-TemplateDirFile` had no extension filter while the bash glob used `*.md`, so a stray
+  `README`, `.txt` or editor backup in the template directory would be copied by pwsh and not by
+  bash. The helper now takes an opt-in `-Filter`, passed `*.md` at the agents call site only.
+- `.claude/agents/opposition.md`'s description advertised "never writes review markers"
+  unconditionally, contradicting both its own body and the marker write that
+  `.claude/commands/code-review.md` Step 5.3 requires of it on an Approve verdict.
+- Both review commands instructed the orchestrator to pass "`sonnet` or higher" to the opposition
+  agent. An explicit `model` parameter overrides frontmatter, so a compliant orchestrator would
+  have silently downgraded the `opus` pin added to prevent exactly that. Both now specify `opus`.
+
+### Documentation
+- **Recorded a cross-project provenance gap.** The ACR session holds a memory-bank entry attributing
+  a specific `ai-review-agent` timeout measurement (a 616 s agent runtime against a 282,240 ms
+  ceiling) to a brief from this project. That measurement exists nowhere in PMB — not in
+  `memory-bank/`, `docs/`, `docs/archive/`, or the ACR brief in the operator's Downloads. It was
+  reported back as unsourced rather than reconstructed from the formula, and ACR was advised to
+  re-derive it with instrumentation rather than treat it as evidence.
+- `memory-bank/activeContext.md` stated `progress.md` was at "599/60,000 — ZERO bytes of headroom,
+  deadlock is live". The file was well under both caps by then; the claim was stale from the
+  moment the relocation landed, in the same branch that left the paragraph unedited. No
+  replacement byte count is recorded here — two attempts to pin one went stale inside this very
+  branch, so the number is left to `wc -c` and the CI caps. Its `mb.sh:831` /
+  `mb.ps1:1090` citations were also simply wrong (`mb.sh:409,410,967`, `mb.ps1:1189`).
+- `memory-bank/progress.md` recorded the relocation as taking the file to a specific byte count.
+  Two successive attempts to state that number (40,063, then 46,956) were each already stale when
+  written, because entries kept being appended after the measurement. No byte count is recorded in
+  any of the three files any more — the relocation's effect is stated as bytes REMOVED (20,953),
+  which does not decay, and current size is left to `wc -c` and the CI caps.
+- New `[NS-42]` (write-rate control — eviction is symptom relief; the file grew +24,355 bytes in
+  three days and `docs/archive/` already holds 149,711 relocated bytes) and `[NS-43]` (the review
+  gate structurally forbids commit-splitting, and its purely textual matcher denies any command
+  that merely mentions a guarded pattern).
+- Agent definitions now carry a scope caveat: their `Bash(...)` entries declare intent and were
+  observed not to constrain Bash in practice, so they must not be relied on as a security boundary.
+
 ### Security
 - `scripts/dangerous-commands.sh`/`.ps1` (and `templates/` mirrors): commit-signing bypass is now
   CONFIRM-tier, alongside the existing `--no-verify` entry. Covers `commit.gpgsign` set to any
@@ -129,6 +193,42 @@
   discriminate either — neutering the original line left them byte-identically green, so the guard
   for the NBSP platform-parity bug was already dead while still looking healthy. Redundant
   normalization in a matcher does not add safety; it removes testability.
+- **Closed a case-sensitivity bypass that spanned three tiers on the `.sh` side** (`[NS-37]`).
+  `block()`, `block_boundary()`, `confirm()` and `warn()` all matched with a bare POSIX `case`,
+  which is case-sensitive, while **every** corresponding site in the `.ps1` twin uses
+  `OrdinalIgnoreCase` or `RegexOptions.IgnoreCase`. Only `confirm_regex()` (`grep -i`) and
+  `confirm_boundary()` (which folded per call) already agreed. So a mixed-case payload got **no
+  verdict at all** from bash and a verdict from PowerShell — `DrOp TaBlE`, `Rm -Rf`, `| BASH`,
+  `--NO-VERIFY` and `SUDO RM` were each live on the shell that runs wherever `pwsh` is absent,
+  which includes CI. Not cosmetic: SQL keywords are case-insensitive to the engine, and on the
+  default case-insensitive Windows and macOS filesystems a shell resolves `RM` to the same
+  binary as `rm`.
+- Fixed at the **mechanism**, not per entry: both command views are folded once, hoisted beside
+  `cmd_loose`, and all six matchers now read the same pair. The two lowercase SQL literals
+  (`drop table`, `drop database`) added by an earlier per-instance patch are **removed** — they
+  fixed the two entries someone thought of, left every other pattern and both other tiers
+  evadable by one shifted keystroke, and were themselves evaded by a *mixed*-case spelling.
+  Their removal also restores structural parity with `$blockPatterns` on the `.ps1` side, which
+  never carried them.
+- **Why widening the fix past the BLOCK tier could not open a new hole:** folding both sides of
+  an ASCII comparison is monotone — it can only ever *add* a match, never remove one. The whole
+  risk is therefore false positives, bounded by the existing word-boundary checks and pinned by
+  negative controls (`| SHA256SUM`, `| Shasum` — the collision that forced `block_boundary()` to
+  exist, and which this repo's own review-gate hash verification depends on). One accepted cost
+  is now pinned rather than left implicit: a mixed-case trigger quoted inside a commit message
+  blocks, exactly as the upper-case spelling already did.
+- Added a **completeness invariant** to both suites: no matcher may match against a non-lowered
+  view, asserted structurally over `scripts/` *and* `templates/scripts/`, plus a byte-identity
+  check between the two mirrors. This is the check payload cases cannot make — round 9's lesson
+  in this same file is that a mutation proof shows a mechanism works *where it is wired* and
+  says nothing about whether every matcher is wired to it. The de-escaped-view retrofit missed
+  one matcher of five; the case-folding retrofit then missed four of six.
+- The cross-shell `assert_parity` helper gained a `block` arm — every parity case in the suite
+  had been a CONFIRM case, so the entire BLOCK tier went unchecked for divergence, which is
+  where this defect lived. Its `pass` arm now also asserts no *false* BLOCK, the failure mode a
+  folding change actually risks. Absolute (non-parity) assertions were added on the `.ps1` side
+  so that dropping `IgnoreCase` there cannot make the two shells agree at the wrong answer while
+  the parity block stays green.
 
 ### Note — session-claims items below are in-flight, not shipped
 The four `Added` items below are implemented and committed on the not-yet-merged branch

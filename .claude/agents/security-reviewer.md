@@ -1,6 +1,24 @@
 ---
 name: security-reviewer
 description: Security-focused code reviewer. Checks for vulnerabilities, secrets, injection risks, supply chain issues, and AI-era antipatterns. Read-only — never modifies files.
+# WHY model is pinned here rather than left to inherit: `.claude/settings.json` sets
+# CLAUDE_CODE_SUBAGENT_MODEL=haiku, which is the right default for the reads, test runs and
+# exploration that most subagents do. It is NOT right for a security review, and an unpinned
+# agent inherits it silently — the findings table looks identical either way, and nothing in the
+# transcript records which model produced it. Found 2026-08-26: this agent had no model field and
+# was therefore running on haiku. Do not remove this line to save tokens; a cheap security review
+# that finds nothing is indistinguishable from a thorough one that finds nothing.
+model: sonnet
+# SCOPE CAVEAT, recorded 2026-08-27 — the Bash(...) entries below declare INTENT, not an enforced
+# boundary. During review of the fix/block-tier-case-sensitivity branch, the `opposition` agent —
+# whose list grants only git diff/log/show, wc, grep, sed, awk, find, diff, ls — successfully ran
+# `mktemp`, `sha256sum`, `cut`, `rm`, `curl`, `python3` and an arbitrary `> file` redirect and
+# reported each result. On that occasion the per-command scoping did not constrain Bash at all.
+# NOT established: whether that is general harness behaviour, version-specific, or a misread of how
+# the grant resolves. Treat it as unresolved rather than settled in either direction.
+# OPERATIONAL CONSEQUENCE, which holds either way: do not rely on these entries as a security
+# boundary. Where an agent must not write, the prohibition belongs in the agent's own instructions
+# (as below) and in hooks — never inferred from this list.
 tools:
   - Read
   - Glob

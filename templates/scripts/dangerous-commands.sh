@@ -290,16 +290,67 @@ if [ "$cmd_len" -gt "$DC_MAX_CMD" ]; then
     exit 0
 fi
 
+# WHY a lowered view of each of the two views above, hoisted here rather than folded per
+# matcher: POSIX `case` is case-SENSITIVE, and every corresponding site in the .ps1 twin uses
+# OrdinalIgnoreCase (literals) or RegexOptions.IgnoreCase (regexes). Four of the six matchers
+# below -- block(), block_boundary(), confirm(), warn() -- used a bare `case` and so returned NO
+# VERDICT AT ALL on a mixed-case payload the .ps1 twin caught. Only confirm_regex() (grep -i) and
+# confirm_boundary() (which folded per call) already agreed. That is a live divergence across
+# three tiers, not a cosmetic one: SQL keywords are case-insensitive to the engine, so a
+# mixed-case drop executes exactly as the upper-case one does, and on the default
+# case-insensitive Windows and macOS filesystems a shell resolves `RM` to the same binary as
+# `rm`. Two lowercase SQL literals had been added to the BLOCK list to paper over this; they
+# patched two entries and left the mechanism broken, so the mechanism is fixed here instead and
+# those entries are gone.
+#
+# WHY folding is safe to apply this widely: lowering BOTH sides of an ASCII comparison is
+# MONOTONE -- it can only ever ADD a match, never remove one -- so it cannot open a new bypass,
+# only produce false positives. That is the same fail-closed argument the cmd_loose note above
+# makes, and the same accepted cost: at CONFIRM and WARN tier a false positive is a prompt, at
+# BLOCK tier it is a refusal. The word-boundary checks below are what keep that cost bounded.
+#
+# WHY hoisted: computing it once beside cmd_loose keeps every matcher reading the SAME pair, so
+# "did this matcher fold?" is answerable by reading one line of the matcher instead of tracing
+# which of them recomputed it. confirm_boundary() used to recompute both per call.
+#
+# WHY `tr` and not a shell parameter expansion: ${var,,} is a bashism and this file targets POSIX sh.
+#
+# KNOWN RESIDUAL DIVERGENCE, measured 2026-08-26 rather than assumed: `tr 'A-Z' 'a-z'` folds ASCII
+# ONLY, while .NET's OrdinalIgnoreCase folds non-ASCII too -- verified directly, a Greek upper-case
+# string Contains() its lower-case form under OrdinalIgnoreCase and returns True. So for a non-ASCII
+# payload the two shells still disagree, which is the same class of gap this whole change closes,
+# one layer down. It is NOT a regression: before this change the sh side folded nothing at all, so
+# every case this misses was already missed. And no pattern shipped in this file contains a
+# non-ASCII character, so nothing in the current list is affected. Stated here rather than papered
+# over -- an earlier draft of this comment claimed the two "match", which was simply false.
+#
+# WHY THE SUBJECT IS FOLDED HERE AND THE PATTERNS ARE NOT FOLDED AT ALL: every pattern below is
+# a literal known when this file is written, so it is simply WRITTEN in lower case. The obvious
+# alternative -- folding $1 inside each matcher -- was implemented, MEASURED, and reverted: it
+# adds a `printf | tr` subshell per matcher CALL, about 25 per invocation, and this hook runs on
+# every single Bash tool call. Measured on this machine over 10 runs of a benign command:
+# 1.07s -> 2.33s per invocation, a 2.2x regression paid by every command the operator ever runs.
+# Folding the two subjects once costs two subshells total.
+#
+# THE TRAP THIS CREATES, and the guard for it: because the subjects are lower case, an UPPER-case
+# pattern can now never match anything -- silently, and FAIL-OPEN, which is the worst direction
+# for a guard to fail in. Nothing about the call site would look wrong. So both suites assert
+# structurally that no pattern argument contains an upper-case letter, which converts that trap
+# into a red test the moment someone writes one.
+cmd_lc=$(printf '%s' "$cmd" | tr 'A-Z' 'a-z')
+cmd_loose_lc=$(printf '%s' "$cmd_loose" | tr 'A-Z' 'a-z')
+
 block() {
     # BLOCK: irreversible or highly destructive — refuse unconditionally.
-    # Checks the de-escaped view too -- see the cmd_loose note above.
-    case "$cmd" in
+    # Checks the de-escaped view too -- see the cmd_loose note above -- and both views folded
+    # to lower case -- see the cmd_lc note above. $1 MUST be written lower case.
+    case "$cmd_lc" in
         *"$1"*)
             deny "BLOCK: $2. Refusing this command."
             exit 0
             ;;
     esac
-    case "$cmd_loose" in
+    case "$cmd_loose_lc" in
         *"$1"*)
             deny "BLOCK: $2. Refusing this command."
             exit 0
@@ -315,13 +366,18 @@ block_boundary() {
     # field-path bug that had made this pattern a no-op made the collision real). POSIX
     # case globs have no \b, so this approximates it: match $1 followed by a non-letter,
     # or match $1 as the literal end of the string.
-    case "$cmd" in
+    #
+    # WHY the boundary class stays [!a-zA-Z] on an already-lowered string: [!a-z] would be
+    # equivalent here, and writing it that way would encode an assumption -- "the subject is
+    # always folded" -- that a future edit could quietly falsify. Keeping the class case-blind
+    # costs nothing and cannot be wrong either way. $1 MUST be written lower case.
+    case "$cmd_lc" in
         *"$1"[!a-zA-Z]*|*"$1")
             deny "BLOCK: $2. Refusing this command."
             exit 0
             ;;
     esac
-    case "$cmd_loose" in
+    case "$cmd_loose_lc" in
         *"$1"[!a-zA-Z]*|*"$1")
             deny "BLOCK: $2. Refusing this command."
             exit 0
@@ -331,14 +387,17 @@ block_boundary() {
 
 confirm() {
     # CONFIRM: advanced op with legitimate uses — require explicit manual invocation.
-    # Checks the de-escaped view too -- see the cmd_loose note above.
-    case "$cmd" in
+    # Checks the de-escaped view too -- see the cmd_loose note above -- and both views folded
+    # to lower case -- see the cmd_lc note above. Without the fold, `--No-Verify` and `SUDO RM`
+    # walked through this tier on the sh side while the .ps1 twin gated both.
+    # $1 MUST be written lower case.
+    case "$cmd_lc" in
         *"$1"*)
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
             ;;
     esac
-    case "$cmd_loose" in
+    case "$cmd_loose_lc" in
         *"$1"*)
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
@@ -440,17 +499,17 @@ confirm_boundary() {
     # matcher is wired to it. Coverage failures wear correctness clothing. The cheap guard is a
     # COMPLETENESS invariant (enumerate every matcher, assert each references both views), which
     # is a different tool from a discrimination check.
-    cmd_lc=$(printf '%s' "$cmd" | tr 'A-Z' 'a-z')
-    cmd_loose_lc=$(printf '%s' "$cmd_loose" | tr 'A-Z' 'a-z')
-    pat_lc=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+    # The two folded views this used to recompute per call are now hoisted beside cmd_loose --
+    # see the cmd_lc note above. This function was the only one that folded, which is what made
+    # the other four's omission look deliberate rather than missed.
     case "$cmd_lc" in
-        "$pat_lc "*|"$pat_lc"|*[!a-zA-Z]"$pat_lc "*|*[!a-zA-Z]"$pat_lc")
+        "$1 "*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1")
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
             ;;
     esac
     case "$cmd_loose_lc" in
-        "$pat_lc "*|"$pat_lc"|*[!a-zA-Z]"$pat_lc "*|*[!a-zA-Z]"$pat_lc")
+        "$1 "*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1")
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
             ;;
@@ -458,8 +517,16 @@ confirm_boundary() {
 }
 
 warn() {
-    # WARN: credential/secrets access — command proceeds, access is surfaced
-    case "$cmd" in
+    # WARN: credential/secrets access — command proceeds, access is surfaced.
+    # Folded to lower case -- see the cmd_lc note above. Filenames are the subject here and the
+    # default Windows and macOS filesystems are case-insensitive, so `ID_RSA` and `id_rsa` name
+    # the same file; the .ps1 twin's OrdinalIgnoreCase already surfaced both.
+    #
+    # WHY only the faithful view and not cmd_loose_lc: this matcher checks ONE view on both
+    # shells -- the .ps1 warn loop tests $cmd alone as well -- so adding the de-escaped view
+    # here would create a divergence rather than close one. That shared single-view limit is a
+    # real gap, but it is a gap in BOTH shells and out of scope for the case-folding fix.
+    case "$cmd_lc" in
         *"$1"*)
             printf "WARNING: %s. Proceeding.\n" "$2"
             ;;
@@ -472,11 +539,14 @@ block "mkfs"             "filesystem format"                    # WHY: formats/d
 block "dd if="           "disk wipe or dump"                    # WHY: raw disk access, wipes or dumps data
 block "git push --force" "force push (long form)"               # WHY: rewrites remote history irreversibly
 block "git push -f"      "force push (short form)"              # WHY: same as --force, short flag form
-# NOTE: POSIX case is case-sensitive. Adding lowercase variants to match ps1 OrdinalIgnoreCase behavior.
-block "DROP TABLE"       "SQL table drop"                       # WHY: irreversible schema destruction
-block "DROP DATABASE"    "SQL database drop"                    # WHY: destroys entire database
-block "drop table"       "SQL table drop (lowercase)"           # WHY: parity with ps1 OrdinalIgnoreCase — catches lowercase SQL
-block "drop database"    "SQL database drop (lowercase)"        # WHY: parity with ps1 OrdinalIgnoreCase — catches lowercase SQL
+# WHY there are no longer lowercase twins of these two: they were added when block() matched
+# case-sensitively, and they fixed the two entries someone thought of rather than the matcher.
+# Every OTHER pattern in this file -- and both other tiers -- stayed evadable by one shifted
+# keystroke, and a MIXED-case spelling evaded these two as well. block() now folds (see the
+# cmd_lc note above), which covers every entry and every spelling, so the twins are redundant.
+# This also restores structural parity with the .ps1 twin, whose $blockPatterns never had them.
+block "drop table"       "SQL table drop"                       # WHY: irreversible schema destruction
+block "drop database"    "SQL database drop"                    # WHY: destroys entire database
 block_boundary "| bash" "command piped to bash (curl|bash, wget|bash, etc.)"  # WHY: remote code execution vector
 block_boundary "| sh"   "command piped to sh"                  # WHY: remote code execution via sh
 block_boundary "|bash"  "command piped to bash (no-space form)"  # WHY: curl|bash without spaces evades space-prefixed pattern
@@ -486,7 +556,12 @@ block_boundary "|sh"    "command piped to sh (no-space form)"    # WHY: wget|sh 
 confirm "git filter-branch" "history rewriting"                 # WHY: rewrites commit history, rarely intentional
 confirm "git update-ref"    "low-level ref manipulation"        # WHY: low-level plumbing, bypasses safety checks
 confirm "sudo rm"           "privileged deletion"               # WHY: elevated deletion can remove system files
-confirm "chmod -R 777"      "world-writable recursive chmod"    # WHY: makes entire tree world-writable
+# WHY this one reads `-r` when the real flag is `-R`: patterns are matched against a lower-cased
+# command (see the cmd_lc note above), so the pattern must be lower case to match at all. The
+# real `chmod -R 777` is still caught, because the subject is folded before comparison. The cost
+# is that `chmod -r 777` -- a different, and near-nonsensical, command -- now also prompts. That
+# false positive is not new: the .ps1 twin's OrdinalIgnoreCase has always had it.
+confirm "chmod -r 777"      "world-writable recursive chmod"    # WHY: makes entire tree world-writable
 confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WHY: skips safety hooks on commit
 # WHY these sit beside the hook-skip flag above: same class of action -- routing around
 # local governance -- and that flag already establishes the class as CONFIRM-worthy. An

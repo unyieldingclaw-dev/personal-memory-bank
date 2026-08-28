@@ -168,19 +168,68 @@ Content should leave Memory Bank files on objective criteria, not agent judgment
 | activeContext.md | Entry > 14 days old and not an active blocker | Move to `docs/archive/context-YYYY-MM-<topic>.md` |
 | activeContext.md | "Next Steps" item completed | Move to `progress.md` immediately |
 | activeContext.md | Issue marked resolved | Delete — do not archive |
-| progress.md | Work completed > 6 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
-| progress.md | Bug fixed > 3 months ago | Move to `docs/archive/progress-YYYY-MM-<topic>.md` |
+| progress.md | Entry's work is complete AND every live `[NS-N]` citation to it still resolves after the move — verified by `grep`, not assumed | Move **verbatim** to a bounded destination — either a write-once archive file per Archive Structure, or, if the destination is a living document that gets appended to, one with a size cap registered in `.github/workflows/pmb-health.yml` — leaving a dated pointer that carries the original heading text |
 | progress.md | Content is not chronological progress at all (project description, feature inventory, standing pointers) and has no live citation | Move **verbatim** to `docs/archive/progress-reference-sections-YYYY-MM-DD.md`, leaving a pointer |
 
-**Why the third row is not an age test.** The first two are age-based, which is the objective form
-this section prefers. The third cannot be: the trigger is *misfiling*, not staleness — content that
-was never progress in the first place does not become evictable by getting older. It was added
-2026-08-24 after a real relocation had no documented basis under the age rules (the moved material
-included a two-month-old section, well inside the six-month threshold). Two guards keep it
-objective rather than a licence for judgement: the content must have **no live citation** anywhere
-in the repo, and the move must be **verbatim** — no condensing, no summarising, no rewriting. A
-relocation that rewrites is an eviction in disguise, and loses exactly the detail the archive exists
-to keep.
+**Why neither progress.md row is an age test — amended 2026-08-27, with the proof recorded.** Both
+rows were age-based until this date (>6 months for completed work, >3 months for fixed bugs). They
+were removed because they had **never once fired and could not**: this repo was 4 months old on
+2026-08-27 (first commit 2026-04-29), so no content had ever reached the six-month threshold, while
+`progress.md` was measured growing **+24,355 bytes over 3 days** (35,640 B at `ea862e8` → 59,995 B
+at `030662c`). A repo that fills its cap in three days cannot be governed by a six-month eviction
+clock. The gap was not theoretical: four separate cap-relief passes (`8847714`, `da62ad2`, the
+reverted 2026-08-25 pass, and the 2026-08-26 rounds-4-9 relocation) all moved **days-old
+chronological** content that no row permitted.
+
+**What replaced them, and why that specific test.** The old rows returned the same verdict — deny —
+for `8847714` and `da62ad2` (both merged) as for the 2026-08-25 pass (reverted). A rule that cannot
+separate cases decided oppositely is not governing the decision. Checking what actually differed:
+`8847714` and `da62ad2` **left the original `##` heading in place**, suffixed "— condensed, full
+detail archived" (still visible in `progress.md` — grep for "condensed, full detail archived"; line
+numbers are deliberately omitted, they have gone stale three times in this file already), so every `[NS-N]` citation
+still resolved; the reverted pass **broke one** — `[NS-35]`'s citation to Round 4. **That single
+DENY case is recorded from session notes, not reproduced from git**, and it is the only DENY among
+the four outcomes; the three PERMITs are independently verifiable. If the 2026-08-25 pass was
+actually reverted for lack of authorization rather than for the broken citation, this rule is
+proven on three PERMITs and no DENY — restate the claim rather than leave it overstated. The discriminator is **citation survival**, not age and not content type.
+The amended row reproduces all four historical outcomes, including the revert.
+
+**Why the pointer must carry the original heading text.** This is what keeps the citation resolving
+*in place*, and it is not cosmetic. `docs/archive/progress-reference-sections-2026-08-23.md` records
+why a chronological pass was rejected on evidence at that time: citations live in
+`activeContext.md`, so rewriting them spends headroom in a **second capped file**. Measured
+2026-08-27: `activeContext.md` was at **149 lines against a 150 hard-fail** — one line. A pointer
+that preserves the heading lets the citation resolve by `grep` with zero new lines pushed into that
+file.
+
+**The verbatim guard survives unchanged**, and one guard is added. Verbatim means no condensing, no
+summarising, no rewriting; a relocation that rewrites is an eviction in disguise, and loses exactly
+the detail the archive exists to keep.
+
+The added guard is **boundedness of the destination**, and it is deliberately two-branched rather
+than a blanket "must be capped". Archive files under Archive Structure are already bounded by
+construction — one topic or period per file, never appended to — so they need no cap and none was
+retrofitted onto them. A *living* destination is the actual hazard: it accretes without limit, and
+content that leaves a capped file for an unbounded one has not been archived, it has been hidden.
+That defect was live when this amendment was written — `docs/MEMORY-BANK-PARADIGM-REVIEW.md` is
+self-described "Living document", had received two relocations, and stood at 693 lines / 56,732
+bytes under no cap of any kind.
+
+Frontmatter was considered as a third guard and **rejected**: nothing outside `memory-bank/` reads
+those fields, `mb doctor` does not validate them there, and the repo's own compliant precedent
+(`docs/archive/progress-reference-sections-2026-08-23.md`) carries none. Requiring it would have
+been convention copied into a place that does not consume it.
+
+**What this does NOT fix.** Eviction is symptom relief. At the measured write rate above, the
+2026-08-26 relocation bought **days, not weeks** of headroom — no figure is given because every
+attempt to state one has decayed before the branch stating it landed — and `docs/archive/` already held
+**149,711 bytes** moved out by this same mechanism while `progress.md` still hit its cap. The
+binding constraint is write *rate*, not eviction policy — tracked as `[NS-42]`, not solved here.
+
+**Why the reference-sections row is not an age test either.** The trigger there is *misfiling*, not
+staleness — content that was never progress in the first place does not become evictable by getting
+older. It was added 2026-08-24 after a real relocation had no documented basis under the then-current
+age rules.
 
 Run `mb doctor` to surface files that are stale or due for review.
 

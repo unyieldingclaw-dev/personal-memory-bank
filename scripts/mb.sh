@@ -384,7 +384,7 @@ show_clean() {
     # Slim check
     # WHY progress.md is checked here too, not just activeContext.md: mb doctor's own
     # File Sizes check (check_size, ~line 809) already measures progress.md against a
-    # 400-line cap -- this display only ever showed activeContext.md, so running `mb clean`
+    # 600-line cap -- this display only ever showed activeContext.md, so running `mb clean`
     # without also running `mb doctor` gave a false "maintenance pass complete" impression
     # even when progress.md was well over its own limit. Same thresholds as mb doctor's
     # check_size() and pmb-health.yml's CI file-size job, kept in sync deliberately.
@@ -406,8 +406,8 @@ show_clean() {
     PROGRESS_PATH="$MEMORY_BANK_PATH/progress.md"
     if [ -f "$PROGRESS_PATH" ]; then
         PROGRESS_LINES=$(wc -l < "$PROGRESS_PATH" | tr -d ' ')
-        echo "progress.md: $PROGRESS_LINES lines (max: 400)"
-        if [ "$PROGRESS_LINES" -gt 400 ]; then
+        echo "progress.md: $PROGRESS_LINES lines (max: 600)"
+        if [ "$PROGRESS_LINES" -gt 600 ]; then
             echo -e "${RED}ACTION NEEDED: File is over limit!${NC}"
         elif [ "$PROGRESS_LINES" -gt 250 ]; then
             echo -e "${YELLOW}RECOMMENDED: Consider archiving old entries${NC}"
@@ -960,11 +960,17 @@ show_doctor() {
     # 6. File sizes
     OVER_LIMIT=false
     check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb clean'${NC}" && OVER_LIMIT=true || true; }
-    [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   150
+# THRESHOLD SOURCE OF TRUTH: .github/workflows/pmb-health.yml's MB_FAIL map. Aligned 2026-08-27
+# after an audit found THREE divergences, in both directions: progress.md was stricter here (400)
+# than in CI (600), so `mb doctor` WARNed on files the shipped docs certified compliant; while
+# projectbrief.md (150 vs 120) and techContext.md (400 vs 300) were LOOSER here than CI, meaning a
+# clean `mb doctor` could still be followed by a red build. Only the progress.md case had been
+# recorded. `tests/test-threshold-parity.sh` now fails if these drift from CI again.
+    [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   120
     [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 300
-    [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    400
+    [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    300
     [ -f "memory-bank/activeContext.md"  ] && check_size "memory-bank/activeContext.md"  150
-    [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       400
+    [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       600
     [ "$OVER_LIMIT" = false ] && echo -e "${GREEN}[OK]   File sizes within limits${NC}"
 
     # 7. Handoff
@@ -1478,6 +1484,7 @@ show_doctor() {
     if [ -d "$AGENTS_DIR" ]; then
         MISSING_NAME_AGENTS=()
         MISMATCHED_NAME_AGENTS=()
+        UNPINNED_REVIEW_AGENTS=()
         for f in "$AGENTS_DIR"/*.md; do
             [ ! -f "$f" ] && continue
             STEM=$(basename "$f" .md)
@@ -1496,7 +1503,37 @@ show_doctor() {
             elif [ "$AGENT_NAME" != "$STEM" ]; then
                 MISMATCHED_NAME_AGENTS+=("$f (name: $AGENT_NAME, filename: $STEM)")
             fi
+            # Review agents that decide whether code ships must PIN a capable model. An unpinned
+            # agent silently inherits CLAUDE_CODE_SUBAGENT_MODEL (haiku in this repo), and a cheap
+            # review that finds nothing is indistinguishable from a thorough one that finds
+            # nothing. Found live 2026-08-26: security-reviewer had no model: field and had been
+            # running on haiku. Nothing structural caught it, so this check exists.
+            case "$STEM" in
+                security-reviewer|opposition)
+                    # Normalization mirrors AGENT_NAME above, deliberately and in full. The
+                    # trailing-CR strip matters on Windows checkouts; the quote strip matters
+                    # because mb.ps1's equivalent does .Trim('"', "'"), so without it a
+                    # frontmatter `model: "haiku"` is caught by pwsh and silently missed by
+                    # bash -- a fresh sh/ps1 divergence of exactly the class this branch exists
+                    # to remove. Both found 2026-08-27.
+                    AGENT_MODEL=$(echo "$FM" | grep -m1 '^model:' \
+                        | sed 's/^model:[[:space:]]*//' \
+                        | sed -E 's/\r$//' \
+                        | sed -E 's/[[:space:]]+$//' \
+                        | sed -E 's/^"(.*)"$/\1/' \
+                        | sed -E "s/^'(.*)'\$/\1/")
+                    if [ -z "$AGENT_MODEL" ]; then
+                        UNPINNED_REVIEW_AGENTS+=("$f (no model: — inherits CLAUDE_CODE_SUBAGENT_MODEL)")
+                    elif [ "$AGENT_MODEL" = "haiku" ]; then
+                        UNPINNED_REVIEW_AGENTS+=("$f (model: haiku — cost-optimized, invalid for a review gate)")
+                    fi
+                    ;;
+            esac
         done
+        if [ "${#UNPINNED_REVIEW_AGENTS[@]}" -gt 0 ]; then
+            echo -e "${YELLOW}[WARN] ${#UNPINNED_REVIEW_AGENTS[@]} review agent(s) not pinned to a capable model:${NC}"
+            for a in "${UNPINNED_REVIEW_AGENTS[@]}"; do echo "       $a"; done
+        fi
         if [ "${#MISSING_NAME_AGENTS[@]}" -gt 0 ]; then
             echo -e "${YELLOW}[WARN] ${#MISSING_NAME_AGENTS[@]} agent(s) missing name: in frontmatter — Claude Code will silently fail to register them:${NC}"
             for a in "${MISSING_NAME_AGENTS[@]}"; do echo "       $a"; done
@@ -1913,9 +1950,10 @@ invoke_upgrade() {
     ADVISORY_DIFF=(
         # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
         "CLAUDE.md"
-        # Agent definitions likely contain project-specific tool lists and instructions
-        ".claude/agents/researcher.md"
-        ".claude/agents/security-reviewer.md"
+        # WHY agent definitions are no longer listed here: they moved to ADVISORY_CREATE and are
+        # auto-discovered — see the block immediately after that array. ADVISORY_DIFF SKIPS any
+        # target missing in the project, which is precisely wrong for agents: a newly-shipped agent
+        # is missing for every adopter by definition, so it would never be delivered at all.
     )
 
     # WHY: ADVISORY_CREATE — files that must exist for commands to work at runtime.
@@ -1950,6 +1988,30 @@ invoke_upgrade() {
         # notice, rather than having a workflow overwritten under it.
         ".github/workflows/memory-bank-size.yml"
     )
+
+    # WHY agent definitions are auto-discovered rather than listed: a static list silently goes
+    # stale the moment a new agent is added — the identical bug this file already documents for
+    # slash commands (accessibility-review.md and change-review.md shipped in 1.2.0 and were never
+    # added to the old hardcoded list, so `mb upgrade` never copied them into existing projects).
+    # It recurred immediately: `.claude/agents/opposition.md` was added 2026-08-26 and both review
+    # commands were changed to dispatch it BY NAME, while the hardcoded list here still named only
+    # researcher and security-reviewer. Every adopter would have received a review command
+    # referencing an agent `mb upgrade` never delivered, failing at the Opposition step — the gate's
+    # sole authority on whether a change ships.
+    #
+    # WHY ADVISORY_CREATE and not ADVISORY_DIFF, where agents used to live: ADVISORY_DIFF skips a
+    # target that is missing in the project. A newly-shipped agent is missing for EVERY adopter, so
+    # listing it there — hardcoded or discovered — still delivers nothing. ADVISORY_CREATE creates
+    # when absent and shows a diff rather than overwriting when the adopter has customized it,
+    # which is the behaviour agent definitions actually need.
+    #
+    # Paths resolve via _upgrade_src's default branch ($TEMPLATES_DIR/$target), so
+    # .claude/agents/X.md -> templates/.claude/agents/X.md with no mapping entry required.
+    if [ -d "$TEMPLATES_DIR/.claude/agents" ]; then
+        for f in "$TEMPLATES_DIR/.claude/agents"/*.md; do
+            [ -f "$f" ] && ADVISORY_CREATE+=(".claude/agents/$(basename "$f")")
+        done
+    fi
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X lives at templates/cursor/rules/X (no dot prefix) because

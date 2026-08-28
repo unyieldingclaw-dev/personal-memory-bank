@@ -916,4 +916,85 @@ echo "#!/usr/bin/env sh" > "$TMPDIR_NOLIB/scripts/review-reminders.sh"
 output=$(cd "$TMPDIR_NOLIB" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
 assert_contains "$output" "\[ERROR\].*_review-gate-lib.sh missing" "new check: _review-gate-lib.sh missing but review-reminders.sh present → [ERROR]"
 
+# ── Check 25: review agents must pin a capable model ──────────────────────────
+# WHY this exists: `security-reviewer` shipped with no `model:` field and ran on haiku for an
+# unknown period (found 2026-08-26) — a cheap security review that finds nothing is
+# indistinguishable from a thorough one that finds nothing, and nothing structural caught it.
+# The check added in response is itself enforcement logic, so it needs a test that discriminates
+# rather than an assertion that it ran.
+#
+# WHY `researcher` is asserted ABSENT rather than simply not mentioned: haiku is the RIGHT model
+# for retrieval work, so the check must be scoped, not blanket. A version that warned on every
+# haiku-pinned agent would pass a test that only looked for the two positive cases.
+echo ""
+echo "--- check 25: review agents not pinned to a capable model → [WARN] ---"
+
+TMPDIR_AGENTMODEL="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentmodel-test)"
+trap 'rm -rf "$TMPDIR_AGENTMODEL"' EXIT
+
+setup_test_project "$TMPDIR_AGENTMODEL"
+mkdir -p "$TMPDIR_AGENTMODEL/.claude/agents"
+
+cat > "$TMPDIR_AGENTMODEL/.claude/agents/opposition.md" <<'EOF'
+---
+name: opposition
+description: Adversarial reviewer.
+---
+Body.
+EOF
+
+cat > "$TMPDIR_AGENTMODEL/.claude/agents/security-reviewer.md" <<'EOF'
+---
+name: security-reviewer
+description: Security reviewer.
+model: "haiku"
+---
+Body.
+EOF
+
+cat > "$TMPDIR_AGENTMODEL/.claude/agents/researcher.md" <<'EOF'
+---
+name: researcher
+description: Codebase investigator.
+model: haiku
+---
+Body.
+EOF
+
+output=$(cd "$TMPDIR_AGENTMODEL" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_contains "$output" "review agent(s) not pinned to a capable model" "check 25: unpinned review agent → [WARN]"
+assert_contains "$output" "opposition.md (no model:" "check 25: names the agent with no model: field"
+# The QUOTED value is the discriminating case: mb.ps1 strips quotes via .Trim(), and bash did not
+# until 2026-08-27 — so a quoted haiku was caught by pwsh and silently missed by sh.
+assert_contains "$output" "security-reviewer.md (model: haiku" "check 25: catches a QUOTED model: \"haiku\" (sh/ps1 parity)"
+assert_not_contains "$output" "researcher.md (model: haiku" "check 25: researcher is exempt — haiku is correct for retrieval work"
+
+# ── Check 25: correctly-pinned review agents produce no warning ───────────────
+TMPDIR_AGENTPINNED="$(mktemp -d 2>/dev/null || mktemp -d -t mb-agentpinned-test)"
+trap 'rm -rf "$TMPDIR_AGENTPINNED"' EXIT
+
+setup_test_project "$TMPDIR_AGENTPINNED"
+mkdir -p "$TMPDIR_AGENTPINNED/.claude/agents"
+
+cat > "$TMPDIR_AGENTPINNED/.claude/agents/opposition.md" <<'EOF'
+---
+name: opposition
+description: Adversarial reviewer.
+model: opus
+---
+Body.
+EOF
+
+cat > "$TMPDIR_AGENTPINNED/.claude/agents/security-reviewer.md" <<'EOF'
+---
+name: security-reviewer
+description: Security reviewer.
+model: sonnet
+---
+Body.
+EOF
+
+output=$(cd "$TMPDIR_AGENTPINNED" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+assert_not_contains "$output" "not pinned to a capable model" "check 25: correctly-pinned agents produce no warning (discrimination)"
+
 print_summary

@@ -186,10 +186,18 @@ function Test-PmbVersionStale {
 # duplicated guard+enumerate boilerplate; each call site keeps its own target-path mapping,
 # since that part legitimately differs (.claude/commands/ vs docs/).
 function Get-TemplateDirFile {
-    param([string]$TemplatesDir, [string]$Subdir)
+    # WHY -Filter is opt-in with a '*' default rather than '*.md': the claude-commands and docs
+    # call sites have always discovered every file in their directory, and narrowing them here
+    # would silently stop delivering any non-.md template they legitimately carry. Only the
+    # .claude/agents site passes '*.md', to match the bash side's glob in scripts/mb.sh (grep for the .claude/agents *.md glob -- no line number, it has been wrong twice).
+    # Found 2026-08-27: the two shells discovered different sets. It was harmless only by
+    # coincidence -- templates/.claude/agents/ happens to contain nothing but .md files -- so a
+    # stray README, .txt, or editor backup dropped there would have been delivered into an
+    # adopter's agents directory by pwsh and not by bash.
+    param([string]$TemplatesDir, [string]$Subdir, [string]$Filter = '*')
     $dir = Join-Path $TemplatesDir $Subdir
     if (-not (Test-Path $dir)) { return @() }
-    return @(Get-ChildItem $dir -File)
+    return @(Get-ChildItem $dir -File -Filter $Filter)
 }
 
 function Get-MbUpgradeAnalysis {
@@ -1182,11 +1190,17 @@ function Show-Doctor {
     # 6. File sizes
     $hasOverLimit = $false
     $sizeSpecs = @(
-        @{Name="projectbrief.md"; Max=150},
+        # THRESHOLD SOURCE OF TRUTH: .github/workflows/pmb-health.yml's MB_FAIL map. Aligned 2026-08-27
+        # after an audit found THREE divergences, in both directions: progress.md was stricter here (400)
+        # than in CI (600), so `mb doctor` WARNed on files the shipped docs certified compliant; while
+        # projectbrief.md (150 vs 120) and techContext.md (400 vs 300) were LOOSER here than CI, meaning a
+        # clean `mb doctor` could still be followed by a red build. Only the progress.md case had been
+        # recorded. `tests/test-threshold-parity.sh` now fails if these drift from CI again.
+        @{Name="projectbrief.md"; Max=120},
         @{Name="systemPatterns.md"; Max=300},
-        @{Name="techContext.md"; Max=400},
+        @{Name="techContext.md"; Max=300},
         @{Name="activeContext.md"; Max=150},
-        @{Name="progress.md"; Max=400}
+        @{Name="progress.md"; Max=600}
     )
     foreach ($s in $sizeSpecs) {
         $p = "memory-bank/$($s.Name)"
@@ -1744,6 +1758,7 @@ function Show-Doctor {
     if (Test-Path $agentsDir) {
         $missingNameAgents = @()
         $mismatchedNameAgents = @()
+        $unpinnedReviewAgents = @()
         Get-ChildItem -Path $agentsDir -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
             $stem = $_.BaseName
             # Scope to the frontmatter block only, so a body line starting with "name:"
@@ -1762,6 +1777,29 @@ function Show-Doctor {
             } elseif ($agentName -ne $stem) {
                 $mismatchedNameAgents += "$($_.FullName) (name: $agentName, filename: $stem)"
             }
+            # Review agents that decide whether code ships must PIN a capable model. An unpinned
+            # agent silently inherits CLAUDE_CODE_SUBAGENT_MODEL (haiku in this repo), and a cheap
+            # review that finds nothing is indistinguishable from a thorough one that finds nothing.
+            # Found live 2026-08-26: security-reviewer had no model: field and had been running on
+            # haiku. researcher is deliberately excluded -- haiku IS right for retrieval work.
+            if ($stem -in @('security-reviewer', 'opposition')) {
+                $agentModel = ""
+                if ($fmMatch.Success) {
+                    $modelMatch = [regex]::Match($fmMatch.Groups[1].Value, '(?m)^model:\s*(.+)$')
+                    if ($modelMatch.Success) {
+                        $agentModel = $modelMatch.Groups[1].Value.Trim().Trim('"', "'")
+                    }
+                }
+                if ([string]::IsNullOrEmpty($agentModel)) {
+                    $unpinnedReviewAgents += "$($_.FullName) (no model: -- inherits CLAUDE_CODE_SUBAGENT_MODEL)"
+                } elseif ($agentModel -eq 'haiku') {
+                    $unpinnedReviewAgents += "$($_.FullName) (model: haiku -- cost-optimized, invalid for a review gate)"
+                }
+            }
+        }
+        if ($unpinnedReviewAgents.Count -gt 0) {
+            Write-Host "[WARN] $($unpinnedReviewAgents.Count) review agent(s) not pinned to a capable model:" -ForegroundColor Yellow
+            foreach ($a in $unpinnedReviewAgents) { Write-Host "       $a" }
         }
         if ($missingNameAgents.Count -gt 0) {
             Write-Host "[WARN] $($missingNameAgents.Count) agent(s) missing name: in frontmatter — Claude Code will silently fail to register them:" -ForegroundColor Yellow
@@ -2155,9 +2193,10 @@ function Invoke-Upgrade {
     $advisoryDiff = @(
         # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
         "CLAUDE.md"
-        # Agent definitions likely contain project-specific tool lists and instructions
-        ".claude/agents/researcher.md"
-        ".claude/agents/security-reviewer.md"
+        # WHY agent definitions are no longer listed here: they moved to $advisoryCreate and are
+        # auto-discovered — see the block below it. $advisoryDiff SKIPS any target missing in the
+        # project, which is precisely wrong for agents: a newly-shipped agent is missing for every
+        # adopter by definition, so it would never be delivered at all.
     )
 
     # WHY: $advisoryCreate holds files that must exist at runtime but may legitimately carry
@@ -2171,6 +2210,20 @@ function Invoke-Upgrade {
     # mb upgrade never copied them into existing projects). mb init already discovers commands this
     # way; this keeps upgrade and init on a single source of truth.
     $templateOwned += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "claude-commands" | ForEach-Object { ".claude/commands/$($_.Name)" })
+
+    # WHY agent definitions are auto-discovered rather than listed: a static list silently goes
+    # stale the moment a new agent is added — the same bug documented for slash commands just above.
+    # It recurred immediately: .claude/agents/opposition.md was added 2026-08-26 and both review
+    # commands were changed to dispatch it BY NAME, while the hardcoded list here still named only
+    # researcher and security-reviewer — so every adopter would have received a review command
+    # referencing an agent mb upgrade never delivered, failing at the Opposition step, which is the
+    # gate's sole authority on whether a change ships.
+    #
+    # WHY $advisoryCreate and not $advisoryDiff, where agents used to live: $advisoryDiff skips a
+    # target missing in the project, and a newly-shipped agent is missing for EVERY adopter, so
+    # listing it there delivers nothing. $advisoryCreate creates when absent and diffs rather than
+    # overwrites when customized. Must stay in sync with scripts/mb.sh's equivalent block.
+    $advisoryCreate += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir ".claude/agents" -Filter "*.md" | ForEach-Object { ".claude/agents/$($_.Name)" })
 
     # WHY: Guide docs (docs/CONTRACTS-GUIDE.md, docs/HOOKS-GUIDE.md, ...) are referenced from
     # templates/CLAUDE.md but were never scaffolded into projects — mb init/upgrade had no

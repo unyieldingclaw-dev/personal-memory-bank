@@ -1,7 +1,7 @@
 # Memory & Instruction File Paradigm — Portable Brief
 
 **Living document — updated as findings land.** Started 2026-08-23; latest addition
-2026-08-25 (cross-shell divergence).
+2026-08-26 (the case-folding fix, and what a parity harness structurally cannot tell you).
 
 **Read this if:** you're a Claude Code session working in a Work-MB-style deployment — a governed
 project whose purpose is to hold *non-specialist* authors to a standard — and someone has pointed
@@ -107,9 +107,9 @@ default state.
   repo has the right mechanism and it is dormant, which is the more instructive failure. Its
   `assert_parity` helper pipes one payload into both the `.sh` and `.ps1` hooks and asserts
   identical verdicts; it covers 11 cases and its own comment names an sh/ps1 case divergence as the
-  precedent it exists for. But it covers 1 of 12 twin pairs, asserts only one severity tier, and
-  **skips silently when `pwsh` is absent** unless an environment variable is set that nothing in CI
-  sets. On a Linux runner it never executes, so the divergence it was written to catch shipped
+  precedent it exists for. It covers 1 of 12 twin pairs and **skips silently when `pwsh` is absent**
+  unless an environment variable is set that nothing in CI sets. (It asserted only one severity tier
+  until 2026-08-26; see the addendum below, which is what closing that gap turned up.) On a Linux runner it never executes, so the divergence it was written to catch shipped
   anyway. Copy the harness; do not copy its wiring. A parity test that can skip is a parity test
   that will skip, and a skip that reads as a pass is worse than no test — your authors cannot tell
   the difference, and on a mixed-shell team the skip is the normal case.
@@ -117,6 +117,45 @@ default state.
   one.** In the origin repo a confusing signal costs an expert some time. In yours it either
   generates a support request or, more likely, gets silently ignored. Guards aimed at
   non-specialists need to fail in ways that are unambiguous to someone who cannot read the script.
+
+#### Addendum 2026-08-26 — three things the case-folding fix taught that the section above could not
+
+The origin repo closed the case divergence in its command-guard hook. The gap was much larger than
+the ticket describing it: **four of six matchers, spanning three severity tiers**, matched
+case-sensitively in `.sh` against a `.ps1` twin that was case-insensitive at every site. Mixed-case
+payloads got *no verdict at all* from bash while PowerShell denied them — live on any machine
+without `pwsh`, which includes the Linux CI runner. Three findings from it are portable, and two of
+them sharpen the advice above rather than restating it.
+
+**1. A parity assertion cannot distinguish "both correct" from "both broken."** This is structural,
+not a wiring flaw, and it is the more dangerous sibling of the silent-skip problem already named
+above. `assert_parity` asserts the two shells *agree*. If a later edit removes case-insensitivity
+from the reference implementation, the two agree again — at the wrong answer — and the parity suite
+goes green while doing it. The fix was to add **absolute** assertions on the side that was already
+correct, so the reference itself is pinned and cannot drift silently. In your deployment this
+matters more, because your authors will read a green parity suite as "the guard works" and have no
+way to check the premise. Pair every parity assertion with an absolute one on the reference side.
+
+**2. A guard can be disarmed by a performance fix, silently and fail-open.** Folding the pattern
+inside each matcher was correct and cost a subshell per matcher *call* — about 25 per invocation, on
+a hook that runs on **every single tool call**. Measured: **1.07s → 2.33s per invocation**. The fix
+was to fold the *subject* once and write the patterns in lower case — which then means an
+upper-case pattern silently matches nothing, ever. One entry in the shipped list was already that
+shape. Nothing at the call site looks wrong; the guard just stops guarding. Two lessons: **budget
+guard latency explicitly**, because in a team deployment every author pays it on every command and
+the pressure to "optimise" a slow guard is exactly how this class of defect enters; and **when a
+fix moves a requirement from the code into a convention, add a structural test for the convention
+in the same change**, because a convention with no enforcement is a fail-open trap wearing a
+comment.
+
+**3. Prefer structural invariants over payload cases for completeness properties.** The origin
+repo's own note records the lesson twice over: a de-escaped-view retrofit missed one matcher of
+five, and this case-folding retrofit then missed four of six. Payload tests can only exercise the
+matchers someone remembered to write a case for, so they measure *coverage of your imagination*.
+The tests that actually hold are the ones that enumerate: no matcher may read an unfolded view; no
+pattern may contain an upper-case letter; the two mirrors must be byte-identical. Those fail when a
+*new* matcher is added and forgets, which is the failure mode that actually recurs. Cheap to write,
+and they do not depend on the author anticipating the bug.
 
 ### A per-user global instruction file cannot carry policy in your deployment
 

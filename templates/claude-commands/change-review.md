@@ -189,8 +189,30 @@ Cross-reference job 2 claims against the test changes:
 
 ### Job 9 — Opposition, Verdict, and Marker Write
 
-Spawn one subagent, dispatched with a capable model (e.g. `sonnet` or higher — never a
-cost-optimized/cheap model, since this subagent is the sole authority on whether the change ships).
+Spawn one subagent using `subagent_type: opposition` (`.claude/agents/opposition.md`) **and** passing
+an explicit `model` of **`opus`**, matching that agent's frontmatter pin — NOT `sonnet`, which as an
+explicit parameter would override the pin and silently downgrade the gate (this file's wording until
+2026-08-27). Never a cost-optimized model, since this subagent
+is the sole authority on whether the change ships.
+
+**WHY the named agent:** `.claude/settings.json` sets `CLAUDE_CODE_SUBAGENT_MODEL=haiku`. Until
+2026-08-26 the "capable model" requirement was prose in this file, addressed to whichever model
+happened to be orchestrating — and an orchestrator that skipped the sentence got a haiku opposition
+pass shaped exactly like a real one (verdict, findings table, confidence column), with nothing
+anywhere recording that the gate had run cheap. `.claude/agents/opposition.md` pins `model: opus`,
+moving the requirement from the advisory layer into config.
+
+**Frontmatter beats the environment variable — verified 2026-08-26**, by spawning `opposition` with
+no `model` parameter while `CLAUDE_CODE_SUBAGENT_MODEL=haiku` was set; it reported `claude-opus-5`.
+So the pin alone is sufficient. Passing `model` explicitly is retained as cheap defence in depth
+against the frontmatter being edited or lost, not because precedence is in doubt.
+
+**If `subagent_type: opposition` errors with "agent type not found":** a newly created agent file is
+picked up after a short refresh lag, not instantly (observed 2026-08-26: not found on first call,
+available minutes later in the same session — so this is a lag, NOT a session boundary). The error is
+loud rather than a silent downgrade. Retry; if it persists, fall back to
+`subagent_type: general-purpose` **with `model` passed explicitly**, pasting the body of
+`.claude/agents/opposition.md` in as the prompt. Never fall back to a default model.
 
 Give it:
 - The full findings tables from Jobs 1–8 (not the Step 3.5 Baseline Repo Health results — that

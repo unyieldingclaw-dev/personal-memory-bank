@@ -171,3 +171,53 @@ Describe "Invoke-Init review-reminders scripts (subprocess)" {
         }
     }
 }
+
+# WHY this block exists: the bash side got both a positive test and a completeness invariant for
+# agent delivery (tests/test-mb-upgrade.sh), and the pwsh side got neither -- despite ps1 discovery
+# being a SEPARATE implementation (Get-TemplateDirFile) from the bash glob. A pwsh-only adopter
+# could therefore silently not receive a newly-shipped agent, which is precisely the failure that
+# `mb upgrade`'s agent auto-discovery was written to close. Found 2026-08-27.
+Describe "Invoke-Upgrade agent advisory-create (subprocess)" {
+    BeforeAll {
+        $script:RepoRoot6 = $RepoRoot
+        $script:UpgradeAgentsProject = New-TestProject -Base $TestDrive -Name 'upgrade-agents-advisory'
+    }
+
+    It "delivers EVERY agent in templates/.claude/agents to a project that has none" {
+        $mbScript = Join-Path $script:RepoRoot6 'scripts/mb.ps1'
+        Push-Location $script:UpgradeAgentsProject
+        try {
+            git init -q 2>$null
+            git config user.email "test@test.com" 2>$null
+            git config user.name "Test" 2>$null
+            git commit -q --allow-empty -m "init" 2>$null
+
+            $env:MB_HOME = $script:RepoRoot6
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
+
+            # Simulate an adopter that predates the agents: clear whatever init delivered.
+            $agentsDir = Join-Path $script:UpgradeAgentsProject '.claude\agents'
+            if (Test-Path $agentsDir) {
+                Get-ChildItem $agentsDir -Filter '*.md' -File | Remove-Item -Force
+            }
+
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript upgrade 2>&1 | Out-Null
+
+            # COMPLETENESS INVARIANT, deliberately not "opposition.md exists": a hard-coded name
+            # would keep passing on the day a third agent is added and goes undelivered, which is
+            # the exact stale-list bug this feature replaced. Assert the delivered set covers the
+            # template set instead, so the check has no list of its own to go stale.
+            $expected = Get-ChildItem (Join-Path $script:RepoRoot6 'templates/.claude/agents') -Filter '*.md' -File |
+                        Select-Object -ExpandProperty Name | Sort-Object
+            $expected.Count | Should -BeGreaterThan 0
+            $missing = @()
+            foreach ($name in $expected) {
+                if (-not (Test-Path (Join-Path $agentsDir $name))) { $missing += $name }
+            }
+            ($missing -join ',') | Should -BeExactly ''
+        } finally {
+            Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            Pop-Location
+        }
+    }
+}

@@ -105,7 +105,7 @@ This is the single highest-leverage habit for improving output quality.
 ## Tools
 
 - **Hooks** — `.claude/settings.json` enforces rules deterministically (format, lint, block dangerous ops). See `docs/HOOKS-GUIDE.md`.
-- **Agents** — `.claude/agents/` defines specialized subagents (security-reviewer, researcher). Spawn with: "use the security-reviewer agent".
+- **Agents** — `.claude/agents/` defines specialized subagents (security-reviewer, researcher, opposition). Spawn with: "use the security-reviewer agent". `opposition` is dispatched by the review commands, not usually by hand.
 - **MCP** — connect external services via `claude mcp add`. See `standards/MCP-SECURITY.md` before adding any server.
 
 ## Handoff Protocol
@@ -133,7 +133,7 @@ When starting a new conversation:
 **Model selection — default to Sonnet, escalate deliberately:**
 - Sonnet handles 90%+ of tasks. Start here every session.
 - Switch to Opus (`/model opus`) for work such as: complex architecture decisions, large multi-file refactors, deep cross-file debugging — see the trigger list below for the full set. Switch back after.
-- Subagents run on Haiku automatically (set in settings.json) — sufficient for file reads, test runs, and exploration.
+- Subagents default to Haiku (`CLAUDE_CODE_SUBAGENT_MODEL` in settings.json) — sufficient for file reads, test runs, and exploration, and NOT for review judgement. `security-reviewer` pins `sonnet` and `opposition` pins `opus` in their own frontmatter, which overrides that env var (verified 2026-08-26). Do not read this line as blanket permission to run a review cheap.
 
 **Claude must PROMPT for escalation — do not wait to be asked.** Escalating at the right moment is a token *saving*, not a spend: a wrong design caught after implementation costs a revert, a debugging pass, and a redesign — many times the price of one careful pass up front. Quality at the front end is the cheaper path. When a trigger below fires, say so explicitly and recommend `/model opus` before continuing.
 

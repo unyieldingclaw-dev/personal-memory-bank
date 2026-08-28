@@ -76,6 +76,42 @@ assert_file_exists "$TMPDIR_UP/.claude/commands/change-review.md" "upgrade resto
 assert_file_exists "$TMPDIR_UP/.claude/commands/health-check.md" "upgrade restores health-check.md"
 assert_file_exists "$TMPDIR_UP/.claude/commands/test-audit.md" "upgrade restores test-audit.md"
 
+# ── Template sync: ALL agent files are auto-discovered, not a hardcoded subset ─
+# Regression test for the SAME defect one directory over, which recurred on 2026-08-26.
+# ADVISORY_DIFF hardcoded researcher.md and security-reviewer.md, so when
+# .claude/agents/opposition.md was added — and BOTH review commands were changed to dispatch it
+# by name — `mb upgrade` would never have delivered it. An adopter's /change-review would fail at
+# the Opposition step, which is the gate's sole authority on whether a change ships.
+#
+# WHY this asserts creation-when-absent specifically: agents used to sit in ADVISORY_DIFF, which
+# SKIPS a target missing from the project. A newly-shipped agent is missing for every adopter by
+# definition, so a discovered-but-still-ADVISORY_DIFF list would have passed a "no hardcoded
+# list" check while still delivering nothing. Deleting the files before upgrading is what makes
+# this test discriminate between the two.
+echo ""
+echo "--- template sync: restores ALL agent files, including newly-shipped ones ---"
+
+rm -f "$TMPDIR_UP/.claude/agents/opposition.md" \
+      "$TMPDIR_UP/.claude/agents/researcher.md" \
+      "$TMPDIR_UP/.claude/agents/security-reviewer.md"
+assert_file_not_exists "$TMPDIR_UP/.claude/agents/opposition.md" "opposition.md absent before upgrade"
+
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0"
+assert_file_exists "$TMPDIR_UP/.claude/agents/opposition.md" "upgrade restores opposition.md (was never in the hardcoded list)"
+assert_file_exists "$TMPDIR_UP/.claude/agents/researcher.md" "upgrade restores researcher.md"
+assert_file_exists "$TMPDIR_UP/.claude/agents/security-reviewer.md" "upgrade restores security-reviewer.md"
+
+# Completeness invariant: every agent shipped in templates/ must be delivered. This is what
+# actually fails when a FOURTH agent is added later and someone reintroduces a static list —
+# the per-file assertions above can only cover agents that existed when this test was written.
+MISSING_AGENTS=""
+for f in "$REPO_ROOT/templates/.claude/agents"/*.md; do
+    [ -f "$f" ] || continue
+    [ -f "$TMPDIR_UP/.claude/agents/$(basename "$f")" ] || MISSING_AGENTS="$MISSING_AGENTS $(basename "$f")"
+done
+assert_contains "missing:${MISSING_AGENTS}" "missing:$" "every agent in templates/.claude/agents/ was delivered by upgrade"
+
 # ── Version tracking: .pmb-version updated ───────────────────────────────────
 echo ""
 echo "--- version tracking: .pmb-version matches repo VERSION ---"
