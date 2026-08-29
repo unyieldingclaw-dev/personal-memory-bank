@@ -886,6 +886,13 @@ function Invoke-Init {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"
     }
 
+    # .claude/agents/ — auto-discovered; full rationale at the same site in scripts/mb.sh.
+    # -Filter '*.md' is required for parity: Get-TemplateDirFile defaults to '*', which would
+    # deliver stray non-agent files the bash glob skips.
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir ".claude/agents" -Filter "*.md")) {
+        Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\agents\$($f.Name)") -Label ".claude/agents/$($f.Name)"
+    }
+
     # standards/ files — governance contracts referenced at runtime by commands
     $standardsTemplate = Join-Path $TemplatesDir "standards"
     if (Test-Path $standardsTemplate) {

@@ -221,3 +221,47 @@ Describe "Invoke-Upgrade agent advisory-create (subprocess)" {
         }
     }
 }
+
+# WHY a separate Describe from the Invoke-Upgrade agent block above: `upgrade` and `init` are
+# different delivery paths with different code, and agent delivery was built into `upgrade` only.
+# A fresh adopter runs `init`, never `upgrade`, so the path the review gate actually depends on
+# was the one with no coverage. Asserting it through `upgrade` would have kept reporting green.
+Describe "Invoke-Init agent delivery (subprocess)" {
+    BeforeAll {
+        $script:RepoRoot7 = $RepoRoot
+        $script:InitAgentsProject = New-TestProject -Base $TestDrive -Name 'init-agents-delivery'
+    }
+
+    It "delivers EVERY agent in templates/.claude/agents on a bare mb init" {
+        $mbScript = Join-Path $script:RepoRoot7 'scripts/mb.ps1'
+        Push-Location $script:InitAgentsProject
+        try {
+            git init -q 2>$null
+            git config user.email "test@test.com" 2>$null
+            git config user.name "Test" 2>$null
+            git commit -q --allow-empty -m "seed" 2>$null
+
+            $env:MB_HOME = $script:RepoRoot7
+            # No upgrade anywhere in this test, deliberately: init alone must be sufficient.
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
+
+            # COMPLETENESS INVARIANT -- see the bash twin in tests/test-mb-init.sh for the full
+            # rationale. Derived from templates/ at runtime, never enumerated, and asserted
+            # non-empty so an absent template directory fails loudly instead of passing on an
+            # empty comparison.
+            $expected = Get-ChildItem (Join-Path $script:RepoRoot7 'templates/.claude/agents') -Filter '*.md' -File |
+                        Select-Object -ExpandProperty Name | Sort-Object
+            $expected.Count | Should -BeGreaterThan 0
+
+            $agentsDir = Join-Path $script:InitAgentsProject '.claude\agents'
+            $missing = @()
+            foreach ($name in $expected) {
+                if (-not (Test-Path (Join-Path $agentsDir $name))) { $missing += $name }
+            }
+            ($missing -join ',') | Should -BeExactly ''
+        } finally {
+            Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            Pop-Location
+        }
+    }
+}

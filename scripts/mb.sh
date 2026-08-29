@@ -658,6 +658,27 @@ invoke_init() {
         [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/commands/$(basename "$f")" ".claude/commands/$(basename "$f")"
     done
 
+    # .claude/agents/ — auto-discovered from the template directory, never enumerated.
+    #
+    # WHY init needs this and cannot lean on `mb upgrade`: a fresh adopter runs init and nothing
+    # else, and the slash commands init DOES deliver dispatch agents BY NAME.
+    # templates/claude-commands/code-review.md and change-review.md both call
+    # `subagent_type: opposition`, so init shipped a review gate whose sole authority was a file it
+    # never copied — and code-review.md's documented fallback ("paste the body of
+    # .claude/agents/opposition.md in as the prompt") named that same missing file, so the
+    # degradation path was broken by the identical gap. Latent until d795abb made the agent a named
+    # dependency instead of a prose request for "a capable model".
+    #
+    # Agent delivery was added to invoke_upgrade and scoped to the one path that prompted it; this
+    # is the same fix on the path adopters actually take. The *.md filter matches
+    # Get-TemplateDirFile's on the pwsh side so both shells discover the same set — without it a
+    # stray README or editor backup dropped here would be delivered by one shell and not the other.
+    if [ -d "$TEMPLATES_DIR/.claude/agents" ]; then
+        for f in "$TEMPLATES_DIR/.claude/agents"/*.md; do
+            [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/agents/$(basename "$f")" ".claude/agents/$(basename "$f")"
+        done
+    fi
+
     # standards/ files — governance contracts referenced at runtime by commands
     if [ -d "$TEMPLATES_DIR/standards" ]; then
         for f in "$TEMPLATES_DIR/standards"/*; do

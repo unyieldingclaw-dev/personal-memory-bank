@@ -51,6 +51,37 @@ for f in _review-gate-lib.sh _review-gate-lib.ps1; do
   assert_file_exists "$TMPDIR_INIT/scripts/$f" "mb init creates scripts/$f"
 done
 
+# ── Agent definitions ────────────────────────────────────────────────────────
+# WHY this exists: mb init copied every templates/claude-commands/* -- including code-review.md
+# and change-review.md, which dispatch `subagent_type: opposition` BY NAME -- while containing
+# zero references to .claude/agents. d795abb turned a latent gap live by making the agent a named
+# dependency: a fresh adopter's review gate died at Opposition, and the documented fallback
+# (code-review.md:98, "paste the body of .claude/agents/opposition.md in as the prompt") needed
+# the same file init never delivered. Agent delivery had been fixed for `mb upgrade` and scoped
+# to the one path that prompted it.
+#
+# COMPLETENESS INVARIANT, deliberately not `assert_file_exists .../opposition.md`: a hard-coded
+# name keeps passing on the day a fourth agent is added and goes undelivered, which is the exact
+# stale-list bug this feature replaced. Derive the expected set from templates/ at runtime so the
+# check has no list of its own to go stale.
+EXPECTED_AGENTS=""
+for f in "$REPO_ROOT/templates/.claude/agents"/*.md; do
+  [ -f "$f" ] || continue
+  EXPECTED_AGENTS="$EXPECTED_AGENTS $(basename "$f")"
+done
+# WHY the non-empty assertion: without it, a missing or empty templates/.claude/agents/ makes the
+# loop below iterate zero times, leaving MISSING_AGENTS empty and reporting PASS while delivering
+# nothing. That is the fail-silent-when-a-precondition-is-absent shape (Family B); absence must be
+# loud. tests/test-mb-upgrade.sh's equivalent block still lacks this guard -- tracked, not fixed here.
+assert_not_contains "expected:${EXPECTED_AGENTS}" "expected:$" "templates/.claude/agents/ yields a non-empty expected set"
+
+MISSING_AGENTS=""
+for f in "$REPO_ROOT/templates/.claude/agents"/*.md; do
+  [ -f "$f" ] || continue
+  [ -f "$TMPDIR_INIT/.claude/agents/$(basename "$f")" ] || MISSING_AGENTS="$MISSING_AGENTS $(basename "$f")"
+done
+assert_contains "missing:${MISSING_AGENTS}" "missing:$" "mb init delivers every agent in templates/.claude/agents/"
+
 # ── Re-init: already initialized ─────────────────────────────────────────────
 echo ""
 echo "--- re-init: already initialized ---"

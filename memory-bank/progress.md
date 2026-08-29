@@ -98,6 +98,73 @@ that matters is that each original heading is preserved below, which it is.
 - **`standards/MEMORY-BANK.md` was shipping a superseded Handoff Protocol, and the divergence inverted an authority rule.** Found when the user asked why the handoff reply lacked the expected structure — the answer was that *two* structures exist. The standard listed "Summary of accomplishments / Files modified / Pending tasks / Context for next agent" as handoff contents, all of which `CLAUDE.md` explicitly forbids ("that duplicates memory-bank and risks drifting from it"). Worse, its **Next Session step 1 said to read `handoff.md` FIRST**, while `CLAUDE.md` says read all `memory-bank/` files first and the handoff second, never as authoritative — so the standard told the next session to synthesise priority from the file written under the worst conditions for it. `CLAUDE.md` supersedes (user ruled 2026-08-28); both `standards/` copies rewritten to match and verified identical. **Fourth instance in one day of the no-arbitration gap** — after global-vs-project `CLAUDE.md`, `standards`-vs-`CLAUDE.md`, and `systemPatterns`-vs-`standards`. The template mirror had been shipping the inverted ordering to every adopter.
 - **Reported by ACR, not yet acted on: `mb upgrade` distributes a working tree, not a release.** No `git archive`/`checkout`/`describe` anywhere in `mb.sh` — it copies whatever is in the PMB checkout at that moment. Combined with `TEMPLATE_OWNED`'s unconditional overwrite of files adopters may not patch locally, an in-flight edit silently replaces working downstream scripts. **Verified here while answering them, and worse than reported:** `VERSION` says `1.2.1`, `.pmb-version` says `1.1.1`, and the newest git tag is `v1.0.4` — three numbers, and **no tag exists for either 1.1.x or 1.2.x**, so there is nothing to pin a release to and a dirty-tree guard is the only near-term option. ACR has been blocked on 1.1.1 for this reason with a dead `last-reviewed` sensor they cannot fix locally. Their session ended before I could reply.
 
+## 2026-08-28 (later) — `d550282` committed; branch `/change-review` run; the nine-instance pattern named
+
+- **`d550282` committed** after two five-domain rounds and **two** Opposition passes. Opposition's
+  first pass returned Request Changes with three required fixes, and its diagnosis is the one worth
+  keeping: *"this is a docs-only change whose entire deliverable is the accuracy of prose, three of
+  its prose claims are verifiably wrong, all three were introduced AFTER every review ended, and none
+  has ever been read by anyone but me."* **The fix passes were the defect source, at a 3-of-5 rate.**
+- **New standing rule, learned the expensive way — PRE-FLIGHT before dispatching any review.**
+  Mechanically re-derive every checkable claim in the artifact: figures, `file:line` citations,
+  enumerations, and any sentence of the form "I verified X." Reviews are for judgement, not
+  arithmetic. Applied to the branch afterwards it cost ~90 seconds and came back clean; not applying
+  it to `d550282` cost two rounds and two Opposition passes whose combined output was four one-line
+  corrections to claims a `grep` would have caught.
+- **`/change-review` run on the full branch** (46 files, +3,019/−707, 4 commits) to obtain the push
+  marker. 9 jobs; Job 8 correctly skipped (no UI files). **ACR was DISQUALIFIED**: installed and
+  invoked, but exited **3** having processed **2,000 of 4,743 diff lines (42%)** — the exact silent
+  failure recorded on 2026-08-26. Job 7 fell through to the inline security logic, `basis: llm`.
+  The command's insistence on checking the exit code rather than the binary's presence is what
+  caught it.
+- **ONE BLOCKING FINDING, and this branch causes it: `mb init` never delivers `.claude/agents/*.md`.**
+  `invoke_init` copies every `templates/claude-commands/*` — including `code-review.md` and
+  `change-review.md`, which each dispatch `subagent_type: opposition` — and contains **zero**
+  references to `.claude/agents`. Before `d795abb` the commands asked for "a capable model" in prose;
+  `d795abb` made it a named-agent dependency, converting a latent gap into a live break. **The
+  documented fallback is broken by the same gap:** `code-review.md:98` says to fall back to
+  `general-purpose` "pasting the body of `.claude/agents/opposition.md` in as the prompt" — a file
+  `init` also never delivers. So a fresh adopter's review gate is dead on arrival with no graceful
+  degradation. `progress.md` 2026-08-27 recorded half of this and dismissed it as "consistent, so not
+  a parity bug" — true when written, false the moment `d795abb` landed.
+- **THE PATTERN, named after nine instances in one day: a guard built for a class, scoped to the one
+  path that prompted it.** It splits into two families needing different fixes.
+  - **Family A — coverage decided by a hand-maintained list (6 of 9):** `mb doctor` checks lines not
+    bytes; `test-threshold-parity` compares the line-cap map not the byte-cap map; ownership class
+    answers "may they customize" not "how does a fix reach them"; agent delivery covers `upgrade` not
+    `init`; the handoff threshold is swept across 9 surfaces but the protocol *text* is unguarded;
+    (`run.sh`'s suite registration was this and is already fixed). **Fix: derive the set from the
+    authority at runtime, never enumerate it, and assert the derived set is non-empty.** The repo
+    already has this idiom in three places and applies it per-incident rather than as policy.
+  - **Family B — a guard that silently no-ops when a precondition is absent (3 of 9):**
+    `PMB_REQUIRE_PARITY` unset makes parity failures non-fatal and **CI never sets it**, so a runner
+    image without pwsh turns the sh/ps1 parity proof into a silent skip; `date -r` is GNU-only.
+    **Fix: absence must be loud.** The `STATE_ABSENT`/`STATE_PRESENT` idiom exists in this repo and
+    is used in one block of a file while the block above it uses a bare `continue`.
+  - **What no mechanism catches, so it must become a review obligation:** a fix with no failing input
+    (the `sed` dot-escape — correct, behaviourally inert), which comparisons need exact equality
+    rather than `assert_contains`' substring match, and relocation verbatim-ness. Required question
+    for any diff adding a guard: *enumerate what it covers and what it excludes; is the exclusion
+    derived or accidental?*
+- **Instance #8 deserves its own line: `tests/test-threshold-parity.sh:34-36` uses
+  `assert_contains "sh=$sh" "sh=$ci"`** — unanchored, so `sh=1200` passes against `ci=120`. Two
+  blocks below, the same file guards against that exact trap with exact-equality and non-overlapping
+  verdict words, and explains why in a comment. Latent only; live values agree today.
+- **Job 7 (Security), HIGH, not fixed here:** the `opposition` agent is new in this branch and is
+  granted marker-write authority, while its own frontmatter documents that its `Bash(...)` allowlist
+  does not constrain Bash — it was observed running `rm`, `curl`, `python3` and arbitrary redirects.
+  So the gate's sole authority runs under an unenforced read-only assumption. Compensating control
+  used throughout today: the orchestrator independently recomputed every marker hash rather than
+  trusting the value. Needs a PreToolUse hook and its own contract.
+- **A hook false positive while testing the hook.** A payload constructed to check whether the marker
+  could be forged was denied — "command piped to bash (curl|bash)" — because the *test command* named
+  both `curl` and `bash`, though nothing piped anywhere. Sixth recorded instance of `[NS-25]`'s
+  match-the-text-not-the-intent class. The forge vector is therefore **unverified**, not cleared.
+- **Approved plan:** the `mb init` fix under its own tight contract (`mb.sh`, `mb.ps1`, plus a
+  regression test on each shell using the completeness-invariant shape) → then the template-surface
+  completeness invariant, which retires Family A → then a spec for the review-obligation and
+  meta-test layers.
+
 ## 2026-08-28 (continued) — Round-3 pass, Opposition Approve, committed `2052c3c`
 
 - **Committed `2052c3c`** after all five required domains plus Opposition (opus). 14 files, +543/−193,
@@ -147,7 +214,8 @@ that matters is that each original heading is preserved below, which it is.
   differ only at that position. Correct hardening, zero live coverage closed; do not cite it as a
   coverage fix.
 - **`tests/run.sh` is NOT concurrency-safe.** `test-mb-doctor.sh:94` `mv`s the live `VERSION` aside
-  while `mb.sh:681` gates `.pmb-version` on its presence. A peer session's concurrent run produced a
+  while `mb.sh:702` gates `.pmb-version` on its presence (was `:681`; the agent-delivery insert of
+  2026-08-28 shifted it +21 — a live demonstration of why a `file:line` citation decays). A peer session's concurrent run produced a
   spurious `mb init` failure (576/1) the suite alone did not reproduce (19/19). Interference is
   asymmetric — it can only fake a FAILURE, never a pass — so a green run is trustworthy and a red one
   needs the isolation check. A bare `grep -c FAIL` also counts section headers; use `^  FAIL:`.
@@ -159,6 +227,46 @@ that matters is that each original heading is preserved below, which it is.
   so an adopter's two copies disagree until they act on the printed prompt. `[O2]`
   `standards/MEMORY-BANK.md:342-345` names absolute input length as the binding variable, then reasons
   in percentages of two different, unstated context windows.
+
+## 2026-08-28 (fix) — `mb init` agent delivery closed; the exported Work-MB briefs found stale
+
+- **The `/change-review` blocker is fixed, under contract `mb-init-agent-delivery-2026-08-28`.** Both
+  `invoke_init` and `Invoke-Init` now auto-discover `templates/.claude/agents/*.md`, mirroring the
+  delivery already present on the `upgrade` path. Filtered to `*.md` on both sides so the two shells
+  discover the same set — the pwsh helper defaults to `*`, which would have delivered stray files the
+  bash glob skips.
+- **Both regression tests were mutation-proved RED before GREEN, in that order, and the order is the
+  point.** bash 20/1 → 21/0; Pester 10/1 → 11/0, failing with exactly
+  `opposition.md,researcher.md,security-reviewer.md`. The pre-existing
+  `Invoke-Upgrade agent advisory-create` test passed throughout, which is the whole diagnosis in one
+  line: the covered path was never the broken one.
+- **Both new tests assert their derived set is NON-EMPTY.** Without it an absent or empty template
+  directory iterates zero times and reports PASS while delivering nothing — Family B's fail-silent
+  shape, in a test written to close a Family A gap. **`tests/test-mb-upgrade.sh:109-113` still lacks
+  this guard**; recorded in the contract's exclusions rather than fixed in passing, because it is
+  adjacent pre-existing work and this contract is deliberately tight.
+- **The contract for this work had been approved and never written** — caught only because the branch
+  state was re-derived at session start rather than trusted. The `active-task.json` in place was a
+  *different*, completed task (the Cursor threshold). `.claude/contracts/*.json` is gitignored, so
+  overwriting it would have destroyed the only copy; parked as
+  `completed-cursor-handoff-threshold-2026-08-28.json` instead.
+- **Seventh instance of `[NS-25]`'s match-the-text-not-the-intent class, hit while writing the Pester
+  test.** A heredoc was denied by the push gate because its *content* — Pester fixture setup — contains
+  the literal text `git commit -q --allow-empty`. Nothing was being committed. Worked around with the
+  Edit tool, the same precedent instances 4-5 used. The count in `[NS-25]` said five as of 2026-08-19
+  and six as of 2026-08-28; this is seven, and the trigger is again *documenting or testing* commands
+  rather than running them.
+- **The two Work-MB briefs in `~/Downloads` carry no Work-MB findings.** Diffed against `docs/`:
+  byte-identical plus a provenance banner, 32/33 lines added, zero removed. They are PMB's outbound
+  exports. **But the paradigm brief's banner is itself stale, superseded by `d550282` one commit after
+  it was written.** It claims `2052c3c` reduced the superseded-handoff-protocol surfaces "from six to
+  four" and names `templates/memory-bank/README.md` as one of the four. Verified against the files:
+  `standards/WORKFLOW.md:194,198` and `templates/standards/WORKFLOW.md:188,192` carry **both**
+  disqualifying markers (the forbidden contents list *and* "read `handoff.md` first") and appear
+  nowhere in the banner, while `README.md:34,37` carries **neither** and is a looser-criterion surface
+  only. So the export under-counts by two and mis-includes one; the authoritative figure stays 7 → 5.
+  An export with a provenance banner is not self-updating, and this is the first demonstration that
+  the banner ages faster than the body it guards.
 
 ## Review rounds 4-9 (2026-08-23 → 2026-08-25) — relocated 2026-08-26, detail in `docs/MEMORY-BANK-PARADIGM-REVIEW.md`
 

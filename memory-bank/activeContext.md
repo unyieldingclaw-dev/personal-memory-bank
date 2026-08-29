@@ -16,7 +16,7 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-08-28 (`2052c3c` committed; branch `fix/block-tier-case-sensitivity` 3 ahead of `main`, none merged)
+## Last Updated: 2026-08-28 (`d550282` committed; branch 4 ahead of `main`; PR BLOCKED on mb init agent delivery)
 
 ## Trim History
 
@@ -43,12 +43,8 @@ four matcher bypasses it exposed are on `main`. The port-only trap that stranded
 `[NS-3]` and `[NS-18]` no longer applies to `scripts/dangerous-commands.sh`: `main` carries the
 full 588-line file, so BLOCK-tier work branches off `main` normally now. Rounds 1-10:
 `progress.md` 2026-08-24/26.
-
-**Branch `fix/block-tier-case-sensitivity` is 3 commits ahead of `main`, NONE merged:** `d795abb`
-(`[NS-37]`, review-agent model pinning, `mb upgrade` agent delivery), `7917905` (PreCompact staleness
-gate), `2052c3c` (Cursor 80→40 + Handoff Protocol reconciliation; round-3 five-domain pass, Opposition
-Approve). Records: `progress.md` 2026-08-26/28. `[NS-38]` follows after merge — same file. This agent
-cannot merge PRs; `review-reminders.sh` denies that unconditionally, by design.
+**Branch `fix/block-tier-case-sensitivity` is 4 commits ahead of `main`, NONE merged** (`d795abb`, `7917905`, `2052c3c`, `d550282`) plus an uncommitted 5th change. The 2026-08-28 `/change-review` blocker — **`mb init` never delivered `.claude/agents/*.md`**, killing a fresh adopter's gate at Opposition along with its documented fallback — is **FIXED, uncommitted**, under contract `mb-init-agent-delivery-2026-08-28`: both shells auto-discover the template dir; regression tests on each shell mutation-proved RED→GREEN. Records: `progress.md` 2026-08-28 (later)/(fix).
+**Next: land this, then the release contract (tag → dirty-tree guard → ref-sourcing), user-approved 2026-08-28, relayed via ACR.** `mb upgrade` sources the WORKING TREE, so no tag may be cut against a dirty one — and the first release is the one the dirty-tree guard cannot protect, since the guard ships after it. This agent cannot merge PRs; `review-reminders.sh` denies that unconditionally, by design.
 
 
 **`progress.md` cap — metric fixed 2026-08-24, standard reconciled 2026-08-27.** Line FAIL raised

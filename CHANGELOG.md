@@ -44,6 +44,25 @@
   registered size cap.
 
 ### Fixed
+- **`mb init` never delivered `.claude/agents/*.md`, so a fresh adopter's review gate was dead on
+  arrival.** `init` copied every `templates/claude-commands/*` — including `code-review.md` and
+  `change-review.md`, which each dispatch `subagent_type: opposition` **by name** — while containing
+  zero references to `.claude/agents`. The documented fallback was broken by the same gap:
+  `code-review.md:98` says to fall back to `general-purpose` "pasting the body of
+  `.claude/agents/opposition.md` in as the prompt", a file `init` also never delivered. So the gate
+  failed at Opposition — its sole authority on whether a change ships — with no graceful
+  degradation. Latent while the commands asked for "a capable model" in prose; **live from the
+  moment agents became a named dependency** earlier in this same release. Both shells now
+  auto-discover `templates/.claude/agents/*.md`, matching the delivery already present in
+  `mb upgrade`. **Adopters who ran `mb init` on an affected version: run `mb upgrade` to receive the
+  agent definitions**, or re-run `mb init` — it creates only what is missing and preserves existing
+  files.
+
+  Cause worth naming, because it is the recurring one: agent delivery *was* fixed, for `mb upgrade`,
+  and scoped to the single path that prompted it. `init` is the path adopters actually take. The
+  regression tests added on both shells derive their expected set from `templates/.claude/agents/`
+  at runtime and assert that set is non-empty, so neither a newly added agent nor an empty template
+  directory can pass silently.
 - **`templates/CLAUDE.md` described the PreCompact hook as warning when it blocks.** The shipped
   copy still documented the original 2026-05-28 design ("the hook always exits 0 — compaction is
   never blocked"); the behaviour changed to a hard exit-2 block and the template was never updated,
