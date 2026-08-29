@@ -22,10 +22,18 @@ Work-MB-style deployment, where the audience is non-technical and the goal is en
 
 - `scripts/pre-compact-check.sh` Check 2 requires a `progress.md` entry dated today before it will
   allow compaction. Every compacting session must append. Nothing in the system ever removes.
-- `activeContext.md` has the same shape. Resolved `[NS-N]` entries do not leave; `[NS-2]` has
-  decayed to the single line "Resolved — see NS-4 and NS-24" and still costs bytes at every
-  session start.
-- The only removal path is a human-approved contract, an archive pass, and a review gate.
+- `activeContext.md` had the same shape. `[NS-2]` had decayed to the single line
+  "Resolved — see NS-4 and NS-24" and still cost bytes at every session start; it was
+  **removed 2026-08-28** under this standard's "issue marked resolved → delete" row. It was one of two
+  candidates with zero inbound citations; the other, `[NS-10]`, was kept because its content exists in
+  no other file — citation count alone is not the criterion. `[NS-22]` and `[NS-24]` were compressed to
+  resolvable stubs in the same pass; `[NS-4]` and `[NS-31]` were examined and left untouched.
+  So the general shape holds with one correction: resolved entries mostly persist *as citation
+  targets*, not as dead weight, and only the uncited ones can actually leave. Cap allocation and
+  enforceability are analysed separately in `docs/MEMORY-BANK-CAP-ALLOCATION-FINDING.md`.
+- Removal takes a human-approved contract and a review gate. An archive pass is required for
+  `progress.md` relocations but NOT for `activeContext.md` resolved issues, whose row says
+  "delete — do not archive" — the `[NS-2]` case above.
 
 A system with its write path wired to a hook and its delete path wired to human attention will
 always trend up. No amount of discipline changes the sign.

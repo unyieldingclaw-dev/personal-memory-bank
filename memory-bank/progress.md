@@ -268,6 +268,29 @@ that matters is that each original heading is preserved below, which it is.
   An export with a provenance banner is not self-updating, and this is the first demonstration that
   the banner ages faster than the body it guards.
 
+## 2026-08-28 (eviction) — `activeContext.md` resolved-entry pass; its own finding was false
+
+- **Delta: −533 bytes net** on `activeContext.md`, in three parts: **−864 from the eviction**
+  (`[NS-2]` −127, `[NS-22]` −640, `[NS-24]` −97), **+82** from same-commit status edits unrelated to
+  it, **+249** for the `[NS-44]` pointer. Three buckets, not two: the first draft folded the status
+  edits into the eviction figure and understated it by 82 bytes — a decomposition that misattributed,
+  in the bullet claiming to decompose *because* a single figure misattributes. Caught in review.
+  Under `standards/MEMORY-BANK.md`'s activeContext row 3
+  ("Issue marked resolved → Delete — do not archive"); no archive file created. `[NS-2]` deleted
+  (zero inbound); `[NS-22]`/`[NS-24]` compressed to stubs because live entries cite them — the
+  practice Trim History already records for 2026-08-20, not a new convention. `[NS-10]` kept: its
+  "investigated and declined" exists in no other file.
+- **The pass's headline finding was FALSE and Opposition caught it.** It claimed `[NS-4]` and
+  `[NS-31]` had dangling pointers to relocated sections. They resolved fine — the forwarding blocks
+  at lines 24-25 preserve each original heading for exactly that purpose. **The check was
+  `grep "^## <date>"`; the headings are bullets.** Wrong anchor, manufactured defect. Reverted: the
+  "repair" had spent 134 bytes rewriting working pointers into the binding-constraint file, against
+  this standard's guidance that doing so spends headroom in a second capped file. Third wrong-boundary
+  check this session (bracket-only, single-file, `^##`); self-review caught none, Opposition caught all.
+- **It also relieved the wrong file.** `activeContext.md` is flat across today's commits while
+  `progress.md` grew +9,583 in one and is force-written every compaction by `pre-compact-check.sh`.
+  `[NS-42]` already says write rate is the binding constraint — demonstrated here, not restated.
+
 ## Review rounds 4-9 (2026-08-23 → 2026-08-25) — relocated 2026-08-26, detail in `docs/MEMORY-BANK-PARADIGM-REVIEW.md`
 
 Five dated sections were moved **verbatim** to `docs/MEMORY-BANK-PARADIGM-REVIEW.md` § "Rounds 4-9"
