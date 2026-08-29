@@ -2,7 +2,43 @@
 
 **Research date:** 2026-08-29  
 **Source repository:** https://github.com/ai-that-works/ai-that-works  
+**Source commit researched:** `51970381041be7b65a2bf06470a5e71930da04e1`  
+**Source commit date:** 2026-08-24  
+**Source branch:** `main`  
+**Repository status at capture:** public, not archived  
+**License:** No `LICENSE` file was found at the captured source commit; do not treat this research record as permission to redistribute source material.  
 **Status:** Research input only. No architecture change is implied by this document.
+
+## Source preservation / provenance
+
+This document is the durable PMB research record for the external `ai-that-works/ai-that-works` repository as inspected on 2026-08-29.
+
+The repository itself is **not mirrored into PMB**. Instead, PMB preserves:
+
+- the exact source commit used for the research;
+- the source paths that materially informed the research;
+- the distilled observations and conclusions below;
+- the distinction between demonstrated patterns, PMB implications, and untested ideas;
+- the date and provenance needed to identify what was actually inspected.
+
+If the upstream repository becomes unavailable, the material below remains the PMB record of what we learned. The commit SHA should be treated as an identifier/provenance anchor, **not** as a guarantee that the source will remain retrievable.
+
+### Source material materially used
+
+- `2026-04-21-harness-engineering-without-the-hype`
+- `2026-05-05-openai-tells-you-not-to-build-your-own-harness`
+- `2026-06-16-product-specs-with-ai`
+- `2026-06-23-software-factory-for-agent-tools`
+- `2026-07-07-agent-observability`
+- `2026-07-14-sota-coding-agent-benchmarks`
+- `2025-07-29-eval-many-models-same-prompt`
+- `2026-02-10-agentic-backpressure-deep-dive`
+
+These paths are recorded because they are the specific source areas behind the conclusions in this document, rather than preserving an indiscriminate copy of the upstream repository.
+
+**Preservation boundary:** This file intentionally stores findings and provenance, not full transcripts, full source files, screenshots, or a wholesale copy of the external repository. If a future PMB decision depends on a specific upstream detail that is no longer retrievable, that detail should be independently re-established rather than reconstructed as fact from memory.
+
+---
 
 ## Why this was captured
 
