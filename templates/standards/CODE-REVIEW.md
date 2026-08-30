@@ -49,9 +49,10 @@ commit, A + B = N against the measured whole"* is.
 **Match the command's reach to the assertion.** A filename filter cannot establish a claim about file
 *contents*; a single-directory search cannot establish a claim about the repository; a pattern written
 for the wrong syntax returns zero matches indistinguishable from a true absence. Where reach and
-assertion differ the finding is false even though the command ran and its output was reported
-honestly — and the author cannot catch it by re-reading, because re-reading re-derives the claim
-inside the same scope. Only a stated scope lets a second reader see the gap.
+assertion differ the finding is **unsupported** — not necessarily wrong, but not established — even
+though the command ran and its output was reported honestly — and the author cannot catch it by
+re-reading, because re-reading re-derives the claim inside the same scope. Only a stated scope lets
+a second reader see the gap.
 
 Run the command before writing its output. An unrun example is the same defect as an unrun test.
 

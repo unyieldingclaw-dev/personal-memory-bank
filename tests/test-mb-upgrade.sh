@@ -105,6 +105,17 @@ assert_file_exists "$TMPDIR_UP/.claude/agents/security-reviewer.md" "upgrade res
 # Completeness invariant: every agent shipped in templates/ must be delivered. This is what
 # actually fails when a FOURTH agent is added later and someone reintroduces a static list —
 # the per-file assertions above can only cover agents that existed when this test was written.
+# WHY the non-empty guard: without it, an absent or empty templates/.claude/agents/ makes the loop
+# below iterate zero times, leaving MISSING_AGENTS empty and reporting PASS while upgrade delivered
+# nothing. Absence must be loud. The sibling guard in tests/test-mb-init.sh landed in bf636e1,
+# which disclosed this loop's lack of one as "tracked, not fixed here"; this closes it.
+EXPECTED_AGENTS=""
+for f in "$REPO_ROOT/templates/.claude/agents"/*.md; do
+    [ -f "$f" ] || continue
+    EXPECTED_AGENTS="$EXPECTED_AGENTS $(basename "$f")"
+done
+assert_not_contains "expected:${EXPECTED_AGENTS}" "expected:$" "templates/.claude/agents/ yields a non-empty expected set"
+
 MISSING_AGENTS=""
 for f in "$REPO_ROOT/templates/.claude/agents"/*.md; do
     [ -f "$f" ] || continue

@@ -31,9 +31,20 @@ for f in $FILES; do
 
     echo ""
     echo "--- $f: CI=$ci mb.sh=$sh mb.ps1=$ps ---"
+    # WHY the verdict-word indirection rather than assert_contains "sh=$sh" "sh=$ci":
+    # assert_contains is an unanchored grep, so "sh=1200" CONTAINS "sh=120": feeding ci=120 and
+    # sh=1200 to the old form printed PASS. Reproduced on synthetic input, not observed live --
+    # the real caps agree today, so the defect was latent. SAME/DIFFERENT are non-overlapping
+    # words, so the substring match cannot false-pass -- the same fix this file already applies
+    # to the perf figure and the handoff threshold below.
+    # LIMIT: an empty $sh or $ps against a NON-EMPTY $ci yields DIFFERENT and fails loudly, but
+    # if $ci is also empty the pair compares SAME. These three assertions are not independent --
+    # the "CI declares a cap" one below is what catches a double extraction failure.
+    if [ "$sh" = "$ci" ]; then v_sh=SAME; else v_sh=DIFFERENT; fi
+    if [ "$ps" = "$ci" ]; then v_ps=SAME; else v_ps=DIFFERENT; fi
     assert_contains "ci=$ci" "ci=[0-9]"          "CI declares a cap for $f"
-    assert_contains "sh=$sh" "sh=$ci"            "mb.sh cap for $f matches CI ($ci)"
-    assert_contains "ps=$ps" "ps=$ci"            "mb.ps1 cap for $f matches CI ($ci)"
+    assert_contains "$v_sh" "SAME"               "mb.sh cap for $f matches CI ($ci, got $sh)"
+    assert_contains "$v_ps" "SAME"               "mb.ps1 cap for $f matches CI ($ci, got $ps)"
 done
 
 
