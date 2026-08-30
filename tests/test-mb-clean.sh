@@ -36,19 +36,31 @@ assert_contains "$output" "Slim" "mb clean shows Slim Check section"
 # guards the three sources against drifting apart again.
 # and confirm the exact reported line count so a future off-by-one in the threshold
 # check would actually fail this test instead of passing silently.
+# THRESHOLDS ARE DERIVED, NOT RESTATED. This file previously hardcoded 400, then 600, and the
+# comment above records that the hardcoded copy "is the reason the divergence stayed live" -- a test
+# pinning a stale number reports green while the thing it guards has moved. On 2026-08-30 the caps
+# ratcheted 600 -> 500 and this file went red for exactly that reason, which is the last time it
+# should. CI's MB_FAIL/MB_WARN maps are the source of truth (tests/test-threshold-parity.sh proves
+# mb.sh and mb.ps1 agree with them), so read the numbers from there and size the fixtures relative
+# to whatever they say.
+PROG_MAX=$(grep -m1 'declare -A MB_FAIL=(' "$REPO_ROOT/.github/workflows/pmb-health.yml" | sed -n 's/.*\[progress.md\]=\([0-9]*\).*/\1/p')
+PROG_WARN=$(grep -m1 'declare -A MB_WARN=(' "$REPO_ROOT/.github/workflows/pmb-health.yml" | sed -n 's/.*\[progress.md\]=\([0-9]*\).*/\1/p')
+# Absence guard: a failed extraction would make every seq below degenerate and assert nothing.
+assert_contains "max=$PROG_MAX warn=$PROG_WARN" "max=[0-9]\+ warn=[0-9]\+" "CI declares progress.md line thresholds (max=$PROG_MAX warn=$PROG_WARN)"
+
 echo ""
-echo "--- oversized progress.md: crosses the 600-line threshold, ACTION NEEDED shown ---"
+echo "--- oversized progress.md: crosses the ${PROG_MAX}-line threshold, ACTION NEEDED shown ---"
 
 {
   echo "# Progress"
-  for i in $(seq 1 601); do echo "Entry $i: progress note."; done
+  for i in $(seq 1 $((PROG_MAX + 1))); do echo "Entry $i: progress note."; done
 } > "$TMPDIR_CLEAN/memory-bank/progress.md"
 PROGRESS_LINE_COUNT=$(wc -l < "$TMPDIR_CLEAN/memory-bank/progress.md" | tr -d ' ')
 
 output=$(cd "$TMPDIR_CLEAN" && MB_HOME="$REPO_ROOT" bash "$MB" clean 2>&1)
 assert_exit_zero $? "mb clean exits 0 with oversized file"
-assert_contains "$output" "progress.md: $PROGRESS_LINE_COUNT lines (max: 600)" "mb clean reports progress.md's actual line count against the 600-line max"
-assert_contains "$output" "ACTION NEEDED: File is over limit!" "mb clean shows the over-limit warning once progress.md exceeds 600 lines"
+assert_contains "$output" "progress.md: $PROGRESS_LINE_COUNT lines (max: $PROG_MAX)" "mb clean reports progress.md's actual line count against the ${PROG_MAX}-line max"
+assert_contains "$output" "ACTION NEEDED: File is over limit!" "mb clean shows the over-limit warning once progress.md exceeds $PROG_MAX lines"
 # WHY also assert the activeContext.md line is still "OK": proves the two size checks
 # are independent -- an oversized progress.md alone should not also flag
 # activeContext.md (which setup_test_project leaves at a handful of lines), ruling out
@@ -60,15 +72,15 @@ assert_contains "$output" "activeContext.md:" "mb clean still reports activeCont
 # branches (scripts/mb.sh:409-415). Nothing previously exercised the middle
 # "RECOMMENDED: Consider archiving old entries" branch (250 < lines <= 600) at all.
 echo ""
-echo "--- progress.md between 250 and 600 lines: RECOMMENDED, not ACTION NEEDED ---"
+echo "--- progress.md between $PROG_WARN and $PROG_MAX lines: RECOMMENDED, not ACTION NEEDED ---"
 
 {
   echo "# Progress"
-  for i in $(seq 1 260); do echo "Entry $i: progress note."; done
+  for i in $(seq 1 $((PROG_WARN + 10))); do echo "Entry $i: progress note."; done
 } > "$TMPDIR_CLEAN/memory-bank/progress.md"
 
 output=$(cd "$TMPDIR_CLEAN" && MB_HOME="$REPO_ROOT" bash "$MB" clean 2>&1)
-assert_contains "$output" "RECOMMENDED: Consider archiving old entries" "mb clean recommends archiving once progress.md exceeds 250 lines but is still under 600"
-assert_not_contains "$output" "ACTION NEEDED: File is over limit!" "mb clean does not show the over-limit warning while progress.md is still under 600 lines"
+assert_contains "$output" "RECOMMENDED: Consider archiving old entries" "mb clean recommends archiving once progress.md exceeds $PROG_WARN lines but is still under $PROG_MAX"
+assert_not_contains "$output" "ACTION NEEDED: File is over limit!" "mb clean does not show the over-limit warning while progress.md is still under $PROG_MAX lines"
 
 print_summary

@@ -265,3 +265,56 @@ Describe "Invoke-Init agent delivery (subprocess)" {
         }
     }
 }
+
+
+# WHY this exists: the review-agent model-pin check (mb doctor check 25) shipped in d795abb with
+# BASH coverage ONLY (tests/test-mb-doctor.sh). Its own comment calls it security-relevant -- an
+# unpinned review agent silently inherits CLAUDE_CODE_SUBAGENT_MODEL=haiku, and a cheap review that
+# finds nothing looks exactly like a thorough one that finds nothing. A pwsh-only adopter had no
+# test behind the check at all. Subprocess, matching the other doctor-path tests: Show-Doctor writes
+# to the host rather than returning a value.
+Describe "Show-Doctor review-agent model pin (subprocess)" {
+    BeforeAll {
+        $script:RepoRootPin = $RepoRoot
+        $script:PinProject  = New-TestProject -Base $TestDrive -Name 'doctor-model-pin'
+        $script:PinAgents   = Join-Path $script:PinProject '.claude\agents'
+        New-Item -ItemType Directory -Force -Path $script:PinAgents | Out-Null
+
+        # Defined here, not in the Describe body: a function declared directly in a Describe block
+        # is not in scope inside It. Pester runs BeforeAll in the container scope, so this is.
+        function Invoke-PinDoctor {
+            Push-Location $script:PinProject
+            try {
+                $env:MB_HOME = $script:RepoRootPin
+                & pwsh -NoLogo -ExecutionPolicy Bypass -File (Join-Path $script:RepoRootPin 'scripts/mb.ps1') doctor 2>&1 | Out-String
+            } finally { Pop-Location }
+        }
+    }
+
+    BeforeEach {
+        # security-reviewer is a gate agent and is always well-formed here, so each case below
+        # isolates the ONE field under test on `opposition` alone.
+        Set-Content -Path (Join-Path $script:PinAgents 'security-reviewer.md') -Encoding utf8 -Value @(
+            '---', 'name: security-reviewer', 'model: sonnet', 'description: t', '---', 'body')
+    }
+
+    It "stays silent when every review agent pins a capable model" {
+        Set-Content -Path (Join-Path $script:PinAgents 'opposition.md') -Encoding utf8 -Value @(
+            '---', 'name: opposition', 'model: opus', 'description: t', '---', 'body')
+        Invoke-PinDoctor | Should -Not -Match 'not pinned to a capable model'
+    }
+
+    # The two mutations. Without these the test above would pass against a DELETED check, which is
+    # the defect class standards/CODE-REVIEW.md names: a check that cannot fail is not a check.
+    It "WARNs when a review agent declares no model at all" {
+        Set-Content -Path (Join-Path $script:PinAgents 'opposition.md') -Encoding utf8 -Value @(
+            '---', 'name: opposition', 'description: t', '---', 'body')
+        Invoke-PinDoctor | Should -Match 'not pinned to a capable model'
+    }
+
+    It "WARNs when a review agent is pinned to the cost-optimized model" {
+        Set-Content -Path (Join-Path $script:PinAgents 'opposition.md') -Encoding utf8 -Value @(
+            '---', 'name: opposition', 'model: haiku', 'description: t', '---', 'body')
+        Invoke-PinDoctor | Should -Match 'not pinned to a capable model'
+    }
+}

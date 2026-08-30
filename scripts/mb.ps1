@@ -568,7 +568,7 @@ function Show-Slim {
 
     $path = Join-Path $MemoryBankPath "activeContext.md"
     if (Test-Path $path) {
-        $lines = (Get-Content $path | Measure-Object -Line).Lines
+        $lines = @(Get-Content $path).Count
         Write-Host "Current size: $lines lines" -ForegroundColor Yellow
         Write-Host "Target: 50-100 lines"
         Write-Host "Maximum: 150 lines"
@@ -602,7 +602,7 @@ function Show-Clean {
     Write-Host "--- Slim Check ---" -ForegroundColor Yellow
     $path = Join-Path $MemoryBankPath "activeContext.md"
     if (Test-Path $path) {
-        $lines = (Get-Content $path | Measure-Object -Line).Lines
+        $lines = @(Get-Content $path).Count
         Write-Host "activeContext.md: $lines lines (target: 50-100, max: 150)"
         if ($lines -gt 150) {
             Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
@@ -613,6 +613,27 @@ function Show-Clean {
         }
     } else {
         Write-Host "Warning: activeContext.md not found" -ForegroundColor Yellow
+    }
+
+    # WHY progress.md is checked here and not only in `mb doctor`: running `mb clean` without also
+    # running `mb doctor` gave a false "maintenance pass complete" impression even when progress.md
+    # was well over its own limit. The bash twin fixed that in Show-Clean (scripts/mb.sh) and the
+    # fix was never mirrored here, so pwsh users kept getting exactly that impression. Same
+    # thresholds as mb doctor's check_size() and pmb-health.yml's MB_FAIL/MB_WARN, kept in sync
+    # deliberately -- tests/test-threshold-parity.sh compares all three statements of them.
+    $progressPath = Join-Path $MemoryBankPath "progress.md"
+    if (Test-Path $progressPath) {
+        $progressLines = @(Get-Content $progressPath).Count
+        Write-Host "progress.md: $progressLines lines (max: 500)"
+        if ($progressLines -gt 500) {
+            Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
+        } elseif ($progressLines -gt 250) {
+            Write-Host "RECOMMENDED: Consider archiving old entries" -ForegroundColor Yellow
+        } else {
+            Write-Host "OK: File is within target range" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "Warning: progress.md not found" -ForegroundColor Yellow
     }
     Write-Host ""
 
@@ -1203,11 +1224,11 @@ function Show-Doctor {
         # projectbrief.md (150 vs 120) and techContext.md (400 vs 300) were LOOSER here than CI, meaning a
         # clean `mb doctor` could still be followed by a red build. Only the progress.md case had been
         # recorded. `tests/test-threshold-parity.sh` now fails if these drift from CI again.
-        @{Name="projectbrief.md"; Max=120},
-        @{Name="systemPatterns.md"; Max=300},
-        @{Name="techContext.md"; Max=300},
+        @{Name="projectbrief.md"; Max=80},
+        @{Name="systemPatterns.md"; Max=120},
+        @{Name="techContext.md"; Max=120},
         @{Name="activeContext.md"; Max=150},
-        @{Name="progress.md"; Max=600}
+        @{Name="progress.md"; Max=500}
     )
     foreach ($s in $sizeSpecs) {
         $p = "memory-bank/$($s.Name)"
@@ -1407,11 +1428,21 @@ function Show-Doctor {
     }
 
     # 15. Startup context size ceiling — WARN >15 KB, ERROR >25 KB
+    # WORKTREE-AWARE -- see the bash twin for the full rationale. A subworktree's own memory-bank
+    # is stale by construction (CLAUDE.md forbids updating it there), so measuring it reported a
+    # phantom 69,594-byte reduction.
+    $startupRoot = "."
+    $commonDir = (& git rev-parse --git-common-dir 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $commonDir) {
+        $candidate = Join-Path (Split-Path -Parent (Resolve-Path $commonDir).Path) ""
+        if (Test-Path (Join-Path $candidate "memory-bank")) { $startupRoot = $candidate }
+    }
     $ceilingFiles = @()
-    if (Test-Path "CLAUDE.md") { $ceilingFiles += "CLAUDE.md" }
-    foreach ($f in @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")) {
-        $p = "memory-bank/$f"
-        if (Test-Path $p) { $ceilingFiles += $p }
+    if (Test-Path (Join-Path $startupRoot "CLAUDE.md")) { $ceilingFiles += (Join-Path $startupRoot "CLAUDE.md") }
+    # Enumerated, not listed -- matches .github/workflows/pmb-health.yml; README.md was in no list.
+    # -Recurse, matching the ls-tree -r baseline below -- see the bash twin for why.
+    foreach ($mb in (Get-ChildItem (Join-Path $startupRoot "memory-bank") -Filter "*.md" -File -Recurse -ErrorAction SilentlyContinue)) {
+        $ceilingFiles += $mb.FullName
     }
     $ceilingBytes = ($ceilingFiles | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum
     $ceilingKB = [math]::Round($ceilingBytes / 1KB, 1)
@@ -1421,6 +1452,31 @@ function Show-Doctor {
         Write-Host "[WARN] Startup context ${ceilingKB} KB exceeds 15 KB — consider slimming memory-bank/" -ForegroundColor Yellow
     } else {
         Write-Host "[OK]   Startup context: ${ceilingKB} KB (warn: 15 KB, fail: 25 KB)" -ForegroundColor Green
+    }
+    # The 25 KB line above is ADVISORY. What actually fails CI is the ratchet: this aggregate may not
+    # exceed its value on origin/main. Mirrored here for the same reason as the bash twin -- a
+    # threshold enforced only in CI gives no local signal before the build reds. Same six files and
+    # same comparison as .github/workflows/pmb-health.yml; silent when no baseline is reachable.
+    $ratchetBase = 0; $ratchetOk = $true
+    $ratchetPaths = @("CLAUDE.md") + (@(& git ls-tree -r --name-only origin/main -- memory-bank/ 2>$null) | Where-Object { $_ -like "*.md" })
+    # A baseline with CLAUDE.md but zero memory-bank files left $ratchetOk true and produced a
+    # ~94 KB false regression on the ordinary first-adoption shape. Count what was enumerated.
+    $ratchetFiles = 0
+    foreach ($rf in $ratchetPaths) {
+        # git cat-file -s, not `git show`: reconstructing the blob's text and re-encoding it
+        # diverged from the bash twin by 1,698 bytes -- the same character-vs-byte class fixed
+        # earlier in Show-Clean. The blob size is a number git already knows; ask for it.
+        $sz = & git cat-file -s "origin/main:$rf" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $sz) { $ratchetBase += [int]$sz } else { $ratchetOk = $false }
+        if ($rf -like "memory-bank/*") { $ratchetFiles++ }
+    }
+    if ($ratchetFiles -eq 0) { $ratchetOk = $false }
+    if ($ratchetOk -and $ratchetBase -gt 0) {
+        if ($ceilingBytes -gt $ratchetBase) {
+            Write-Host "[WARN] Startup context is $($ceilingBytes - $ratchetBase) bytes above origin/main. PMB's own CI gates on this; an adopter's memory-bank-size.yml does NOT, so treat it as advisory outside PMB." -ForegroundColor Yellow
+        } else {
+            Write-Host "[OK]   Startup-context ratchet: $($ratchetBase - $ceilingBytes) bytes under origin/main" -ForegroundColor Green
+        }
     }
 
     # 16. Hook error log — check for recent hook failures

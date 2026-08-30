@@ -27,8 +27,38 @@ $CONFIRM_MSG = "CONFIRM REQUIRED: {0}. Run manually if intentional."
 $WARN_MSG    = "WARNING: {0}. Proceeding."
 
 try {
-    # WHY: $input | Out-String matches how update-reviewed.ps1 reads stdin from Claude Code hooks.
-    $raw = $input | Out-String
+    # WHY a raw UTF-8 read rather than `$input | Out-String`: PowerShell decodes piped stdin using
+    # [Console]::InputEncoding, which on Windows is the OEM console code page -- ibm437 on the
+    # machine where this was found, never UTF-8. Any non-ASCII byte in a command therefore arrived
+    # mangled. Proven end-to-end 2026-08-30 by probing the child process: 45 U+3042 characters
+    # (50 chars / 140 UTF-8 bytes) reached the hook as 140 single-byte CP437 characters, which
+    # re-encode to 275 UTF-8 bytes -- so the size guard below over-counted by ~2x and could fire a
+    # spurious CONFIRM on a command well under the limit. Fail-safe in direction, wrong regardless.
+    # SCOPE OF THIS FIX, stated so it is not over-read: it corrects the DECODING of stdin. It does
+    # not address TRUNCATION -- .pmb-hook-errors.log records JSON-parse failures of the form
+    # "Unterminated string" and "Unexpected end when deserializing object" both before and after
+    # this change, which means the payload sometimes arrives incomplete for a reason not
+    # diagnosed here. On that path the catch block below falls back to raw matching, and a BLOCK
+    # substring past the truncation point would not be seen. Open, not closed.
+    # The sh twin is not affected, because bash hands piped bytes to the script unchanged and never
+    # re-decodes them through a code page. (dangerous-commands.sh's round-8 comment is about a
+    # DIFFERENT bug -- ${#cmd} counting locale characters rather than bytes -- and is cited here
+    # only as evidence this pair has been bitten by character-vs-byte confusion before, NOT as
+    # support for the claim about stdin decoding.)
+    # IsInputRedirected guards the interactive case, where ReadToEnd() would otherwise block --
+    # preserving the fail-open-on-empty-stdin behaviour the early exit below depends on.
+    # detectEncodingFromByteOrderMarks MUST be $false. The 2-arg StreamReader(Stream, Encoding)
+    # overload defaults it TRUE, so a leading BOM of a DIFFERENT encoding silently overrides the
+    # UTF8Encoding passed in -- $sr.CurrentEncoding reported "Unicode" for an FF FE payload.
+    # Reproduced end-to-end: a UTF-16-BOM payload carrying a BLOCK-tier command produced NO
+    # output and exit 0, because the wide decode destroyed the literal substring the matchers
+    # look for. Pinning the encoding while leaving BOM detection on pins nothing.
+    $raw = if ([Console]::IsInputRedirected) {
+        (New-Object System.IO.StreamReader(
+            [Console]::OpenStandardInput(),
+            (New-Object System.Text.UTF8Encoding($false)),
+            $false)).ReadToEnd()
+    } else { "" }
     if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
     $data = $raw | ConvertFrom-Json -ErrorAction Stop
     # WHY .tool_input.command, not .command: the real payload nests everything under

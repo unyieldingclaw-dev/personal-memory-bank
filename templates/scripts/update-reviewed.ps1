@@ -11,7 +11,23 @@
 # WHY: Reads from stdin because Claude Code PostToolUse hooks pass tool input as JSON
 # via stdin, not as command-line arguments.
 try {
-    $input_json = $input | Out-String
+    # Same OEM-code-page defect fixed in dangerous-commands.ps1 on 2026-08-30, same fix. PowerShell
+    # decodes piped stdin with [Console]::InputEncoding (ibm437 here), so a non-ASCII byte arrives
+    # mangled. The blast radius here is narrower -- this script reads only .tool_input.file_path --
+    # but a memory-bank path containing a non-ASCII character would silently fail to match, and this
+    # script already fails silently by design, so nothing would report it.
+    # detectEncodingFromByteOrderMarks MUST be $false. The 2-arg StreamReader(Stream, Encoding)
+    # overload defaults it TRUE, so a leading BOM of a DIFFERENT encoding silently overrides the
+    # UTF8Encoding passed in -- $sr.CurrentEncoding reported "Unicode" for an FF FE payload.
+    # Reproduced end-to-end: a UTF-16-BOM payload carrying a BLOCK-tier command produced NO
+    # output and exit 0, because the wide decode destroyed the literal substring the matchers
+    # look for. Pinning the encoding while leaving BOM detection on pins nothing.
+    $input_json = if ([Console]::IsInputRedirected) {
+        (New-Object System.IO.StreamReader(
+            [Console]::OpenStandardInput(),
+            (New-Object System.Text.UTF8Encoding($false)),
+            $false)).ReadToEnd()
+    } else { "" }
     if ([string]::IsNullOrWhiteSpace($input_json)) { exit 0 }
 
     $parsed = $input_json | ConvertFrom-Json -ErrorAction Stop

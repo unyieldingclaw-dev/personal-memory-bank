@@ -6,6 +6,15 @@ This file provides instructions for Claude Code. Read this file and all files in
 
 At the start of every conversation, and again after any context compaction, silently read ALL files in `memory-bank/` to restore full project context:
 
+> **OPEN CONFLICT, surfaced not resolved — read-all is the interim mechanism.** `projectbrief.md`
+> (Tier 1, immutable) requires that state be *available* at session start with detail fetched on
+> demand. No such mechanism exists yet, so this instruction loads every file in full instead, at a
+> measured cost you can reproduce with `wc -c CLAUDE.md memory-bank/*.md`. No figure is quoted here:
+> a number in this file is a number about this file, so the next edit silently invalidates it, and
+> the two attempts already made in this repo were both stale within the same branch. **These do not agree, and per the authority rule below the Tier-1 goal
+> governs — this instruction is what the repo actually does today, not what it should do.** Do not
+> treat this note as settling it. Tracked as `[NS-35]` decisions 1 and 3, and `[NS-44]`.
+
 1. `memory-bank/projectbrief.md` - Non-negotiable requirements and constraints
 2. `memory-bank/systemPatterns.md` - Architecture decisions and patterns to follow
 3. `memory-bank/techContext.md` - Tech stack, dependencies, environment

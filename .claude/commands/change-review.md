@@ -69,12 +69,21 @@ Work through all 9 jobs. For each finding, use this schema:
 | **Domain**         | Security / Correctness / Performance / Testing / Maintainability / Architecture / Accessibility / Scope / Coverage |
 | **Severity**       | Critical / High / Medium / Low / Info                                                                              |
 | **Location**       | `file:line` or `file:line–line`                                                                                    |
-| **Evidence**       | Specific lines, patterns, or absence of expected code                                                              |
+| **Evidence**       | Specific lines or patterns. For an ABSENCE claim ("no test covers X", "referenced nowhere") or an ATTRIBUTION claim ("X cost Y bytes"), the scope actually searched, **stated as the command**, in the finding itself — the conclusion alone is not evidence, and the command's reach must match the assertion. See NOTE below. |
 | **Basis**          | `llm` / `heuristic` / `policy` / `semgrep` / `acr`                                                                 |
 | **Impact**         | What breaks or degrades if not addressed                                                                           |
 | **Recommendation** | Concrete fix — not "consider improving"                                                                            |
 | **Blocking**       | Yes / No — should this block merge?                                                                                |
 | **Confidence**     | High / Medium / Low                                                                                                |
+
+> **NOTE on absence and attribution claims.** The Evidence rule above is the operative form here of
+> `standards/CODE-REVIEW.md`'s "Absence and attribution claims" subsection; read it there for the
+> full statement and worked example. It is restated in the schema rather than imported wholesale
+> because **this command's `Basis` field is not that document's `Basis` field.** Here `Basis` records
+> which detector produced a finding (`llm`/`heuristic`/`policy`/`semgrep`/`acr`); there it records
+> evidentiary strength (`VERIFIED`/`INFERRED`/`SPECULATIVE`). Same name, orthogonal axes — do not
+> substitute one vocabulary for the other, and do not report a `VERIFIED` in this command's Basis
+> column. Use the **Confidence** column for strength.
 
 ---
 

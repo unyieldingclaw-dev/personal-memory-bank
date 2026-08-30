@@ -406,8 +406,8 @@ show_clean() {
     PROGRESS_PATH="$MEMORY_BANK_PATH/progress.md"
     if [ -f "$PROGRESS_PATH" ]; then
         PROGRESS_LINES=$(wc -l < "$PROGRESS_PATH" | tr -d ' ')
-        echo "progress.md: $PROGRESS_LINES lines (max: 600)"
-        if [ "$PROGRESS_LINES" -gt 600 ]; then
+        echo "progress.md: $PROGRESS_LINES lines (max: 500)"
+        if [ "$PROGRESS_LINES" -gt 500 ]; then
             echo -e "${RED}ACTION NEEDED: File is over limit!${NC}"
         elif [ "$PROGRESS_LINES" -gt 250 ]; then
             echo -e "${YELLOW}RECOMMENDED: Consider archiving old entries${NC}"
@@ -987,11 +987,11 @@ show_doctor() {
 # projectbrief.md (150 vs 120) and techContext.md (400 vs 300) were LOOSER here than CI, meaning a
 # clean `mb doctor` could still be followed by a red build. Only the progress.md case had been
 # recorded. `tests/test-threshold-parity.sh` now fails if these drift from CI again.
-    [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   120
-    [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 300
-    [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    300
+    [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   80
+    [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 120
+    [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    120
     [ -f "memory-bank/activeContext.md"  ] && check_size "memory-bank/activeContext.md"  150
-    [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       600
+    [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       500
     [ "$OVER_LIMIT" = false ] && echo -e "${GREEN}[OK]   File sizes within limits${NC}"
 
     # 7. Handoff
@@ -1167,11 +1167,37 @@ show_doctor() {
     fi
 
     # 15. Startup context size ceiling — WARN >15 KB, ERROR >25 KB
+    # WORKTREE-AWARE. CLAUDE.md's Memory Bank section makes the MAIN worktree's memory-bank/
+    # authoritative ("If in a git worktree: read memory-bank/ from the main worktree ... Never
+    # update or commit memory-bank/ from a subworktree"). Measuring the subworktree's own copies
+    # instead was demonstrated to report 69,594 bytes UNDER origin/main from a worktree whose
+    # memory-bank is simply stale and smaller -- a phantom reduction, and a falsely reassuring
+    # green in exactly the case this repo hits most: a side job spun up in a worktree while the
+    # main session runs. Resolving to the main worktree makes the number identical from every
+    # session on this repo, which is the only way it means anything.
+    # Default to "." and override ONLY on genuine success. The first version wrote
+    # `cd "$(git rev-parse --git-common-dir || echo .)/.."`, which on git failure resolves to the
+    # PARENT of the cwd, not the cwd -- and the -d guard did not revert it, because a sibling
+    # directory named memory-bank exists. Reproduced here: it resolved to /c/Users/Mizzo/Claude,
+    # where an unrelated Memory-Bank project sits, and NTFS is case-insensitive -- doctor would
+    # have measured a different project. This matches the PowerShell twin, which assigns only
+    # inside its success branch.
+    STARTUP_ROOT="."
+    _mb_common="$(git rev-parse --git-common-dir 2>/dev/null)"
+    if [ -n "$_mb_common" ] && [ -d "$_mb_common" ]; then
+        _mb_cand="$(cd "$_mb_common/.." 2>/dev/null && pwd)"
+        if [ -n "$_mb_cand" ] && [ -d "$_mb_cand/memory-bank" ]; then STARTUP_ROOT="$_mb_cand"; fi
+    fi
     CEILING_BYTES=0
-    [ -f "CLAUDE.md" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "CLAUDE.md" 2>/dev/null || echo 0)))
-    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
-        [ -f "memory-bank/$f" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "memory-bank/$f" 2>/dev/null || echo 0)))
-    done
+    [ -f "$STARTUP_ROOT/CLAUDE.md" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "$STARTUP_ROOT/CLAUDE.md" 2>/dev/null || echo 0)))
+    # Enumerated, not listed -- CLAUDE.md defines startup context as CLAUDE.md plus EVERY file in
+    # memory-bank/, and memory-bank/README.md was in no list. Matches .github/workflows/pmb-health.yml.
+    # RECURSIVE, matching the ls-tree -r baseline below. A memory-bank/*.md glob is not, so the
+    # two sides enumerated different sets and a 30,000-byte memory-bank/sub/notes.md was
+    # demonstrated invisible to the ratchet. Both sides recurse now.
+    while IFS= read -r f; do
+        CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "$f" 2>/dev/null || echo 0)))
+    done < <(find "$STARTUP_ROOT/memory-bank" -name "*.md" -type f 2>/dev/null)
     CEILING_KB=$(awk "BEGIN {printf \"%.1f\", $CEILING_BYTES / 1024}")
     if [ "$CEILING_BYTES" -gt 25600 ]; then
         echo -e "${RED}[ERROR] Startup context ${CEILING_KB} KB exceeds 25 KB limit — compact memory-bank/ immediately${NC}"
@@ -1179,6 +1205,43 @@ show_doctor() {
         echo -e "${YELLOW}[WARN] Startup context ${CEILING_KB} KB exceeds 15 KB — consider slimming memory-bank/${NC}"
     else
         echo -e "${GREEN}[OK]   Startup context: ${CEILING_KB} KB (warn: 15 KB, fail: 25 KB)${NC}"
+    fi
+    # The 25 KB line above is ADVISORY. What actually fails CI is the ratchet: this aggregate may
+    # not exceed its value on origin/main. Mirrored here because a threshold enforced only in CI
+    # gives a developer no local signal before the build reds -- the failure this repo already paid
+    # for once, recorded above check_size() as "a clean mb doctor followed by a red build".
+    # Same six files and same comparison as .github/workflows/pmb-health.yml; silent when no
+    # baseline is reachable, since an unavailable baseline is not evidence of growth.
+    RATCHET_BASE=$(git cat-file -s "origin/main:CLAUDE.md" 2>/dev/null || echo 0)
+    RATCHET_OK=1
+    [ "$RATCHET_BASE" -gt 0 ] || RATCHET_OK=0
+    RATCHET_FILES=0
+    # NUL-delimited: the unquoted `for f in $(git ls-tree ...)` form word-splits a filename with a
+    # space into two nonexistent paths, both lookups fail, RATCHET_OK goes 0, and the ratchet
+    # silently degrades to advisory. Demonstrated on a real tree with "memory-bank/space file.md".
+    # Success is the cat-file EXIT STATUS, not `-gt 0`: a legitimately empty file returns "0",
+    # which the old test read as failure while the PowerShell twin read as success.
+    # git cat-file -s reports the blob's exact byte size with no decoding step, which is why both
+    # shells use it rather than reconstructing the blob (that diverged by 1,698 bytes once).
+    while IFS= read -r -d '' f; do
+        case "$f" in *.md) ;; *) continue ;; esac
+        if b=$(git cat-file -s "origin/main:$f" 2>/dev/null); then
+            RATCHET_BASE=$((RATCHET_BASE + b))
+        else
+            RATCHET_OK=0
+        fi
+        RATCHET_FILES=$((RATCHET_FILES + 1))
+    done < <(git ls-tree -rz --name-only origin/main -- memory-bank/ 2>/dev/null)
+    # RATCHET_OK is only cleared INSIDE the loop, so a baseline with CLAUDE.md but zero
+    # memory-bank files -- the ordinary first-adoption shape -- left it true and produced a
+    # ~94 KB false regression. A partially-unreachable baseline is unreachable.
+    [ "$RATCHET_FILES" -gt 0 ] || RATCHET_OK=0
+    if [ "$RATCHET_OK" = "1" ] && [ "$RATCHET_BASE" -gt 0 ]; then
+        if [ "$CEILING_BYTES" -gt "$RATCHET_BASE" ]; then
+            echo -e "${YELLOW}[WARN] Startup context is $((CEILING_BYTES - RATCHET_BASE)) bytes above origin/main. PMB's own CI gates on this; an adopter's memory-bank-size.yml does NOT, so treat it as advisory outside PMB.${NC}"
+        else
+            echo -e "${GREEN}[OK]   Startup-context ratchet: $((RATCHET_BASE - CEILING_BYTES)) bytes under origin/main${NC}"
+        fi
     fi
 
     # 16. Hook error log — check for recent hook failures

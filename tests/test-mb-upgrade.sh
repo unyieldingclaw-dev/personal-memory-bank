@@ -133,7 +133,9 @@ assert_contains "$output" ".pmb-version" "mb upgrade reports .pmb-version update
 
 EXPECTED_VER=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")
 ACTUAL_VER=$(tr -d '[:space:]' < "$TMPDIR_UP/.pmb-version" 2>/dev/null || echo "missing")
-assert_contains "$ACTUAL_VER" "$EXPECTED_VER" ".pmb-version matches repo VERSION after upgrade"
+# assert_equals, not assert_contains: the latter is an unanchored grep, so a stale .pmb-version of
+# "1.2.10" would have PASSED against a repo VERSION of "1.2.1". Pre-existing on origin/main:89.
+assert_equals "$ACTUAL_VER" "$EXPECTED_VER" ".pmb-version matches repo VERSION after upgrade"
 
 # ── Missing standard: ADVISORY_CREATE restores it ────────────────────────────
 echo ""

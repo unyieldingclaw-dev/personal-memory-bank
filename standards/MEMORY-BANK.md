@@ -78,6 +78,27 @@ Contains:
 
 Update when: Features completed, bugs found, milestones reached
 
+**Does NOT contain: a restatement of the change itself.** This is the binding constraint on
+memory-bank size, and it is a write-RATE rule, not an eviction rule. A commit message is permanent,
+searchable, and costs zero context; a `progress.md` entry costs context at every session start and
+again after every compaction, forever. The test for a new entry is therefore: *could a commit
+message have carried this?* If yes, it belongs there, and the entry cites the hash instead.
+
+Record what a commit message structurally cannot:
+- Cross-session state — what is in flight, blocked, or deferred, and why
+- Decisions whose rationale outlives the commit that implemented them
+- **Corrections to earlier entries** — a commit message is immutable, so a claim that turns out
+  wrong can only be superseded here
+- Findings that span commits, or that no single commit caused
+
+Do not record: what changed, which files were touched, suite counts, or a review's findings list
+when the commit message already carries them.
+
+**Why this outranks eviction.** `progress.md` was measured growing **+24,355 bytes in 3 days** while
+`docs/archive/` already held **182,555 bytes** (measured at `22549c4`; an earlier draft of this
+paragraph cited a four-day-stale 149,711) moved out by the eviction mechanism below — eviction
+could not keep pace with the write rate, so it is symptom relief and this is the cause.
+
 ## Authority Tiers
 
 Memory Bank files have explicit authority levels. When an agent encounters a contradiction
@@ -153,11 +174,17 @@ Keep Memory Bank files focused and scannable:
 
 | File | Target | Max | If Exceeded |
 |------|--------|-----|-------------|
-| projectbrief.md | 50-80 lines | 150 | Review - should rarely grow |
-| systemPatterns.md | 100-180 lines | 300 | Consolidate similar patterns |
-| techContext.md | 150-250 lines | 400 | Move details to docs/ |
+| projectbrief.md | 30-50 lines | 80 | Review - should rarely grow |
+| systemPatterns.md | 40-80 lines | 120 | Consolidate similar patterns |
+| techContext.md | 40-80 lines | 120 | Move details to docs/ |
 | activeContext.md | 50-100 lines | 150 | Archive to `docs/archive/` |
-| progress.md | 100-250 lines | 600 | Archive old versions |
+| progress.md | 100-250 lines | 500 | Archive old versions |
+
+**These numbers are not free-standing.** They restate the `FAIL` caps enforced by the size workflow
+in `.github/workflows/`, and a table that drifts from the workflow tells a reader the opposite of
+what CI will do. Two rows were already divergent before 2026-08-30 (`projectbrief` said 150 against
+a workflow value of 120; `techContext` said 400 against 300) with nothing comparing them — this was
+the FOURTH uncompared statement of the same caps. Change the workflow first, then this table.
 
 ## Eviction Criteria
 

@@ -75,4 +75,55 @@ for live in "$LIVE_DIR"/*.mdc; do
         "$name: live rule has a template behind it (an orphan is unmanaged by mb upgrade, never ships)"
 done
 
+# ── standards/*.md vs templates/standards/*.md ──────────────────────────────────────────────
+# WHY this is a SECOND pair with DIFFERENT rules, not an extension of the loop above: unlike
+# .cursor/rules, standards/ is NOT byte-identical by design. Three files deliberately diverge --
+# the live copies name this repo's own paths, incidents and dates, while the shipped templates are
+# genericized for adopters (templates/standards/MEMORY-BANK.md even says so in-line: "PMB's own
+# copy of this rule names pmb-health.yml"). A naive cmp-all guard would be wrong as written, which
+# is exactly why no check existed: the easy version was known-wrong and the correct one was never
+# built. Meanwhile the other 12 pairs drifted with nothing watching.
+#
+# THE ALLOWLIST IS THE DANGEROUS PART. An allowlist that silently grows swallows the check it is
+# attached to, so it carries its own anti-rot guard below: each entry must ACTUALLY still diverge.
+# If a file is reconciled later, its stale entry turns this RED and must be deleted -- the
+# allowlist cannot quietly accumulate permission for pairs that no longer need it.
+STD_LIVE="$REPO_ROOT/standards"
+STD_TMPL="$REPO_ROOT/templates/standards"
+STD_DIVERGE_OK="AGENTIC-SAFETY.md MEMORY-BANK.md WORKFLOW.md"
+
+echo ""
+echo "=== mirror parity: standards vs templates/standards ==="
+echo ""
+echo "--- non-allowlisted pairs must be byte-identical ---"
+std_count=0
+for live in "$STD_LIVE"/*.md; do
+    [ -e "$live" ] || continue
+    name="$(basename "$live")"
+    case " $STD_DIVERGE_OK " in *" $name "*) continue ;; esac
+    std_count=$((std_count + 1))
+    assert_file_exists "$STD_TMPL/$name" "$name: standard has a template behind it"
+    if [ -f "$STD_TMPL/$name" ]; then
+        diff -q "$live" "$STD_TMPL/$name" >/dev/null 2>&1
+        assert_exit_zero "$?" "$name: live and template are byte-identical"
+    fi
+done
+
+echo ""
+echo "--- the sweep actually ran ---"
+[ "$std_count" -gt 0 ]
+assert_exit_zero "$?" "standards/ contained at least one non-allowlisted pair to compare (found $std_count)"
+
+# Anti-rot: an allowlist entry for a pair that no longer diverges is stale permission. Assert each
+# one still earns its place, so reconciling a file forces its removal instead of leaving a hole.
+echo ""
+echo "--- every allowlisted divergence is still a real divergence ---"
+for name in $STD_DIVERGE_OK; do
+    assert_file_exists "$STD_TMPL/$name" "$name: allowlisted file still has a template"
+    if [ -f "$STD_TMPL/$name" ] && [ -f "$STD_LIVE/$name" ]; then
+        diff -q "$STD_LIVE/$name" "$STD_TMPL/$name" >/dev/null 2>&1
+        assert_exit_nonzero "$?" "$name: allowlist entry still needed (files genuinely differ)"
+    fi
+done
+
 print_summary
