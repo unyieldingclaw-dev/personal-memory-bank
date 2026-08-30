@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-08-28
+last-reviewed: 2026-08-29
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -290,6 +290,22 @@ that matters is that each original heading is preserved below, which it is.
 - **It also relieved the wrong file.** `activeContext.md` is flat across today's commits while
   `progress.md` grew +9,583 in one and is force-written every compaction by `pre-compact-check.sh`.
   `[NS-42]` already says write rate is the binding constraint — demonstrated here, not restated.
+
+## 2026-08-29 — absence-claim scope rule (`a11e4df`); a review-gate defect recorded
+
+- **The rule, its placement rationale and its four accepted limits are in `a11e4df`'s commit message
+  and are not restated here.** What that message does not cover follows.
+- **`[NS-45]` — the review gate destroys its marker before the guarded verb runs.**
+  `review-reminders.sh:92-93` writes `.pending-commit-presha` at PreToolUse;
+  `review-reminders-post.sh:40` and `.ps1:43` delete it on entry to the commit branch, *before* the
+  presha==postsha test that gates reissue — so its survival proves that branch never ran. A surviving
+  presha then lets a later text-matching command mint a marker for an unreviewed tree.
+  **Basis is INFERRED, not measured.** The chain is read from source; the bypass was never reproduced.
+  What was observed is narrower: an orphaned presha survived a run on 2026-08-29, and two more dated
+  2026-07-26 sit in worktrees.
+- **The defect lives in an untested branch.** `tests/test-review-reminders.sh` covers "the commit ran
+  and failed, HEAD unchanged" but nothing simulates the presha surviving because PostToolUse never
+  fired at all; `review-reminders-post.ps1`'s reissue path has no Pester coverage.
 
 ## Review rounds 4-9 (2026-08-23 → 2026-08-25) — relocated 2026-08-26, detail in `docs/MEMORY-BANK-PARADIGM-REVIEW.md`
 

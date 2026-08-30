@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-08-28
+last-reviewed: 2026-08-29
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,13 +16,13 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-08-28 (`bf636e1` committed; branch 5 ahead of `main`, none on `origin`)
+## Last Updated: 2026-08-29 (`a11e4df` committed; branch 7 ahead of `main`, none on `origin`)
 
 ## Trim History
 
 Trimmed 2026-08-14 (671→~150), 2026-08-18 (NS-24 condensed; older narrative sections condensed further
 same day), 2026-08-20 (five narrative sections evicted to `docs/archive/`, each duplicating a live
-`[NS-N]` entry; resolved entries condensed to pointers). **Bytes bind before lines here** (~380
+`[NS-N]` entry; resolved entries condensed to pointers), 2026-08-29 (`[NS-2]` deleted, `[NS-22]`/`[NS-24]` condensed to stubs — `910e17f`). **Bytes bind before lines here** (~380
 chars/line) — measure headroom in bytes, not lines, when judging the next trim.
 Full history in `docs/archive/context-*.md` / `progress.md`'s dated entries. `Next Steps` is
 the authoritative pending-work list.
@@ -43,7 +43,7 @@ four matcher bypasses it exposed are on `main`. The port-only trap that stranded
 `[NS-3]` and `[NS-18]` no longer applies to `scripts/dangerous-commands.sh`: `main` carries the
 full 588-line file, so BLOCK-tier work branches off `main` normally now. Rounds 1-10:
 `progress.md` 2026-08-24/26.
-**Branch `fix/block-tier-case-sensitivity` is 5 commits ahead of `main`, NONE merged or pushed** (`d795abb`, `7917905`, `2052c3c`, `d550282`, `bf636e1`). The `/change-review` blocker — **`mb init` never delivered `.claude/agents/*.md`**, killing a fresh adopter's gate at Opposition along with its documented fallback — is **FIXED and COMMITTED** (`bf636e1`): both shells auto-discover the template dir; regression tests on each shell mutation-proved RED→GREEN; five domains + Opposition returned Approve. Records: `progress.md` 2026-08-28 (later)/(fix).
+**Branch `fix/block-tier-case-sensitivity` is 7 commits ahead of `main`, NONE merged or pushed** (`d795abb`, `7917905`, `2052c3c`, `d550282`, `bf636e1`, `910e17f`, `a11e4df`). The `/change-review` blocker — **`mb init` never delivered `.claude/agents/*.md`**, killing a fresh adopter's gate at Opposition along with its documented fallback — is **FIXED and COMMITTED** (`bf636e1`): both shells auto-discover the template dir; regression tests on each shell mutation-proved RED→GREEN; five domains + Opposition returned Approve. Records: `progress.md` 2026-08-28 (later)/(fix).
 **Next: push (needs a FULL-BRANCH `/change-review` — the push gate binds `origin/main...HEAD`, a different diff than the commit gate), then the release contract (tag → dirty-tree guard → ref-sourcing), user-approved 2026-08-28, relayed via ACR.** `mb upgrade` sources the WORKING TREE, so no tag may be cut against a dirty one — and the first release is the one the dirty-tree guard cannot protect, since the guard ships after it. This agent cannot merge PRs; `review-reminders.sh` denies that unconditionally, by design.
 
 
@@ -131,6 +131,7 @@ now guards all three sources.
 42. [NS-42] **Write-rate control — the successor problem eviction does not solve.** `progress.md` grew **+24,355 B in 3 days** (`ea862e8` 35,640 → `030662c` 59,995, measured 2026-08-27), and `docs/archive/` already holds **149,711 B** moved by the same mechanism while the file still hit its cap. The 2026-08-26 relocation bought ~1.6 days. Eviction is symptom relief; the constraint is write volume per session. Needs a design pass, not another relocation.
 43. [NS-43] **Review gate: two structural problems, 2026-08-27.** (a) It gates commits on a marker equal to `diff_hash HEAD` — the whole tree — consumed on use (`review-reminders.sh:87-97`), so one Approve buys one commit containing everything; splitting N concerns needs N full passes. Likely why branches here reach many concerns at zero commits, against the standard's preference for revertable changes. (b) The matcher is textual: any Bash command merely *mentioning* the commit verb is denied, so this entry could not be written from a heredoc. Fail-safe, but the repo cannot document its gate.
 44. [NS-44] **Startup-context ceiling exceeded nearly fivefold and structurally unenforceable; per-file caps misallocated.** Detail and four options, none implemented: `docs/MEMORY-BANK-CAP-ALLOCATION-FINDING.md`. Continues `[NS-28]` and `[NS-42]`.
+45. [NS-45] **The review gate destroys its marker before the guarded verb runs, its compensator does not fire, and the residue is a bypass primitive.** Mechanism, citations and basis in `progress.md` 2026-08-29 (INFERRED from source, not reproduced). Sharpens `[NS-24]` Task #33 with a mechanism; strengthens `[NS-26]`'s `peek_marker()` case.
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 
