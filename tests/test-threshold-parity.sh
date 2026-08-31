@@ -158,7 +158,21 @@ echo "--- startup-context ratchet: same primitive, same enumeration, all three s
 RATCHET_SOURCES="$CI_YML $MB_SH $MB_PS1"
 for src in $RATCHET_SOURCES; do
     b=$(basename "$src")
-    region_claude=$(awk '/RATCHET_BASE=|ratchetBase = 0|BASE_CEIL=/{f=1} f{print} f&&/^ *(done|})$/{exit}' "$src")
+    # ASSERT THE LOOKUP EXPRESSION, not the bare filename. Comment-stripping was the wrong
+    # instrument: review demonstrated the assertion still passed for pmb-health.yml with the real
+    # baseline lookup deleted, because "CLAUDE.md" also appears in an ECHO line inside the region
+    # and sed cannot strip a string literal. A rename mutation survived too. Matching the actual
+    # call means only the call can satisfy it.
+    #
+    # Region bounded by a terminator that EXISTS INDEPENDENTLY of what is asserted -- the OK-flag
+    # test following every baseline loop -- rather than the n>=40 line count it replaces, which
+    # overshot mb.sh by 9 lines and mb.ps1 by 20 and was green only by luck.
+    case "$src" in
+        *.ps1) claim_pat='@("CLAUDE.md")'       ; claim_end='if ($ratchetOk' ;;
+        *.yml) claim_pat='origin/main:CLAUDE.md' ; claim_end='if [ "$BASE_OK"' ;;
+        *)     claim_pat='origin/main:CLAUDE.md' ; claim_end='if [ "$RATCHET_OK"' ;;
+    esac
+    region_claude=$(awk -v e="$claim_end" '/RATCHET_BASE=|ratchetBase = 0|BASE_CEIL=/{f=1} f&&index($0,e){exit} f{print}' "$src" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*echo \|^[[:space:]]*Write-Host ')
     # >=1, not ==1: each source legitimately calls it twice (once for CLAUDE.md, once per enumerated
     # memory-bank file). An earlier draft asserted "exactly once" and went red against correct code
     # -- the assertion's claim was wrong, not the code.
@@ -180,8 +194,8 @@ for src in $RATCHET_SOURCES; do
     # Matched inside the ratchet REGION, not as the literal string "origin/main:CLAUDE.md": mb.ps1
     # builds its path list in a variable, so a literal check reported ABSENT against code that does
     # include the file. Reach has to match the assertion -- the defect this file exists to catch.
-    assert_contains "$region_claude" "CLAUDE.md" \
-        "$b includes CLAUDE.md in the baseline (16,212 B on main -- exceeds the whole headroom)"
+    assert_contains "$region_claude" "$claim_pat" \
+        "$b performs the CLAUDE.md baseline lookup (16,212 B on main -- exceeds the whole headroom)"
     # A hardcoded memory-bank list anywhere in the ratchet region would reintroduce the short-by-one
     # hole the enumeration closes.
     region=$(awk '/RATCHET_BASE=|ratchetBase = 0|BASE_CEIL=/{f=1} f{print} f&&/^ *(done|})$/{exit}' "$src")

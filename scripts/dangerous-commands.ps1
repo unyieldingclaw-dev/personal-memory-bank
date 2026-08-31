@@ -47,17 +47,44 @@ try {
     # support for the claim about stdin decoding.)
     # IsInputRedirected guards the interactive case, where ReadToEnd() would otherwise block --
     # preserving the fail-open-on-empty-stdin behaviour the early exit below depends on.
-    # detectEncodingFromByteOrderMarks MUST be $false. The 2-arg StreamReader(Stream, Encoding)
-    # overload defaults it TRUE, so a leading BOM of a DIFFERENT encoding silently overrides the
-    # UTF8Encoding passed in -- $sr.CurrentEncoding reported "Unicode" for an FF FE payload.
-    # Reproduced end-to-end: a UTF-16-BOM payload carrying a BLOCK-tier command produced NO
-    # output and exit 0, because the wide decode destroyed the literal substring the matchers
-    # look for. Pinning the encoding while leaving BOM detection on pins nothing.
+    # detectEncodingFromByteOrderMarks is $true, and this is a TRADE, not a pure win.
+    #
+    # Measured across 10 byte-level cases against three variants ($true = here, $false, and main's
+    # pre-branch `$input | Out-String`):
+    #   $true  DENIES utf8/utf8-BOM and UTF-16 LE+BE and UTF-32 LE+BE with BOM; PASSES the malformed
+    #          FF FE-or-FE FF followed by UTF-8 hybrid.
+    #   $false is behaviourally IDENTICAL to main on all eight real-encoding cases, and DENIES the
+    #          two hybrid cases.
+    # So $true gains four genuine multi-byte encodings and loses two malformed hybrids. Both classes
+    # are unreachable through the documented producer -- Claude Code writes byte 0 of this stdin and
+    # emits BOM-less UTF-8 -- which is INFERRED about a third-party binary, not verified here.
+    #
+    # THE HISTORY, because three wrong versions were recorded before this one:
+    #   (1) "A UTF-16 BOM bypasses the BLOCK tier" -- reproduced with the FF FE + UTF-8 hybrid, which
+    #       no producer emits. Set $false to fix it.
+    #   (2) "$false was a regression that introduced a bypass" -- also wrong. $false matches main
+    #       exactly on every real encoding; it fixed nothing and broke nothing.
+    #   (3) "The hybrid failed to match for a reason unrelated to the setting" -- falsified by
+    #       measurement: the setting is the ONLY reason. $true passes it, $false denies it.
+    # The reusable lesson is that each wrong version was asserted from a proxy rather than measured
+    # against the real input, including the self-critical one.
+    #
+    # The fix that actually mattered is the StreamReader with UTF8Encoding replacing
+    # `$input | Out-String`, which corrects OEM-code-page decoding of the common no-BOM path.
+    #
+    # COVERAGE, counted rather than inferred from the Describe's existence: 3 of the 10 cases above
+    # are asserted in tests/dangerous-commands.Tests.ps1 "encoding pinning (raw bytes)" -- utf8
+    # no-BOM, utf8+BOM, and utf16LE+BOM, plus a benign control. UTF-16 BE, UTF-32 LE/BE and BOTH
+    # hybrids are asserted nowhere in tests/. So the single-setting revert IS pinned (flipping to
+    # $false turns the utf16LE case red), but the breadth of the trade is not: a change that keeps
+    # UTF-16 LE working while breaking BE or UTF-32 would ship green.
+    # An earlier draft of this line said "all ten", inferred from the Describe rather than counted --
+    # which is the same proxy-for-measurement error the paragraph above records three times.
     $raw = if ([Console]::IsInputRedirected) {
         (New-Object System.IO.StreamReader(
             [Console]::OpenStandardInput(),
             (New-Object System.Text.UTF8Encoding($false)),
-            $false)).ReadToEnd()
+            $true)).ReadToEnd()
     } else { "" }
     if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
     $data = $raw | ConvertFrom-Json -ErrorAction Stop

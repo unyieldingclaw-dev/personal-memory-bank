@@ -163,11 +163,46 @@ Cross-reference job 2 claims against the test changes:
    - Bash: `git diff origin/main...HEAD > /tmp/cr-diff.patch` (or replay the Step 1 command that produced the diff)
    - If Step 1 used `--diff <path>`, copy that file to `/tmp/cr-diff.patch`
    - If Step 1 used `gh pr diff <number>`, re-run: `gh pr diff <number> > /tmp/cr-diff.patch`
-2. Run `ai-review-agent --profile security --diff /tmp/cr-diff.patch` and check its exit code, not just whether the command was found.
-3. **If the exit code is 0:** incorporate its findings here, attributed as `basis: acr`. An empty findings list with exit 0 is a genuine clean pass.
-4. **If the exit code is non-zero (ACR exits 2 when its agents fail internally):** do not treat an empty findings list as a clean pass — that reads as "reviewed, nothing found" when it may mean "did not actually run." Note the non-zero exit explicitly in this job's output, then fall through to the inline `/security-review` logic below as the actual security coverage for this run, attributed as `basis: llm` (not `basis: acr`, since ACR did not genuinely complete).
+2. Run `ai-review-agent --profile security --chunk --diff /tmp/cr-diff.patch` and read its exit code. **`--chunk` is not optional here** — see the truncation note below.
+3. **Map the exit code. Do NOT collapse to zero/non-zero, and do NOT assume this list is complete — treat any code not listed as `2`:**
+
+   | Exit | Meaning | What to do |
+   |------|---------|-----------|
+   | `0` | Ran fully, nothing met the threshold | Genuine clean pass. Incorporate findings (possibly none) as `basis: acr`. |
+   | `1` | Something met `--fail-on` (default `high`) | **USE THE FINDINGS** — this is the tool working, not failing. Attribute `basis: acr`. **But check the report for a truncation banner first:** ACR evaluates blockers BEFORE truncation, so exit 1 can occur on a partial run. If truncated, treat coverage as partial per the `3` row and say so in the footer. |
+   | `2` | An agent failed internally (takes priority over `1`) | Not a clean pass. Fall through to the inline logic below. |
+   | `3` | The diff was TRUNCATED — coverage was partial | Not a clean pass. Re-run with `--chunk`; if it still truncates, fall through. |
+   | `4` | Startup failure — no review ran at all (Ollama unreachable, model missing, diff file absent) | **RETRY, do not triage.** This is infrastructure, not a finding about the code. On stderr with no report produced, so there is no empty findings list to misread. If it recurs, fall through. |
+   | any other | Unknown | Treat as `2`. An earlier version of this step said "if the exit code is non-zero" and was replaced by an explicit table; the table then omitted `4`, which was hit in practice on 2026-08-30 when a server restart killed a run mid-chunk. Enumerating without a catch-all reintroduced the gap the enumeration was meant to close. |
+
+4. **On exit 2, 3, 4, or any unlisted code:** never read an empty findings list as clean — that reports "reviewed, nothing found" when it means "did not review all of it." Record the exit code verbatim in this job's output, then fall through to the inline `/security-review` logic as the actual coverage, attributed `basis: llm` (not `basis: acr`, since ACR did not genuinely complete). State the reduced coverage in the Coverage Footer.
+5. **Never pass `--allow-truncation` in this workflow.** It converts exit 3 into exit 0, which is precisely the signal this step exists to preserve.
 
 > **Why:** Without `--diff`, ACR defaults to `git diff --cached` (staged changes), which is a different surface than the PR or branch diff computed in Step 1.
+>
+> **Why `--chunk`, measured not assumed:** `--max-lines` defaults to **2000**. On 2026-08-30 a
+> 6,578-line branch diff was truncated to 2,000 lines — four agents returned **0 findings in 13.6s**
+> and exited 3. The same diff with `--chunk` (4 full-coverage passes, 200s) returned **15 findings
+> including 2 High**. Any diff over 2,000 lines is affected, which is most branch diffs.
+>
+> **ACR was NOT silent about it — the reader was.** An earlier draft of this note claimed the report
+> body gave no signal and that only the exit code showed truncation. That was false, and the
+> correction matters more than the original point. The run announced it THREE times: a `[ai-review]
+> Diff truncated: 4579 of 6579 lines were excluded` line as the **first line of output**, a
+> `⚠️ Diff truncated: reviewed 2000/6579 lines` banner in the report, and — because the finding count
+> was zero — an `⚠️ INCOMPLETE` headline replacing the usual clean checkmark. The reviewer missed all
+> three by running `tail` and a grep for agent lines instead of reading the report.
+>
+> So the real hazard this step guards is not a silent tool; it is a reviewer who greps a report
+> instead of reading it. `--chunk` is mandatory because it removes the situation rather than relying
+> on anyone noticing a banner — a control that depends on attention is not a control.
+>
+> **Why the exit codes are enumerated rather than tested as non-zero:** an earlier version of this
+> step said "if the exit code is non-zero ... do not treat an empty findings list as a clean pass."
+> That rule is right for 2 and 3 and **wrong for 1**, which means the run succeeded and found
+> something at or above the fail threshold. Under that rule a run that correctly surfaced two High
+> findings would have been discarded as "did not actually run" and replaced with weaker inline
+> coverage — throwing away the tool's most valuable output at exactly the moment it mattered.
 >
 > **Why check the exit code, not just presence:** a presence-only check (`which ai-review-agent`, Step 2) can't distinguish "ACR ran and found nothing" from "ACR was invoked but every agent inside it failed or timed out" — the latter also produces zero findings, and without an exit-code check both look identical: a clean security review. That's a silently skipped security check reading as a pass.
 

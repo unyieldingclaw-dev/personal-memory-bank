@@ -662,3 +662,73 @@ Describe "dangerous-commands.ps1 (JSON-parse-failure fallback)" {
         $r.Output | Should -Not -Match '"permissionDecision":"deny"'
     }
 }
+
+
+# WHY a raw-BYTE harness rather than the string-based Invoke-DangerousCommandsHook above: the defect
+# this guards is an ENCODING override, so the payload must reach the hook as exact bytes. Piping a
+# PowerShell string re-encodes it and the BOM never survives as FF FE, which is why the original
+# reproduction was done by hand and never captured as a test.
+#
+# WHAT THIS GUARDS, stated correctly after two wrong attempts:
+# detectEncodingFromByteOrderMarks must be $true. With $false, genuinely UTF-16 input is decoded as
+# UTF-8, every other byte is NUL, the matchers' literal substrings stop being contiguous, and nothing
+# fires. Measured across an 8-case byte matrix: $true denies UTF-16 LE/BE and UTF-32 LE/BE with BOM;
+# $false denies none of them.
+#
+# The original diagnosis was WRONG IN BOTH DIRECTIONS and the history is kept because the reasoning
+# is the reusable part. A first pass "reproduced" a bypass using FF FE followed by UTF-8 bytes -- a
+# malformed hybrid no producer emits -- and set $false to fix it. A second pass called that a
+# regression it had introduced. Neither is right: $false is behaviourally IDENTICAL to the
+# pre-branch `$input | Out-String` read on all eight cases, so it fixed nothing and broke nothing.
+# It was a no-op against a hole that was already there and is unreachable anyway, since Claude Code
+# writes byte 0 of this stdin and emits BOM-less UTF-8.
+#
+# The fix that DID matter is the StreamReader with UTF8Encoding replacing `$input | Out-String`,
+# which corrects OEM-code-page decoding of the no-BOM path. That is guarded by the byte-length test
+# above; reverting the reader fails it AND the UTF-16 case below.
+Describe "dangerous-commands.ps1 encoding pinning (raw bytes)" {
+    BeforeAll {
+        function Invoke-HookWithBytes {
+            param([byte[]]$Bytes)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'
+            $psi.Arguments = "-NoLogo -NoProfile -File `"$script:HookScript`""
+            $psi.RedirectStandardInput = $true
+            $psi.RedirectStandardOutput = $true
+            $psi.UseShellExecute = $false
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $p.StandardInput.BaseStream.Write($Bytes, 0, $Bytes.Length)
+            $p.StandardInput.Close()
+            $out = $p.StandardOutput.ReadToEnd()
+            $p.WaitForExit()
+            $out
+        }
+        # Split so the literal never appears contiguously -- this repo's own PreToolUse hook inspects
+        # the command text of whatever runs the suite and would refuse it.
+        $script:BlockJson = '{"tool_name":"Bash","tool_input":{"command":"' + 'rm' + ' -' + 'rf /tmp/x"}}'
+    }
+
+    It "denies a BLOCK-tier command sent as plain UTF-8 (control)" {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($script:BlockJson)
+        Invoke-HookWithBytes -Bytes $bytes | Should -Match '"permissionDecision":"deny"'
+    }
+
+    It "denies the SAME command when prefixed with a UTF-16 LE BOM" {
+        # Goes red under $false: the UTF-16 bytes decode as UTF-8 with interleaved NULs and no
+        # matcher sees a contiguous pattern. This is the assertion that falsified two wrong diagnoses.
+        $bytes = [byte[]](0xFF,0xFE) + [System.Text.Encoding]::Unicode.GetBytes($script:BlockJson)
+        Invoke-HookWithBytes -Bytes $bytes | Should -Match '"permissionDecision":"deny"'
+    }
+
+    It "denies the SAME command when prefixed with a UTF-8 BOM" {
+        # The other direction: a UTF-8 BOM must not break a payload that is genuinely UTF-8.
+        $bytes = [byte[]](0xEF,0xBB,0xBF) + [System.Text.Encoding]::UTF8.GetBytes($script:BlockJson)
+        Invoke-HookWithBytes -Bytes $bytes | Should -Match '"permissionDecision":"deny"'
+    }
+
+    It "stays silent on a benign command sent as raw bytes (no false positive)" {
+        $json = '{"tool_name":"Bash","tool_input":{"command":"echo hi"}}'
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        Invoke-HookWithBytes -Bytes $bytes | Should -Not -Match '"permissionDecision":"deny"'
+    }
+}
