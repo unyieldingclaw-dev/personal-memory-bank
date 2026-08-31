@@ -109,13 +109,15 @@ commit message) and a mutable one (the entry), only the second correctable. Reco
 ## 5. Finding — eviction cannot reach the mass
 
 `standards/MEMORY-BANK.md`'s `activeContext.md` eviction rows key on *resolved* status or an age test
-of >14 days for entries that are not active blockers. `[NS-35]` is **5,823 bytes — 13.2% of the
+of >14 days for entries that are not active blockers. `[NS-35]` was, until 2026-08-31 (see §5's update below), **5,823 bytes — 13.2% of the
 file** — and satisfies neither: 5 days old and explicitly active. The criteria structurally exempt the
 largest entries, because size correlates with being recent and active.
 
 The eviction pass that produced this document recovered 864 bytes. One untouchable entry is **6.7x**
 that.
 
+
+**Update 2026-08-31 — §5's example was acted on, and the section's conclusion still holds.** `[NS-35]` was condensed from 5,822 B to 1,860 B, recovering **3,962 B** and taking `activeContext.md` from **3 bytes** of headroom to 3,965. That does **not** refute this section: the entry still satisfied neither eviction criterion (it is active, not resolved), so the recovery came from condensing an entry the rules **exempt**, by hand, on an operator decision — not from the eviction mechanism. The measured claim below stands: the seven entries actually marked resolved total **2,131 B even if deleted outright**, less than half of this one active entry. **Eviction still cannot reach the mass; a human overriding the criteria can.**
 ## 6. Options, in leverage order
 
 Each needs its own contract. Ordered by expected effect on the 123,029-byte session load.

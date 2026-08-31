@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# tests/test-mirror-parity.sh — the .cursor/rules governance substrate must not drift from templates/
+# tests/test-mirror-parity.sh — the governance substrate must not drift from templates/
+#
+# THREE pairs, two different rules: .cursor/rules and .claude/commands are STRICT byte-identity;
+# standards/ is allowlisted because three files diverge by design. See each block's own WHY.
 #
 # WHY this file exists: `.cursor/rules/*.mdc` is TEMPLATE_OWNED (scripts/mb.sh, TEMPLATE_OWNED array),
 # meaning `mb upgrade` overwrites the live copy from `templates/cursor/rules/` unconditionally. So the
@@ -73,6 +76,67 @@ for live in "$LIVE_DIR"/*.mdc; do
     name="$(basename "$live")"
     assert_file_exists "$TMPL_DIR/$name" \
         "$name: live rule has a template behind it (an orphan is unmanaged by mb upgrade, never ships)"
+done
+
+# ── .claude/commands/*.md vs templates/claude-commands/*.md ─────────────────────────────────
+# WHY a THIRD pair, and why it is strict-identity like .cursor/rules rather than allowlisted like
+# standards/: measured 2026-08-31, all 8 pairs are byte-identical and none diverges by design. The
+# live copies carry no repo-specific content, so there is nothing to genericize for adopters.
+#
+# WHY it is TEMPLATE_OWNED, by a DIFFERENT route than .cursor/rules -- the distinction matters and an
+# imprecise version of it would be wrong: the cursor rules are six literal paths in the TEMPLATE_OWNED
+# array, whereas commands are AUTO-DISCOVERED into it (scripts/mb.sh, the loop appending
+# ".claude/commands/$(basename "$f")" for each templates/claude-commands/*). So the array contains
+# exactly those commands that HAVE a template. Two consequences, and they differ:
+#   - A live orphan (no template behind it) is therefore NEVER in the array, never visited by
+#     `mb upgrade`, and no delete path reaches it. It persists in this repo, never ships to adopters,
+#     and drifts from the shipped substrate forever with nothing reporting it. Same hazard as the
+#     cursor orphan case, reached by a different mechanism.
+#   - A template with no live copy is self-healing: it IS in the array, so upgrade creates it. Still
+#     asserted, because an in-repo divergence is a signal regardless of whether upgrade would repair
+#     it, and because this suite runs against this repo, not against a freshly upgraded adopter.
+#
+# WHY this gap existed until 2026-08-31: it was found by editing change-review.md's exit-code table in
+# BOTH copies by hand and then asking what enforced that -- nothing did. The file above states the
+# TEMPLATE_OWNED rationale for .cursor/rules and it applies verbatim here; the guard was simply never
+# extended to the sibling family. That is this repo's recurring defect class (a fix reaching one
+# sibling and not the other), caught this time before it shipped rather than after.
+#
+# NOTE the directory names are NOT symmetric: templates/claude-commands/ -> .claude/commands/.
+# scripts/mb.sh maps this explicitly; a naive derivation that assumes matching path segments breaks.
+CMD_LIVE="$REPO_ROOT/.claude/commands"
+CMD_TMPL="$REPO_ROOT/templates/claude-commands"
+
+echo ""
+echo "=== mirror parity: .claude/commands vs templates/claude-commands ==="
+echo ""
+echo "--- templates/claude-commands/*.md -> .claude/commands/ ---"
+cmd_count=0
+for tmpl in "$CMD_TMPL"/*.md; do
+    [ -e "$tmpl" ] || continue
+    cmd_count=$((cmd_count + 1))
+    name="$(basename "$tmpl")"
+    live="$CMD_LIVE/$name"
+    assert_file_exists "$live" "$name: command template has a live counterpart"
+    if [ -f "$live" ]; then
+        diff -q "$tmpl" "$live" >/dev/null 2>&1
+        assert_exit_zero "$?" "$name: command template and live copy are byte-identical"
+    fi
+done
+
+# Same anti-tautology guard as the pair above: if CMD_TMPL is renamed or emptied the loop iterates
+# zero times and every assertion in it vanishes silently, leaving a suite that passes on nothing.
+echo ""
+echo "--- the sweep actually ran ---"
+[ "$cmd_count" -gt 0 ]
+assert_exit_zero "$?" "templates/claude-commands/ contained at least one .md to compare (found $cmd_count)"
+
+echo ""
+echo "--- .claude/commands/*.md -> templates/claude-commands/ ---"
+for live in "$CMD_LIVE"/*.md; do
+    [ -e "$live" ] || continue
+    name="$(basename "$live")"
+    assert_file_exists "$CMD_TMPL/$name"         "$name: live command has a template behind it (an orphan is never in TEMPLATE_OWNED, never ships)"
 done
 
 # ── standards/*.md vs templates/standards/*.md ──────────────────────────────────────────────

@@ -58,218 +58,185 @@ the archive file, so existing `progress.md` <date> references still resolve.
 - **2026-08-23 (continued) — Cap Deadlock Cleared by Relocation; Round-6 Pre-Gate Hardening**
 - **2026-08-22 — Commit-Signing CONFIRM Tier; Two Review-Driven Corrections; Midnight Gate-Expiry Found**
 
-## 2026-08-28 — `[NS-22]` committed; Cursor's handoff threshold re-derived; `[NS-22]` action 3 closed as not-a-defect
+## Relocated 2026-08-28 — five sections moved verbatim 2026-08-31
 
-- **`[NS-22]` committed as `7917905`** after a full six-domain + Opposition (opus) pass. **The first review pass used the WRONG command** — the bare skill name resolved to a plugin twin instead of `.claude/commands/code-review.md`, exactly the `[NS-21]` shadowing risk already on record. The twin has 7 steps to the project's 5, no `standards/CODE-REVIEW.md` contract load, no model pin on Opposition, and its Step 5 *instructs generating tests* — which the project command forbids at line 209. So the repo was mutated during review, a listed Failure Criterion. Re-run clean with read-only agent types so the domains structurally could not edit.
-- **Opposition returned Approve, overturning Security's sole blocker on a strict-subset proof:** post-fix allows ⊆ pre-fix allows, so the change cannot permit any compaction `main` blocks today — a `touch` fails to close a residual rather than opening a hole, and the recommended `Date:`-line fix is equally forgeable. It disproved 3 of 4 claimed non-adversarial triggers by measurement (`handoff.md` is gitignored; OneDrive is a *sibling* of the repo, not an ancestor). **Its sharpest point, which no domain could see alone: the severity ordering was inverted relative to the diff's risk direction** — the change can only ever block *more*, so the whole new risk surface was the two over-blocking Mediums while the High was a pre-existing residual.
-- **Two regressions accepted as documented limits** — GNU-only `date -r` (BSD `stat -f` fallback from the 2026-05-28 design not carried forward; live exposure zero) and the midnight hard-block that folds into `[NS-34]`. Both enumerated in `7917905`'s message. **Both then demonstrated live in this session:** the handoff went stale at rollover and `progress.md` had no entry dated today, so the gate blocked its own author.
-- **Cursor's handoff threshold re-derived 80% → 40%.** Reasoning deliberately NOT restated here — it lives in `standards/MEMORY-BANK.md`, "Implications for Handoff Thresholds", which is the governed home for it; a second copy is the restatement-drift class this repo rules against. In one line: the 80% was justified on continuity (Cursor re-injects `.mdc` rules) and silent on output quality degrading with input length, which is IDE-independent. **Found by the user asking "isn't 80% too high?" on a third look** — my first pass called it drift (wrong: different decisions), my second withdrew the finding as documented-and-justified (wrong: justified on the wrong axis). The middle pass was the worst of the three and is the one that would have shipped.
-- **`[NS-22]` action 3 CLOSED as not-a-defect.** "Handoff at 40% is user-triggered with nothing automating it" is true and *unfixable*: hooks cannot observe context %, now confirmed first-party — Sonnet 4.5 carries built-in context awareness model-side with no documented hook exposure. It is advisory by necessity, not by oversight. There is no incoherence left to reconcile: 40 < 65 in Claude Code, and Cursor is now 40 with no backstop to precede.
-- **`tests/test-mirror-parity.sh` added** — the `.cursor/rules` ↔ `templates/cursor/rules` pairs had **zero** guards despite being `TEMPLATE_OWNED`. Auto-discovering and bidirectional; mutation-proved both ways. Full rationale in the file's own WHY block, not restated here.
-- **The Round 10 deferred `standards/` parity check is not implementable as specified.** Byte-identity is the wrong invariant there: of three divergent pairs, **two are correct by design** — `AGENTIC-SAFETY.md` and `WORKFLOW.md` carry PMB-specific incidents and paths in the live copy that must not ship to adopters. Only `MEMORY-BANK.md`'s `mb compact` (verified: exits 2, superseded by `mb clean`) was a genuine defect, and it was **inverted** — the template shipped the correct instruction while PMB's own copy did not. Fixed here. Re-file the parity item with a different invariant rather than leaving it queued as merely unscheduled.
-- **ACR provenance gap CLOSED — carried over from `handoff.md` before deleting it, and independently corroborated the same day by an ACR session message.** The 616 s figure this repo could not source: ACR re-derived it with per-invocation instrumentation and reports **do not raise the ceiling** — 12 invocations, slowest genuine attempt 213.2 s against a 315.4 s ceiling (~68%). The one row appearing to exceed it (611.7 s vs 354.7 s) was wall time across a retried `fetch failed`, a measurement artifact rather than an agent running long. **Record it exactly as ACR states it:** they judge the resemblance to the unsourced 616 s **suggestive, not established** — their words — and explicitly decline to call it confirmed (an earlier draft of this entry said *strong*, an adjective ACR never used; they flagged it 2026-08-28 and it is corrected here), because a resemblance cannot promote an unsourced number to evidence — which was the whole point of the gap. Do not upgrade that hedge. Shipped in ACR 1.15.0; `ReviewResult.timings` now lands in the CI artifact, so the rows accumulate instead of needing another half-day of local trials.
-- **Still open from the handoff, not absorbed:** the competing opposition agent on `fix/review-gate-reconcile-designs` requires human confirmation rather than writing the marker itself, which may be the better design than what shipped.
-- **Cursor 80% → 40%, and the reasoning took four passes to get right.** Pass 1 called it drift (wrong — Claude Code and Cursor were genuinely different decisions). Pass 2 withdrew the finding as documented-and-justified (wrong, and the worst of the four: it verified a rationale *existed* without checking it covered the binding constraint). Pass 3, prompted only by the user asking "isn't 80% too high?", found the rationale addresses **continuity** (rules re-inject, so instructions survive) and is silent on **quality** (output degrades with input length regardless) — and the quality curve is IDE-independent. Pass 4 found the *strongest* argument had been sitting unread the whole time: `systemPatterns.md:33` already stated 40% with no IDE qualifier. **But the tempting version of that argument is wrong** — `systemPatterns.md` carries `authority: stable` while `standards/MEMORY-BANK.md` has no frontmatter and no tier, and `CLAUDE.md`'s authority order ranks only `memory-bank/` files. So it was two governing documents in conflict with **no stated arbitration**, the third instance of that gap in one day (after global-vs-project `CLAUDE.md` and standards-vs-`CLAUDE.md`). The general gap stays open.
-- **The sweep missed two adopter-facing files and a reviewer caught them.** `templates/AGENTS.md` (three occurrences — the cross-tool file read by Claude Code, Cursor, Codex and Gemini) and `templates/memory-bank/README.md`. Found by grepping the whole repo, which is not a mechanism. **Correction, caught by a later review round:** an earlier draft of this entry said both ship via `mb init`. Only `README.md` does (the `memory-bank/*` glob in `invoke_init`). **`AGENTS.md` has NO `mb` CLI distribution path at all** — zero references in `mb.sh`, absent from `TEMPLATE_OWNED` and both advisory lists; it is copied only by the standalone `scripts/init-memory-bank.sh:155`, which the documented `mb init` onboarding never invokes. So the file the repo calls its cross-tool rules file reaches adopters only through a bootstrap path the docs do not point at — a separate latent gap the wrong claim was hiding. **The fix that matters is `tests/test-threshold-parity.sh`'s new block**, which now extracts the threshold from all 9 prescriptive surfaces and asserts agreement — matching only *instructions* ("context >= N%", "at N% context", "at or above N%"), never bare percentages, so the files' own history sections describing the old 80% are not flagged as drift and nobody is pressured into deleting the explanation. Mutation-proved.
-- **Three defects in my own new code, all caught by review, none by me.** A comment claiming `mb upgrade` "would silently delete" an orphaned rule file — **it has no delete path at all**, verified in both shells; the claim was plausible, motivating, false, and printed in assertion text on every run. And two assertions comparing a literal to itself and a variable to itself: behaviourally backstopped by their enclosing `if`, but unable to fail, in a file whose own header quotes "a check that cannot fail does not count as a check". Replaced with helpers that test the real condition.
-- **Pre-existing, fixed in passing:** `tests/run.sh`'s `sed 's/\./\./g'` was a no-op (replaces a literal dot with a literal dot) while its comment claimed it escaped dots for the `grep -E` anchor; and both `.cursor/rules/memory-bank.mdc` copies carried duplicate `mb clean` rows, one of which claimed archived history goes to `AGENTS.md`.
-- **`progress.md` cap deadlock cleared by relocation, not by trimming.** The file hit its 60,000-byte cap writing the entry above and could not accept another. Five sections dated 2026-08-12 → 2026-08-18, already marked *condensed, full detail archived*, moved **verbatim** to `docs/archive/progress-2026-08-condensed-sections.md` with dated pointers carrying each original heading; citation survival verified by grep beforehand (five live references, all still resolving). **Recorded as a delta, not a level: 12,965 bytes moved out, 1,490 added back as the pointer stub, net −11,475.** An earlier draft stated before/after totals instead; two reviewers independently flagged them, because a level is false the moment anything else in the file changes — and this entry's own later bullets changed it. That is the delta-not-level rule, violated in the entry that cites it. **Framing borrowed from an ACR session that hit its own caps four times in one day: move the evidence out, leave the rule in.**
-- **Review round 2 found three blocking items; one was rejected on measurement.** (a) The threshold guard I added to close coverage holes **had a coverage hole of the same shape** — `[ -z "$vals" ] && continue` dropped a file from the sweep on a reword, and `[ -f ] || continue` dropped one on a delete, both silently while the suite reported success. The correct per-file `STATE_ABSENT` idiom already existed 20 lines above in the same file; the block was modelled on that one and did not carry over the part that makes it complete. Fixed, mutation-proved both triggers on the real file (31/1 each). (b) The authority/arbitration argument lived **only** in `CHANGELOG.md` and this file while both cited `standards/MEMORY-BANK.md` as its home — the no-duplication rule enforced for one half of the reasoning and violated with the other. Moved to the standard, trimmed here to a pointer. (c) **A byte-count finding was REJECTED**: the reviewer reconstructed 64,314 by adding the *final* entry to HEAD, conflating two states; `54,611 + 5,305 = 59,916` exactly, and the file was never over cap. Corrected the figure anyway, for the delta-not-level reason two other domains gave.
-- **`standards/MEMORY-BANK.md` was shipping a superseded Handoff Protocol, and the divergence inverted an authority rule.** Found when the user asked why the handoff reply lacked the expected structure — the answer was that *two* structures exist. The standard listed "Summary of accomplishments / Files modified / Pending tasks / Context for next agent" as handoff contents, all of which `CLAUDE.md` explicitly forbids ("that duplicates memory-bank and risks drifting from it"). Worse, its **Next Session step 1 said to read `handoff.md` FIRST**, while `CLAUDE.md` says read all `memory-bank/` files first and the handoff second, never as authoritative — so the standard told the next session to synthesise priority from the file written under the worst conditions for it. `CLAUDE.md` supersedes (user ruled 2026-08-28); both `standards/` copies rewritten to match and verified identical. **Fourth instance in one day of the no-arbitration gap** — after global-vs-project `CLAUDE.md`, `standards`-vs-`CLAUDE.md`, and `systemPatterns`-vs-`standards`. The template mirror had been shipping the inverted ordering to every adopter.
-- **Reported by ACR, not yet acted on: `mb upgrade` distributes a working tree, not a release.** No `git archive`/`checkout`/`describe` anywhere in `mb.sh` — it copies whatever is in the PMB checkout at that moment. Combined with `TEMPLATE_OWNED`'s unconditional overwrite of files adopters may not patch locally, an in-flight edit silently replaces working downstream scripts. **Verified here while answering them, and worse than reported:** `VERSION` says `1.2.1`, `.pmb-version` says `1.1.1`, and the newest git tag is `v1.0.4` — three numbers, and **no tag exists for either 1.1.x or 1.2.x**, so there is nothing to pin a release to and a dirty-tree guard is the only near-term option. ACR has been blocked on 1.1.1 for this reason with a dead `last-reviewed` sensor they cannot fix locally. Their session ended before I could reply.
+Moved to `docs/archive/progress-2026-08-28-round3-gate-passes-and-brief-staleness.md` **verbatim**, not summarised. **Delta, not a level: 30448 bytes moved out.**
+Citation survival grep-verified before the move; each original heading is preserved below and in
+the archive file, so existing `progress.md` <date> references still resolve.
 
-## 2026-08-28 (later) — `d550282` committed; branch `/change-review` run; the nine-instance pattern named
+- **2026-08-28 — `[NS-22]` committed; Cursor's handoff threshold re-derived; `[NS-22]` action 3 closed as not-a-defect**
+- **2026-08-28 (later) — `d550282` committed; branch `/change-review` run; the nine-instance pattern named**
+- **2026-08-28 (continued) — Round-3 pass, Opposition Approve, committed `2052c3c`**
+- **2026-08-28 (fix) — `mb init` agent delivery closed; the exported Work-MB briefs found stale**
+- **2026-08-28 (eviction) — `activeContext.md` resolved-entry pass; its own finding was false**
 
-- **`d550282` committed** after two five-domain rounds and **two** Opposition passes. Opposition's
-  first pass returned Request Changes with three required fixes, and its diagnosis is the one worth
-  keeping: *"this is a docs-only change whose entire deliverable is the accuracy of prose, three of
-  its prose claims are verifiably wrong, all three were introduced AFTER every review ended, and none
-  has ever been read by anyone but me."* **The fix passes were the defect source, at a 3-of-5 rate.**
-- **New standing rule, learned the expensive way — PRE-FLIGHT before dispatching any review.**
-  Mechanically re-derive every checkable claim in the artifact: figures, `file:line` citations,
-  enumerations, and any sentence of the form "I verified X." Reviews are for judgement, not
-  arithmetic. Applied to the branch afterwards it cost ~90 seconds and came back clean; not applying
-  it to `d550282` cost two rounds and two Opposition passes whose combined output was four one-line
-  corrections to claims a `grep` would have caught.
-- **`/change-review` run on the full branch** (46 files, +3,019/−707, 4 commits) to obtain the push
-  marker. 9 jobs; Job 8 correctly skipped (no UI files). **ACR was DISQUALIFIED**: installed and
-  invoked, but exited **3** having processed **2,000 of 4,743 diff lines (42%)** — the exact silent
-  failure recorded on 2026-08-26. Job 7 fell through to the inline security logic, `basis: llm`.
-  The command's insistence on checking the exit code rather than the binary's presence is what
-  caught it.
-- **ONE BLOCKING FINDING, and this branch causes it: `mb init` never delivers `.claude/agents/*.md`.**
-  `invoke_init` copies every `templates/claude-commands/*` — including `code-review.md` and
-  `change-review.md`, which each dispatch `subagent_type: opposition` — and contains **zero**
-  references to `.claude/agents`. Before `d795abb` the commands asked for "a capable model" in prose;
-  `d795abb` made it a named-agent dependency, converting a latent gap into a live break. **The
-  documented fallback is broken by the same gap:** `code-review.md:98` says to fall back to
-  `general-purpose` "pasting the body of `.claude/agents/opposition.md` in as the prompt" — a file
-  `init` also never delivers. So a fresh adopter's review gate is dead on arrival with no graceful
-  degradation. `progress.md` 2026-08-27 recorded half of this and dismissed it as "consistent, so not
-  a parity bug" — true when written, false the moment `d795abb` landed.
-- **THE PATTERN, named after nine instances in one day: a guard built for a class, scoped to the one
-  path that prompted it.** It splits into two families needing different fixes.
-  - **Family A — coverage decided by a hand-maintained list (6 of 9):** `mb doctor` checks lines not
-    bytes; `test-threshold-parity` compares the line-cap map not the byte-cap map; ownership class
-    answers "may they customize" not "how does a fix reach them"; agent delivery covers `upgrade` not
-    `init`; the handoff threshold is swept across 9 surfaces but the protocol *text* is unguarded;
-    (`run.sh`'s suite registration was this and is already fixed). **Fix: derive the set from the
-    authority at runtime, never enumerate it, and assert the derived set is non-empty.** The repo
-    already has this idiom in three places and applies it per-incident rather than as policy.
-  - **Family B — a guard that silently no-ops when a precondition is absent (3 of 9):**
-    `PMB_REQUIRE_PARITY` unset makes parity failures non-fatal and **CI never sets it**, so a runner
-    image without pwsh turns the sh/ps1 parity proof into a silent skip; `date -r` is GNU-only.
-    **Fix: absence must be loud.** The `STATE_ABSENT`/`STATE_PRESENT` idiom exists in this repo and
-    is used in one block of a file while the block above it uses a bare `continue`.
-  - **What no mechanism catches, so it must become a review obligation:** a fix with no failing input
-    (the `sed` dot-escape — correct, behaviourally inert), which comparisons need exact equality
-    rather than `assert_contains`' substring match, and relocation verbatim-ness. Required question
-    for any diff adding a guard: *enumerate what it covers and what it excludes; is the exclusion
-    derived or accidental?*
-- **Instance #8 deserves its own line: `tests/test-threshold-parity.sh:34-36` uses
-  `assert_contains "sh=$sh" "sh=$ci"`** — unanchored, so `sh=1200` passes against `ci=120`. Two
-  blocks below, the same file guards against that exact trap with exact-equality and non-overlapping
-  verdict words, and explains why in a comment. Latent only; live values agree today.
-- **Job 7 (Security), HIGH, not fixed here:** the `opposition` agent is new in this branch and is
-  granted marker-write authority, while its own frontmatter documents that its `Bash(...)` allowlist
-  does not constrain Bash — it was observed running `rm`, `curl`, `python3` and arbitrary redirects.
-  So the gate's sole authority runs under an unenforced read-only assumption. Compensating control
-  used throughout today: the orchestrator independently recomputed every marker hash rather than
-  trusting the value. Needs a PreToolUse hook and its own contract.
-- **A hook false positive while testing the hook.** A payload constructed to check whether the marker
-  could be forged was denied — "command piped to bash (curl|bash)" — because the *test command* named
-  both `curl` and `bash`, though nothing piped anywhere. Sixth recorded instance of `[NS-25]`'s
-  match-the-text-not-the-intent class. The forge vector is therefore **unverified**, not cleared.
-- **Approved plan:** the `mb init` fix under its own tight contract (`mb.sh`, `mb.ps1`, plus a
-  regression test on each shell using the completeness-invariant shape) → then the template-surface
-  completeness invariant, which retires Family A → then a spec for the review-obligation and
-  meta-test layers.
+## 2026-08-31 — what four Opposition rounds cost, and the one rule worth keeping
 
-## 2026-08-28 (continued) — Round-3 pass, Opposition Approve, committed `2052c3c`
+Detail is in `11ec83b` and `e1d77f2`. Only what a commit message cannot carry:
 
-- **Committed `2052c3c`** after all five required domains plus Opposition (opus). 14 files, +543/−193,
-  suite **577/0 across 22 suites** measured serialized. The seven accepted limits are enumerated in
-  the commit message and deliberately not restated here.
-- **Three domains returned `Blocking: true`; Opposition overturned all three on one fact.** Every
-  *Handoff Protocol line* in `templates/AGENTS.md` and both `.cursor/rules/memory-bank.mdc` copies is
-  **byte-identical to `main`** — only the percentage changed in those lines. (Stated precisely,
-  because a looser earlier draft here said the *files* were byte-identical and only the percentage
-  changed. False at file level: the `.cursor/rules` copies also gained a five-line threshold
-  rationale blockquote and an `mb clean` row rewrite. Neither is a protocol change, so Opposition's
-  reasoning holds — but the compression of it did not, and a reader checking the file would have
-  found the claim wrong.) **The orchestrator argued it was blocking before any domain reported it**,
-  then found the `git show 030662c` counter-evidence itself. The convergence was weaker than it
-  looked: the domains were told what the diff was *meant* to fix, which primed them to check whether
-  it had. Prompt framing is not independent confirmation.
-- **The surface count was wrong, and then the correction to it was ambiguous. Stating the criterion
-  first, because that is the actual defect.** A surface "carries the superseded protocol" here iff it
-  **explicitly states either the forbidden contents list** ("accomplishments / files modified /
-  service state / commands to resume / pending tasks") **or the inverted read order** ("read
-  `handoff.md` first"). Under that criterion the true figures are **7 total → 5 remaining**:
-  - Fixed by `2052c3c` (2): `standards/MEMORY-BANK.md`, `templates/standards/MEMORY-BANK.md`.
-  - Still carrying it (5): `templates/AGENTS.md:61,65`; `.cursor/rules/memory-bank.mdc:61-67,72`;
-    `templates/cursor/rules/memory-bank.mdc:61-67,72`; `standards/WORKFLOW.md:194,198`;
-    `templates/standards/WORKFLOW.md:188,192`. The last two were found only in round 1 of this
-    entry's own review — nobody had enumerated them before.
-  - `templates/memory-bank/README.md` is a **sixth** surface under a *looser* criterion: it is silent
-    on the new memory-bank-first ordering without contradicting it. Counting it gives `8 → 6`, which
-    is where the earlier figure came from. Applied consistently that looser criterion would catch
-    several more surfaces than six across the repo — a further reason the strict one is what is
-    stated here. Both numbers were defensible; **neither was
-    checkable, because the criterion was never stated.** That is the finding, not the digit.
-  - **`2052c3c`'s commit message says `6 → 4`.** It is superseded and cannot be corrected without
-    rewriting history. This entry is authoritative. That split — a frozen copy and a mutable one,
-    only the second fixable — is exactly the hazard flagged one round earlier about restating
-    commit-message content here, now demonstrated rather than predicted.
-  - The direction of Opposition's ruling is unaffected: the drift is pre-existing on `main` and the
-    commit still reduces the count. Only the size of the remaining work changed.
-- **Architecture Drift cited a file not in the diff.** It offered "the rewritten `CLAUDE.md:111-128`"
-  as evidence the change *created* a contradiction. `CLAUDE.md` is not among the 14 files and already
-  carried the narrow protocol on `main`. Failure Criterion "Evidence does not materially support the
-  finding claim" — caught by Opposition, not by the orchestrator, who read the finding and did not
-  check its citation.
-- **A cross-domain disagreement settled by measurement.** Correctness called the `tests/run.sh` `sed`
-  fix "genuinely necessary"; Testing mutation-proved the grep verdict identical either way. Testing
-  was right — an unescaped `.` in an ERE still matches a literal `.`, and none of the 22 tracked suites
-  differ only at that position. Correct hardening, zero live coverage closed; do not cite it as a
-  coverage fix.
-- **`tests/run.sh` is NOT concurrency-safe.** `test-mb-doctor.sh:94` `mv`s the live `VERSION` aside
-  while `mb.sh:702` gates `.pmb-version` on its presence (was `:681`; the agent-delivery insert of
-  2026-08-28 shifted it +21 — a live demonstration of why a `file:line` citation decays). A peer session's concurrent run produced a
-  spurious `mb init` failure (576/1) the suite alone did not reproduce (19/19). Interference is
-  asymmetric — it can only fake a FAILURE, never a pass — so a green run is trustworthy and a red one
-  needs the isolation check. A bare `grep -c FAIL` also counts section headers; use `^  FAIL:`.
-  Committing mid-run is worse than slow: the transient `VERSION` deletion breaks the hash check and
-  `consume_marker()` destroys the marker *before* comparing, so the denial eats the approval. Backlog.
-- **Opposition raised two findings no domain reached and retracted two of its own with the evidence
-  that killed them.** `[O1]` `mb upgrade` lands the `.cursor/rules` number (`TEMPLATE_OWNED`, hard
-  overwrite) but never the `standards/` rationale (`ADVISORY_CREATE`, not copied when the file exists),
-  so an adopter's two copies disagree until they act on the printed prompt. `[O2]`
-  `standards/MEMORY-BANK.md:342-345` names absolute input length as the binding variable, then reasons
-  in percentages of two different, unstated context windows.
+- **Overcorrecting in the self-critical direction is its own false record.** A confession is a claim
+  and takes the same evidence as any other. The BOM finding was recorded WRONG THREE TIMES: as a
+  bypass (reproduced with a malformed hybrid), then as a regression I had introduced, then as an
+  effect unrelated to the setting. An 8-case byte matrix settled it; each wrong version was asserted
+  from a proxy rather than measured, **including the self-critical one**, which is the version that
+  reads as rigour and therefore gets challenged least. ACR recorded the same rule independently after
+  their own memory bank carried my wrong version for hours because they believed my self-criticism.
+- **Review-by-reading produced nothing this session; review-by-breaking-something-adjacent produced
+  everything.** Five domain agents plus two Opposition rounds passed a diff containing a
+  space-splitting bypass of a required check. Four separate "checks that cannot fail" were found only
+  by mutating the code they guarded. The BOM error surfaced only from writing the test meant to
+  confirm the fix. Nothing was found by re-reading.
+- **A fix that reaches one sibling and not the other is the recurring mechanism here, not a series of
+  incidents.** Three instances in one file family this session: `ceil_region` → `region_claude`;
+  `region_claude` fixed for `mb.sh` but not `pmb-health.yml`; `1,116` correct in PMB's repo and wrong
+  in the template. Worth treating as a class when reviewing any two-copy change.
+- **Cross-session:** ACR (`ai-code-review-agent`) and this repo ran a full day of paired review. Their
+  findings against PMB and mine against ACR are recorded in each other's banks as *peer-reported, not
+  reproduced locally*. That labelling is deliberate and should be preserved — it is what let both
+  sides correct a wrong claim without it hardening into either record.
 
-## 2026-08-28 (fix) — `mb init` agent delivery closed; the exported Work-MB briefs found stale
+- **The six remaining Work-MB exports refreshed 2026-08-31; three verified claims came out of it.**
+  (a) `030662c` shipped **four of the six** recommendations in
+  `WORK-MB-ENFORCEMENT-INTEGRITY-VERIFICATION-AND-DESIGN.md`, whose header still read "nothing
+  implemented" — including its self-described core fix, the three-state result model (`DEGRADED` is
+  live in both `pre-push-check.{sh,ps1}`). Template hashing and a `SessionStart` staleness hook did
+  NOT land (searched `scripts/*.{sh,ps1}` and `.claude/settings.json`; not searched: unmerged
+  branches). (b) The handoff brief's "four surfaces still carry the superseded protocol" claim is
+  **still true 11 days on** — `templates/AGENTS.md:61,65`, both `.cursor/rules/memory-bank.mdc`
+  copies, `templates/memory-bank/README.md:37`. The corrected protocol reached the surfaces a Claude
+  Code session reads and stopped at the ones other tools read. (c) `docs/MEMORY-BANK-REDESIGN-VALIDATION.md`
+  **still does not exist**, so D1-D4 still has no written home anywhere.
+- **The inbound MB testing overview predicted two defects PMB later hit independently — worth the
+  reciprocity.** Its 2026-08-22 §9.3.2 recommended a `cursor-parity` drift gate; PMB built parity
+  gating of that class for `standards/` and thresholds and never for `.cursor/rules/`, which is
+  exactly the gap (b) above measures. Its §9.3.5 recommended SHA **scope** tests on the review marker;
+  PMB reached `[NS-41]` (a marker can attest to an EMPTY diff) from the other direction five days
+  later. **A peer's recommendation that we declined is now a measured cost, twice.** That document is
+  inbound and its body was annotated, not edited — preserve that distinction.
 
-- **The `/change-review` blocker is fixed, under contract `mb-init-agent-delivery-2026-08-28`.** Both
-  `invoke_init` and `Invoke-Init` now auto-discover `templates/.claude/agents/*.md`, mirroring the
-  delivery already present on the `upgrade` path. Filtered to `*.md` on both sides so the two shells
-  discover the same set — the pwsh helper defaults to `*`, which would have delivered stray files the
-  bash glob skips.
-- **Both regression tests were mutation-proved RED before GREEN, in that order, and the order is the
-  point.** bash 20/1 → 21/0; Pester 10/1 → 11/0, failing with exactly
-  `opposition.md,researcher.md,security-reviewer.md`. The pre-existing
-  `Invoke-Upgrade agent advisory-create` test passed throughout, which is the whole diagnosis in one
-  line: the covered path was never the broken one.
-- **Both new tests assert their derived set is NON-EMPTY.** Without it an absent or empty template
-  directory iterates zero times and reports PASS while delivering nothing — Family B's fail-silent
-  shape, in a test written to close a Family A gap. **`tests/test-mb-upgrade.sh:109-113` still lacks
-  this guard**; recorded in the contract's exclusions rather than fixed in passing, because it is
-  adjacent pre-existing work and this contract is deliberately tight.
-- **The contract for this work had been approved and never written** — caught only because the branch
-  state was re-derived at session start rather than trusted. The `active-task.json` in place was a
-  *different*, completed task (the Cursor threshold). `.claude/contracts/*.json` is gitignored, so
-  overwriting it would have destroyed the only copy; parked as
-  `completed-cursor-handoff-threshold-2026-08-28.json` instead.
-- **Seventh instance of `[NS-25]`'s match-the-text-not-the-intent class, hit while writing the Pester
-  test.** A heredoc was denied by the push gate because its *content* — Pester fixture setup — contains
-  the literal text `git commit -q --allow-empty`. Nothing was being committed. Worked around with the
-  Edit tool, the same precedent instances 4-5 used. The count in `[NS-25]` said five as of 2026-08-19
-  and six as of 2026-08-28; this is seven, and the trigger is again *documenting or testing* commands
-  rather than running them.
-- **The two Work-MB briefs in `~/Downloads` carry no Work-MB findings.** Diffed against `docs/`:
-  byte-identical plus a provenance banner, 32/33 lines added, zero removed. They are PMB's outbound
-  exports. **But the paradigm brief's banner is itself stale, superseded by `d550282` one commit after
-  it was written.** It claims `2052c3c` reduced the superseded-handoff-protocol surfaces "from six to
-  four" and names `templates/memory-bank/README.md` as one of the four. Verified against the files:
-  `standards/WORKFLOW.md:194,198` and `templates/standards/WORKFLOW.md:188,192` carry **both**
-  disqualifying markers (the forbidden contents list *and* "read `handoff.md` first") and appear
-  nowhere in the banner, while `README.md:34,37` carries **neither** and is a looser-criterion surface
-  only. So the export under-counts by two and mis-includes one; the authoritative figure stays 7 → 5.
-  An export with a provenance banner is not self-updating, and this is the first demonstration that
-  the banner ages faster than the body it guards.
-
-## 2026-08-28 (eviction) — `activeContext.md` resolved-entry pass; its own finding was false
-
-- **Delta: −533 bytes net** on `activeContext.md`, in three parts: **−864 from the eviction**
-  (`[NS-2]` −127, `[NS-22]` −640, `[NS-24]` −97), **+82** from same-commit status edits unrelated to
-  it, **+249** for the `[NS-44]` pointer. Three buckets, not two: the first draft folded the status
-  edits into the eviction figure and understated it by 82 bytes — a decomposition that misattributed,
-  in the bullet claiming to decompose *because* a single figure misattributes. Caught in review.
-  Under `standards/MEMORY-BANK.md`'s activeContext row 3
-  ("Issue marked resolved → Delete — do not archive"); no archive file created. `[NS-2]` deleted
-  (zero inbound); `[NS-22]`/`[NS-24]` compressed to stubs because live entries cite them — the
-  practice Trim History already records for 2026-08-20, not a new convention. `[NS-10]` kept: its
-  "investigated and declined" exists in no other file.
-- **The pass's headline finding was FALSE and Opposition caught it.** It claimed `[NS-4]` and
-  `[NS-31]` had dangling pointers to relocated sections. They resolved fine — the forwarding blocks
-  at lines 24-25 preserve each original heading for exactly that purpose. **The check was
-  `grep "^## <date>"`; the headings are bullets.** Wrong anchor, manufactured defect. Reverted: the
-  "repair" had spent 134 bytes rewriting working pointers into the binding-constraint file, against
-  this standard's guidance that doing so spends headroom in a second capped file. Third wrong-boundary
-  check this session (bracket-only, single-file, `^##`); self-review caught none, Opposition caught all.
-- **It also relieved the wrong file.** `activeContext.md` is flat across today's commits while
-  `progress.md` grew +9,583 in one and is force-written every compaction by `pre-compact-check.sh`.
-  `[NS-42]` already says write rate is the binding constraint — demonstrated here, not restated.
+- **`[NS-35]` condensed 5,822->1,860 B; `[NS-46]` added** (global-vs-project arbitration, untracked until now because the file was at its cap).
+  `activeContext.md`: **3 bytes** of headroom -> 3,965. **The recovery came from a human overriding the eviction criteria on an ACTIVE entry, not
+  from the mechanism** — the seven entries actually marked resolved total 2,131 B even if deleted outright. `[NS-44]`'s §5 finding survives intact.
+- **The condensation exposed a false claim I had shipped hours earlier.** `[NS-35]` decision 1 (tiered loading) was **DESIGNED, Opposition-reviewed
+  and DROPPED 2026-08-26** on six blocking findings — the index does not fit (~117 B/item available vs 198 measured) and its scope self-reverted via
+  `TEMPLATE_OWNED`. Both `[NS-35]` and the paradigm review still carried the PRE-DROP framing, so Document 14 of today's Work-MB brief asserted "a
+  porting problem, not a design problem" — the exact belief Opposition falsified. Corrected in both. **A tracking entry is not a substitute for the
+  record it summarises**, and a summary written before a reversal looks identical to one written after.
+- **`progress.md` relocation ran 2026-08-31 at 499/500 lines** — one line of headroom against a `PreCompact` hook that
+  *requires* a dated entry, i.e. a mandated write the cap forbade. Five 2026-08-28 sections moved verbatim (30,448 B,
+  213 lines); file went 499->**298** lines and 53,662->**24,153** B. Byte accounting reconciles exactly: 30,448 out,
+  29,509 net, 939 B pointer block. Four dated sub-references verified resolving in BOTH the pointer and the archive.
+- **Measured effect on the thing that actually matters:** startup context (CLAUDE.md + the five files) fell from
+  **110.5 KB to 84.7 KB** — still **3.4x** check 15's 25 KB ERROR, but the ratchet delta vs `origin/main` improved
+  from -5,139 to **-37,461**. Note what did the work: **relocation and one hand-condensed active entry, not eviction.**
+- **`[NS-47]` + Work-MB Document 16 written from an external survey (Codex, ai-that-works, OmniRoute), doc-level only,
+  nothing installed or reproduced.** The finding that reframes `[NS-46]`: **Codex runs TWO precedence systems in
+  OPPOSITE directions on purpose** — prose (`AGENTS.md`) is positional, most-local-wins, so project beats global;
+  policy (`config.toml`/`requirements.toml`) is layered, managed-wins, MDM > cloud layers > system requirements >
+  user/project. **PMB has ONE file type carrying BOTH at two scopes under one asserted rule**, so guidance and
+  guardrails get identical precedence when they want opposite ones. The stale-constant incident was not a check that
+  escaped — it was policy routed through a channel whose precedence was designed for guidance. **Fix the split
+  before writing an arbitration rule.** Honest limit found in the same docs: managed config sets startup DEFAULTS and
+  a user may change them mid-run; only `allow_managed_hooks_only` is hard. That distinction IS the compliance claim.
+- **Decaying-Resolution Memory names what this repo already does by hand** — resolution decays, the memory does not,
+  which is why it survives the objection that killed Lumina's time-decay. Today's `[NS-35]` condensation and the
+  relocate-verbatim-plus-pointer archive are both DRM performed reactively at cap-breach. **Adopt it only on the READ
+  path** — full resolution stays on disk forever, only what is LOADED loses detail; DRM's summarise-the-store variant
+  is the ACE/SSGM degradation this repo already reverted a pass for. **OmniRoute REJECTED, and the SECOND instance of
+  its class** (SwitchYard was first): a routing gateway needs a request path the harness owns, its compression targets
+  model-readable text against a PR-reviewability requirement, and its vector memory fails the observability objection.
+  Two instances make it a class — record the three reasons so the next gateway proposal gets an answer, not a shrug.
+- **Findings F and G closed in `.claude/commands/change-review.md` and its template mirror (byte-identical after).**
+  F: the exit-1 row now discriminates on **whether a report exists** before reading exit 1 as findings — with none it
+  is a usage error (unknown flag, bad `--fail-on`, unknown profile, missing diff file, or ACR <1.10.0 rejecting
+  `--chunk`), handled as `4` but with stderr read FIRST, since a usage error is deterministic and retrying it changes
+  nothing. A **version preflight** was added as the new step 2: below 1.10.0 ACR is treated as UNAVAILABLE and the job
+  goes inline as `basis: llm` — explicitly NOT falling back to a non-chunked run, which would reintroduce the silent
+  truncation the job exists to prevent. G: the exit-3 row's "re-run with `--chunk`" is gone; the safety clause stays.
+- **NEW FINDING, surfaced BY that edit and not fixed: `.claude/commands/` <-> `templates/claude-commands/` is a
+  TEMPLATE_OWNED mirror pair with NO parity test.** `mb.sh:2028` auto-discovers every `templates/claude-commands/*`
+  into `TEMPLATE_OWNED`, so `mb upgrade` overwrites the live copy **unconditionally** — divergence is silently
+  reverted. That is verbatim the rationale `tests/test-mirror-parity.sh` states for guarding `.cursor/rules`, and it
+  guards that family and not this one. The two copies are identical today only because this edit kept them so BY HAND.
+  Extending the existing test is the obvious fix and is NOT done — new assertions here must be mutation-proved per
+  source. **Also honest: nothing tests `change-review.md`'s content at all, so F and G are unverified by any suite.**
+- **`tests/test-mirror-parity.sh` extended to a third mirror pair: `.claude/commands` <-> `templates/claude-commands`.
+  50 -> 75 assertions** (8 pairs x exists+identical, 1 sweep guard, 8 orphan checks). All 8 measured byte-identical,
+  none diverging by design, so it is STRICT-identity like `.cursor/rules` rather than allowlisted like `standards/`.
+  Recorded in the file: the pair is TEMPLATE_OWNED by a **different route** — cursor rules are six literal array
+  entries, commands are AUTO-DISCOVERED into the array (`mb.sh`), so the array holds exactly those commands that HAVE
+  a template; a live orphan is therefore never in it, never visited, never shipped, and drifts silently. Directory
+  names are asymmetric (`templates/claude-commands/` -> `.claude/commands/`), which a naive path derivation breaks on.
+- **Mutation-proved on a SCRATCH copy, per the 2026-08-30 rule — never the shared tree.** A faithful scratch harness
+  reproduced 75/0 before any mutation. Four mutations, each isolating one new assertion: one-byte divergence -> 74/1;
+  live copy removed -> 72/1; live orphan added -> 75/1; template dir renamed -> **50/9**. The last is the one worth
+  keeping: **50 is exactly the pre-extension count**, i.e. renaming the directory makes all 16 template-side
+  assertions VANISH and only the sweep guard stands between that and a suite passing on nothing. The anti-tautology
+  guard was demonstrated, not asserted.
+- **`[NS-43]`(b) IS BROADER THAN RECORDED — new instance, reproduced today.** That entry says the review gate's
+  textual matcher denies any Bash command merely MENTIONING the commit verb, "so this entry could not be written from
+  a heredoc". The same thing happens for the BLOCK-tier recursive-delete pattern: writing THIS progress entry was
+  denied because the prose quoted that pattern verbatim, and it had to be reworded to land. So the defect is not
+  specific to the commit verb — **any BLOCK/deny pattern is unquotable in the record it governs.** Fail-safe, and it
+  means the repo systematically cannot document its own guardrails from the tool it uses to write them. Reworded
+  rather than bypassed, per the no-user-as-bypass rule.
+- **Two operational notes.** The BLOCK tier also refused a recursive delete of my own scratch directory — correct, it
+  does not whitelist scratch paths; worked within it using a fresh directory and `mv`. And a first full-suite run was
+  KILLED at a 2-minute timeout; `run.sh` moves the real `VERSION` aside, so the tree was checked before continuing —
+  `VERSION` intact at 1.2.1, no stray backups, no unintended modifications.
+- **The exit-0 row was fixed too, and it is the most interesting of the three.** `0` no longer asserts "Ran fully";
+  it now requires READING THE BODY, because a fail-fast/`earlyExit` ACR run exits `0` and declares itself INCOMPLETE
+  in the body rather than the code. **Peer-reported by the ACR session (their PR #83), NOT reproduced here** —
+  labelling preserved. Step 5's fall-through was widened to cover an exit `0`/`1` whose body contradicts its code.
+- **What makes it worth recording: the old wording was NOT wrong when written.** Before that PR a fail-fast run was
+  indistinguishable from a complete one on every readable surface, so "Ran fully" was accurate. It was made false by
+  a change in ANOTHER repository, with no edit to this file and nothing here able to detect it. **A correct claim can
+  be invalidated by a change elsewhere** — which is the cross-project form of the drift class this repo keeps
+  finding internally, and the argument for citing a source of truth rather than restating its current state.
+- **Cost of taking it mid-review, recorded because the sequencing is the lesson.** Five domain agents were already
+  running against `git diff HEAD`. Editing without stopping them would have produced a marker binding a tree that
+  **five of six reviewers never saw** — the marker-attests-to-unreviewed-content failure this repo has logged before.
+  So they were stopped, all edits made, and the review restarted once against a frozen tree. Partial reuse of their
+  findings was available and deliberately not taken.
+- **ACR independently verified F and G in this checkout rather than accepting them, and found a measurement trap.**
+  `grep -c "re-run with \`--chunk\`"` returns **1**, reading as "still present" — but the survivor is inside the
+  parenthetical that RECORDS ITS OWN DELETION. **A count is the wrong instrument for "was this removed" whenever the
+  record of removal quotes the removed text.** Same family as the check satisfied by a comment, one tier up: not a
+  test that cannot fail, but a measurement that cannot distinguish.
+- **RELEASE CONTRACT — scheduling decided by the operator 2026-08-31, so it stops being re-relayed.**
+  The substance was approved 2026-08-28 (tag -> dirty-tree guard -> ref-sourcing). Only the *when*
+  was outstanding, and it had died twice: relayed to `personal-memory-bank-7b`, which correctly
+  declined to act second-hand, and that session ended. **Decision: cut the first tag AFTER this
+  branch merges.** Rationale, unchanged from the constraint that produced the question: `mb upgrade`
+  sources the WORKING TREE, so no tag may be cut against a dirty one, and the branch is 11 commits
+  unpushed behind an open push gate. Recorded here rather than relayed again — a scheduling decision
+  passed between sessions is how it gets acted on twice.
+- **The 13 Medium ACR findings are NOT recoverable, and the scope of that claim is stated.** Searched:
+  all 24 session transcripts under `~/.claude/projects/C--Users-Mizzo-.../`, the entire scratchpad tree
+  (18 session dirs, unfiltered by extension), the ACR working tree for a default report location
+  (there is none), and this repo. **What WAS recovered** from transcript `6bfddd35` (lines 5040-5071):
+  the run metrics (`ACR_EXIT=1`, 200s, 15 findings), the per-agent chunk breakdown, and **both High
+  findings in full with their disproofs**. The reviewing session printed only the `## Medium (13)`
+  header and read the two High bodies; the Medium bodies never entered its context and ACR wrote no
+  report file. **Product consequence for ACR, now in their brief:** a 200-second run whose output
+  cannot be recovered fifteen minutes later is a workflow hazard independent of finding quality.
+- **Both recovered High findings were false, by two mechanisms worth keeping.** (1) ACR read a
+  **deleted `-` line as current code** and recommended exactly what the branch had already done —
+  generalises to *a diff that fixes a bug contains the buggy code by construction, so the better the
+  fix, the more false Highs it generates*. (2) It **inferred absence of behaviour from absence of an
+  idiom** (no `ToLower` in the ps1), where PowerShell operators are case-insensitive by default;
+  disproved behaviourally 4/4, not by argument. Also confirmed: 1.15.0 now emits `**Location
+  unverified** (evidence not found at this line)` — PMB's own 2026-08-26 recommended invariant,
+  implemented — and **both false Highs carried it**, so it works as a confidence signal but does not
+  clear `Blocking: Yes`.
+- **Downloads Work-MB exports refreshed 2026-08-31** (channel kept, per operator decision; a GitHub
+  migration was considered and declined). `ACR-1.15.0-...-2026-08-31.md` created and the 1.13.1 file
+  bannered SUPERSEDED; `PMB-Findings-for-Work-MB.md` header corrected `2052c3c` -> `11ec83b` and
+  Documents 13-15 added (session-start load + the ratchet; the pointer mechanism; the five
+  checks-that-could-not-fail); Round3 annotated as a deliberate snapshot; the paradigm-review HTML
+  given a currency banner correcting **Q1** — its *"nothing structural can proceed until this is
+  answered"* was falsified, since the ratchet shipped with the pointer mechanism still unbuilt, and
+  the outcome was a third option neither Q1 branch anticipated.
 
 ## 2026-08-30 — two durable lessons; the change itself is in the commit message
 
