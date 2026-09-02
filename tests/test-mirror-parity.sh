@@ -102,6 +102,25 @@ done
 # extended to the sibling family. That is this repo's recurring defect class (a fix reaching one
 # sibling and not the other), caught this time before it shipped rather than after.
 #
+# WHY the glob is `*` and not `*.md`, corrected 2026-08-31 before this shipped: the first draft
+# globbed `*.md` while the mechanism above globs `*`. Four independent review domains caught it and
+# it was mutation-proved invisible -- a `helper.txt` added to templates/claude-commands/ left the
+# suite green while mb.sh's own discovery loop put it in TEMPLATE_OWNED, i.e. it would ship and
+# force-overwrite at every adopter with this guard reporting PASS. **The guarded set must be derived
+# the same way as the overwritten set, or the guard is narrower than the thing it guards.** The
+# `.cursor/rules` block above does not hit it TODAY, but for a weaker reason than symmetry: its
+# TEMPLATE_OWNED entries are six literal `.mdc` paths that happen to coincide with the directory's
+# current contents. The derivations still differ (literal array vs directory glob), so the sets agree
+# by CONTENT, not by CONSTRUCTION -- and the failure runs the other way: a seventh `.mdc` added to both
+# directories by hand passes this test and is never in TEMPLATE_OWNED, so `mb upgrade` never ships it.
+# Nothing ties that array to that directory. Unguarded, and out of scope here.
+#
+# SCOPE OF THE MATCH, stated precisely: the TEMPLATE side matches `mb.sh`'s discovery exactly. It does
+# NOT match `mb.ps1`, whose `Get-ChildItem -File -Filter '*'` also returns dotfiles that bash `*` skips
+# -- so a committable dotfile (`.gitkeep`, `.editorconfig`) would ship to pwsh adopters with this guard
+# green. Pre-existing and untouched here. The LIVE side is an orphan check and is deliberately broader
+# than any discovery loop: neither shell ever enumerates `.claude/commands/`.
+#
 # NOTE the directory names are NOT symmetric: templates/claude-commands/ -> .claude/commands/.
 # scripts/mb.sh maps this explicitly; a naive derivation that assumes matching path segments breaks.
 CMD_LIVE="$REPO_ROOT/.claude/commands"
@@ -110,10 +129,10 @@ CMD_TMPL="$REPO_ROOT/templates/claude-commands"
 echo ""
 echo "=== mirror parity: .claude/commands vs templates/claude-commands ==="
 echo ""
-echo "--- templates/claude-commands/*.md -> .claude/commands/ ---"
+echo "--- templates/claude-commands/* -> .claude/commands/ ---"
 cmd_count=0
-for tmpl in "$CMD_TMPL"/*.md; do
-    [ -e "$tmpl" ] || continue
+for tmpl in "$CMD_TMPL"/*; do
+    [ -f "$tmpl" ] || continue
     cmd_count=$((cmd_count + 1))
     name="$(basename "$tmpl")"
     live="$CMD_LIVE/$name"
@@ -129,12 +148,12 @@ done
 echo ""
 echo "--- the sweep actually ran ---"
 [ "$cmd_count" -gt 0 ]
-assert_exit_zero "$?" "templates/claude-commands/ contained at least one .md to compare (found $cmd_count)"
+assert_exit_zero "$?" "templates/claude-commands/ contained at least one file to compare (found $cmd_count)"
 
 echo ""
-echo "--- .claude/commands/*.md -> templates/claude-commands/ ---"
-for live in "$CMD_LIVE"/*.md; do
-    [ -e "$live" ] || continue
+echo "--- .claude/commands/* -> templates/claude-commands/ ---"
+for live in "$CMD_LIVE"/*; do
+    [ -f "$live" ] || continue
     name="$(basename "$live")"
     assert_file_exists "$CMD_TMPL/$name"         "$name: live command has a template behind it (an orphan is never in TEMPLATE_OWNED, never ships)"
 done

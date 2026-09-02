@@ -5,7 +5,8 @@ a 2026-08-25 pass was reverted for removing content, and that precedent governs 
 
 **Why:** `progress.md` reached **499 of its 500-line CI cap** while the `PreCompact` hook requires an
 entry dated today, i.e. one line of headroom against a mandated write. Relocation is the sanctioned
-unblock. **Delta, not a level: 30448 bytes and 213 lines moved out.**
+unblock. **Delta, not a level: 30,235 bytes and 213 lines moved out** (LF blob; an earlier draft said 30,448, which was
+the CRLF working-tree measurement — exactly one byte per line high against what CI measures).
 
 **Citation survival was grep-verified before the move.** Each original heading is preserved both here
 and in the pointer block left in `progress.md`, so existing `progress.md <date>` references still

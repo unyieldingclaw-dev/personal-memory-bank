@@ -27,6 +27,14 @@ wrong boundary. The corrected finding is stronger than the false one.
 
 ## 1. The measurement
 
+> **SUPERSEDED CAP COLUMN — banner added 2026-09-01.** The `cap` values in the table below
+> (20,000 / 40,000 / 40,000 / 60,000; capped total 205,000) are the values that were live on 2026-08-28. **They were
+> ratcheted DOWN on 2026-08-30** to 8,000 / 12,000 / 12,000 / 55,000 (capped total 132,000) — see
+> `.github/workflows/pmb-health.yml`, which records that change as the response to §2 below. **Read the caps from
+> that workflow, never from here.** This is a restatement of governing config, not a decaying measurement, so
+> dating it is not sufficient — `standards/MEMORY-BANK.md` names uncompared cap restatements as a recurring defect
+> and mandates changing the workflow first, then any table. This is the fifth instance.
+
 Against `MB_FAIL_BYTES` and `MB_FAIL` in `.github/workflows/pmb-health.yml`:
 
 | file | bytes | cap | used | lines | cap | used |
@@ -43,7 +51,8 @@ Loaded at session start: the five files above plus `memory-bank/README.md` (1,11
 
 ## 2. Finding — the per-file caps are misallocated, not too small
 
-Three files consume **3,256 bytes of the 100,000** allocated to them (3.3%). Two consume **101,875 of
+**§2 WAS ACTED ON — see the banner in §1; `pmb-health.yml` records the 2026-08-30 ratchet-down as the response, so
+the finding below is RESOLVED and is retained as the record of why the caps moved.** Three files consumed **3,256 bytes of the then-100,000** allocated to them (3.3%). Two consume **101,875 of
 105,000** (97.0%). **~99,869 bytes sit unused under the caps while `activeContext.md` was 401 bytes
 from making the PR unmergeable.**
 
@@ -63,10 +72,10 @@ line cap (5 lines of headroom) while at 97.9% of its byte cap. Any redistributio
 ## 3. Finding — the aggregate ceiling exists, is exceeded nearly fivefold, and cannot fail anything
 
 `scripts/mb.sh:1169` implements check 15, "Startup context size ceiling — WARN >15 KB, ERROR >25 KB".
-It sums `CLAUDE.md` plus the five memory-bank files (**not** `README.md`) and compares against
+It sums `CLAUDE.md` plus **every `.md` under `memory-bank/`, recursively — including `README.md`** (corrected 2026-09-01: this sentence previously said five files and excluded `README.md`, which the code has not done since the recursive `find` landed; `mb doctor`'s own figure matches the six-file sum) and compares against
 hard byte thresholds of 15,360 and 25,600.
 
-Current value: **121,913 bytes = 119.1 KB, or 4.76x the ERROR threshold.** Every `mb doctor` run
+Current value **as measured 2026-08-28** — 121,913 bytes / 4.76x the ERROR threshold. **STALE, and left dated rather than refreshed:** re-measured 2026-09-01 it is materially lower. **No refreshed figure is given here on purpose** — read it live from `mb doctor` check 15; a re-measured level is true at the moment of correction and false after the next write. Refreshing it again is the remediation that has now failed three times in this repo (see §5's update); read the live figure from `mb doctor` check 15. Every `mb doctor` run
 prints:
 
 ```
@@ -109,7 +118,7 @@ commit message) and a mutable one (the entry), only the second correctable. Reco
 ## 5. Finding — eviction cannot reach the mass
 
 `standards/MEMORY-BANK.md`'s `activeContext.md` eviction rows key on *resolved* status or an age test
-of >14 days for entries that are not active blockers. `[NS-35]` was, until 2026-08-31 (see §5's update below), **5,823 bytes — 13.2% of the
+of >14 days for entries that are not active blockers. `[NS-35]` was, until 2026-08-31 (see §5's update below), **5,823 bytes (LF blob, trailing newline counted) — ~13% of the
 file** — and satisfies neither: 5 days old and explicitly active. The criteria structurally exempt the
 largest entries, because size correlates with being recent and active.
 
@@ -117,10 +126,11 @@ The eviction pass that produced this document recovered 864 bytes. One untouchab
 that.
 
 
-**Update 2026-08-31 — §5's example was acted on, and the section's conclusion still holds.** `[NS-35]` was condensed from 5,822 B to 1,860 B, recovering **3,962 B** and taking `activeContext.md` from **3 bytes** of headroom to 3,965. That does **not** refute this section: the entry still satisfied neither eviction criterion (it is active, not resolved), so the recovery came from condensing an entry the rules **exempt**, by hand, on an operator decision — not from the eviction mechanism. The measured claim below stands: the seven entries actually marked resolved total **2,131 B even if deleted outright**, less than half of this one active entry. **Eviction still cannot reach the mass; a human overriding the criteria can.**
+**Update 2026-08-31 — §5's example was acted on, and the section's conclusion still holds.** `[NS-35]` was condensed from 5,823 B to 1,861 B (LF blobs; one byte-convention throughout, unlike an earlier draft that mixed the two three lines apart), recovering **3,962 B**. **Stated as a delta on purpose:** the headroom level this sentence first quoted was false within the same session, because `[NS-46]` and `[NS-47]` spent 4,248 B of it before the commit landed — a net **+286 B**. Read headroom from `pmb-health.yml`, not from here. That does **not** refute this section: the entry still satisfied neither eviction criterion (it is active, not resolved), so the recovery came from condensing an entry the rules **exempt**, by hand, on an operator decision — not from the eviction mechanism. The measured claim below stands: the seven entries actually marked resolved total **2,131 B even if deleted outright**, less than half of this one active entry. **Eviction still cannot reach the mass; a human overriding the criteria can.**
+
 ## 6. Options, in leverage order
 
-Each needs its own contract. Ordered by expected effect on the 123,029-byte session load.
+Each needs its own contract. Ordered by expected effect on the session load measured in §1 — a dated snapshot, not a live level.
 
 1. **Stop restating commit-message content in `progress.md`.** Highest leverage, no mechanism needed,
    addresses the dominant write rate. Commit messages are permanent, searchable, and cost zero
@@ -141,7 +151,7 @@ Each needs its own contract. Ordered by expected effect on the 123,029-byte sess
 
 ## 7. Evidence, and how far verified
 
-- **Measured this session, `wc -c` / `wc -l` against the working tree**, caps read from
+- **Measured 2026-08-28 with `wc -c` / `wc -l` against the WORKING TREE.** Superseded method: `.gitattributes` is `eol=lf` while `progress.md` is CRLF locally, so worktree `wc -c` overstates by one byte per line against the LF blobs CI measures. Later figures in this file use `git cat-file -s`. Caps read from
   `.github/workflows/pmb-health.yml`: every figure in §1, the §2 roll-ups, and the 121,913 / 119.1 KB
   / 4.76x figures in §3 (recomputed by hand from the summands `mb.sh:1169-1175` uses).
 - **Measured with `git show <sha>:<path> | wc -c`**: the `+9,583` and the `activeContext.md` flatness

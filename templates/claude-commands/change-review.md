@@ -163,18 +163,41 @@ Cross-reference job 2 claims against the test changes:
    - Bash: `git diff origin/main...HEAD > /tmp/cr-diff.patch` (or replay the Step 1 command that produced the diff)
    - If Step 1 used `--diff <path>`, copy that file to `/tmp/cr-diff.patch`
    - If Step 1 used `gh pr diff <number>`, re-run: `gh pr diff <number> > /tmp/cr-diff.patch`
-2. **Preflight the version — `--chunk` requires ACR >= 1.10.0, and nothing else in this workflow pins it.** Run `ai-review-agent --version`. If it is below 1.10.0, ACR **cannot** run this job: `--chunk` is mandatory (below), and an older build rejects the flag with a usage error — exit 1 and no report, which the `1` row would otherwise read as findings. Treat ACR as **unavailable**, go straight to the inline `/security-review` logic, and record `basis: llm` plus the observed version in the Coverage Footer. **Do not fall back to a non-chunked run** — that reintroduces the silent truncation this job exists to prevent.
-3. Run `ai-review-agent --profile security --chunk --diff /tmp/cr-diff.patch` and read its exit code. **`--chunk` is not optional here** — see the truncation note below.
+2. **Preflight the version — `--chunk` requires ACR >= 1.10.0, and nothing else in this workflow pins it.** Run `ai-review-agent --version`. If it is below 1.10.0, ACR **cannot** run this job: `--chunk` is mandatory (below), and an older build rejects the flag with a usage error — exit 1 and no report. **`--chunk` was introduced in ACR `CHANGELOG.md` `[1.10.0]`, 2026-08-17**, which is the source of the pin. **If `--version` errors, times out, or its output cannot be parsed as a version, treat ACR as unavailable too** — the safe direction, stated rather than assumed. Treat ACR as **unavailable**, go straight to the inline `/security-review` logic, and record `basis: llm` in the Coverage Footer — `too old (<version>)` when a version parsed, `version unreadable` when none did. **Do not fall back to a non-chunked run** — that reintroduces the silent truncation this job exists to prevent.
+3. Run `ai-review-agent --profile security --chunk --format json --diff /tmp/cr-diff.patch` and read its exit code. **Neither `--chunk` nor `--format json` is optional here.** `--chunk` prevents silent truncation (note below). `--format json` is what makes row `0`'s signals READABLE: `formatJson()` is a raw `JSON.stringify(result)`, so every signal below is a field on the result object. **One run yields all four** — an earlier draft of this step omitted `--format json`, which made row `0` instruct a check the procedure could not produce.
 4. **Map the exit code. Do NOT collapse to zero/non-zero, and do NOT assume this list is complete — treat any code not listed as `2`:**
 
    | Exit | Meaning | What to do |
    |------|---------|-----------|
-   | `0` | Nothing met the threshold — **but `0` alone does NOT establish the run was COMPLETE** | **Read the report body before calling this clean.** A fail-fast / `earlyExit` run exits `0` and declares itself INCOMPLETE **in the body, not in the exit code** — *peer-reported by the ACR session 2026-08-31 (their PR #83), **NOT reproduced here***. If the body carries an INCOMPLETE headline, a truncation banner, or an agent-failure report, coverage is partial: fall through per step 5 and say so in the footer. Only with a clean body is this a genuine clean pass — incorporate findings (possibly none) as `basis: acr`. **WHY this row does not trust its own code:** an exit code is a summary the body can contradict, and this table already learned that at exit `1`, where a usage error and a findings-present run share a code. Before 2026-08-31 a fail-fast run was indistinguishable from a complete one on every surface, so the old wording "Ran fully" was not wrong when written — it was made wrong by the surfaces becoming honest. |
-   | `1` | Something met `--fail-on` (default `high`) — **or the invocation was rejected** | **Check a report exists BEFORE reading this as findings.** **With a report:** USE THE FINDINGS — the tool working, not failing. Attribute `basis: acr`. **Check it for a truncation banner:** ACR evaluates blockers BEFORE truncation, so exit 1 can occur on a partial run; if truncated, treat coverage as partial per the `3` row and say so in the footer. **With NO report, this is a usage error, not findings** — unknown flag, bad `--fail-on` value, unknown profile, missing diff file, or an ACR older than 1.10.0 rejecting `--chunk`. There are no findings to use. **Handle as `4`**, but read the stderr line FIRST: if it names a flag, profile, value or path, retrying changes nothing — fix the invocation. All four cases measured 2026-08-31: each prints one stderr line and no report body. |
+   | `0` | Nothing met the threshold — **`0` does NOT establish that coverage was complete** | **Never record an unqualified clean pass from exit `0`.** Inspect the JSON for any indication of reduced coverage (`filteredFiles`, an `agentStatus` entry that is not `ok`, `earlyExit`, `truncation`). **That list is INDICATIVE, not exhaustive, and two of those fields are known-unreliable under the mandatory `--chunk`** — measured 2026-09-01: the chunk merge drops `truncation` outright, and `filteredFiles` is last-chunk-wins. Any indication, **or any inability to establish coverage**, → fall through per item 5. Otherwise record `basis: acr` **with an explicit coverage caveat** in the footer. See **Why this row stopped enumerating signals** below. |
+   | `1` | Something met `--fail-on` (default `high`) — **or the invocation was rejected** | **Check a findings object exists BEFORE reading this as findings.** **With findings:** use them, `basis: acr`, and apply the `0` row's coverage caveat — exit `1` says nothing about coverage. **With none:** this is a usage error — measured 2026-09-01, an unknown flag, a bad `--fail-on` value and an unknown profile each exit `1` with one stderr line and no report (a missing diff file exits `4`, not `1`). Read the stderr line, fix the invocation, and fall through per item 5 as `basis: llm`. **Do not retry** — these are deterministic. |
    | `2` | An agent failed internally (takes priority over `1`) | Not a clean pass. Fall through to the inline logic below. |
    | `3` | The diff was TRUNCATED — coverage was partial | Not a clean pass. **`--chunk` is already mandatory above, so there is nothing to re-run differently** — fall through. (This row previously said "re-run with `--chunk`", which became dead advice once `--chunk` was made mandatory.) |
    | `4` | Startup failure — no review ran at all (Ollama unreachable, model missing, diff file absent) | **RETRY, do not triage.** This is infrastructure, not a finding about the code. On stderr with no report produced, so there is no empty findings list to misread. If it recurs, fall through. |
    | any other | Unknown | Treat as `2`. An earlier version of this step said "if the exit code is non-zero" and was replaced by an explicit table; the table then omitted `4`, which was hit in practice on 2026-08-30 when a server restart killed a run mid-chunk. Enumerating without a catch-all reintroduced the gap the enumeration was meant to close. |
+
+> **Why this row stopped enumerating signals.** Four review rounds were spent trying to state precisely which field
+> of ACR's output proves coverage. Every version of that list was correct when written and wrong within a day, and the
+> corrections kept introducing new contradictions — first a signal the invocation could not produce, then one the chunk
+> merge silently drops. **The cause is structural: `ai-review-agent` here is an `npm link` into another session's
+> working tree, on an arbitrary branch, rebuilt without warning — its behaviour changed at least three times during a
+> single session, and `--version` does not identify what ran.** A precise static description of a moving target cannot
+> converge. So this table states an INVARIANT (exit `0` never earns an unqualified clean pass) and treats the field
+> list as indicative. Before relying on any specific field, re-derive it against `npm pack ai-review-agent@<version>`,
+> not against the linked build.
+>
+> **KNOWN GAP this row does NOT detect reliably — do not read the table as reassurance.** ACR's `security` and
+> `adversarial` agents carry `exclude: ['**/*.md']`, and the "skipped by agentPolicy" line renders only when EVERY
+> changed file matches. On a mostly-markdown diff they review only the non-markdown files and the rendered report says
+> nothing. Measured 2026-09-01 on a 6-`.md`-plus-1-`.sh` diff: **all six markdown files were excluded**, leaving one
+> file reviewed — including both copies of this command file, i.e. the definition of the gate itself.
+>
+> **Do NOT "fix" that by deleting the exclude.** ACR's source records those two agents as having zero file-type
+> awareness with a REPRODUCED failure: misreading a `.md` file's prose description of a vulnerability as executable
+> code. This repo's `standards/` and `memory-bank/` are exactly that content, so a blanket removal is worse than the
+> gap. The real axis is inert prose vs executable instruction, and a file extension is a failing proxy for it here.
+> Note `loadConfig` does a SHALLOW merge — setting `agentPolicy` for any agent replaces the whole default object.
+> Tracked as `[NS-48]`; NOT applied.
 
 5. **On exit 2, 3, 4, any unlisted code, or an exit `0`/`1` whose BODY declares the run incomplete:** never read an empty findings list as clean — that reports "reviewed, nothing found" when it means "did not review all of it." Record the exit code verbatim in this job's output, then fall through to the inline `/security-review` logic as the actual coverage, attributed `basis: llm` (not `basis: acr`, since ACR did not genuinely complete). State the reduced coverage in the Coverage Footer.
 6. **Never pass `--allow-truncation` in this workflow.** It converts exit 3 into exit 0, which is precisely the signal this step exists to preserve.
@@ -374,7 +397,7 @@ _(This section is informational only — it never sets `Blocking: Yes` and never
 - **Plan/spec loaded:** none | `<path>`
 - **Security review:** reviewed (PMB-native) | reviewed (ACR) | skipped
 - **Accessibility:** reviewed | skipped — no UI files
-- **ACR backend:** used | not installed | disabled
+- **ACR backend:** used | not installed | too old (`<version>`, needs >= 1.10.0) | version unreadable | disabled
 - **Baseline repo health:** all checks pass | N check(s) failing (pre-existing)
 ```
 
