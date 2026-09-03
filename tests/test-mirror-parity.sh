@@ -209,4 +209,65 @@ for name in $STD_DIVERGE_OK; do
     fi
 done
 
+# ── the rest of TEMPLATE_OWNED: hook scripts, git hooks, settings.json ──────────────────
+# WHY this block exists: the three families above cover .cursor/rules, .claude/commands and
+# standards/ -- but mb.sh's TEMPLATE_OWNED array is far larger, and everything in it is
+# force-overwritten by `mb upgrade` with no prompt. Measured 2026-09-02: .claude/settings.json and
+# delegation-depth-check.{sh,ps1} had ALL diverged from their templates while sitting in that array,
+# so an upgrade would have silently reverted a live `pwsh` hook fix and a corrected spawn budget.
+# Nothing detected it, because this file guarded three families and the array spans five:
+# `.cursor/rules`, `.claude/commands` (appended by the discovery loop), `.claude/settings.json`,
+# `scripts/`, and `.githooks/`. The first two were covered; the last three were not.
+#
+# WHY the list is DERIVED from mb.sh rather than written out here: this file already learned that
+# lesson one family over -- "the guarded set must be derived the same way as the overwritten set, or
+# the guard is narrower than the thing it guards." A hand-copied list would drift the moment someone
+# adds an entry to the array, which is exactly the failure being fixed.
+echo ""
+echo "--- TEMPLATE_OWNED (derived from scripts/mb.sh) -> templates/ ---"
+MB_SH="$REPO_ROOT/scripts/mb.sh"
+# Literal entries only: the .claude/commands/* members are appended by a discovery loop and are
+# already covered by the command-mirror block above.
+TO_LIST=$(sed -n '/TEMPLATE_OWNED=(/,/^    )/p' "$MB_SH" | grep -oE '"[^"]+"' | tr -d '"')
+to_count=0
+for target in $TO_LIST; do
+    case "$target" in
+        .cursor/rules/*)   continue ;;  # covered above
+        .claude/commands/*) continue ;; # covered above
+        .claude/settings.json) continue ;; # hook-wiring compared separately below
+    esac
+    tmpl="$REPO_ROOT/templates/$target"
+    live="$REPO_ROOT/$target"
+    to_count=$((to_count + 1))
+    assert_file_exists "$tmpl" "$target: template exists behind a TEMPLATE_OWNED entry"
+    if [ -f "$tmpl" ] && [ -f "$live" ]; then
+        diff -q "$live" "$tmpl" >/dev/null 2>&1
+        assert_exit_zero "$?" "$target: live and template are byte-identical (mb upgrade overwrites this)"
+    fi
+done
+[ "$to_count" -gt 0 ]
+assert_exit_zero "$?" "TEMPLATE_OWNED sweep derived at least one entry from mb.sh (found $to_count)"
+
+# WHY settings.json is compared on HOOK WIRING ONLY, not byte-identity: the file carries two kinds
+# of content under one TEMPLATE_OWNED entry. The hooks block IS the deterministic enforcement wiring
+# and must match -- a divergence there is how the live `pwsh -NonInteractive` fix nearly got reverted
+# to a `powershell` invocation that does not exist off Windows. The permissions block is genuinely
+# project-specific (this repo allows its own test runner and linters), and forcing this repo's
+# broader grants onto every adopter would widen their agent's authority without their say. That
+# split is the real defect -- one TEMPLATE_OWNED file holding both machine-owned and project-owned
+# content -- and it is tracked, not fixed here. Comparing the `"command":` lines pins the half that
+# must not drift without pretending the other half should match.
+echo ""
+echo "--- .claude/settings.json: hook wiring must match (permissions deliberately may not) ---"
+SJ_LIVE="$REPO_ROOT/.claude/settings.json"
+SJ_TMPL="$REPO_ROOT/templates/.claude/settings.json"
+assert_file_exists "$SJ_TMPL" "settings.json: template exists"
+if [ -f "$SJ_LIVE" ] && [ -f "$SJ_TMPL" ]; then
+    sj_live_cmds=$(grep -c '"command":' "$SJ_LIVE" 2>/dev/null || printf '0')
+    [ "$sj_live_cmds" -gt 0 ]
+    assert_exit_zero "$?" "settings.json: live file declares at least one hook command ($sj_live_cmds)"
+    diff <(grep '"command":' "$SJ_LIVE") <(grep '"command":' "$SJ_TMPL") >/dev/null 2>&1
+    assert_exit_zero "$?" "settings.json: hook command wiring identical between live and template"
+fi
+
 print_summary

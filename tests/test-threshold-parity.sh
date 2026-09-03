@@ -321,4 +321,47 @@ done
 [ "$HANDOFF_SEEN" -gt 0 ]
 assert_exit_zero "$?" "handoff-threshold sweep matched at least one prescriptive statement (found $HANDOFF_SEEN)"
 
+# ── adopter-CI direction check ───────────────────────────────────────────────────────
+# WHY this is an INEQUALITY and not the equality used above: there are TWO CI cap sets, and they
+# are not supposed to match. `.github/workflows/pmb-health.yml` governs THIS repo and has been
+# ratcheted down as these files shrank. `templates/.github/workflows/memory-bank-size.yml` ships to
+# adopters as a STARTING DEFAULT -- its own comment says "Tune them to your project" -- so forcing
+# PMB's tightened values onto a fresh adopter would red their build on install. Asserting equality
+# here would be wrong and would have to be deleted the next time this repo ratchets.
+#
+# WHAT MUST hold is the direction. `mb doctor` ships to adopters too, so if doctor were LOOSER than
+# the CI they receive, an adopter would get a clean local check followed by a red build -- the exact
+# failure this file's header calls "worse and unrecorded" (projectbrief 150 vs 120, techContext 400
+# vs 300). Doctor being STRICTER is merely noisy: a warning their CI does not enforce. So the
+# invariant is doctor <= adopter CI, per file, and only the dangerous direction fails.
+#
+# Found 2026-09-02: nothing compared these two sources at all. CI_YML above is bound to
+# pmb-health.yml only, so the adopter workflow was outside every existing assertion.
+TMPL_YML="$REPO_ROOT/templates/.github/workflows/memory-bank-size.yml"
+echo ""
+echo "--- mb doctor must not be looser than the CI shipped to adopters ---"
+if [ ! -f "$TMPL_YML" ]; then
+    assert_contains "TEMPLATE_ABSENT" "TEMPLATE_PRESENT" "adopter CI workflow exists to compare against"
+else
+    TMPL_FAIL_LINE=$(grep -m1 'declare -A FAIL_LINES=(' "$TMPL_YML")
+    TMPL_SEEN=0
+    for f in $FILES; do
+        tmpl=$(printf '%s' "$TMPL_FAIL_LINE" | sed -n "s/.*\[$f\]=\([0-9]*\).*/\1/p")
+        sh=$(grep -o "check_size \"memory-bank/$f\" *[0-9]*" "$MB_SH" | grep -o '[0-9]*$')
+        # Both extractions must have produced a number, or the comparison is vacuous -- the same
+        # empty-vs-empty trap the equality block above documents.
+        if [ -z "$tmpl" ] || [ -z "$sh" ]; then
+            assert_contains "EXTRACT_EMPTY" "EXTRACT_OK" "$f: extracted both adopter-CI ($tmpl) and mb.sh ($sh) caps"
+            continue
+        fi
+        TMPL_SEEN=$((TMPL_SEEN + 1))
+        [ "$sh" -le "$tmpl" ]
+        assert_exit_zero "$?" "$f: mb doctor ($sh) <= adopter CI ($tmpl) — doctor is not looser than the build it ships beside"
+    done
+    # Anti-tautology guard: if every extraction above silently stopped matching, the loop would
+    # assert nothing per file and this block would read as green.
+    [ "$TMPL_SEEN" -gt 0 ]
+    assert_exit_zero "$?" "adopter-CI direction sweep compared at least one file (found $TMPL_SEEN)"
+fi
+
 print_summary

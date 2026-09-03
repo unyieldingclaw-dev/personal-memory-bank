@@ -183,11 +183,16 @@ jobs:
           #
           # Comparing against origin/main fixes both: the baseline cannot be rewritten by the PR
           # being judged, and it falls automatically as main shrinks, which is what a ratchet is.
-          # Reductions are always free. This branch lands 13,107 B (12.8 KB) below main, so it blocks
+          # Reductions are always free. This branch lands NET NEGATIVE against main, so it blocks
           # runaway growth rather than ordinary work -- but read that as a ONE-TIME CREDIT, not
-          # recurring headroom. It exists because this branch archived 20,452 B; the next branch
-          # inherits the lower baseline and starts at zero margin. Two earlier drafts of this comment
-          # quoted ~16 KB and ~15 KB, both stale before the branch merged, which is the same
+          # recurring headroom. It exists because this branch archived a large block of prose; the
+          # next branch inherits the lower baseline and starts at zero margin. NO ABSOLUTE IS QUOTED
+          # HERE, deliberately: three earlier drafts said ~16 KB, ~15 KB and 13,107 B, and all three
+          # were stale before the branch merged -- the third was exactly right at the commit that
+          # wrote it and wrong two commits later. This check computes the margin live and prints it;
+          # read it from that output, never from this comment. (An earlier draft of this very
+          # sentence said "twenty lines below" and was itself wrong by twenty-two lines -- a distance
+          # is a level too, and decays on any edit between the two points.) That is the same
           # decaying-absolute problem the archive header two directories over refuses to repeat.
           #
           # The fetch is explicit because actions/checkout defaults to a shallow, single-commit

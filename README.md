@@ -244,7 +244,12 @@ The `pmb-health` CI workflow runs on every push and PR with six jobs:
 | `rules-file-integrity` | invisible Unicode chars, hidden HTML comments, LLM bypass phrases in `CLAUDE.md` and `standards/` |
 | `sast` | Semgrep `p/bash` scan of `scripts/` and `templates/scripts/` |
 
-The same checks `mb doctor` runs locally are enforced in CI so drift is caught before merge.
+Most checks `mb doctor` runs locally are also enforced in CI, so drift is caught before merge. The
+memory-bank size caps are the exception worth knowing: the workflow you receive
+(`.github/workflows/memory-bank-size.yml`) ships deliberately looser starting defaults for you to
+tune, while `mb doctor`'s built-in caps are this project's own. `mb doctor` is therefore never
+_looser_ than your CI — it may warn about a file your build would still accept, but it will not pass
+a file your build would reject. Tune the workflow's caps to match your project.
 
 </details>
 

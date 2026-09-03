@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-09-01
+last-reviewed: 2026-09-02
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -86,9 +86,10 @@ the archive file, so existing `progress.md` <date> references still resolve.
   fresh contradiction because the file carried five interlocking claims about internals. **Defect rate stayed flat
   across rounds 3-5 while care increased — that is the signal that the approach, not the diligence, was wrong.**
 - **Fix: state the INVARIANT, not the enumeration.** Exit `0` never earns an unqualified clean pass; the field list
-  is explicitly INDICATIVE, not exhaustive, with the two known-unreliable fields named. **The lookup surface shrank
-  and the file did not:** the two rewritten cells lost 537 B per mirror (row `0` 1,042 -> 756, row `1` 890 -> 639),
-  while each mirror grew 2,340 B net, because the rationale moved out of the cells into a longer block quote that
+  is explicitly INDICATIVE, not exhaustive, with the two known-unreliable fields named. **The lookup surface shrank per ROW
+  and the file did not:** the two rewritten ROWS lost 537 B per mirror (row `0` 1,042 -> 756, row `1` 890 -> 639 —
+  whole-row lengths, not single cells; a later review measured cell 4 alone and got different figures for that reason),
+  while each mirror grew 2,340 B net, because the rationale moved out of the rows into a longer block quote that
   adds internals of its own. An earlier draft of this bullet claimed ~4,850 characters DELETED across both mirrors —
   sign-inverted, and caught by the round-6 review. Removing three of the four blocking findings **by deletion rather
   than by another correction** is what the fix bought; a smaller artifact is not. Generalises: **when a description of an external
@@ -123,7 +124,7 @@ the archive file, so existing `progress.md` <date> references still resolve.
   the gate's own definition. **The real axis is inert prose vs executable instruction; a file extension is a
   failing proxy for it in a repo where markdown IS the mechanism.** Now `[NS-48]`, deliberately not applied.
 - **`activeContext.md`'s binding dimension flipped.** Condensing `[NS-47]` to a pointer bought byte headroom back, but the file sits at **149 of 150 lines** — CI fails at `-gt 150`, so exactly ONE more line fits. Bytes were the constraint all session; lines are now.
-  Read headroom live, as `pmb-health.yml`'s cap minus `git cat-file -s`. A future trim that only counts bytes will not help.
+  Read BYTE headroom live, as `pmb-health.yml`'s byte cap minus `git cat-file -s`; the LINE constraint is the binding one and is read the same way against the line cap. A future trim that only counts bytes will not help.
 ## 2026-08-31 (post-review) — the gap fixes, and the one finding that came from reading ACR's source
 
 Committed `6cae656` on an Approve verdict with eight accepted limits; these close five of them. What the
@@ -241,7 +242,7 @@ Detail is in `11ec83b` and `e1d77f2`. Only what a commit message cannot carry:
   *requires* a dated entry, i.e. a mandated write the cap forbade. Five 2026-08-28 sections moved verbatim:
   **213 lines / 30,235 B** (LF blob). Byte accounting, one convention throughout
   (LF): **30,235 B out**. The pointer-block and net figures are deliberately omitted — the block is LIVE and this same commit edits it, so any figure for it is false on write. An earlier draft mixed LF and CRLF three figures apart, then quoted a pointer-block size its own edit invalidated. Four dated sub-references verified resolving in BOTH the pointer and the archive.
-- **Measured effect on the thing that actually matters:** startup context (CLAUDE.md + **all six** `memory-bank/*.md`, the set CI measures)
+- **Measured effect on the thing that actually matters:** for startup context (CLAUDE.md + **all six** `memory-bank/*.md`, the set CI measures),
   **the ratchet passes** — margin deliberately not quoted. A branch-vs-`origin/main` figure is a LEVEL IN DISGUISE:
   both endpoints move, so it decays like any level. Read the margin from CI.
   Absolute KB and multiples-of-the-ceiling are deliberately NOT stated — they decay on the next write to any

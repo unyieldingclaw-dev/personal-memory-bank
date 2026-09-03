@@ -27,8 +27,16 @@ BLOCK_REASONS=()
 #
 # WHY an unreadable mtime falls through instead of bypassing: a bypass that cannot be verified must
 # not be honoured. Falling through is safe -- it runs the ordinary checks, it does not hard-block.
+# WHY two mtime readers: `date -r FILE` is a GNU extension. On BSD/macOS `date -r` takes SECONDS,
+# so it rejects a path and yields empty -- which fell through to "date could not be read" and
+# silently removed the bypass on every macOS run. That failed safe (the gate stayed on) but it also
+# meant the documented handoff bypass never worked there, which is not what the protocol promises.
+# `stat -f` is the BSD spelling and is tried only when the GNU form yields nothing, so the GNU path
+# is unchanged. If both fail the variable stays empty and the existing unverifiable-bypass branch
+# below still applies.
 if [ -f "handoff.md" ]; then
     handoff_date=$(date -r "handoff.md" +%Y-%m-%d 2>/dev/null || printf '')
+    [ -z "$handoff_date" ] && handoff_date=$(stat -f %Sm -t %Y-%m-%d "handoff.md" 2>/dev/null || printf '')
     if [ -n "$handoff_date" ] && [ "$handoff_date" = "$today" ]; then
         exit 0
     fi

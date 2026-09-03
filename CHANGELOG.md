@@ -2,7 +2,28 @@
 
 ## [Unreleased]
 
+### Added
+- **Startup-context ratchet — a new hard-failing CI check.** `CLAUDE.md` plus every
+  `memory-bank/**/*.md` is summed and compared against the same total on `origin/main`; a pull
+  request that increases it fails. The 25 KB ceiling this repo is still far over stays advisory —
+  what is enforced is the *direction*, because "advisory" had been read as "may grow", and it did.
+  Reductions are always free. If the baseline cannot be fetched the check degrades to advisory and
+  says so, rather than failing on an unavailable baseline.
+- **`tests/test-threshold-parity.sh` additionally asserts that `mb doctor` is never looser than the
+  CI shipped to adopters** — the direction that produces a clean local check followed by a red
+  build. Equality is deliberately *not* asserted; see the cap-sources entry under Changed.
+
 ### Changed
+- **`/change-review` Job 7 no longer enumerates `ai-review-agent`'s internal fields; it states an
+  invariant.** Exit `0` never earns an unqualified clean pass, the coverage-signal list is marked
+  INDICATIVE rather than exhaustive, and per-field reliability is documented as build-dependent and
+  to be re-derived rather than remembered. Four review rounds were spent keeping a precise
+  description of that tool current; every version was correct when written and wrong within a day,
+  because the local install is a link into another working tree that rebuilds without warning.
+  The exit-code table also gained a catch-all, a version preflight (`--chunk` needs >= 1.10.0), and
+  a mandatory `--format json`. A known gap is documented in place: that tool's security and
+  adversarial agents exclude `**/*.md`, which on a markdown-dominant diff means they review only the
+  remainder while the rendered report says nothing about it.
 - **Cursor's handoff threshold lowered from 80% to 40%, matching Claude Code.** The 80% was
   documented and deliberate — justified on rule re-injection, which addresses the *continuity* cost
   of a full context but not the *quality* cost. **Adopters using Cursor: you will be prompted to
@@ -31,11 +52,21 @@
   now run on a more capable model than before.**
 - **`mb doctor` check 25 additionally warns when `security-reviewer` or `opposition` is missing a
   `model:` field, or pins `haiku`.** `researcher` is deliberately exempt. Both shells.
-- **Memory-bank line caps aligned to CI in both runtimes.** An audit found three divergences
-  running in both directions: `progress.md` was stricter at runtime (400) than in CI (600), while
+- **Memory-bank line caps aligned to this repo's CI in both runtimes.** An audit found three
+  divergences running in both directions. The figures below are the values **as of that audit**,
+  not the shipped ones: `progress.md` was stricter at runtime (400) than in CI (600), while
   `projectbrief.md` (150 vs 120) and `techContext.md` (400 vs 300) were LOOSER at runtime than in
   CI — so a clean `mb doctor` could be followed by a red build. Only the first had been recorded.
-  `tests/test-threshold-parity.sh` now fails if the three sources drift again.
+  The caps have since been ratcheted down; read the shipped values from
+  `.github/workflows/pmb-health.yml`, never from this entry.
+  `tests/test-threshold-parity.sh` now fails if those sources drift again.
+- **Scope limit, stated because the entry above is easy to over-read:** there are **four** cap
+  sources, not three. `templates/.github/workflows/memory-bank-size.yml` — the CI adopters actually
+  receive — is deliberately looser, because its caps are starting defaults an adopter tunes, and
+  forcing this repo's ratcheted values onto a fresh install would red their first build. Equality
+  across all four is therefore the wrong invariant. What is now asserted is the **direction**:
+  `mb doctor` must never be looser than the CI it ships beside, since that is the combination that
+  produces a clean local check followed by a red build.
 - **`standards/MEMORY-BANK.md` eviction criteria amended.** The two age-based `progress.md` rows
   (>6 months, >3 months) were removed: they had never fired and could not, since the repo is four
   months old while `progress.md` measurably grows ~8 KB/day. They are replaced by a
@@ -124,6 +155,25 @@
   observed not to constrain Bash in practice, so they must not be relied on as a security boundary.
 
 ### Security
+- **`scripts/dangerous-commands.ps1` (and its `templates/` mirror) now decodes hook stdin with an
+  explicit `StreamReader`+`UTF8Encoding` instead of `$input | Out-String`,** which was re-decoding
+  bytes through the console code page and mangling non-ASCII payloads before any tier could match
+  them. **This is a measured trade, not a pure win, and the losing side is stated deliberately.**
+  Across a 10-case byte matrix: the new path correctly matches UTF-16 LE/BE and UTF-32 LE/BE input
+  carrying a BOM — four encodings the old path silently failed to match — but it no longer matches
+  two *malformed hybrids* (a `FF FE` or `FE FF` prefix followed by UTF-8 bytes) that the old path
+  did match. Those hybrids are not emitted by the documented producer, which writes byte 0 of this
+  stream; that containment is INFERRED about a third-party binary, not verified here. Coverage is
+  3 of the 10 cases; UTF-16 BE, UTF-32 LE/BE and both hybrids are asserted nowhere. Adopters running
+  hooks under `pwsh` get the four gained encodings and the two lost hybrids.
+- **A word-splitting bug could silently disable a required CI check.** The startup-context job
+  enumerated files with an unquoted command substitution, so any tracked path containing a space
+  word-split into nonexistent paths, the baseline lookup failed, and the check reported PASS while
+  skipping its own work. Now NUL-delimited (`git ls-tree -rz`). Demonstrated against a real tree.
+- **`mb doctor`'s worktree path resolution is fixed** (`git rev-parse --git-common-dir`): from a
+  subworktree it previously measured whichever `memory-bank/` sat beside it, which is stale by
+  construction, and reported a large false margin on the one check meant to be unfoolable.
+
 - `scripts/dangerous-commands.sh`/`.ps1` (and `templates/` mirrors): commit-signing bypass is now
   CONFIRM-tier, alongside the existing `--no-verify` entry. Covers `commit.gpgsign` set to any
   value git resolves as false (`false`/`0`/`no`/`off`, any case, quoted or bare) via `git -c` or
@@ -287,12 +337,21 @@
   so that dropping `IgnoreCase` there cannot make the two shells agree at the wrong answer while
   the parity block stays green.
 
-### Note — session-claims items below are in-flight, not shipped
-The four `Added` items below are implemented and committed on the not-yet-merged branch
-`worktree-concurrent-session-claims`, not on this branch/tag — see `[NS-18]` in
-`memory-bank/activeContext.md`.
+## Pending — NOT part of any release
 
-### Added
+**This section is not release notes and must not be renamed at tag-cut.** It was previously a
+`### Added` block inside `[Unreleased]`, carrying a note that its contents were unshipped. The note
+was correct but structurally unsafe: renaming `## [Unreleased]` to a version number — the one
+mechanical step of cutting a release — would have swept four features that do not exist in this
+repository into the release notes for a tag that does not contain them. Moved to its own
+`##`-level section on 2026-09-02 so that rename cannot reach it.
+
+Everything below is implemented and committed on the not-yet-merged branch
+`worktree-concurrent-session-claims`, not on this branch or tag — see `[NS-18]` in
+`memory-bank/activeContext.md`. Move these items into a release section only when that branch
+actually merges.
+
+### Pending — session-claims (branch `worktree-concurrent-session-claims`)
 - `scripts/session-claims.sh`/`.ps1`: coordinate multiple Claude Code sessions working the same
   repo at once via a gitignored, self-pruning `.claude/session-claims.json` registry —
   `prune`/`list`/`claim`/`release`/`force-clear`/`notify`, `mkdir`-based lock with 30s staleness
