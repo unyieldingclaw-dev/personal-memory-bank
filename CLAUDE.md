@@ -126,7 +126,11 @@ When user types "Handoff" or reports context >= 40%:
 1. **STOP** all work immediately
 2. Before writing `handoff.md`, verify `memory-bank/activeContext.md` and `progress.md` are actually current. If stale, update them FIRST — a rich `handoff.md` cannot compensate for a stale memory-bank, since the next session is instructed to treat memory-bank as authoritative, not this file
 3. **CREATE** `handoff.md` in project root, scoped ONLY to: exact in-flight state (file/line being edited, uncommitted diffs, what was about to run next), any running processes/services left in a non-default state, any command needed to resume, and an explicit pointer — "See `memory-bank/activeContext.md`'s Next Steps for priority and rationale; this file covers only what wasn't captured there yet."
-4. **RESPOND** only: "Handoff ready at `handoff.md`. Start a new conversation."
+4. **RESPOND** with "Handoff ready at `handoff.md`." and then a fenced, paste-able block carrying the
+   session title, branch, worktree status, and the single first action — the next session is opened
+   by pasting it, so omitting it just makes the user ask. Verify those facts with a command rather
+   than transcribing from memory; a wrong branch there sends the successor into the wrong tree.
+   Close with two or three lines that point at `handoff.md`'s sections instead of restating them.
 5. **STOP** - do not continue
 
 When starting a new conversation:

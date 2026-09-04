@@ -228,7 +228,14 @@ echo "--- TEMPLATE_OWNED (derived from scripts/mb.sh) -> templates/ ---"
 MB_SH="$REPO_ROOT/scripts/mb.sh"
 # Literal entries only: the .claude/commands/* members are appended by a discovery loop and are
 # already covered by the command-mirror block above.
-TO_LIST=$(sed -n '/TEMPLATE_OWNED=(/,/^    )/p' "$MB_SH" | grep -oE '"[^"]+"' | tr -d '"')
+# WHY the pattern anchors a WHOLE LINE rather than grepping for any quoted substring: the previous
+# form (`grep -oE '"[^"]+"'`) matched quoted text inside COMMENTS too, so a comment that quoted a
+# command's output -- e.g. printed "[!] differs — review manually" -- was harvested as an array
+# entry, then word-split by the unquoted `for` below into several nonexistent paths, reddening the
+# sweep on a documentation edit. Demonstrated 2026-09-03 by adding exactly such a comment. Anchoring
+# to a line that is ONLY a quoted string admits real array elements and nothing else; comment lines
+# begin with # and cannot match.
+TO_LIST=$(sed -n '/TEMPLATE_OWNED=(/,/^    )/p' "$MB_SH" | grep -E '^[[:space:]]*"[^"]+"[[:space:]]*$' | tr -d ' "')
 to_count=0
 for target in $TO_LIST; do
     case "$target" in
@@ -247,6 +254,92 @@ for target in $TO_LIST; do
 done
 [ "$to_count" -gt 0 ]
 assert_exit_zero "$?" "TEMPLATE_OWNED sweep derived at least one entry from mb.sh (found $to_count)"
+
+# ── the sweep's real anchor: the OTHER runtime ───────────────────────────────────────────
+# WHY the `-gt 0` guard above is NOT sufficient, demonstrated by mutation 2026-09-03: truncating
+# mb.sh's TEMPLATE_OWNED from 29 entries to 1 left this whole block GREEN while the assertion count
+# silently fell 123 -> 81. A floor of one cannot detect EROSION, and the sweep derives the guarded
+# set from the same file an eroding edit would shrink, so it cannot see its own coverage collapse.
+#
+# WHY NOT a hardcoded expected count: that is a decaying absolute, stale the first time the array
+# legitimately grows -- the defect class this repo keeps re-learning. mb.ps1's $templateOwned is a
+# genuinely INDEPENDENT statement of the same set, maintained by hand in another language, so
+# comparing the two anchors each against the other makes erosion that moves them APART visible,
+# and no figure here goes stale when the set legitimately changes. Read the KNOWN BLIND SPOT note
+# below before relying on that: erosion both runtimes make in lockstep is invisible here, and
+# mb.sh is NOT a proxy for mb.ps1's standards behaviour -- the two deliberately differ.
+#
+# The pattern anchors a WHOLE LINE for the same reason the TO_LIST extraction above does: a naive
+# quoted-substring grep also harvests quoted text out of comments.
+echo ""
+echo "--- mb.sh TEMPLATE_OWNED and mb.ps1 \$templateOwned must declare the same set ---"
+MB_PS1="$REPO_ROOT/scripts/mb.ps1"
+assert_file_exists "$MB_PS1" "mb.ps1 exists to cross-check the guarded set against"
+if [ -f "$MB_PS1" ] && [ -f "$MB_SH" ]; then
+    TO_SH=$(sed -n '/    TEMPLATE_OWNED=(/,/^    )/p' "$MB_SH" \
+        | grep -E '^[[:space:]]*"[^"]+"[[:space:]]*$' | tr -d ' "' | sort)
+    TO_PS=$(sed -n '/\$templateOwned = @(/,/^[[:space:]]*)/p' "$MB_PS1" \
+        | grep -E '^[[:space:]]*"[^"]+"[[:space:]]*$' | tr -d ' "' | sort)
+    sh_n=$(printf '%s\n' "$TO_SH" | grep -c .)
+    ps_n=$(printf '%s\n' "$TO_PS" | grep -c .)
+    # Both extractions must have produced entries, or the comparison is empty-vs-empty and vacuous
+    # -- the same trap the threshold-parity block documents for its own sed extraction.
+    if [ "$sh_n" -eq 0 ] || [ "$ps_n" -eq 0 ]; then
+        assert_contains "EXTRACT_EMPTY" "EXTRACT_OK" "TEMPLATE_OWNED extraction produced entries from both runtimes (mb.sh=$sh_n, mb.ps1=$ps_n)"
+    else
+        # WHY THIS IS NOT AN EQUALITY, AND NOT A COUNT. The two runtimes deliberately disagree:
+        # mb.ps1 force-overwrites standards/*.md (a453a5a), mb.sh leaves them ADVISORY_CREATE. That
+        # disagreement is real, is documented in mb.sh's TEMPLATE_OWNED comment, and must not be
+        # closed by drift -- reconciling it needs templates/standards/WORKFLOW.md de-staled first.
+        #
+        # WHY NOT "they differ by exactly 15 entries": that is a decaying absolute. It goes stale
+        # the first time a sixteenth standard is added, and then either fails on a correct change
+        # or, worse, is quietly bumped to 16 and stops meaning anything. The shape of the
+        # difference is the invariant; its size is not. Nothing here states a count.
+        #
+        # KNOWN BLIND SPOT -- this catches DIVERGENT erosion, not CONVERGENT erosion. Every check
+        # below compares the two runtimes against EACH OTHER, so a change both files make in
+        # lockstep is invisible by construction. Mutation-proved 2026-09-03: deleting the same
+        # entry (scripts/check-contract.sh/.ps1) from BOTH arrays keeps every assertion here green
+        # while the suite total silently falls 130 -> 126, because the lost entry appears in
+        # neither ps_only nor sh_only and `shared_n` only floors at > 0. Closing that needs a THIRD
+        # source independent of both files -- e.g. deriving the expected set from the hook scripts
+        # actually on disk -- which is not attempted here. Do not read these assertions as "erosion
+        # is visible"; read them as "erosion that moves the runtimes APART is visible."
+        ps_only=$(comm -13 <(printf '%s\n' "$TO_SH") <(printf '%s\n' "$TO_PS"))
+        sh_only=$(comm -23 <(printf '%s\n' "$TO_SH") <(printf '%s\n' "$TO_PS"))
+
+        # Every entry mb.ps1 owns and mb.sh does not must be a standard. A non-standard appearing
+        # here means one runtime gained or lost a hook script, git hook, or settings file -- real
+        # erosion, and exactly what this anchor exists to catch.
+        ps_only_non_std=$(printf '%s\n' "$ps_only" | grep -v '^$' | grep -cv '^standards/' || true)
+        [ "$ps_only_non_std" -eq 0 ]
+        assert_exit_zero "$?" "every mb.ps1-only TEMPLATE_OWNED entry is a standards/* file (found $ps_only_non_std that are not)"
+
+        # mb.sh must own nothing mb.ps1 lacks, in either direction of drift.
+        [ -z "$(printf '%s\n' "$sh_only" | grep -v '^$')" ]
+        assert_exit_zero "$?" "mb.sh declares no TEMPLATE_OWNED entry that mb.ps1 lacks"
+
+        # Anti-vacuity, POSITIVE form. A `shared core is non-empty` check alone is NOT sufficient:
+        # mutation-proved 2026-09-03 that breaking mb.ps1's extraction so it stops matching the
+        # standards entries empties ps_only, leaves sh_only empty, keeps the shared core at 29, and
+        # reports GREEN -- reintroducing exactly the erosion-blindness this anchor exists to close.
+        # The real invariant is directional and must be asserted positively: mb.ps1 OWNS standards
+        # that mb.sh does not.
+        #
+        # This deliberately goes RED the day someone reconciles the runtimes. That is the point:
+        # reconciling requires de-staling templates/standards/WORKFLOW.md first (see mb.sh's
+        # TEMPLATE_OWNED comment), so it must be a decision that updates this test, never a drift
+        # that silently satisfies it.
+        ps_only_std=$(printf '%s\n' "$ps_only" | grep -c '^standards/' || true)
+        [ "$ps_only_std" -gt 0 ]
+        assert_exit_zero "$?" "mb.ps1 still owns standards/* that mb.sh does not — the deliberate runtime divergence is intact, not extraction failure (found $ps_only_std)"
+
+        shared_n=$(comm -12 <(printf '%s\n' "$TO_SH") <(printf '%s\n' "$TO_PS") | grep -c .)
+        [ "$shared_n" -gt 0 ]
+        assert_exit_zero "$?" "the two runtimes share a non-empty TEMPLATE_OWNED core (found $shared_n)"
+    fi
+fi
 
 # WHY settings.json is compared on HOOK WIRING ONLY, not byte-identity: the file carries two kinds
 # of content under one TEMPLATE_OWNED entry. The hooks block IS the deterministic enforcement wiring
@@ -268,6 +361,53 @@ if [ -f "$SJ_LIVE" ] && [ -f "$SJ_TMPL" ]; then
     assert_exit_zero "$?" "settings.json: live file declares at least one hook command ($sj_live_cmds)"
     diff <(grep '"command":' "$SJ_LIVE") <(grep '"command":' "$SJ_TMPL") >/dev/null 2>&1
     assert_exit_zero "$?" "settings.json: hook command wiring identical between live and template"
+
+    # ── the command strings are not the wiring ────────────────────────────────────────────
+    # WHY this block exists on top of the line-diff above: that diff compares ONLY `"command":`
+    # lines, so it cannot see WHICH EVENT a hook is bound to or WHICH TOOLS its matcher selects.
+    # Mutation-proved twice independently on 2026-09-02/03: changing the dangerous-commands.ps1
+    # PreToolUse entry's matcher from "Bash" to "Write|Edit" -- which unhooks the BLOCK-tier
+    # command guard from every Bash call, the single most safety-relevant rewiring available in
+    # this file -- leaves the line-diff GREEN, because no `"command":` line changes. The assertion
+    # was named "hook wiring must match" while checking only a third of the wiring.
+    #
+    # A hook is identified by the TRIPLE (event, matcher, commands). Comparing the normalized
+    # triples catches a matcher swap, an event move (PreToolUse -> PostToolUse), a reordering that
+    # changes precedence, and an added or dropped hook entry -- none of which the line-diff sees.
+    #
+    # WHY python3 and not jq: `git grep -l "jq " tests/` returns nothing while python3 is already
+    # the structured-data tool in four suites here, so this adds no new dependency. The guard
+    # below matches the skip convention those suites use.
+    if command -v python3 >/dev/null 2>&1; then
+        sj_norm() {
+            python3 - "$1" <<'PYEOF'
+import json, sys
+with open(sys.argv[1], encoding='utf-8-sig') as fh:
+    hooks = json.load(fh).get('hooks', {})
+# Event order is not semantic (it is a JSON object), so events sort. Entry order WITHIN an event
+# IS semantic -- it decides which hook runs first -- so entries keep their declared order.
+for event in sorted(hooks):
+    for idx, entry in enumerate(hooks[event] or []):
+        cmds = ';'.join(h.get('command', '') for h in (entry.get('hooks') or []))
+        print(f"{event}|{idx}|{entry.get('matcher', '')}|{cmds}")
+PYEOF
+        }
+        sj_live_norm=$(sj_norm "$SJ_LIVE" 2>/dev/null)
+        sj_tmpl_norm=$(sj_norm "$SJ_TMPL" 2>/dev/null)
+        # Anti-vacuity: if either normalization produced nothing (unparseable JSON, renamed key,
+        # a python failure), an empty-vs-empty comparison would report PASS while checking nothing.
+        sj_n=$(printf '%s\n' "$sj_live_norm" | grep -c .)
+        if [ -z "$sj_live_norm" ] || [ -z "$sj_tmpl_norm" ]; then
+            assert_contains "NORMALIZE_EMPTY" "NORMALIZE_OK" "settings.json: hook triples extracted from both files"
+        else
+            [ "$sj_n" -gt 0 ]
+            assert_exit_zero "$?" "settings.json: normalization yielded hook triples to compare (found $sj_n)"
+            [ "$sj_live_norm" = "$sj_tmpl_norm" ]
+            assert_exit_zero "$?" "settings.json: hook (event, matcher, commands) triples identical — matcher and event drift is covered, not just command text"
+        fi
+    else
+        echo "  SKIP: settings.json structural hook compare (python3 not installed on this machine)"
+    fi
 fi
 
 print_summary

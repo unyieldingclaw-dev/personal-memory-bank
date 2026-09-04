@@ -32,11 +32,34 @@ BLOCK_REASONS=()
 # silently removed the bypass on every macOS run. That failed safe (the gate stayed on) but it also
 # meant the documented handoff bypass never worked there, which is not what the protocol promises.
 # `stat -f` is the BSD spelling and is tried only when the GNU form yields nothing, so the GNU path
-# is unchanged. If both fail the variable stays empty and the existing unverifiable-bypass branch
-# below still applies.
+# is unchanged.
+#
+# WHY THE VALUE IS VALIDATED BY SHAPE AND NOT MERELY BY EMPTINESS: an earlier version of this
+# comment claimed "if both fail the variable stays empty." That was FALSE, and measurably so.
+# `2>/dev/null || printf ''` discards stderr and the exit code, but NOT stdout already written --
+# and GNU `stat -f` means `--file-system`, not BSD's format-string flag, so it consumes `%Sm` and
+# `%Y-%m-%d` as extra file operands (erroring, suppressed) while the real trailing operand SUCCEEDS
+# and prints ~108 bytes of raw filesystem fields. Command substitution captures that, so the
+# variable ends up non-empty garbage. Reproduced 2026-09-03 on GNU coreutils 8.32: exit status 1,
+# stdout `handoff.md 20ce71e00000000 255 3e72eff 4096 ...`.
+#
+# The gate never mis-fired on it, because a 108-byte string cannot equal "$today" -- so this was a
+# DIAGNOSTIC defect, not a bypass: the note below took the "dated X, not today" branch and printed
+# the filesystem dump where a date belongs, instead of saying the date could not be read. It was
+# also unreachable in practice on GNU, since `[ -f ]` guarantees `date -r` succeeds there; the
+# combination needed is a non-GNU `date` with a GNU-style `stat`.
+#
+# Validating the SHAPE fixes all of that at once and makes the stated invariant true on every
+# platform rather than only where the fallback happens to be unreachable: anything that is not
+# exactly YYYY-MM-DD is discarded, so a partial-output reader is indistinguishable from a failed
+# one, and the unverifiable-bypass branch below applies as documented.
 if [ -f "handoff.md" ]; then
     handoff_date=$(date -r "handoff.md" +%Y-%m-%d 2>/dev/null || printf '')
     [ -z "$handoff_date" ] && handoff_date=$(stat -f %Sm -t %Y-%m-%d "handoff.md" 2>/dev/null || printf '')
+    case "$handoff_date" in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;   # a real date; keep it
+        *) handoff_date='' ;;                             # empty, partial, or garbage; discard
+    esac
     if [ -n "$handoff_date" ] && [ "$handoff_date" = "$today" ]; then
         exit 0
     fi

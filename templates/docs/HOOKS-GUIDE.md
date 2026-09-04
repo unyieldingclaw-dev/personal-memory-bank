@@ -157,11 +157,13 @@ Implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and `scripts/pre-c
 
 Note: `PreCompact` hooks have no `matcher` field — the hook type applies to the compaction event itself, not to a specific tool.
 
-### 6. Agent Delegation Depth Check (`PreToolUse` — Agent tool)
+### 6. Agent Spawn-Volume Advisory (`PreToolUse` — Agent tool)
 
-Fires before every `Agent` tool call. Tracks nested agent delegation depth and emits a WARN when depth exceeds the budget defined in `standards/PERFORMANCE-BUDGET.md` (default: ≤1 subagent deep). Implemented in `scripts/delegation-depth-check.ps1` and `scripts/delegation-depth-check.sh`.
+Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and emits a WARN once it exceeds the budget in `standards/PERFORMANCE-BUDGET.md` (default: ≤6 spawns per rolling 2-hour window). Always exits 0 — advisory, never blocking. Implemented in `scripts/delegation-depth-check.ps1` and `scripts/delegation-depth-check.sh`.
 
-**Runtime state file:** The hook stores its counter in `.pmb-delegation-depth` in the project root (gitignored). This file is created automatically on the first agent dispatch and resets after 2 hours of inactivity. Delete it manually to reset the depth counter mid-session without restarting.
+**It does not measure nesting depth, despite the name.** There is no `PostToolUse:Agent` event, so a hook cannot tell a returned agent from a running one — six parallel agents and a six-deep chain are indistinguishable to it. The file name, state file and internal variable still say "depth" for compatibility; the semantics have only ever been a spawn count. This entry described it as nesting depth, with a ≤1 default, until 2026-09-03; the shipped scripts had used 6 since `5c0e8c9`.
+
+**Runtime state file:** The hook stores its counter in `.pmb-delegation-depth` in the project root (gitignored). This file is created automatically on the first agent dispatch and resets after 2 hours of inactivity. Delete it manually to reset the spawn counter mid-session without restarting.
 
 **Hook error logging:** Unexpected errors are logged to `.pmb-hook-errors.log`.
 

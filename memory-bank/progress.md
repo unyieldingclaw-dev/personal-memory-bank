@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-09-02
+last-reviewed: 2026-09-03
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -88,7 +88,7 @@ the archive file, so existing `progress.md` <date> references still resolve.
 - **Fix: state the INVARIANT, not the enumeration.** Exit `0` never earns an unqualified clean pass; the field list
   is explicitly INDICATIVE, not exhaustive, with the two known-unreliable fields named. **The lookup surface shrank per ROW
   and the file did not:** the two rewritten ROWS lost 537 B per mirror (row `0` 1,042 -> 756, row `1` 890 -> 639 —
-  whole-row lengths, not single cells; a later review measured cell 4 alone and got different figures for that reason),
+  whole-row lengths, not single cells; a later review measured cell 4 alone and got different figures for that reason; and row `0` was rewritten AGAIN in `c84b06d` to 1,198 B, its longest yet, so 756 is a round-5 figure and not a current one),
   while each mirror grew 2,340 B net, because the rationale moved out of the rows into a longer block quote that
   adds internals of its own. An earlier draft of this bullet claimed ~4,850 characters DELETED across both mirrors —
   sign-inverted, and caught by the round-6 review. Removing three of the four blocking findings **by deletion rather
@@ -123,8 +123,8 @@ the archive file, so existing `progress.md` <date> references still resolve.
   falsified in one command: on the diff under review **all six** `.md` files were excluded (verified 2026-09-01 by calling ACR's own `matchPattern`), two of them copies of `change-review.md`,
   the gate's own definition. **The real axis is inert prose vs executable instruction; a file extension is a
   failing proxy for it in a repo where markdown IS the mechanism.** Now `[NS-48]`, deliberately not applied.
-- **`activeContext.md`'s binding dimension flipped.** Condensing `[NS-47]` to a pointer bought byte headroom back, but the file sits at **149 of 150 lines** — CI fails at `-gt 150`, so exactly ONE more line fits. Bytes were the constraint all session; lines are now.
-  Read BYTE headroom live, as `pmb-health.yml`'s byte cap minus `git cat-file -s`; the LINE constraint is the binding one and is read the same way against the line cap. A future trim that only counts bytes will not help.
+- **`activeContext.md`'s binding dimension FLIPS between bytes and lines, so read BOTH live.** Condensing `[NS-47]` to a pointer bought byte headroom back; a later trim removed lines and inverted it again. No absolute is quoted here on purpose — every figure this bullet has carried went stale within days, including a "149 of 150 lines, exactly ONE more fits" that a trim on this same branch invalidated in both directions at once.
+  Read each margin as `pmb-health.yml`'s cap minus the live measure — `git cat-file -s` for bytes, `wc -l` for lines — and act on whichever is tighter, not whichever this file last named. Bytes have been the tighter of the two throughout, but the ratio is deliberately not quoted: an earlier draft said "roughly 8x" and the very edit that introduced it moved the figure to ~5.8x. A trim that counts only one dimension will not help.
 ## 2026-08-31 (post-review) — the gap fixes, and the one finding that came from reading ACR's source
 
 Committed `6cae656` on an Approve verdict with eight accepted limits; these close five of them. What the

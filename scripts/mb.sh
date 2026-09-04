@@ -2015,6 +2015,21 @@ invoke_upgrade() {
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
+        # WHY standards/*.md are NOT here, despite scripts/mb.ps1 listing them: moving them into
+        # this array was attempted on 2026-09-03 (completing the port a453a5a began in mb.ps1) and
+        # REVERTED the same day on a Critical review finding. TEMPLATE_OWNED force-overwrites via
+        # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md is STALE, not
+        # genericized: the live file describes the current `.claude/plans` -> `mb plan promote`
+        # flow while the template still describes the superseded one ([NS-19], first sentence,
+        # still open). Force-overwriting would therefore replace a correct governance file with a
+        # known-wrong one. Three of the fifteen are also on test-mirror-parity.sh's STD_DIVERGE_OK
+        # allowlist, which asserts they must KEEP diverging.
+        #
+        # The two runtimes therefore disagree, deliberately and visibly: mb.ps1 force-overwrites
+        # standards, mb.sh does not. That disagreement is now pinned by an assertion in
+        # tests/test-mirror-parity.sh rather than left as an undocumented fact. Reconciling it is a
+        # real decision -- it needs templates/standards/WORKFLOW.md fixed first -- not a drift to
+        # be silently closed.
     )
 
     # WHY: Slash commands are auto-discovered from templates/claude-commands/ instead of

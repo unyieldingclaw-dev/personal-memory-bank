@@ -245,11 +245,20 @@ The `pmb-health` CI workflow runs on every push and PR with six jobs:
 | `sast` | Semgrep `p/bash` scan of `scripts/` and `templates/scripts/` |
 
 Most checks `mb doctor` runs locally are also enforced in CI, so drift is caught before merge. The
-memory-bank size caps are the exception worth knowing: the workflow you receive
-(`.github/workflows/memory-bank-size.yml`) ships deliberately looser starting defaults for you to
-tune, while `mb doctor`'s built-in caps are this project's own. `mb doctor` is therefore never
-_looser_ than your CI — it may warn about a file your build would still accept, but it will not pass
-a file your build would reject. Tune the workflow's caps to match your project.
+memory-bank size caps are the exception worth knowing.
+
+`mb upgrade` can add a `.github/workflows/memory-bank-size.yml` to your project — **`mb init` does
+not**, so a project set up with `mb init` alone has no CI enforcement of these caps at all until you
+run `mb upgrade`. It is added only if absent and is never overwritten, so an existing workflow of
+your own is left alone.
+
+That workflow ships deliberately looser starting defaults than `mb doctor`'s built-in caps. **As
+shipped**, therefore, `mb doctor` is never _looser_ than that CI: it may warn about a file your build
+would still accept, but it will not pass one your build would reject. That ordering is a property of
+the two default sets — it is asserted by `tests/test-threshold-parity.sh` for the shipped values and
+nothing more. Tune the workflow's caps to your project, but note that tightening any cap below
+`mb doctor`'s own value inverts the relationship for that file, and you will get a clean local check
+followed by a red build. `mb doctor` reports its caps at runtime; compare before you tune.
 
 </details>
 

@@ -89,6 +89,64 @@ printf '# Handoff\n\nspent state\n' > "$D/handoff.md"
 touch -d "2 days ago" "$D/handoff.md" 2>/dev/null || touch -t "$(date -d '2 days ago' +%Y%m%d%H%M 2>/dev/null || echo 202001010000)" "$D/handoff.md"
 assert_contains "code=$(hook_code "$D")" "code=0" "a stale handoff removes the bypass but does not hard-block a fresh bank"
 
+# ── the BSD mtime fallback, which no test could reach before ───────────────────────────────
+# WHY this block exists: `date -r FILE` is a GNU extension, and every case above runs on a machine
+# where it SUCCEEDS -- so `$handoff_date` was never empty and the `stat -f` fallback line never
+# executed in any test, on any CI runner (all 10 jobs are ubuntu-latest). The macOS fix it
+# implements was therefore self-attested, which this repo's own CODE-REVIEW.md counts as UNMET.
+# Established 2026-09-03 by `grep -rln "stat -f" tests/`, which returned nothing.
+#
+# WHY STUBS RATHER THAN A REAL BSD RUNNER: none is available. A stub `date` that rejects `-r`
+# exactly as BSD does reproduces the ONLY precondition the fallback needs, and PATH-PREPENDING is
+# safe -- the [NS-33] hazard was a fixture that STRIPPED /usr/bin, which is a different thing.
+# The real `date`/`stat` are captured by absolute path first so the stubs can delegate.
+echo ""
+echo "--- BSD-like \`date -r\` failure: the fallback path is actually reached ---"
+REAL_DATE="$(command -v date)"
+STUBS="$TMPDIR_PC/stubs"; mkdir -p "$STUBS"
+# Rejects any invocation carrying -r (BSD `date -r` takes SECONDS, so a path is a usage error),
+# and delegates everything else -- the hook also calls plain `date +%Y-%m-%d` for "today".
+{ printf '#!/usr/bin/env bash\n'
+  printf 'for a in "$@"; do [ "$a" = "-r" ] && exit 1; done\n'
+  printf 'exec "%s" "$@"\n' "$REAL_DATE"; } > "$STUBS/date"
+chmod +x "$STUBS/date"
+stub_out()  { ( cd "$1" && PATH="$STUBS:$PATH" bash "$HOOK" 2>&1 ); }
+stub_code() { ( cd "$1" && PATH="$STUBS:$PATH" bash "$HOOK" >/dev/null 2>&1; echo $? ); }
+
+# Sanity: the stub must actually break `date -r` while leaving plain `date` working, or every
+# assertion below is vacuous -- the same empty-vs-empty trap the parity suites document.
+PATH="$STUBS:$PATH" date -r "$TMPDIR_PC" +%Y-%m-%d >/dev/null 2>&1
+assert_exit_nonzero "$?" "stub precondition: \`date -r\` fails under the stub (fallback is now reachable)"
+assert_contains "$(PATH="$STUBS:$PATH" date +%Y-%m-%d)" "$TODAY" "stub precondition: plain \`date\` still works, so \$today is still computed"
+
+# CASE 1 — GNU `stat` is present. `stat -f` there means --file-system, so it exits nonzero but
+# still PRINTS ~108 bytes of filesystem fields to stdout, which `$(...)` captures. The shape guard
+# must discard that. Without the guard this asserts the bug: the note says "dated <fs dump>".
+D="$TMPDIR_PC/bsd-date-gnu-stat"; make_bank "$D" thin
+printf '# Handoff\n\nin-flight state\n' > "$D/handoff.md"
+assert_contains "code=$(stub_code "$D")" "code=2" "unreadable mtime does NOT bypass the gate (fail-safe preserved)"
+out="$(stub_out "$D")"
+assert_contains "$out" "could not be read" "garbage from GNU \`stat -f\` is discarded by the shape guard, not printed as a date"
+case "$out" in
+    *18446744073709551615*|*"4096 4096"*) sq=leaked ;;
+    *) sq=clean ;;
+esac
+assert_contains "$sq" "clean" "no raw filesystem fields leak into the stale-handoff message"
+
+# CASE 2 — a BSD-like `stat` that really does emit YYYY-MM-DD. This is the case the fix PROMISES
+# and the one no runner here can otherwise reach: on real macOS both readers are BSD, so the
+# fallback supplies the date and the documented handoff bypass works. Asserting it here is what
+# turns "macOS is fixed" from a claim into a check.
+{ printf '#!/usr/bin/env bash\n'
+  printf 'exec "%s" +%%Y-%%m-%%d\n' "$REAL_DATE"; } > "$STUBS/stat"
+chmod +x "$STUBS/stat"
+echo ""
+echo "--- BSD-like \`date\` AND \`stat\`: the documented macOS bypass actually works ---"
+D="$TMPDIR_PC/bsd-both"; make_bank "$D" thin
+printf '# Handoff\n\nin-flight state\n' > "$D/handoff.md"
+assert_contains "code=$(stub_code "$D")" "code=0" "with a BSD-style \`stat\`, a handoff dated today bypasses the gate on a machine with no \`date -r\`"
+rm -f "$STUBS/stat" "$STUBS/date"
+
 # ── sh/ps1 parity ──────────────────────────────────────────────────────────────────────────
 # WHY: every assertion above runs the .sh hook only, but Claude Code invokes the .ps1 twin first
 # on any machine where pwsh is present -- so the bypass could be correct in the shell under test

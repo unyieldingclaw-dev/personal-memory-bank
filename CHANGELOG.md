@@ -3,6 +3,25 @@
 ## [Unreleased]
 
 ### Added
+- **`tests/test-mirror-parity.sh` now cross-checks the two runtimes' `TEMPLATE_OWNED` sets against
+  each other, and compares hooks structurally.** The previous sweep derived its guarded set from
+  `scripts/mb.sh` alone and guarded it with `count > 0` — a floor that cannot detect erosion:
+  truncating the array from 29 entries to 1 left the suite green while assertions silently fell
+  123 to 81. `scripts/mb.ps1`'s `$templateOwned` is an independent, hand-maintained declaration of
+  the same intent, so the two anchor each other. They **deliberately differ** — `mb.ps1`
+  force-overwrites `standards/*.md` and `mb.sh` leaves them advisory — so the assertion pins the
+  *shape* of that difference rather than demanding equality: every `mb.ps1`-only entry must be a
+  `standards/*` file, `mb.sh` must own nothing `mb.ps1` lacks, and the divergence must still exist.
+  It therefore also goes red if someone reconciles the runtimes, forcing that to be a decision
+  rather than a drift. No count appears anywhere in it — "they differ by 15 entries" would have been
+  the same decaying absolute this release removes elsewhere. The `settings.json`
+  check also compares `(event, matcher, commands)` triples rather than `"command":` lines only:
+  moving the `dangerous-commands` matcher from `Bash` to `Write|Edit` — unhooking the BLOCK-tier
+  guard from every Bash call — passed the old check and fails the new one.
+- **`tests/test-pre-compact-check.sh` covers the BSD mtime fallback**, which no test could previously
+  reach: every case ran where GNU `date -r` succeeds, so the fallback line never executed, on any
+  runner (all CI jobs are `ubuntu-latest`). A stub `date` that rejects `-r` exactly as BSD does now
+  exercises both outcomes, including the macOS bypass the fix promised — previously self-attested.
 - **Startup-context ratchet — a new hard-failing CI check.** `CLAUDE.md` plus every
   `memory-bank/**/*.md` is summed and compared against the same total on `origin/main`; a pull
   request that increases it fails. The 25 KB ceiling this repo is still far over stays advisory —
@@ -14,6 +33,28 @@
   build. Equality is deliberately *not* asserted; see the cap-sources entry under Changed.
 
 ### Changed
+- **The Handoff Protocol's step 4 now requires a paste-able launch block.** It previously said to
+  respond *only* "Handoff ready at `handoff.md`" — which withholds the session title, branch and
+  worktree the next session is opened with, so the user has to ask for them every time.
+  `templates/handoff.md` already labelled the title "the user pastes this when opening the next
+  session", so the intent was there; only the response format had not caught up. Both `CLAUDE.md`
+  and its template are updated. The block's facts must be verified with a command rather than
+  transcribed — a wrong branch there sends the successor into the wrong worktree.
+- **The agent-delegation hook's budget is documented as what it actually measures.**
+  `standards/PERFORMANCE-BUDGET.md`, `standards/AGENTIC-SAFETY.md` and `docs/HOOKS-GUIDE.md` (plus
+  `templates/` mirrors) said "≤1 delegation depth" while the shipped hook had warned above **6
+  cumulative spawns** since `5c0e8c9` — and cited `PERFORMANCE-BUDGET.md` as the authority for a
+  number that document contradicted. The change to 6 had never been disclosed here either. The
+  docs now separate the two limits and say which is enforced: spawn count is checked, nesting depth
+  is not and **cannot** be, because there is no `PostToolUse:Agent` event, so six parallel agents
+  and a six-deep chain are indistinguishable to a hook. `AGENTIC-SAFETY.md` previously told
+  operators a WARN meant "a subagent is attempting to spawn another subagent"; that reading sent
+  them hunting for something the counter cannot see, on a signal ordinary fan-out produces.
+- **`README.md`'s memory-bank cap paragraph corrected on two counts.** It called
+  `.github/workflows/memory-bank-size.yml` "the workflow you receive" — but `mb init` delivers no
+  `.github/` path at all; only `mb upgrade` adds it, so a project set up with `mb init` alone has no
+  CI enforcement of these caps. And its unqualified "`mb doctor` is never looser than your CI" held
+  only for the shipped defaults, one sentence before telling the reader to tune those defaults.
 - **`/change-review` Job 7 no longer enumerates `ai-review-agent`'s internal fields; it states an
   invariant.** Exit `0` never earns an unqualified clean pass, the coverage-signal list is marked
   INDICATIVE rather than exhaustive, and per-field reliability is documented as build-dependent and
@@ -75,6 +116,17 @@
   registered size cap.
 
 ### Fixed
+- **The PreCompact handoff-bypass validates the mtime it reads by SHAPE, not merely by emptiness.**
+  The fallback's comment claimed "if both fail the variable stays empty." False on GNU: `2>/dev/null
+  || printf ''` discards stderr and the exit code but not stdout already written, and GNU `stat -f`
+  means `--file-system`, so it consumed the format arguments as file operands while the real operand
+  succeeded — printing ~108 bytes of filesystem fields that command substitution captured.
+  Reproduced on coreutils 8.32. The gate never mis-fired (a 108-byte string cannot equal today's
+  date), so this was diagnostic, not a bypass: the stale-handoff note printed the filesystem dump
+  where a date belongs instead of saying the date could not be read. Anything not exactly
+  `YYYY-MM-DD` is now discarded, which makes the stated invariant true on every platform rather
+  than only where the fallback happens to be unreachable. The `.ps1` twin never had this defect —
+  it reads `LastWriteTime` and yields either a formatted date or `$null`.
 - **`mb init` never delivered `.claude/agents/*.md`, so a fresh adopter's review gate was dead on
   arrival.** `init` copied every `templates/claude-commands/*` — including `code-review.md` and
   `change-review.md`, which each dispatch `subagent_type: opposition` **by name** — while containing
