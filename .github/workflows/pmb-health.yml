@@ -599,6 +599,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
+      # WHY this job needs the fetch too: actions/checkout leaves a shallow clone with no
+      # refs/remotes/origin/main, and test-threshold-parity.sh's baseline probe resolves the same
+      # origin/main blobs the file-size job's ratchet does. Without it the probe measures an absent
+      # ref and fails here while the identical primitive succeeds one job over -- a result that
+      # varies by which job takes the measurement, which this repo does not accept as a gate.
+      # The STEP is tolerant; the JOB is not, and the difference matters. `|| true` only stops a
+      # fetch failure from being reported as a step error -- the probe downstream produces the
+      # precise verdict, and unlike the file-size job's SKIP path it FAILS HARD on an unresolved
+      # baseline. stderr is deliberately NOT discarded: the remedy the probe prints is "fetch it",
+      # so a reader who cannot see git's reason for the fetch failing is sent back to the step that
+      # already tried. stdout is quiet because success has nothing to say.
+      - name: Fetch main for the origin/main baseline probe
+        shell: bash
+        run: git fetch --depth=1 origin main >/dev/null || true
+
       - name: Run mb command tests
         shell: bash
         run: bash tests/run.sh
@@ -632,6 +647,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
+
+      # Same shallow-clone reason as the mb-command-tests job. mb doctor's startup-context ratchet
+      # reads the same origin/main blobs, so on a shallow checkout it has never once executed here
+      # -- and both mb.sh and mb.ps1 take the no-baseline path with no else branch, printing
+      # NOTHING rather than a SKIP.
+      #
+      # Across the three enforcers test-threshold-parity.sh keeps in parity (grep RATCHET_SOURCES:
+      # this workflow, mb.sh, mb.ps1) one condition produces TWO behaviours -- visible SKIP in
+      # file-size, silence in both doctors. The suite's hard FAIL is a third behaviour but belongs
+      # to the parity CHECKER, which that variable deliberately excludes from the enforcer set.
+      #
+      # This closes ONE of the two silences. mb.ps1's ratchet stays unexercised in CI: it is
+      # reached only through Invoke-Pester, whose only doctor path runs inside a fixture built by
+      # tests/setup.sh with no remote, so origin/main resolves nowhere for the PowerShell twin.
+      # NOTE 2026-09-06: this makes the ratchet line appear in this job's output for the first
+      # time. Read it against the file-size job's figures rather than assuming the two agree.
+      # stderr is kept for the same reason as the mb-command-tests fetch above.
+      - name: Fetch main for mb doctor's startup-context ratchet
+        shell: bash
+        run: git fetch --depth=1 origin main >/dev/null || true
 
       - name: Run mb doctor on this repo
         shell: bash

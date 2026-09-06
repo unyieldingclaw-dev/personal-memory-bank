@@ -251,12 +251,59 @@ for src in "$MB_SH" "$MB_PS1"; do
         "$(basename "$src") resolves the startup root via git-common-dir (worktree-aware)"
 done
 
-# Behavioural: the baseline must resolve, or every assertion above is vacuous.
-RB=$(git -C "$REPO_ROOT" cat-file -s "origin/main:CLAUDE.md" 2>/dev/null || echo 0)
-for f in $(git -C "$REPO_ROOT" ls-tree -r --name-only origin/main -- memory-bank/ 2>/dev/null | grep '\.md$'); do
-    RB=$((RB + $(git -C "$REPO_ROOT" cat-file -s "origin/main:$f" 2>/dev/null || echo 0)))
-done
-assert_contains "base=$RB" "base=[1-9][0-9]*" "origin/main baseline resolves to a non-zero aggregate ($RB)"
+# Behavioural: everything above checks that the three enforcers SPELL the baseline lookup
+# correctly. This checks that the lookup they spell RESOLVES. The two are independent — a
+# correctly-spelled probe against an unreachable ref returns nothing and leaves every static
+# assertion above green.
+#
+# It reproduces the production form deliberately, because the first version of this block did not,
+# and was green in the exact state it exists to catch. That version seeded the total from CLAUDE.md
+# BEFORE the loop and only ever added to it, so a baseline carrying CLAUDE.md and ZERO memory-bank
+# files still aggregated non-zero and PASSED — the defect the file-size job labels `F3:` (grep it),
+# reproduced inside the file that polices mb.sh and mb.ps1 for it. Three properties are
+# load-bearing here, and each is the fix for a defect this branch closed in the enforcers:
+#
+#   -rz + read -d ''  the unquoted `for f in $(ls-tree -r ...)` form word-splits a filename
+#                     containing a space into two nonexistent paths. This file FORBIDS that idiom
+#                     for bash sources (grep `enum_pat`); it was using it here.
+#   exit status       `|| echo 0` cannot tell an unreachable blob from a legitimately empty one.
+#                     Success is cat-file's exit status. That matches mb.ps1, and matches the
+#                     file-size job's LOOP — but NOT its CLAUDE.md seed, which still uses
+#                     `|| echo 0` plus `-gt 0`, as does mb.sh's. That seed divergence is real,
+#                     pre-existing, and asserted by nothing; this block does not close it.
+#   files > 0         a partially-unreachable baseline is unreachable, and a bare non-zero total is
+#                     satisfied by CLAUDE.md alone — which is how the first version passed.
+#
+# Do NOT relax this to a non-zero check to make a shallow checkout green; fetch the ref instead (the
+# mb-command-tests job now does). The reason is NOT that the enforcers are measuring nothing — they
+# may well be fine: on run 33887225213 this probe reported an absent baseline while the file-size
+# job resolved one in the same run, because each job has its own git state. The reason is narrower
+# and sufficient: a probe that cannot resolve the ref cannot tell you whether the lookup the
+# enforcers spell actually works, which is the one thing it exists to establish.
+RB=0
+RB_OK=1
+RB_FILES=0
+if rb_b=$(git -C "$REPO_ROOT" cat-file -s "origin/main:CLAUDE.md" 2>/dev/null); then
+    RB=$((RB + rb_b))
+else
+    RB_OK=0
+fi
+while IFS= read -r -d '' f; do
+    case "$f" in *.md) ;; *) continue ;; esac
+    if rb_b=$(git -C "$REPO_ROOT" cat-file -s "origin/main:$f" 2>/dev/null); then
+        RB=$((RB + rb_b))
+    else
+        RB_OK=0
+    fi
+    RB_FILES=$((RB_FILES + 1))
+done < <(git -C "$REPO_ROOT" ls-tree -rz --name-only origin/main -- memory-bank/ 2>/dev/null)
+[ "$RB_FILES" -gt 0 ] || RB_OK=0
+# The printed pair discriminates the three failing states, which the prose cannot: 0 files with
+# 0 B is an absent ref (fetch it); 0 files with non-zero B is a reachable ref whose memory-bank/ is
+# empty on main — the first-adoption shape, and the state the old probe passed green; files > 0 with
+# RB_OK=0 means a blob under memory-bank/ was unreachable. Read the numbers, not just the sentence.
+assert_equals "$RB_OK" "1" \
+    "origin/main baseline fully resolves — every blob reachable and memory-bank/ non-empty ($RB_FILES files, $RB B; 0 files + 0 B = absent ref, 0 files + non-zero B = empty memory-bank/ on main)"
 
 # ── the two shells must COUNT lines the same way, not merely agree on thresholds ─────────────
 # WHY: matching thresholds are worthless if the measurement differs. `Measure-Object -Line` does not
