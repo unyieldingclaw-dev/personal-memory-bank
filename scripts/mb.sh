@@ -464,16 +464,47 @@ invoke_commit() {
     # WHY: Detect subworktrees so we refuse memory-bank/ mutations from the wrong root.
     COMMON_GIT=$(git rev-parse --git-common-dir 2>/dev/null || true)
     LOCAL_GIT="$PWD/.git"
+    # An empty COMMON_GIT is the definitive not-in-a-repo signal, and it is answered here rather
+    # than inferred from the `git status` call below, which can also fail on an unreadable index
+    # -- a different condition that deserves a different message. Checked BEFORE the subworktree
+    # comparison because it is the more fundamental case. "Not a git repository" is the wording
+    # `mb doctor`'s Check 1 already uses for this condition -- at WARN there, ERROR here, because
+    # doctor is reporting and this command cannot proceed. (`mb status` does NOT check git state
+    # at all; an earlier version of this comment claimed it did.)
+    if [ -z "$COMMON_GIT" ]; then
+        echo -e "${RED}[ERROR] Not a git repository.${NC}"
+        echo -e "${YELLOW}Run mb commit from inside your project's git repository.${NC}"
+        echo ""
+        exit 1
+    fi
     if [ -n "$COMMON_GIT" ] && [ "$(realpath "$COMMON_GIT" 2>/dev/null)" != "$(realpath "$LOCAL_GIT" 2>/dev/null)" ]; then
         echo -e "${RED}[ERROR] You are in a git subworktree.${NC}"
         echo -e "${YELLOW}Commit memory-bank/ from the main worktree root instead.${NC}"
         echo ""
-        return
+        # ADOPTER-VISIBLE CONTRACT CHANGE: this path returned 0 before the commit that added this
+        # comment (no date is written here -- git blame supplies it and cannot go stale). Both of this
+        # function's refusal paths now exit non-zero, because no rule distinguished them -- each
+        # means "mb commit did not commit and your location is wrong". A refusal reporting
+        # success is a false-success signal: `mb commit && echo done` printed "done" from a
+        # subworktree having committed nothing.
+        exit 1
     fi
 
-    # WHY: 2>/dev/null suppresses git errors if not in a repo (graceful handling).
-    # --porcelain gives machine-readable output stable across git versions.
-    STATUS=$(git status --porcelain "$MEMORY_BANK_PATH" 2>/dev/null)
+    # WHY: --porcelain gives machine-readable output stable across git versions.
+    # NOT `|| true`. The not-in-a-repo case exits above, so a failure reaching here is a real one
+    # (corrupt or unreadable index, permissions) -- and `|| true` would leave STATUS empty, which
+    # the `-z` test below reports as "No changes in memory-bank/ to commit", exit 0. Reproduced
+    # against a repo with genuine uncommitted memory-bank changes and a truncated .git/index:
+    # `|| true` claimed there was nothing to commit and succeeded. That is the same false-success
+    # shape the subworktree branch above exists to remove, so failing loudly here is the point.
+    # `2>/dev/null` hides git's message but NOT its exit status, which is why this needs an
+    # explicit handler at all: bare, under `set -e`, it aborted with only the banner printed.
+    if ! STATUS=$(git status --porcelain "$MEMORY_BANK_PATH" 2>/dev/null); then
+        echo -e "${RED}[ERROR] git status failed in this repository.${NC}"
+        echo -e "${YELLOW}memory-bank/ was NOT inspected — resolve the git error and retry.${NC}"
+        echo ""
+        exit 1
+    fi
 
     if [ -z "$STATUS" ]; then
         echo -e "${YELLOW}No changes in memory-bank/ to commit${NC}"
@@ -1183,7 +1214,12 @@ show_doctor() {
     # have measured a different project. This matches the PowerShell twin, which assigns only
     # inside its success branch.
     STARTUP_ROOT="."
-    _mb_common="$(git rev-parse --git-common-dir 2>/dev/null)"
+    # `|| true` is load-bearing under `set -e` (top of file): a bare assignment whose command
+    # substitution exits non-zero aborts the whole script, and `git rev-parse` exits 128 outside
+    # a repo. Without it `mb doctor` died right here at 128 and checks 15-25 never ran, while the
+    # PowerShell twin -- which cannot fail this way -- completed. `2>/dev/null` suppresses git's
+    # message, not its exit status, so it is not a substitute for this.
+    _mb_common="$(git rev-parse --git-common-dir 2>/dev/null)" || true
     if [ -n "$_mb_common" ] && [ -d "$_mb_common" ]; then
         _mb_cand="$(cd "$_mb_common/.." 2>/dev/null && pwd)"
         if [ -n "$_mb_cand" ] && [ -d "$_mb_cand/memory-bank" ]; then STARTUP_ROOT="$_mb_cand"; fi
@@ -1399,7 +1435,8 @@ show_doctor() {
         [ ! -f "$p" ] && continue
         last_rev=$(grep -m1 '^last-reviewed:' "$p" 2>/dev/null | sed 's/last-reviewed:[[:space:]]*//' | tr -d ' \r')
         [ -z "$last_rev" ] || [ "$last_rev" = "YYYY-MM-DD" ] && continue
-        last_commit=$(git log -1 --format="%as" -- "$p" 2>/dev/null)
+        # || true: same set -e trap as the git-common-dir call in the startup-context block.
+        last_commit=$(git log -1 --format="%as" -- "$p" 2>/dev/null) || true
         [ -z "$last_commit" ] && continue
         # WHY: YYYY-MM-DD dates sort lexicographically — string comparison is safe.
         if [[ "$last_commit" > "$last_rev" ]]; then
@@ -1675,7 +1712,9 @@ show_doctor() {
         tokens=$((bytes / 4))
         printf "    %-37s ~%d tokens\n" "$file" "$tokens"
     done
-    COMMIT_30D=$(git log --before="30 days ago" -1 --format="%H" -- "${STARTUP_FILES[@]}" 2>/dev/null)
+    # || true: same set -e trap as the git-common-dir call above. Outside a repo git exits 128,
+    # which aborted doctor here and so the graceful else branch below could never run.
+    COMMIT_30D=$(git log --before="30 days ago" -1 --format="%H" -- "${STARTUP_FILES[@]}" 2>/dev/null) || true
     if [ -n "$COMMIT_30D" ]; then
         TOTAL_30D=0
         for f in "${STARTUP_FILES[@]}"; do

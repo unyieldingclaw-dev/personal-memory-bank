@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`mb commit` never worked on Windows, and now does.** `mb.ps1` compared two `Resolve-Path`
+  results with `-ne`. `Resolve-Path` returns a `PathInfo`, which has no value equality, so that
+  compared **references** and was unconditionally true — it returned `True` even where both sides
+  resolved to the identical string in a healthy main worktree. The subworktree guard therefore
+  fired in **every repository**, so `mb commit` refused everywhere on the documented Windows entry
+  point (`install.bat` → `mb.bat` → `pwsh mb.ps1`). `mb.sh` was never affected; it compares
+  `realpath` strings. Logged since 2026-06-18 as audit finding C5 with a root cause — "symlinks or
+  UNC paths … in some cases" — that was wrong in both halves: incidence was 100%, and no symlink
+  or UNC path was involved. Comparing `.Path` fixes it. **A refusal-only test cannot catch this**
+  (it passes against the broken form), so the new coverage asserts the main-worktree happy path.
+- **`mb doctor` aborted at exit 128 in any non-git directory, skipping checks 15–25.** Three bare
+  command-substitution assignments ran under `set -e`, where a non-zero `git` exit kills the
+  script; `2>/dev/null` hides git's message but not its status. Two of the three predate this
+  release. `mb.ps1` was never affected — PowerShell does not abort on a native command's exit code.
+- **A failed `git status` was mishandled in `mb commit` — differently in each runtime, so the two
+  are described separately rather than blended.** On a corrupt or unreadable index, `mb.ps1`
+  reported "No changes in memory-bank/ to commit" and exited **0**, claiming a clean tree it had
+  never successfully inspected; `mb.sh` did *not* do that — being a bare assignment under `set -e`,
+  it aborted at exit **128** with only its banner printed, the same class as the `mb doctor` abort
+  above. Both now print an explicit error and exit 1. Stated per-runtime because an earlier draft
+  of this entry attributed the false-success symptom to both, and only `mb.ps1` ever had it.
+
+### Changed
+- **BREAKING (exit codes): `mb commit`'s refusal paths now exit `1` instead of `0`,** in both
+  runtimes. Previously "not a git repository" and "you are in a git subworktree" printed an
+  `[ERROR]` and exited **0**, so `mb commit && <next>` ran the success branch having committed
+  nothing. No rule distinguished the two paths from any other failure; both mean the command did
+  not commit. **If you script `mb commit`, check the exit code** — a wrapper relying on `0` will
+  now see a failure where it previously saw silent success. Note this arrives quietly: `mb.sh` and
+  `mb.ps1` are not in `TEMPLATE_OWNED` and `templates/scripts/` ships no `mb.*`, so `mb upgrade`
+  does **not** deliver them — you receive this when your PMB clone updates, with no diff shown.
+
 ### Added
 - **`tests/test-mirror-parity.sh` now cross-checks the two runtimes' `TEMPLATE_OWNED` sets against
   each other, and compares hooks structurally.** The previous sweep derived its guarded set from

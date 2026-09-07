@@ -113,7 +113,25 @@ echo "# Project" > "$TMPDIR_NOGIT/CLAUDE.md"
 echo "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40" >> "$TMPDIR_NOGIT/CLAUDE.md"
 
 output=$(cd "$TMPDIR_NOGIT" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+rc=$?
 assert_contains "$output" "\[WARN\] Not a git repository" "check 1: non-git dir → [WARN]"
+
+# WHY the next two assertions reuse this fixture rather than adding another: the [WARN] above is
+# emitted in the first ~20 lines, so it kept passing while doctor was ABORTING a few checks later
+# and nothing noticed. Under `set -e` a bare `VAR=$(git ...)` assignment kills the script when git
+# exits 128 outside a repo — `2>/dev/null` hides the message, not the status. Three such sites
+# existed at three different depths. Provenance, blamed rather than assumed: `last_commit` (check
+# 21) and `COMMIT_30D` (Token Budget) both came from `030662c`, which is on main; `_mb_common`
+# came from `e1d77f2` — the startup-context ratchet, which is branch-only and NOT on main, so
+# this branch introduced that one and shipped it through review. An earlier draft of this comment
+# credited it to the check-25 work and called all three inherited; both were wrong. Because the
+# three sit at different depths, an assertion naming any single check catches only one. These
+# assert the
+# INVARIANT instead — doctor runs to completion outside a repo — which catches a future site
+# wherever it is added. Every other fixture in this file git-inits, so this is the only place the
+# invariant can be tested.
+assert_equals "$rc" "0" "check 1: non-git dir — doctor exits 0, not git's 128"
+assert_contains "$output" "Token Budget Health" "check 1: non-git dir — doctor runs to completion (final section emitted)"
 
 # ── Check 2: Templates not found ─────────────────────────────────────────────
 echo ""

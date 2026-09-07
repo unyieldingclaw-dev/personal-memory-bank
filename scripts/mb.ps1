@@ -684,17 +684,59 @@ function Invoke-Commit {
     # that resolves to .git/ inside $PWD. In a subworktree it's a different path.
     $commonGitDir = git rev-parse --git-common-dir 2>$null
     $localGitDir  = Join-Path $PWD ".git"
-    if ($commonGitDir -and (Resolve-Path $commonGitDir -ErrorAction SilentlyContinue) -ne (Resolve-Path $localGitDir -ErrorAction SilentlyContinue)) {
+    # An empty $commonGitDir is the definitive not-in-a-repo signal, answered here rather than
+    # inferred from the `git status` call below, which can also fail on an unreadable index.
+    # Checked BEFORE the subworktree comparison because it is the more fundamental case.
+    # "Not a git repository" is the wording `mb doctor`'s Check 1 already uses for this condition
+    # -- at WARN there, ERROR here, because doctor is reporting and this command cannot proceed.
+    # (`mb status` does NOT check git state at all; an earlier version of this comment said it did.)
+    if (-not $commonGitDir) {
+        Write-Host "[ERROR] Not a git repository." -ForegroundColor Red
+        Write-Host "Run mb commit from inside your project's git repository." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+    # .Path on BOTH sides is load-bearing, and this line is the whole reason `mb commit` never
+    # worked on Windows. Resolve-Path returns a PathInfo, which has no value equality, so
+    # `$a -ne $b` compares REFERENCES and is unconditionally true -- it returned true even when
+    # both sides resolved to the identical string in a healthy main worktree. The guard therefore
+    # fired in EVERY repository, so `mb commit` refused everywhere and never committed anything
+    # via mb.bat -> pwsh -> here, which is the documented Windows entry point (install.bat).
+    # Measured before and after: current form true/true (main worktree, subworktree); .Path form
+    # false/true, which is the discrimination the comparison was always supposed to make.
+    # Comparing .Path strings matches the bash twin, which compares realpath output.
+    # Recorded as C5 in docs/superpowers/specs/2026-06-18-mb-commands-audit.md, whose stated root
+    # cause ("symlinks or UNC paths ... in some cases") is wrong -- incidence is 100%.
+    if ($commonGitDir -and (Resolve-Path $commonGitDir -ErrorAction SilentlyContinue).Path -ne (Resolve-Path $localGitDir -ErrorAction SilentlyContinue).Path) {
         Write-Host "[ERROR] You are in a git subworktree." -ForegroundColor Red
         Write-Host "Commit memory-bank/ from the main worktree root instead." -ForegroundColor Yellow
         Write-Host ""
-        return
+        # ADOPTER-VISIBLE CONTRACT CHANGE: this path returned 0 before the commit that added this
+        # comment (no date here -- git blame supplies it and cannot go stale). Both refusal
+        # paths now exit non-zero, matching mb.sh. A refusal reporting success is a false-success
+        # signal: `mb commit; if ($LASTEXITCODE -eq 0) {...}` treated a refusal as a commit.
+        exit 1
     }
 
-    # WHY: 2>$null suppresses git errors if not in a repo (graceful handling).
-    # --porcelain gives machine-readable output (stable across git versions).
+    # WHY: --porcelain gives machine-readable output (stable across git versions).
+    # The not-in-a-repo case exits above. An earlier version of this comment claimed `2>$null`
+    # was itself "graceful handling if not in a repo" -- it suppresses git's message, not its
+    # exit status. That claim was word-for-word identical in mb.sh, where under `set -e` it was
+    # actively wrong and aborted the command at 128; here it merely fell through to the
+    # misleading "No changes" below. Same false comment, two different wrong behaviours.
+    # $LASTEXITCODE is checked rather than trusting an empty $status: a genuine git failure
+    # (corrupt or unreadable index) and a genuinely clean memory-bank/ BOTH leave $status empty,
+    # and the `-not $status` test below reports the second as "No changes" with exit 0. Reporting
+    # a failed inspection as "nothing to commit" is the same false-success shape the subworktree
+    # branch above exists to remove. Mirrors the `if ! STATUS=$(...)` handler in mb.sh.
     $status = git status --porcelain $MemoryBankPath 2>$null
-    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] git status failed in this repository." -ForegroundColor Red
+        Write-Host "memory-bank/ was NOT inspected — resolve the git error and retry." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+
     if (-not $status) {
         Write-Host "No changes in memory-bank/ to commit" -ForegroundColor Yellow
         return
