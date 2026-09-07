@@ -121,15 +121,15 @@ assert_contains "$output" "\[WARN\] Not a git repository" "check 1: non-git dir 
 # and nothing noticed. Under `set -e` a bare `VAR=$(git ...)` assignment kills the script when git
 # exits 128 outside a repo — `2>/dev/null` hides the message, not the status. Three such sites
 # existed at three different depths. Provenance, blamed rather than assumed: `last_commit` (check
-# 21) and `COMMIT_30D` (Token Budget) both came from `030662c`, which is on main; `_mb_common`
-# came from `e1d77f2` — the startup-context ratchet, which is branch-only and NOT on main, so
-# this branch introduced that one and shipped it through review. An earlier draft of this comment
+# 21) and `COMMIT_30D` (in the Startup Context block, which precedes show_budget — an earlier
+# draft of this comment placed it in Token Budget) both came from `030662c`, which is on main;
+# `_mb_common` came from `e1d77f2` — the startup-context ratchet, which is branch-only and NOT on
+# main, so this branch introduced that one and shipped it through review. That same earlier draft
 # credited it to the check-25 work and called all three inherited; both were wrong. Because the
 # three sit at different depths, an assertion naming any single check catches only one. These
-# assert the
-# INVARIANT instead — doctor runs to completion outside a repo — which catches a future site
-# wherever it is added. Every other fixture in this file git-inits, so this is the only place the
-# invariant can be tested.
+# assert the INVARIANT instead — doctor runs to completion outside a repo — which catches a future
+# site wherever it is added. Every other fixture in this file git-inits, so this is the only place
+# the invariant can be tested.
 assert_equals "$rc" "0" "check 1: non-git dir — doctor exits 0, not git's 128"
 assert_contains "$output" "Token Budget Health" "check 1: non-git dir — doctor runs to completion (final section emitted)"
 
@@ -1014,5 +1014,72 @@ EOF
 
 output=$(cd "$TMPDIR_AGENTPINNED" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
 assert_not_contains "$output" "not pinned to a capable model" "check 25: correctly-pinned agents produce no warning (discrimination)"
+
+# --- check 15 (startup context ceiling): bracketed main-repo path, mb.ps1 -----------------------
+# WHY no PWSH_USABLE probe like tests/test-mb-commit.sh has: this does not need one. That probe
+# exists because `assert_equals rc 0` and `assert_not_contains` both pass against a pwsh stub that
+# executes nothing and prints nothing. Here the positive proof is inside the assertions themselves
+# — a silent stub fails `assert_contains` — so the discrimination is structural rather than gated.
+# Do not "harmonise" this by adding a probe; it would add machinery, not rigour.
+#
+# WHAT it pins: mb.ps1 check 15 resolved --git-common-dir with a WILDCARD Resolve-Path carrying no
+# -ErrorAction. (An earlier draft said "alone among that file's four call sites"; review measured
+# that as false -- Invoke-Setup's Resolve-Path lacks it too.) A bracket in the MAIN repo path
+# therefore resolved to $null and `Split-Path -Parent $null` threw
+# ParameterBindingValidationException. Reachable only from inside a subworktree, since only there
+# is --git-common-dir absolute rather than the relative `.git`.
+#
+# The throw is NOT the serious half, and an earlier version of this comment said it was. Measured:
+# doctor does not die on it. It prints the stack trace, carries on with $startupRoot still at ".",
+# and so measures the SUBWORKTREE's own memory-bank instead of the main worktree's — which is
+# exactly the phantom-reduction failure this check's worktree-awareness exists to prevent. With
+# the main worktree inflated past the 25 KB ceiling and the subworktree left small, pre-fix
+# reported "[OK] Startup context: 0.6 KB" for a tree measuring 27 KB against a 25 KB hard limit
+# (27,607 B vs a 25,600 B ceiling -- 27 KB in total, not 27 KB in excess). A false OK in a
+# governance check outranks a crash, so the inflation below is load-bearing, not decoration: the
+# no-throw assertion alone passes against a build that still measures the wrong tree.
+#
+# Discrimination measured against HEAD before the fix, all four cells: bracketed main THREW and
+# reported [OK] 0.6 KB; bracketed main post-fix reported [ERROR] 27 KB; plain main reported
+# [ERROR] 27 KB both pre- and post-fix. So the bracket is the discriminator, not mere absence,
+# and `assert_contains "exceeds 25 KB"` is the assertion that actually fails against the defect.
+#
+# `cd` rather than `git -C`: git -C fails on a bracketed path on Git for Windows ("cannot change
+# to ...: No such file or directory") even though the directory exists and cd into it works.
+#
+# Cleanup is explicit, with no `trap ... EXIT` registration: bash keeps only the LAST EXIT trap,
+# and this file registers many, so adding one more would silently disarm the one before it. That
+# pre-existing defect is not fixed here — it is simply not joined.
+if ! command -v pwsh >/dev/null 2>&1; then
+    echo "  SKIP: pwsh not available — check 15 bracketed-path case not exercised"
+else
+    TMPDIR_BRACKET="$(mktemp -d)"
+    BR_MAIN="$TMPDIR_BRACKET/main[x]"
+    setup_test_project "$BR_MAIN" >/dev/null 2>&1
+    if command -v cygpath >/dev/null 2>&1; then
+        BR_SUB_ARG="$(cygpath -w "$TMPDIR_BRACKET/sub")"
+        MBPS1_D="$(cygpath -w "$REPO_ROOT/scripts/mb.ps1")"
+        MB_HOME_D="$(cygpath -w "$REPO_ROOT")"
+    else
+        BR_SUB_ARG="$TMPDIR_BRACKET/sub"
+        MBPS1_D="$REPO_ROOT/scripts/mb.ps1"
+        MB_HOME_D="$REPO_ROOT"
+    fi
+    if ! ( cd "$BR_MAIN" && git worktree add "$BR_SUB_ARG" -b brackettest ) >/dev/null 2>&1; then
+        echo "  SKIP: git worktree add unavailable — check 15 bracketed-path case not exercised"
+    else
+        # Inflate the MAIN worktree past the 25 KB ceiling, leaving the subworktree's own copy
+        # small. Measuring the wrong tree is then visible as an [OK] where an [ERROR] is due.
+        head -c 20000 /dev/urandom | base64 > "$BR_MAIN/memory-bank/bulk.md"
+        # Path via the ENVIRONMENT with a single-quoted -Command body: see the injection note in
+        # tests/test-mb-commit.sh. An interpolated path containing  ' ; #  is otherwise executable.
+        output=$(cd "$TMPDIR_BRACKET/sub" && MB_HOME="$MB_HOME_D" MB_SCRIPT="$MBPS1_D" pwsh -NoProfile -Command \
+            '$PSStyle.OutputRendering="PlainText"; & $env:MB_SCRIPT doctor' 2>&1)
+        assert_contains "$output" "Startup context" "check 15: bracketed main repo — doctor reaches the ceiling check (positive proof pwsh executed mb.ps1)"
+        assert_not_contains "$output" "Cannot bind argument to parameter" "check 15: bracketed main repo — Resolve-Path does not glob the path away and throw"
+        assert_contains "$output" "exceeds 25 KB limit" "check 15: bracketed main repo — measures the MAIN worktree, not the subworktree (no false OK)"
+    fi
+    rm -rf "$TMPDIR_BRACKET"
+fi
 
 print_summary

@@ -49,7 +49,18 @@ param(
 $RepoRoot = if ($env:MB_HOME) { $env:MB_HOME } else { Split-Path -Parent $PSScriptRoot }
 # WHY: Validate MB_HOME points to a real PMB installation before trusting it for script paths.
 # An attacker-controlled MB_HOME could otherwise load a crafted pick-folder.ps1 or templates.
-if ($env:MB_HOME -and -not (Test-Path (Join-Path $RepoRoot 'templates') -PathType Container)) {
+# -LiteralPath is load-bearing and cannot weaken this guard, only sharpen it. Without it Test-Path
+# globs, so an MB_HOME containing [ or ] -- legal on Windows -- fails to match its own real
+# templates/ and every mb.ps1 command dies here with a false "templates/ not found", while mb.sh at
+# the same MB_HOME runs normally: measured rc=1 vs rc=0 on a tree whose templates/ was present.
+# The globbing also cuts the other way, which is why this is a security fix and not only a usability
+# one: a wildcard Test-Path can be satisfied by some OTHER directory the pattern happens to match,
+# so the guard could pass for a path that is not the one about to be used. This is one of 118
+# Test-Path CALLS in this file, on 116 distinct lines; 115 still glob and are recorded as audit
+# finding C9. Counted from the PowerShell AST, which is why calls and lines differ -- an earlier
+# version of this comment said "call sites ... measured by excluding comment lines", which names a
+# method (grep -v '^ *#') that yields 116, not the 118 it was attached to. Not fixed here.
+if ($env:MB_HOME -and -not (Test-Path -LiteralPath (Join-Path $RepoRoot 'templates') -PathType Container)) {
     Write-Host "[ERROR] MB_HOME '$env:MB_HOME' is not a valid PMB installation (templates/ not found)." -ForegroundColor Red
     exit 1
 }
@@ -707,7 +718,26 @@ function Invoke-Commit {
     # Comparing .Path strings matches the bash twin, which compares realpath output.
     # Recorded as C5 in docs/superpowers/specs/2026-06-18-mb-commands-audit.md, whose stated root
     # cause ("symlinks or UNC paths ... in some cases") is wrong -- incidence is 100%.
-    if ($commonGitDir -and (Resolve-Path $commonGitDir -ErrorAction SilentlyContinue).Path -ne (Resolve-Path $localGitDir -ErrorAction SilentlyContinue).Path) {
+    #
+    # -LiteralPath is the second half of the same defect and is equally load-bearing. Without it
+    # Resolve-Path treats its argument as a WILDCARD, so any repo whose path contains [ or ] --
+    # legal on Windows -- resolves to $null on both sides, `.Path` yields $null, and $null -ne
+    # $null is false... except the LOCAL side is what fails first in practice, leaving one real
+    # string against a $null and firing the guard. Measured in a healthy main worktree at a
+    # bracketed path: wildcard Resolve-Path null=True, -LiteralPath null=False; end to end,
+    # mb.ps1 said "You are in a git subworktree" (rc=1) where mb.sh correctly said "No changes"
+    # (rc=0). Fixing only the equality half would have left a narrower version of the same
+    # 100%-for-those-users refusal, and a fresh sh/ps1 exit-code divergence with it.
+    #
+    # BOTH directions occur. Review measured the second one AFTER the paragraph above was written,
+    # which had reasoned the both-null case away as not arising in practice: with a bracket on both
+    # sides (main `main[x]`, subworktree `sub[y]`, both real `git worktree add`) both sides resolve
+    # to $null, $null -ne $null is False, and the guard does NOT fire -- pre-fix pwsh returned rc=0
+    # "No changes" from inside a genuine subworktree. That is a false NEGATIVE, the more dangerous
+    # direction: a refusal that should have fired, silently didn't. A bracket on only one side
+    # leaves one real string and still fires correctly, which is why the false-positive framing
+    # surfaced first and the worse case hid behind it.
+    if ($commonGitDir -and (Resolve-Path -LiteralPath $commonGitDir -ErrorAction SilentlyContinue).Path -ne (Resolve-Path -LiteralPath $localGitDir -ErrorAction SilentlyContinue).Path) {
         Write-Host "[ERROR] You are in a git subworktree." -ForegroundColor Red
         Write-Host "Commit memory-bank/ from the main worktree root instead." -ForegroundColor Yellow
         Write-Host ""
@@ -1476,17 +1506,48 @@ function Show-Doctor {
     $startupRoot = "."
     $commonDir = (& git rev-parse --git-common-dir 2>$null)
     if ($LASTEXITCODE -eq 0 -and $commonDir) {
-        $candidate = Join-Path (Split-Path -Parent (Resolve-Path $commonDir).Path) ""
-        if (Test-Path (Join-Path $candidate "memory-bank")) { $startupRoot = $candidate }
+        # -LiteralPath throughout. Resolve-Path, Test-Path, Get-ChildItem and Get-Item all treat
+        # -Path as a WILDCARD, so any repo whose path contains [ or ] silently resolves to nothing.
+        # This Resolve-Path was the loudest instance in the file: it carried no -ErrorAction, so
+        # `Split-Path -Parent $null` threw ParameterBindingValidationException. An earlier draft of
+        # this comment said "alone among the four" -- that was false and review caught it. TWO of
+        # the file's four Resolve-Path call SITES lacked -ErrorAction: this one and the one in
+        # Invoke-Setup (no line number on purpose -- three drafts of the surrounding record carried
+        # mb.ps1 line numbers and all three went stale, the last within minutes of being derived).
+        # Sites, not calls: the AST reports five Resolve-Path calls on
+        # four lines, because the mb commit guard puts two on one line. Do not read this block as
+        # evidence that the others are guarded;
+        # Invoke-Setup's is not, and it is part of audit finding C9.
+        #
+        # The throw is NOT the serious half. Doctor does not die on it -- it prints the stack trace,
+        # carries on with $startupRoot still ".", and so measures the SUBWORKTREE's own memory-bank
+        # rather than the main worktree's, which is precisely the phantom reduction the
+        # WORKTREE-AWARE note above this block exists to prevent. Measured with the main worktree
+        # inflated past the ceiling and the subworktree left small: pre-fix printed
+        # "[OK] Startup context: 0.6 KB" for a tree measuring 27 KB against a 25 KB hard limit
+        # (27,607 B vs a 25,600 B ceiling -- 27 KB in total, not in excess), post-fix printed
+        # the [ERROR], and a non-bracketed path printed the [ERROR] either way -- so the bracket is
+        # the cause, not mere absence. A false OK in a governance check outranks a crash.
+        #
+        # Reachable only from inside a subworktree, since only there does git return an absolute
+        # --git-common-dir instead of a relative `.git`. The other four calls in this check (two
+        # Test-Path, one Get-ChildItem, one Get-Item -- five calls of four cmdlet kinds in total)
+        # never threw at all;
+        # they were the silent half of the same wrong-root measurement.
+        $resolvedCommon = (Resolve-Path -LiteralPath $commonDir -ErrorAction SilentlyContinue).Path
+        if ($resolvedCommon) {
+            $candidate = Join-Path (Split-Path -Parent $resolvedCommon) ""
+            if (Test-Path -LiteralPath (Join-Path $candidate "memory-bank")) { $startupRoot = $candidate }
+        }
     }
     $ceilingFiles = @()
-    if (Test-Path (Join-Path $startupRoot "CLAUDE.md")) { $ceilingFiles += (Join-Path $startupRoot "CLAUDE.md") }
+    if (Test-Path -LiteralPath (Join-Path $startupRoot "CLAUDE.md")) { $ceilingFiles += (Join-Path $startupRoot "CLAUDE.md") }
     # Enumerated, not listed -- matches .github/workflows/pmb-health.yml; README.md was in no list.
     # -Recurse, matching the ls-tree -r baseline below -- see the bash twin for why.
-    foreach ($mb in (Get-ChildItem (Join-Path $startupRoot "memory-bank") -Filter "*.md" -File -Recurse -ErrorAction SilentlyContinue)) {
+    foreach ($mb in (Get-ChildItem -LiteralPath (Join-Path $startupRoot "memory-bank") -Filter "*.md" -File -Recurse -ErrorAction SilentlyContinue)) {
         $ceilingFiles += $mb.FullName
     }
-    $ceilingBytes = ($ceilingFiles | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum
+    $ceilingBytes = ($ceilingFiles | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum
     $ceilingKB = [math]::Round($ceilingBytes / 1KB, 1)
     if ($ceilingBytes -gt 25600) {
         Write-Host "[ERROR] Startup context ${ceilingKB} KB exceeds 25 KB limit — compact memory-bank/ immediately" -ForegroundColor Red
