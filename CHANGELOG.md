@@ -548,5 +548,13 @@ actually merges.
 Versions **0.1.0 (2026-04-29) through 1.2.1 (2026-08-03)** live in
 `docs/archive/changelog-0.1.0-to-1.2.1.md`. They were moved there on 2026-09-07 because this file
 had reached 901 lines against the 800-line hard cap in `.github/workflows/pmb-health.yml`'s File
-Size job — with only 8 lines of headroom before this change. Add new released sections there, not
-here.
+Size job — with only 8 lines of headroom before this change.
+
+New released sections belong **here**, not in that archive. When this file approaches the cap again,
+move the oldest sections to a **new** dated archive file. Never append to an existing one:
+`docs/archive/README.md` and `standards/MEMORY-BANK.md` both require one topic or period per file,
+and `pmb-health.yml` exempts `docs/archive/` from its *byte* caps because archives do not grow.
+Note the 800-line markdown cap still applies there — `docs/archive/*.md` is inside the File Size
+job's scope — so appending would eventually red the build in the archive too, which is precisely the
+failure this move exists to stop repeating. An earlier version of this pointer said the opposite,
+and a later one claimed the archive directory was unwatched; neither was true.
