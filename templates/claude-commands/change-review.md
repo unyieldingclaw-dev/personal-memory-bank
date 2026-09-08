@@ -55,10 +55,13 @@ Run only checks that are **fully local and offline** (no registry fetch, no modu
 - The 3 greps from `.github/workflows/pmb-health.yml`'s "Rules-File Integrity" job (invisible Unicode, hidden HTML comments, LLM bypass phrases) against `standards/`, `CLAUDE.md`, `templates/CLAUDE.md`
 - The credential grep and the placeholder (`TBD`/`TODO`) grep from the "Forbidden Patterns" job against the same file sets that job covers
 - "Template Integrity"'s check that hook scripts referenced in `templates/.claude/settings.json` exist under `templates/`
+- The **"File Size" job in full** — its markdown line cap (`find` + `wc -l`, using the job's own exclusion list), the per-file line and byte caps on the memory-bank files (enumerated with a recursive `find`, since a `memory-bank/*.md` glob would miss a subdirectory), and the byte cap on relocation destinations under `docs/`, which is the branch reviewers forget and which guards files that grow by design. Report a pass only if every branch passed. These are pure filesystem checks with no network call, so they qualify under the rule above; they were omitted rather than excluded. **Read the current thresholds and path list out of the workflow — do not copy them into this file**, and if the workflow is absent (it is not delivered to adopter repositories) record the check as Skipped rather than passed. The thresholds are ratcheted deliberately, and this repo has already shipped three hand-transcribed caps that silently drifted from CI (see `tests/test-threshold-parity.sh`'s header).
 
 Do **not** attempt to replicate Semgrep (registry fetch), PSScriptAnalyzer (`Install-Module` fetch), or gitleaks (network action) — those are correctly CI-only per this repo's own layering rule, and this skill can't reliably or quickly reproduce a network-dependent tool.
 
 Report results in their own section (see Step 5's report template) with a one-line pass/fail per check. If a check fails, note whether the offending file(s) are touched by the current diff or pre-existing — this is the detail that would have flagged PR #7's situation immediately. This section never sets `Blocking: Yes` and never factors into the Verdict.
+
+**The diff-caused vs pre-existing distinction carries more weight for the size caps than for the greps above, so state it explicitly for them.** A grep hit is usually a pre-existing repo condition and often a judgement call. A cap breach in a file this diff edits is neither: it is arithmetic, and it is caused by the change under review. Reporting it as one more undifferentiated informational line understates it — say plainly which file, at what count, and that the File Size job will fail on it. Per the rule above this still does not set the Verdict, and that is not a contradiction to paper over: **this review's Verdict and CI's gate are separate answers.** A report may legitimately read "Verdict: Approve" beside "the File Size job will fail" — the review found nothing wrong with the change's substance, and CI independently enforces a limit the author must still clear. Say both, rather than muting one to make them agree.
 
 ## Step 4: Run 9 review jobs
 
@@ -372,6 +375,7 @@ _(If no findings: "No findings. Change package looks clean.")_
 | Credential grep | ✅ Pass / ❌ Fail | ... |
 | Spec placeholder grep | ✅ Pass / ❌ Fail | ... |
 | Template Integrity | ✅ Pass / ❌ Fail | ... |
+| File Size job (markdown cap, memory-bank caps, relocation destinations) | ✅ Pass / ❌ Fail | ... |
 
 _(This section is informational only — it never sets `Blocking: Yes` and never affects the Verdict. If any check fails, state whether the affected file(s) are touched by this diff or pre-existing on the base branch.)_
 

@@ -4,6 +4,13 @@ allowed-tools:
   - Bash(git diff *)
   - Bash(git log *)
   - Bash(git status *)
+  - Bash(git grep *)
+  - Bash(git cat-file *)
+  - Bash(git ls-tree *)
+  - Bash(find *)
+  - Bash(grep *)
+  - Bash(wc *)
+  - Bash(awk *)
   - Read
   - Agent
 ---
@@ -56,6 +63,72 @@ Determine which conditional domains apply:
 - Performance: does the diff touch tight loops, database queries, or I/O paths?
 - Accessibility: does the diff touch HTML/JSX/TSX/Vue/Svelte files?
 
+## Step 3.5 — Baseline Repo Health (deterministic; run BEFORE spawning anything)
+
+**Why this step exists:** every domain in Step 4 reasons semantically over a diff. That is the
+right instrument for "is this claim true" and the wrong one for "does this violate a mechanical
+limit." On 2026-09-07 a change that would have pushed `CHANGELOG.md` past the markdown line cap in
+`.github/workflows/pmb-health.yml`'s File Size job reached the commit point after seven adversarial
+review rounds, and was caught only because the user asked for one more look. The committed file
+stood at 792 lines against an 800-line cap — `git show 9890758~1:CHANGELOG.md | wc -l` — so it had
+never breached in any commit; the pending addition was what would have taken it over. No amount of
+semantic review finds that; `wc -l` finds it in milliseconds.
+
+**Why it runs before Step 4 specifically:** Steps 4 and 5 together spawn six to eight subagents,
+each reading the diff in full, and they are what this command spends its budget on. Running the
+mechanical checks first avoids spending any of that on a change CI will reject regardless of what
+the round concludes. (This is a cost argument, not a sequencing one — `/change-review`'s Step 3.5
+also precedes its own subagent spawn. No ordering is claimed between Step 4's domain passes and
+Step 5's single opposition pass; the models differ and the comparison has not been measured.)
+
+Run these against the **whole working tree**, not just the diff. **Read each one's current
+definition out of `.github/workflows/pmb-health.yml` — do not reproduce thresholds, path lists or
+grep patterns from this file or from memory.** They are ratcheted deliberately, and a number copied
+into prose is stale the moment CI moves; that is why none are restated here.
+
+- The **"File Size" job in full** — enumerate its `FAIL=1` branches from the workflow rather than
+  working from the two best-known ones. It currently has four distinct failure conditions:
+  per-file line and byte caps on the memory-bank files, a byte cap on *relocation destinations*
+  under `docs/`, the startup-context ratchet, and the general markdown line cap. The
+  relocation-destination cap is the one reviewers forget, and it guards files that grow by design.
+  Report "File Size: Pass" only if every branch passed; naming a subset is how this check returns a
+  false negative. The ratchet is the one branch that may legitimately be unavailable (see below) —
+  if it is skipped, say "Pass, ratchet skipped" rather than "Pass". Enumerate the memory-bank files the way the job does, with a recursive `find` —
+  a `memory-bank/*.md` glob is not recursive, and the workflow's own comments record a file in a
+  subdirectory going invisible for exactly that reason.
+- The placeholder (`TBD`/`TODO`) scan over `docs/superpowers/specs/` — note it strips fenced and
+  inline code before matching and skips some filenames, so a naive `grep` reports false hits
+- The credential grep, and the 3 "Rules-File Integrity" greps (invisible Unicode, hidden HTML
+  comments, LLM bypass phrases)
+
+**If `.github/workflows/pmb-health.yml` is not present, record every row as Skipped and say so.**
+Do not substitute remembered thresholds, and do not treat the checks as passed. This command is
+delivered to adopter repositories that do not receive that workflow, and several paths above
+(`docs/superpowers/specs/`, `templates/.claude/settings.json`) are specific to this repository.
+
+Two checks that do **not** belong in the offline set, for different reasons. Semgrep,
+PSScriptAnalyzer and gitleaks each need a registry fetch, module install or network action, and per
+this repo's layering rule they are correctly CI-only. The **startup-context ratchet** compares
+against `origin/main`, which CI reaches with `git fetch --depth=1` — so it is not offline either.
+Run it only if a current `origin/main` ref is already available locally, and say which you did;
+CI itself degrades to advisory when the fetch is unavailable.
+
+**Report the results; do not act on them.** List each check as a one-line pass/fail in the Step 6
+report, marking each failure diff-caused or pre-existing. If a cap fails on a file this diff
+touches, say so before spawning Step 4 and tell the user the change cannot pass CI as written —
+they decide whether to spend the round. **Do not fix it yourself.** Editing during a review is a
+Failure Criterion in `standards/CODE-REVIEW.md` ("Repo mutation during review without explicit user
+request") and is forbidden by this file's own closing rule; remediation needs an explicit request
+after findings are presented.
+
+**A check *result* never sets the Verdict; a *discrepancy* between reported and actual results
+does.** Enforcement of these caps belongs to CI, and this step exists to make CI's answer visible
+early rather than to duplicate its authority — so a genuine FAIL here, however serious, is
+informational. But if Step 5's re-run finds this step reported a result the workflow does not
+produce, that is not a cap finding at all: it is evidence the review's own reporting is unreliable,
+it is eligible for `Blocking: true` on the ordinary Severity/Basis rules, and it must be reported
+as a finding rather than reconciled quietly.
+
 ## Step 4 — Spawn Independent Domain Subagents
 
 Spawn one subagent per required domain from the standard, plus any conditional domains that apply. Each subagent sees only the code and its own domain lens — not other subagents' findings.
@@ -107,14 +180,21 @@ Give it:
 
 Instruct it to, in order:
 
-1. Answer all four questions from the standard's Opposition Review section:
+1. Re-run Step 3.5's deterministic checks itself, reading each check's definition out of
+   `.github/workflows/pmb-health.yml` rather than accepting this orchestrator's report that they
+   passed. The orchestrator reporting PASS is a claim like any other, and this command's premise is
+   that claims get checked rather than believed — an orchestrator's claim about its own work least
+   of all. Re-running costs seconds. Report any disagreement with the orchestrator's Step 3.5
+   results as a finding.
+
+2. Answer all four questions from the standard's Opposition Review section:
    - Is any Critical/High finding overstated? Provide counter-evidence.
    - What was not reviewed that could matter?
    - Which findings might be false positives in this codebase's context?
    - What cross-domain risk did no single domain agent catch?
    A general statement that none apply is a failure — all four must be explicitly answered.
 
-2. Determine the final verdict: before scanning, revise the `Blocking` field on any finding you
+3. Determine the final verdict: before scanning, revise the `Blocking` field on any finding you
    concluded above is overstated or a false positive with specific counter-evidence — per the
    standard's exception, evidence that risk is contained downgrades it to `Blocking: false`. Then
    scan every finding — the Step 4 domain findings (with any revisions from this step applied) plus
@@ -123,7 +203,7 @@ Instruct it to, in order:
    (if concrete fixes were identified) or **Needs Discussion** (if the disagreement itself needs a
    human call).
 
-3. If, and only if, the verdict is **Approve**: independently compute a hash of the reviewed diff
+4. If, and only if, the verdict is **Approve**: independently compute a hash of the reviewed diff
    and write it to `.claude/.code-review-ok` (create the `.claude` directory first if it doesn't
    exist). Do not accept a hash from the orchestrator — recompute it from the actual diff via
    `git diff HEAD`, run from the same working directory as the rest of the review.
@@ -150,12 +230,39 @@ Instruct it to, in order:
 
    If the verdict is **Request Changes** or **Needs Discussion**, do not write the marker.
 
-4. Return to the orchestrator: its answers to the four opposition questions, the verdict, whether it
-   wrote the marker, and the full findings list with any `Blocking` revisions from step 2 applied
+5. Return to the orchestrator: its answers to the four opposition questions, the verdict, whether it
+   wrote the marker, and the full findings list with any `Blocking` revisions from instruction 3 applied
    (for each revised finding, note the original value, the new value, and the counter-evidence that
-   justified the change).
+   justified the change), and its own Step 3.5 re-run results from instruction 1.
 
 ## Step 6 — Assemble Report
+
+**Pre-escalation gate — satisfy every condition below before presenting this report or asking for
+any approval.** These are falsifiable checks, not a confidence judgement: "I am satisfied this is
+complete" is the state that preceded each failure they exist to catch, so it cannot be the test.
+
+1. **Every deterministic gate in Step 3.5 has been run against the working tree** — actually
+   executed, not reasoned about, and not taken from a subagent's report.
+2. **Every number, line citation and `file:function` attribution *you* originate carries the
+   command that produced it**, run by you against the current tree. Not "I derived this myself" —
+   the command, in the report, so a second reader can re-run it. This is deliberate: the standard's
+   own Evidence Integrity rule is that "a self-attested completion counts as UNMET", so a claim
+   about your own diligence cannot discharge this condition, only a re-runnable command can.
+   This applies to figures you introduce — scope counts, sizes, gate results, anything in your own
+   prose — and **not** to the domain findings' own Evidence fields, which you relay unaltered and
+   which instruction 1 of Step 5 exists to re-derive. Relaying a subagent's figure *into your own
+   prose* without re-deriving it is the single most reliable predictor of a false statement in this
+   repo's review history — a function name that does not exist, a line list stale by a fixed
+   offset, a count no stated method reproduces: each entered the record by being copied.
+3. **Every claim about a file has been checked against that file in its current state**, including
+   claims inherited from a handoff, an earlier session, or your own earlier turn.
+4. **The full diff has been read once end to end**, not only the hunks you edited.
+5. **Any number written into a file under active edit was re-derived after the last edit to that
+   file.** Line numbers and counts decay silently; a figure that was correct when measured can be
+   wrong by the time it is committed.
+
+If a condition cannot be met, say which one and why, in the report, rather than presenting the work
+as complete. An acknowledged gap is a finding; an unacknowledged one is a false certificate.
 
 Using the findings list returned by Step 5's subagent (which reflects any `Blocking` revisions made
 during its opposition review — do not use the original, unrevised Step 4 output) and the opposition
@@ -166,6 +273,11 @@ already written (or correctly not written) by Step 5's subagent.
 
 **Scope:** [git diff HEAD or filename]
 **Files reviewed:** N
+
+**Baseline Repo Health (Step 3.5 — informational, never sets the Verdict):**
+| Check | Status | Diff-caused or pre-existing |
+|---|---|---|
+| ... | Pass / Fail / Skipped | ... |
 
 **Domain Coverage:**
 | Domain | Status |
