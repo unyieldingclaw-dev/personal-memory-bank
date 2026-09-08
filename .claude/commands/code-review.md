@@ -103,8 +103,9 @@ into prose is stale the moment CI moves; that is why none are restated here.
 
 **If `.github/workflows/pmb-health.yml` is not present, record every row as Skipped and say so.**
 Do not substitute remembered thresholds, and do not treat the checks as passed. This command is
-delivered to adopter repositories that do not receive that workflow, and several paths above
-(`docs/superpowers/specs/`, `templates/.claude/settings.json`) are specific to this repository.
+delivered to adopter repositories that do not receive that workflow, and paths named above
+(`docs/superpowers/specs/`, and the relocation destinations under `docs/`) are specific to this
+repository.
 
 Two checks that do **not** belong in the offline set, for different reasons. Semgrep,
 PSScriptAnalyzer and gitleaks each need a registry fetch, module install or network action, and per
@@ -176,6 +177,12 @@ Give it:
 - The diff being reviewed (same scope as Step 4) — needed to produce genuine counter-evidence when
   answering the opposition questions, not just react to the findings table
 - The full text of the Severity, Blocking, and Basis field definitions from `standards/CODE-REVIEW.md`, verbatim
+- **This orchestrator's Step 3.5 results, verbatim** — every check with the pass/fail you recorded
+  and the figures you measured. Instruction 1 below asks the subagent to report any disagreement
+  with these, and Step 3.5 makes such a disagreement `Blocking: true`-eligible; without them in the
+  payload it can only re-run the checks independently, never detect that you *misreported* them.
+  Handing over your own claim so it can be contradicted is the whole point; withholding it leaves
+  the subagent checking the repository instead of checking you.
 - Read and Bash tool access
 
 Instruct it to, in order:
