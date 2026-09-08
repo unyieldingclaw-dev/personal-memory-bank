@@ -1,6 +1,7 @@
 ---
 allowed-tools:
   - Agent
+  - Bash(bash scripts/baseline-health.sh*)
   - Bash(git diff *)
   - Bash(gh pr diff *)
   - Bash(which *)
@@ -55,7 +56,7 @@ Run only checks that are **fully local and offline** (no registry fetch, no modu
 - The 3 greps from `.github/workflows/pmb-health.yml`'s "Rules-File Integrity" job (invisible Unicode, hidden HTML comments, LLM bypass phrases) against `standards/`, `CLAUDE.md`, `templates/CLAUDE.md`
 - The credential grep and the placeholder (`TBD`/`TODO`) grep from the "Forbidden Patterns" job against the same file sets that job covers
 - "Template Integrity"'s check that hook scripts referenced in `templates/.claude/settings.json` exist under `templates/`
-- The **"File Size" job in full** — its markdown line cap (`find` + `wc -l`, using the job's own exclusion list), the per-file line and byte caps on the memory-bank files (enumerated with a recursive `find`, since a `memory-bank/*.md` glob would miss a subdirectory), and the byte cap on relocation destinations under `docs/`, which is the branch reviewers forget and which guards files that grow by design. Report a pass only if every branch passed. These are pure filesystem checks with no network call, so they qualify under the rule above; they were omitted rather than excluded. **Read the current thresholds and path list out of the workflow — do not copy them into this file**, and if the workflow is absent (it is not delivered to adopter repositories) record the check as Skipped rather than passed. The thresholds are ratcheted deliberately, and this repo has already shipped three hand-transcribed caps that silently drifted from CI (see `tests/test-threshold-parity.sh`'s header).
+**Run them with `bash scripts/baseline-health.sh` rather than by hand.** That script contains no copy of any check — it locates each one by name in `.github/workflows/pmb-health.yml`, lifts the body of its `run:` block and executes it verbatim under CI's own shell flags, so a ratcheted cap takes effect here with no edit anywhere. It covers the three greps, the credential and placeholder greps, Template Integrity, and the **whole** File Size job including the relocation-destination byte cap that hand-written lists forget. **Read its exit code and do not collapse the four:** `0` all passed; `1` a real check failed; `2` the workflow is absent, so every row is **Skipped** and nothing was verified — do not substitute remembered thresholds and do not report a pass, since this command ships to repositories that do not receive `pmb-health.yml`; `3` a step could not be extracted because the workflow was renamed or re-indented, which is **not** a passing tree. One caveat to the "offline" rule above: the File Size job's startup-context ratchet makes one shallow `git fetch --depth=1 origin main`, which fails soft.
 
 Do **not** attempt to replicate Semgrep (registry fetch), PSScriptAnalyzer (`Install-Module` fetch), or gitleaks (network action) — those are correctly CI-only per this repo's own layering rule, and this skill can't reliably or quickly reproduce a network-dependent tool.
 

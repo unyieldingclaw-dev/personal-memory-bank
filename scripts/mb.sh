@@ -2051,6 +2051,11 @@ invoke_upgrade() {
         "scripts/_review-gate-lib.ps1"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
+        # Review helper, not a hook. Bash-only ON PURPOSE: it works by extracting check bodies out
+        # of the CI workflow and running them, so a PowerShell twin would be a SECOND implementation
+        # of that extractor — reintroducing exactly the runtime divergence this script removes. Git
+        # Bash ships with Git for Windows, which this repo already requires (the suite is all bash).
+        "scripts/baseline-health.sh"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"

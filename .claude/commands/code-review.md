@@ -1,6 +1,7 @@
 ---
 description: "Deep code review covering security, correctness, maintainability, testing, and architecture drift. Uses Claude (cloud API) — sends diff content to Anthropic. Some environments may have a personal, machine-local /ai-review command (Ollama-based, not shipped by this repo) as an offline alternative; if unavailable, this cloud-based review is the supported path. Spawns separate subagents per domain so findings don't bias each other."
 allowed-tools:
+  - Bash(bash scripts/baseline-health.sh*)
   - Bash(git diff *)
   - Bash(git log *)
   - Bash(git status *)
@@ -81,38 +82,34 @@ the round concludes. (This is a cost argument, not a sequencing one — `/change
 also precedes its own subagent spawn. No ordering is claimed between Step 4's domain passes and
 Step 5's single opposition pass; the models differ and the comparison has not been measured.)
 
-Run these against the **whole working tree**, not just the diff. **Read each one's current
-definition out of `.github/workflows/pmb-health.yml` — do not reproduce thresholds, path lists or
-grep patterns from this file or from memory.** They are ratcheted deliberately, and a number copied
-into prose is stale the moment CI moves; that is why none are restated here.
+Run it:
 
-- The **"File Size" job in full** — enumerate its `FAIL=1` branches from the workflow rather than
-  working from the two best-known ones. It currently has four distinct failure conditions:
-  per-file line and byte caps on the memory-bank files, a byte cap on *relocation destinations*
-  under `docs/`, the startup-context ratchet, and the general markdown line cap. The
-  relocation-destination cap is the one reviewers forget, and it guards files that grow by design.
-  Report "File Size: Pass" only if every branch passed; naming a subset is how this check returns a
-  false negative. The ratchet is the one branch that may legitimately be unavailable (see below) —
-  if it is skipped, say "Pass, ratchet skipped" rather than "Pass". Enumerate the memory-bank files the way the job does, with a recursive `find` —
-  a `memory-bank/*.md` glob is not recursive, and the workflow's own comments record a file in a
-  subdirectory going invisible for exactly that reason.
-- The placeholder (`TBD`/`TODO`) scan over `docs/superpowers/specs/` — note it strips fenced and
-  inline code before matching and skips some filenames, so a naive `grep` reports false hits
-- The credential grep, and the 3 "Rules-File Integrity" greps (invisible Unicode, hidden HTML
-  comments, LLM bypass phrases)
+```
+bash scripts/baseline-health.sh
+```
 
-**If `.github/workflows/pmb-health.yml` is not present, record every row as Skipped and say so.**
-Do not substitute remembered thresholds, and do not treat the checks as passed. This command is
-delivered to adopter repositories that do not receive that workflow, and paths named above
-(`docs/superpowers/specs/`, and the relocation destinations under `docs/`) are specific to this
-repository.
+**Do not reimplement these checks by hand, and do not copy thresholds into your report as if you had
+derived them.** The script contains no copy of any check: it locates each one by name in
+`.github/workflows/pmb-health.yml`, lifts the body of its `run:` block, and executes that verbatim
+under CI's own shell flags. So a cap ratcheted in the workflow takes effect here on the next run
+with no edit to anything — which is why no thresholds, path lists or patterns appear in this file.
+Reproducing them by hand is not merely redundant, it is unreliable: the spec placeholder scan alone
+needs a 20-line `awk` function with a fence-parity and a per-line backtick-parity guard, and a naive
+`grep` substitute reports false hits on a clean tree.
 
-Two checks that do **not** belong in the offline set, for different reasons. Semgrep,
-PSScriptAnalyzer and gitleaks each need a registry fetch, module install or network action, and per
-this repo's layering rule they are correctly CI-only. The **startup-context ratchet** compares
-against `origin/main`, which CI reaches with `git fetch --depth=1` — so it is not offline either.
-Run it only if a current `origin/main` ref is already available locally, and say which you did;
-CI itself degrades to advisory when the fetch is unavailable.
+**Read the exit code. The four are distinct on purpose — do not collapse them.**
+
+| Code | Meaning | What to report |
+|---|---|---|
+| `0` | every check passed | Pass, per check |
+| `1` | a check **failed** | A real CI failure, on the same bodies the workflow runs. Name the check and the offending file. |
+| `2` | the workflow is **absent** | Every row **Skipped**. Nothing was verified. Do **not** substitute remembered thresholds and do **not** report a pass — this command ships to repositories that do not receive `pmb-health.yml`. |
+| `3` | a step could not be **extracted** | The workflow was renamed or re-indented, so nothing ran. **This is not a passing tree.** Report it as a finding against the tooling. |
+
+It is **not** fully offline: the File Size job's startup-context ratchet runs one shallow
+`git fetch --depth=1 origin main`, which fails soft. Semgrep, PSScriptAnalyzer and gitleaks are
+deliberately absent from the script — each needs a registry fetch, module install or network action,
+and per this repo's layering rule they are correctly CI-only.
 
 **Report the results; do not act on them.** List each check as a one-line pass/fail in the Step 6
 report, marking each failure diff-caused or pre-existing. If a cap fails on a file this diff

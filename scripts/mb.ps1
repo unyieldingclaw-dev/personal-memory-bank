@@ -239,7 +239,9 @@ function Get-MbUpgradeAnalysis {
         'scripts/review-reminders.ps1',   'scripts/review-reminders.sh',
         'scripts/review-reminders-post.ps1', 'scripts/review-reminders-post.sh',
         'scripts/_review-gate-lib.sh',    'scripts/_review-gate-lib.ps1',
-        'scripts/warn-stale-review-marker.sh', 'scripts/warn-stale-review-marker.ps1'
+        'scripts/warn-stale-review-marker.sh', 'scripts/warn-stale-review-marker.ps1',
+        # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
+        'scripts/baseline-health.sh'
     )
     $govMissing = @($templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) })
 
@@ -2332,6 +2334,8 @@ function Invoke-Upgrade {
         "scripts/review-reminders-post.ps1"
         "scripts/_review-gate-lib.sh"
         "scripts/_review-gate-lib.ps1"
+        # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
+        "scripts/baseline-health.sh"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
