@@ -61,6 +61,8 @@ Do **not** attempt to replicate Semgrep (registry fetch), PSScriptAnalyzer (`Ins
 
 Report results in their own section (see Step 5's report template) with a one-line pass/fail per check. If a check fails, note whether the offending file(s) are touched by the current diff or pre-existing — this is the detail that would have flagged PR #7's situation immediately. This section never sets `Blocking: Yes` and never factors into the Verdict.
 
+**A check *result* never sets the Verdict; a *discrepancy* between reported and actual results does.** The sentence above is about results, and it holds without exception — a cap failure here is informational however serious it is, because enforcing those caps is CI's job. But Job 9's opposition subagent re-runs these checks and is given this section's reported results to compare against. If what was reported is not what the checks produce, that is not a Step 3.5 result at all: it is evidence this review's own reporting is unreliable, it is a finding on the ordinary Severity/Basis rules, and it is eligible to block. Reporting honestly costs nothing; the rule exists so that misreporting is not free.
+
 **The diff-caused vs pre-existing distinction carries more weight for the size caps than for the greps above, so state it explicitly for them.** A grep hit is usually a pre-existing repo condition and often a judgement call. A cap breach in a file this diff edits is neither: it is arithmetic, and it is caused by the change under review. Reporting it as one more undifferentiated informational line understates it — say plainly which file, at what count, and that the File Size job will fail on it. Per the rule above this still does not set the Verdict, and that is not a contradiction to paper over: **this review's Verdict and CI's gate are separate answers.** A report may legitimately read "Verdict: Approve" beside "the File Size job will fail" — the review found nothing wrong with the change's substance, and CI independently enforces a limit the author must still clear. Say both, rather than muting one to make them agree.
 
 ## Step 4: Run 9 review jobs
@@ -286,8 +288,16 @@ loud rather than a silent downgrade. Retry; if it persists, fall back to
 `.claude/agents/opposition.md` in as the prompt. Never fall back to a default model.
 
 Give it:
-- The full findings tables from Jobs 1–8 (not the Step 3.5 Baseline Repo Health results — that
-  section is informational only and never affects Blocking)
+- The full findings tables from Jobs 1–8. **Not** the Step 3.5 Baseline Repo Health results as
+  findings to weigh — that section is informational only and never affects Blocking.
+- **This orchestrator's Step 3.5 Baseline Repo Health results, verbatim — as claims to re-run, not
+  as findings to weigh.** The distinction carries the whole design: a Step 3.5 *result* never
+  affects Blocking however bad it is, because enforcing those caps is CI's job and not this
+  review's. But a *discrepancy* between what this orchestrator reported and what the checks actually
+  produce is not a Step 3.5 result at all — it is evidence that this review's own reporting is
+  unreliable, which is a different category of thing and is a finding on the ordinary rules.
+  Without these in the payload the section is entirely self-attested, with nothing anywhere
+  verifying it.
 - The finding schema (Domain, Severity, Location, Evidence, Basis, Impact, Recommendation, Blocking,
   Confidence)
 - The diff being reviewed (same scope as Step 1) — needed to produce genuine counter-evidence when
@@ -296,7 +306,17 @@ Give it:
 
 Instruct it to, in order:
 
-1. Play devil's advocate against the entire change:
+1. Re-run Step 3.5's Baseline Repo Health checks itself, reading each check's definition out of
+   `.github/workflows/pmb-health.yml` rather than accepting this orchestrator's report that they
+   passed, and compare against the results handed over above. A **result** that differs from CI is
+   informational, exactly as Step 3.5 says. A **discrepancy between what was reported and what the
+   checks actually produce** is not: report it as a finding on the ordinary Severity/Basis rules.
+   **If this orchestrator did not supply its Step 3.5 results at all, report that omission as a
+   finding**, and apply the same rule to any other item the `Give it:` list requires that you did
+   not receive — a disagreement is loud, a missing payload item is silent, and the report looks
+   equally complete either way.
+
+2. Play devil's advocate against the entire change:
    - What assumptions does this change make that could be wrong?
    - What edge cases does it not handle?
    - Are there performance implications at scale that the change doesn't address?
@@ -305,14 +325,14 @@ Instruct it to, in order:
    - Cross-domain risks: a correctness issue that also has security implications, or a test gap
      that also affects a claim
 
-2. Before scanning, revise the `Blocking` field on any finding from Jobs 1–8 you conclude above is
+3. Before scanning, revise the `Blocking` field on any finding from Jobs 1–8 you conclude above is
    overstated or a false positive, backed by specific counter-evidence from the diff — specific
    evidence that risk is contained downgrades it to `Blocking: No`. Then scan every finding —
    Jobs 1–8's findings (with any revisions from this step
    applied) plus anything you surface yourself during the opposition pass — for any `Blocking: Yes`.
    This determines whether the change package is clean.
 
-3. If, and only if, no finding (from Jobs 1–8 as revised, or your own opposition pass) has
+4. If, and only if, no finding (from Jobs 1–8 as revised, or your own opposition pass) has
    `Blocking: Yes` (including the case where there are no findings at all): independently recompute
    a hash of the reviewed diff and write it to `.claude/.change-review-ok` (create the `.claude`
    directory first if it doesn't exist). Do not accept this hash from the orchestrator — recompute
@@ -345,10 +365,11 @@ Instruct it to, in order:
    Remove-Item "$env:TEMP\pmb-diff-hash.tmp" -Force
    ```
 
-4. Return to the orchestrator: its opposition answers; the full findings list with any `Blocking`
-   revisions from step 2 applied (for each revised finding, note the original value, the new value,
-   and the counter-evidence that justified the change) plus any findings it surfaced itself during
-   the opposition pass; and whether it wrote the marker.
+5. Return to the orchestrator: its opposition answers; its own Step 3.5 re-run results from
+   instruction 1, including any discrepancy or missing-payload finding; the full findings list with
+   any `Blocking` revisions from instruction 3 applied (for each revised finding, note the original
+   value, the new value, and the counter-evidence that justified the change) plus any findings it
+   surfaced itself during the opposition pass; and whether it wrote the marker.
 
 ---
 

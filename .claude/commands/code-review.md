@@ -173,7 +173,9 @@ loud rather than a silent downgrade. Retry; if it persists, fall back to
 `.claude/agents/opposition.md` in as the prompt. Never fall back to a default model.
 
 Give it:
-- All domain findings collected in Step 4
+- All domain findings collected in Step 4 — **if Step 4 returned no findings, or was not run, say
+  so explicitly rather than omitting this item.** An absent item and an empty one are
+  indistinguishable to the subagent, and only one of them is legitimate.
 - The diff being reviewed (same scope as Step 4) — needed to produce genuine counter-evidence when
   answering the opposition questions, not just react to the findings table
 - The full text of the Severity, Blocking, and Basis field definitions from `standards/CODE-REVIEW.md`, verbatim
@@ -193,6 +195,13 @@ Instruct it to, in order:
    that claims get checked rather than believed — an orchestrator's claim about its own work least
    of all. Re-running costs seconds. Report any disagreement with the orchestrator's Step 3.5
    results as a finding.
+
+   **If this orchestrator did not supply its Step 3.5 results at all, report that omission as a
+   finding too**, and apply the same rule to any other item the `Give it:` list requires that you
+   did not receive. A disagreement is loud; a missing payload item is silent, and your report looks
+   equally complete either way — which is why the omission has to be the thing you report. This is
+   not hypothetical: during the review that added this instruction, the orchestrator omitted the
+   Step 4 findings item entirely and no one noticed until the opposition agent said so.
 
 2. Answer all four questions from the standard's Opposition Review section:
    - Is any Critical/High finding overstated? Provide counter-evidence.
@@ -280,6 +289,8 @@ already written (or correctly not written) by Step 5's subagent.
 
 **Scope:** [git diff HEAD or filename]
 **Files reviewed:** N
+**Step 4 disposition:** N domains spawned, M findings returned — state zero explicitly if that is
+the number, so a silent Step 4 is distinguishable from a clean one.
 
 **Baseline Repo Health (Step 3.5 — informational, never sets the Verdict):**
 | Check | Status | Diff-caused or pre-existing |
