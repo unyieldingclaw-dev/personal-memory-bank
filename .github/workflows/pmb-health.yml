@@ -438,17 +438,53 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          # Scan CLAUDE.md and standards/ for invisible Unicode chars that could
-          # smuggle hidden instructions: zero-width space (U+200B), zero-width
-          # non-joiner/joiner (U+200C/D), BOM (U+FEFF), RTL override (U+202E),
-          # soft hyphen (U+00AD), directional isolates (U+2066-2069).
+          # Scan CLAUDE.md and standards/ for invisible Unicode that could smuggle
+          # hidden instructions: the whole Cf (Format) category — zero-width
+          # space/joiner, BOM, bidi overrides and isolates, soft hyphen, word
+          # joiner, and the Tag block — plus the Hangul fillers, which are Lo
+          # rather than Cf but still render as blank.
           FAIL=0
           FILES=$(find standards CLAUDE.md templates/CLAUDE.md -name "*.md" -o -name "CLAUDE.md" 2>/dev/null | sort -u)
           while IFS= read -r file; do
             [ -f "$file" ] || continue
-            # grep -P matches literal bytes for the Unicode code points
-            if LC_ALL=C grep -Pn '[\x{200B}\x{200C}\x{200D}\x{FEFF}\x{202E}\x{00AD}\x{2066}-\x{2069}]' "$file" 2>/dev/null; then
+            # THREE THINGS HERE ARE LOAD-BEARING; each stops a specific wrong fix.
+            #
+            # 1. (*UTF), NOT LC_ALL=C. Until 2026-09-08 this used LC_ALL=C with an
+            #    enumerated \x{...} class. LC_ALL=C puts PCRE in 8-bit non-UTF mode
+            #    where \x{200B} exceeds the single-byte maximum, so grep aborted on
+            #    its own pattern ("character value in \x{} or \o{} is too large",
+            #    status 2), a 2>/dev/null hid the message, status 2 made the `if`
+            #    false, and the step printed OK over a tree containing a real
+            #    U+200B. It had never been able to fail since the day it was
+            #    written, and was found by planting a violation rather than by
+            #    reading it. MEASURED, so nobody repeats it: merely DROPPING
+            #    LC_ALL=C does NOT fix this — the ambient locale can be non-UTF-8
+            #    too, and was on the machine where this was found. (*UTF) forces
+            #    UTF mode regardless of locale.
+            #
+            # 2. A CATEGORY, NOT A LIST. The enumeration missed the Unicode Tag
+            #    block (U+E0000-E007F), which hides an entire ASCII payload one
+            #    invisible character per letter and renders blank in terminals and
+            #    in GitHub's diff viewer — the strongest vector of the set, absent
+            #    from a list written to stop exactly this. It also missed U+2060,
+            #    interchangeable with the U+200B it did block. \p{Cf} is the
+            #    category the technique relies on, so it covers those and whatever
+            #    Unicode adds later, with no list to keep current. The four
+            #    explicit points are Hangul fillers: category Lo, not Cf, but they
+            #    render as blank. Do not "simplify" this back to an enumeration.
+            #
+            # 3. THE STATUS IS READ, NOT SWALLOWED — that is what made the original
+            #    failure silent. 0 = a real hit, 1 = clean, anything else means grep
+            #    itself failed, which is a BROKEN CHECK and must be loud rather than
+            #    quietly green. `|| rc=$?` keeps this exempt from `set -e`, which
+            #    `shell: bash` sets via -eo pipefail.
+            rc=0
+            grep -Pn '(*UTF)[\p{Cf}\x{115F}\x{1160}\x{3164}\x{FFA0}]' "$file" || rc=$?
+            if [ "$rc" -eq 0 ]; then
               echo "FAIL: $file — invisible Unicode character(s) found above"
+              FAIL=1
+            elif [ "$rc" -ne 1 ]; then
+              echo "FAIL: $file — grep exited $rc, so this file was NOT scanned. This is a broken check, not a pass."
               FAIL=1
             fi
           done <<< "$FILES"

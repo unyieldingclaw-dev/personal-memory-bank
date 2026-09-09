@@ -52,6 +52,15 @@ new_sandbox() {
     d=$(mktemp -d) || return 1
     git -C "$REPO_ROOT" clone -q "$REPO_ROOT" "$d/repo" 2>/dev/null || return 1
     cp "$SCRIPT" "$d/repo/scripts/baseline-health.sh" || return 1
+    # The clone carries COMMITTED state. The script is copied in above precisely
+    # because of that — and the workflow it extracts from needs identical
+    # treatment, which it was not getting. MEASURED 2026-09-08: mutation 8 failed
+    # against a fix that was present and correct in the working tree, because the
+    # sandbox was still running HEAD's copy of pmb-health.yml. Without this line
+    # no workflow change can be tested until after it is committed, which inverts
+    # the point of a mutation suite: the one edit you most want to prove is the
+    # one edit the harness cannot see.
+    cp "$REPO_ROOT/.github/workflows/pmb-health.yml" "$d/repo/.github/workflows/pmb-health.yml" || return 1
     printf '%s' "$d"
 }
 
@@ -161,6 +170,138 @@ assert_contains "$out" "AMBIGUOUS STEP NAME" "duplicate step name: says the name
 assert_contains "$out" "Credential grep" "duplicate step name: names the ambiguous step"
 assert_not_contains "$out" "INJECTED_BODY_EXECUTED" "duplicate step name: the smuggled body never runs"
 assert_not_contains "$out" "baseline-health: PASS" "duplicate step name: never reports an overall pass"
+
+# ---------------------------------------------------------------------------
+# 8. MUTATION - DETECTION EFFICACY, a different question from every mutation
+#    above. Those prove the RUNNER behaves: it extracts, it refuses an ambiguous
+#    name, it exits with the right code. None of them proves an extracted check
+#    can still FIND anything. That gap is not theoretical - it concealed a check
+#    that had never once been able to fail. pmb-health.yml's invisible-Unicode
+#    grep errored on its own pattern, the step body swallowed the error with
+#    2>/dev/null, and it printed "OK: No invisible Unicode characters found"
+#    over a tree containing a real U+200B. Found 2026-09-08 by planting a
+#    violation rather than by reading the code, which is the whole point: no CI
+#    run since the check was written could have surfaced it, because ordinary CI
+#    never injects a violation.
+#    A green suite is worth nothing if the checks it runs are inert.
+# ---------------------------------------------------------------------------
+SBX_D=$(new_sandbox) || { echo "  FAIL: could not create sandbox"; print_summary; exit 1; }
+SANDBOXES+=("$SBX_D"); SBX="$SBX_D/repo"
+# Both planted as printf escapes rather than pasted literally: a fixture that
+# smuggles invisible characters into the repo to prove invisible characters are
+# detectable is a fixture nobody can review by eye.
+# TWO vectors, in two files, because they fail differently. U+200B is the
+# historical one that went undetected. U+E0061 is a Unicode Tag-block character,
+# which hides a whole ASCII payload one invisible char per letter and was MISSED
+# by the enumerated class this check used until 2026-09-08 — the strongest
+# vector, absent from a list written to stop exactly this. Planting only the
+# historical one would pass against a pattern still blind to the worse attack.
+# Both target files sit far under the 500-warn/800-fail markdown cap, so a size
+# failure cannot masquerade as the detection asserted here.
+#
+# TWO PLANT SHAPES, because each catches mutants the other misses. Both previous
+# fixtures were defeatable and the history is the argument for this one:
+#
+#   v1  "Zero-width space follows:<ZWSP> end."  — distinctive visible text, so
+#       replacing the WHOLE class with the literal `follows:` still passed every
+#       assertion. It proved a pattern matched something, not that it detected an
+#       invisible character.
+#   v2  the bare character alone on a line — removed the visible text, but could
+#       not distinguish "detects invisible characters" from "detects lines made
+#       ONLY of invisible characters". Merely ANCHORING the shipped class,
+#       (*UTF)^[\p{Cf}...]+$, passed 30/0 while missing a payload embedded in
+#       prose — the realistic attack, and the one the comment in pmb-health.yml
+#       calls the strongest vector. v1 had actually caught that mutant; v2 lost it.
+#
+# EMBEDDED plant: a duplicate of a line that ALREADY EXISTS in the clean tree,
+# with the character inserted MID-LINE. Any pattern keying on the visible text
+# therefore also fires on the untouched original — which breaks the CONTROL in
+# mutation 1, not this block. That leaves the invisible character as the only
+# thing that can discriminate. Derived from the file at runtime rather than
+# hardcoded, so it cannot drift out of sync with the file's actual content.
+# BARE plant: the character alone on a line. Kept because it catches mutants the
+# embedded form misses — anything requiring surrounding non-space context.
+#
+# ONE SHAPE PER FILE, and that separation is load-bearing rather than tidiness.
+# When both shapes shared LOGGING.md, an anchored pattern still found the bare
+# one there, so that file's assertion passed and THREE of the five mutants below
+# were discriminated by the single SECRETS.md assertion — measured, 29/1 each.
+# Deleting one fixture line would have silently restored the blind spot for all
+# three. Split across files, each shape fails its own assertion independently.
+# plant_embedded <file> <utf8-escape> — duplicates the file's first non-blank
+# line with the character inserted at the MIDPOINT, not after the first byte. An
+# earlier version split after char 1, which in these files is the "#" of an H1;
+# `(*UTF)^.?[...]` then passed 31/0 while missing a payload buried in prose, and
+# the comment's own claim of "mid-line" was not what the fixture tested.
+plant_embedded() {
+    local f="$1" ch="$2" base mid
+    base=$(grep -m1 -v '^[[:space:]]*$' "$f")
+    mid=$(( ${#base} / 2 ))
+    printf "%s${ch}%s\n" "${base:0:mid}" "${base:mid}" >> "$f"
+}
+plant_embedded "$SBX/standards/LOGGING.md"            '\xe2\x80\x8b'      # U+200B  in \p{Cf}
+plant_embedded "$SBX/standards/SECRETS.md"            '\xf3\xa0\x81\xa1'  # U+E0061 in \p{Cf}, Tag block
+# U+3164 HANGUL FILLER is category Lo, NOT Cf — it is covered only by the four
+# explicit code points in the shipped class. Without this plant, deleting those
+# four and keeping the bare category passed 31/0 while a planted U+3164 went
+# undetected end to end. The comment above the pattern argues for categories and
+# against lists, which makes deleting that residual list the most invited edit on
+# the line; this is the assertion that makes the edit fail instead of ship.
+plant_embedded "$SBX/standards/TRUST-CLASSIFICATION.md" '\xe3\x85\xa4'    # U+3164, Lo not Cf
+printf '\xe2\x80\x8b\n' >> "$SBX/standards/SECURITY-RULES.md"
+# ONE PLANT PER SCOPE ROOT. The check scans THREE roots — `find standards
+# CLAUDE.md templates/CLAUDE.md` — and every plant above sits under the first.
+# Narrowing that find to `standards` alone therefore passed 32/0 while a real
+# U+200B in CLAUDE.md went undetected end to end: measured in both directions.
+# CLAUDE.md is the highest-value target in this check's threat model, being the
+# file whose whole function is carrying instructions to the agent. The narrowing
+# is also SCHEDULED rather than hypothetical — widening the scan to cover
+# templates/standards/ (a known follow-up) edits precisely that line, so without
+# these two plants the next planned change lands on the blind spot.
+plant_embedded "$SBX/CLAUDE.md"           '\xe2\x80\x8b'
+plant_embedded "$SBX/templates/CLAUDE.md" '\xe2\x80\x8b'
+out=$(run_in "$SBX"); rc=$?
+assert_equals "$rc" "1" "planted invisible Unicode: exits 1 - the check must DETECT, not merely run"
+# WHY the detection string and not the step banner. baseline-health.sh prints
+# "FAIL:    <step>" for ANY non-zero exit of the extracted body, so asserting on
+# it pins WHICH step failed but not WHY. Measured: deleting just the (*UTF) token
+# makes every file error with status 2, the step reports FAIL for a scan that
+# examined nothing, and a banner-only assertion still passes — the same
+# can't-fail defect this mutation exists to close, one level deeper. The success
+# path emits "invisible Unicode character(s) found above"; the broken-scanner
+# path emits "NOT scanned". Assert the first and forbid the second.
+assert_contains "$out" "invisible Unicode character(s) found above" "planted invisible Unicode: reports a real DETECTION, not merely a failing step"
+assert_not_contains "$out" "NOT scanned" "planted invisible Unicode: the scanner ran — a broken scan must not stand in for a detection"
+assert_contains "$out" "LOGGING.md" "planted U+200B embedded mid-line: surfaces the zero-width-space file"
+assert_contains "$out" "SECRETS.md" "planted U+E0061 embedded mid-line: surfaces the Tag-block file the old enumerated class missed"
+assert_contains "$out" "SECURITY-RULES.md" "planted bare U+200B: surfaces the isolated-character file — an independent discriminator, so no single fixture line carries three mutants"
+assert_contains "$out" "TRUST-CLASSIFICATION.md" "planted U+3164 (category Lo, not Cf): surfaces the file covering the four explicit code points — deleting them for the bare category must not pass"
+assert_contains "$out" "CLAUDE.md" "planted U+200B in CLAUDE.md: pins the second scope root — narrowing the find to standards/ alone must not pass"
+assert_contains "$out" "templates/CLAUDE.md" "planted U+200B in templates/CLAUDE.md: pins the third scope root"
+assert_not_contains "$out" "baseline-health: PASS" "planted invisible Unicode: never reports an overall pass"
+
+# ---------------------------------------------------------------------------
+# 9. MUTATION — the BROKEN-SCANNER branch, a third outcome distinct from both a
+#    detection and a clean tree. The step reads grep's exit status explicitly:
+#    0 is a hit, 1 is clean, anything else means grep itself failed. That third
+#    branch is precisely what the original defect lacked — a `2>/dev/null` and an
+#    `if` collapsed "errored" into "clean", so the step printed OK for a scan
+#    that never happened. Mutation 8 proves a real hit is caught; this proves a
+#    BROKEN scan is reported loudly rather than passing silently. Without it,
+#    neutering the branch to `elif false` left every assertion green.
+# ---------------------------------------------------------------------------
+SBX_D=$(new_sandbox) || { echo "  FAIL: could not create sandbox"; print_summary; exit 1; }
+SANDBOXES+=("$SBX_D"); SBX="$SBX_D/repo"
+# Dropping (*UTF) returns PCRE to 8-bit mode, where \x{200B} exceeds the
+# single-byte maximum, so grep aborts on its own pattern for EVERY file. That is
+# the original defect's exact mechanism, reintroduced deliberately. Scoped to the
+# grep line so the surrounding explanatory comments are left intact.
+sed -i "/grep -Pn/s/(\*UTF)//" "$SBX/.github/workflows/pmb-health.yml"
+out=$(run_in "$SBX"); rc=$?
+assert_equals "$rc" "1" "broken grep pattern: exits 1 rather than passing a scan that never ran"
+assert_contains "$out" "NOT scanned" "broken grep pattern: says plainly the file was not scanned"
+assert_contains "$out" "broken check, not a pass" "broken grep pattern: names it a broken check rather than a clean tree"
+assert_not_contains "$out" "baseline-health: PASS" "broken grep pattern: never reports an overall pass"
 
 WF="$REPO_ROOT/.github/workflows/pmb-health.yml"
 
