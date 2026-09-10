@@ -72,45 +72,44 @@ the archive file, so existing `progress.md` <date> references still resolve.
 
 ## 2026-09-09 — a CI check that had never been able to fail, and what found it
 
-Two commits: `f1ae4ce` extracted the deterministic CI checks into `scripts/baseline-health.sh`;
-`1f7a7e7` repaired the invisible-Unicode check. The mechanics are in those messages. What belongs
-here is why the second existed at all.
+**It was found by planting a violation, not by reading.** The invisible-Unicode guard over
+`standards/`, `CLAUDE.md` and `templates/CLAUDE.md` had never once been able to fail since the day
+it was written, so every green CI run was evidence of nothing. Mechanism and fix: `1f7a7e7`. The
+durable part is what found it — **a check never given something to catch is indistinguishable from
+one that cannot catch anything.** Five of the seven extracted checks still have no
+detection-efficacy coverage; closing them is what changes the cost of the *next* inert check.
 
-**The check had never once been able to fail, in CI or locally, since the day it was written.**
-`LC_ALL=C` puts PCRE in 8-bit non-UTF mode, where the zero-width-space code point exceeds the
-single-byte maximum, so grep aborted on its own pattern with status 2; `2>/dev/null` hid the message,
-status 2 made the `if` false, and the step printed "OK: No invisible Unicode characters found" over a
-tree containing a real U+200B. It is the smuggled-instruction guard over `standards/`, `CLAUDE.md`
-and `templates/CLAUDE.md`, and there is no fallback: `mb verify-integrity` checksums exactly five
-files — the `memory-bank/` set — and never covered `standards/` or `CLAUDE.md` at all, so it is not
-a weaker guard on this axis but an unrelated one (`scripts/mb.sh:2320`).
+**The mutant space has axes, and hunting one mutant at a time never enumerates them.** The fixture
+took four attempts, each defeated one axis over — one "fix" was a regression described as an
+improvement. It ended by splitting the space into code-point coverage (unbounded, so closed by
+argument) and everything else (finite: scope roots, plant position, status branch) — an open-ended
+hunt became three cells that could be closed, and were.
 
-**It was found by planting a violation, not by reading.** Ordinary CI never injects one, so no green
-run could ever have surfaced it. That is the generalisable part: **a check never given something to
-catch is indistinguishable from one that cannot catch anything.** Detection-efficacy coverage now
-stands at 2 of the 7 extracted checks. The other five are the largest open gap, and closing them is
-what changes the cost of the *next* inert check rather than this one.
+**Several of my own verification commands did not verify what they claimed** — a pipe to `head`
+(always exits 0), `&&`-chained greps (a no-match aborts the rest), a non-matching `sed`, a grep
+whose escaping printed nothing, and a CR-counting grep that matched every line and produced a false
+CRLF finding I asserted aloud before catching it. Four failed silently; the one that failed loudly
+did so because mutations ran through a Python `assert` on the substitution count. **The fix is not
+more care, it is making the check unable to pass without doing its work** — the same principle as
+the bug being repaired, applied to the tooling that verifies the repair.
 
-**The fixture took four attempts, each defeated one axis over.** v1 fell to matching its own visible
-text; v2 to anchoring — a mutant v1 had caught, so that "fix" was a regression described as an
-improvement; v3 concentrated three mutants onto a single assertion; v4 pinned one of three scope
-roots. The durable diagnosis, from the review that caught it: **the mutant space has axes, and
-hunting one mutant at a time never enumerates them.** Splitting it into code-point coverage
-(unbounded — any finite plant set is beaten by a pattern narrowed to exactly that set, so close it by
-argument) and everything else (finite — scope roots, plant position, status branch) turned an
-open-ended hunt into three cells that could be closed, and were. The mutants themselves were run
-ad hoc and left no artifact — what a future reader can check is `tests/test-baseline-health.sh`
-blocks 8 and 9, which are the detection and broken-scanner cases those runs were protecting.
+**The commit gate denies on a bare substring, and the denial destroys the marker — REPRODUCED.**
+`review-reminders.sh:87` matches `*'git<SP>commit'*` against raw stdin (spelled with `<SP>` here
+deliberately — the literal form denies the very tool call that writes it). `consume_marker()`
+(`:74-84`) renames and `rm -f`s the marker *before* comparing hashes, with no restore on denial. So
+any tool call whose payload merely contains the substring destroys a valid, expensively-earned
+review marker. Matched control pair, no git invoked either time: an `echo` containing the substring
+was denied, the same `echo` with it broken passed. Three natural instances in one session — a grep
+of the hook's own source, a contract file, and this entry. The comment at `:39` asserts the false
+premise that the substring "only plausibly" appears inside a command field. Sharper than `[NS-45]`
+(filed INFERRED-not-reproduced, and at least an attempted commit); `[NS-25]`'s bug on the commit
+side. **Self-suppressing: it blocks its own documentation.**
 
-**Several of my own verification commands this session did not verify what they claimed** — a pipe to
-`head` (which always exits 0), `&&`-chained greps (a no-match aborts the rest), a non-matching `sed`,
-a grep whose escaping printed nothing, and a CR-counting grep that matched every line and produced a
-false CRLF finding I asserted aloud and wrote into an archive header before catching it. Four failed
-silently. The one that failed loudly did so because mutations now run through a Python `assert` on
-the substitution count. **The fix is not more care, it is making the check unable to pass without
-doing its work** — the same principle as the bug being repaired, applied to the tooling that verifies
-the repair.
-
+**The Next Steps drain is unblocked, and deliberately not done here.** `cbd988c` gave this file the
+room that completed items drain into — the stated dependency when this morning's contract deferred
+it. Still deferred: 33+ completeness judgements, each needing a citation-survival check, and
+`[NS-4]`/`[NS-24]`/`[NS-37]` all have live inbound citations. For whoever takes it — that contract
+lists `[NS-30]` among the resolved; it reads "Shipped… but NOT closed in the field."
 
 ## 2026-09-01 (round 5) — why the exit-code table stopped enumerating, and the cost of four rounds
 
@@ -231,7 +230,7 @@ commit message cannot carry:
 Moved to `docs/archive/progress-2026-08-31-opposition-rounds.md` to clear the 500-line CI cap; this
 file stood at 498/500 and could not accept the dated entry the `PreCompact` gate requires — the gate
 demanded exactly what the cap forbade, and the gate was measured exiting 2 before this pass.
-**18,208 bytes and 173 lines moved out, 687 added back as this stub.** Stated as a delta rather than
+**18,208 bytes and 173 lines moved out.** Stated as a delta rather than
 before/after totals, which decay on the next edit. Second occurrence of this bind; see the archive
 file's header for why that is structural rather than incidental.
 
