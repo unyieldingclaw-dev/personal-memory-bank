@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-09-09
+last-reviewed: 2026-09-11
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -27,14 +27,13 @@ chars/line) — measure headroom in bytes, not lines, when judging the next trim
 Full history in `docs/archive/context-*.md` / `progress.md`'s dated entries. `Next Steps` is
 the authoritative pending-work list.
 
-## Archived Narrative — see `docs/archive/context-2026-08-20-narrative-sections.md`
+## Archived Narrative — `docs/archive/context-2026-08-20-narrative-sections.md` (82 lines, 5.5 KB)
 
-Five narrative sections were evicted 2026-08-20 to keep this file under its 150-line cap. Each
-duplicated a live `Next Steps` entry, which remains the authoritative record: user-as-bypass /
-investigation-integrity (`[NS-16]`), review-gate layered enforcement spec+plan (`[NS-15]`, superseded
-by `[NS-26]`), fleet version drift (`[NS-14]`), freshness-hook / session-claims / mb backlog
-(`[NS-13]`, `[NS-18]`, `[NS-0]`), and the Handoff Protocol narrowing (shipped `3a2a7fd`; open
-remainder is `[NS-34]`, successor to the evicted `[NS-22]`). Older narrative: `docs/archive/context-2026-0*.md`.
+**Open it when one of the entries its table names is too terse to act on, or when you need why a
+decision was taken rather than what it was.** It holds the five narrative sections evicted 2026-08-20 under the
+line cap, and opens with a table mapping each one to the entry that superseded it **as of 2026-08-20**
+(one row names `[NS-22]`, since closed — `[NS-34]` is its live successor). The archive holds only
+the detail those entries were condensed from. Older: `docs/archive/context-2026-0*.md`.
 
 ## Current Focus
 
@@ -120,7 +119,7 @@ Full record: `progress.md` 2026-08-24/27 and this branch's commits.
 39. [NS-39] **The review gate validates diffs, never premises — and the record gives no signal which claims were verified.** MEASURED 2026-08-25: the gate binds a SHA-256 of the diff, so a false line it does not touch is invisible to it. Evidence: the contract claim "seven pairs stay byte-identical" was wrong throughout yet survived nine rounds, six domains and Opposition — it was a premise. All five `memory-bank/` files carry identical `source_type` / `confidence` / empty `lineage`, so provenance cannot discriminate; only 13/54 entries here and 15/107 in `progress.md` cite a source. Detail: `docs/MEMORY-BANK-PARADIGM-REVIEW.md`. **Qualifies `[NS-35]` decision 3** — prune rules cannot act on a status that does not exist. First step: make provenance vary per claim, or drop the fields.
 42. [NS-42] **Write-rate control — the successor problem eviction does not solve.** `progress.md` grew **+24,355 B in 3 days** (`ea862e8` 35,640 → `030662c` 59,995, measured 2026-08-27), and `docs/archive/` already holds **149,711 B** moved by the same mechanism while the file still hit its cap. The 2026-08-26 relocation bought ~1.6 days. Eviction is symptom relief; the constraint is write volume per session. Needs a design pass, not another relocation.
 43. [NS-43] **Review gate: two structural problems, 2026-08-27.** (a) It gates commits on a marker equal to `diff_hash HEAD` — the whole tree — consumed on use (`review-reminders.sh:87-97`), so one Approve buys one commit containing everything; splitting N concerns needs N full passes. Likely why branches here reach many concerns at zero commits, against the standard's preference for revertable changes. (b) The matcher is textual: any Bash command merely *mentioning* the commit verb is denied, so this entry could not be written from a heredoc. Fail-safe, but the repo cannot document its gate.
-44. [NS-44] **Startup-context ceiling exceeded nearly fivefold and structurally unenforceable; per-file caps misallocated.** Detail and four options, none implemented: `docs/MEMORY-BANK-CAP-ALLOCATION-FINDING.md`. Continues `[NS-28]` and `[NS-42]`.
+44. [NS-44] **Startup-context ceiling exceeded nearly fivefold and structurally unenforceable; per-file caps misallocated.** Detail and four options, none implemented: `docs/MEMORY-BANK-CAP-ALLOCATION-FINDING.md`. Continues `[NS-28]` and `[NS-42]`. Retrieval via pointer: 0 fetches (2026-09-09, `docs/RETRIEVAL-BASELINE-2026-09-09.md`).
 45. [NS-45] **The review gate destroys its marker before the guarded verb runs, its compensator does not fire, and the residue is a bypass primitive.** Mechanism, citations and basis in `progress.md` 2026-08-29 (INFERRED from source, not reproduced). Sharpens `[NS-24]` Task #33 with a mechanism; strengthens `[NS-26]`'s `peek_marker()` case.
 46. [NS-46] **Nothing arbitrates the global `~/.claude/CLAUDE.md` against this project's when they contradict.** Global says project files "add, do not replace"; this file's authority order never names it, so a stale global constant outranks a correct project deferral. The 2026-08-25 autocompact instance is FIXED (`mb doctor` compares values, not presence); the rule and duplication are NOT. Detail: `docs/MEMORY-BANK-PARADIGM-REVIEW.md`. Untracked until now by this file's cap.
 47. [NS-47] **External survey 2026-08-31 (OpenAI Codex, ai-that-works, OmniRoute) — doc-level only, nothing installed or reproduced.** Full write-up: **Work-MB Document 16** in `PMB-Findings-for-Work-MB.md` (**OUT OF REPO** — a Downloads export, uncapped and unversioned; treat `progress.md` as the in-repo source); session detail in `progress.md` 2026-08-31. **(a)** Codex runs TWO precedence systems in OPPOSITE directions — prose (`AGENTS.md`) most-local-wins, policy (`config.toml`/`requirements.toml`) managed-wins. PMB has ONE file type carrying both under one asserted rule; **that**, not a missing arbitration sentence, is what `[NS-46]` should be fixed against. **(b)** `model_auto_compact_token_limit_scope: body_after_prefix` — measure the body AFTER a fixed prefix; `CLAUDE.md` + `memory-bank/` IS that prefix here, and PMB reports one blended number. **(c)** Codex's `project_doc_max_bytes` defaults to 32 KiB and BINDS — first external anchor for PMB's 25 KB. Do NOT copy its silent skip: an unloaded guardrail has 0% adherence. **(d)** Decaying-Resolution Memory names what PMB already does by hand; adopt on the READ path only, since DRM's summarise-the-store variant is the ACE/SSGM degradation already hit here. **CAVEATED 2026-09-01 — (d) has a live counter-example:** `[NS-27]`'s archived, live-pointed rule was not retrieved and had to be re-derived; see `progress.md` 2026-08-31. **(e)** OmniRoute REJECTED — second of the gateway class after SwitchYard.
