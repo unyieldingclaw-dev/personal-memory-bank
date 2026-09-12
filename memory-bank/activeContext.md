@@ -22,8 +22,8 @@ lineage: []
 
 Trimmed 2026-08-14 (671→~150), 2026-08-18 (NS-24 condensed; older narrative sections condensed further
 same day), 2026-08-20 (five narrative sections evicted to `docs/archive/`, each duplicating a live
-`[NS-N]` entry; resolved entries condensed to pointers), 2026-08-29 (`[NS-2]` deleted, `[NS-22]`/`[NS-24]` condensed to stubs — `910e17f`). **Bytes bind before lines here** (~380
-chars/line) — measure headroom in bytes, not lines, when judging the next trim.
+`[NS-N]` entry; resolved entries condensed to pointers), 2026-08-29 (`[NS-2]` deleted, `[NS-22]`/`[NS-24]` condensed to stubs — `910e17f`). **Which dimension binds FLIPS** — read bytes and lines both live
+against `pmb-health.yml`'s caps and act on the tighter, never from a figure named here.
 Full history in `docs/archive/context-*.md` / `progress.md`'s dated entries. `Next Steps` is
 the authoritative pending-work list.
 
