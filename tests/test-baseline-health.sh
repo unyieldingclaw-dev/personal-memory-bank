@@ -292,11 +292,39 @@ assert_not_contains "$out" "baseline-health: PASS" "planted invisible Unicode: n
 # ---------------------------------------------------------------------------
 SBX_D=$(new_sandbox) || { echo "  FAIL: could not create sandbox"; print_summary; exit 1; }
 SANDBOXES+=("$SBX_D"); SBX="$SBX_D/repo"
-# Dropping (*UTF) returns PCRE to 8-bit mode, where \x{200B} exceeds the
-# single-byte maximum, so grep aborts on its own pattern for EVERY file. That is
-# the original defect's exact mechanism, reintroduced deliberately. Scoped to the
-# grep line so the surrounding explanatory comments are left intact.
-sed -i "/grep -Pn/s/(\*UTF)//" "$SBX/.github/workflows/pmb-health.yml"
+# WHY an unterminated character class, not dropping (*UTF) as 1f7a7e7 originally did.
+# Dropping (*UTF) is LOCALE-dependent, not grep-VERSION-dependent -- the same variable
+# .github/workflows/pmb-health.yml:452,460-463 already documents for the production check
+# itself: "(*UTF), NOT LC_ALL=C ... merely dropping LC_ALL=C does NOT fix this -- the
+# ambient locale can be non-UTF-8 too ... (*UTF) forces UTF mode regardless of locale."
+#
+# Two DIFFERENT exit codes are in play below -- grep's own, and this script's overall
+# verdict -- named separately because conflating them under one "rc" cost an earlier draft
+# of this very comment a Blocking review finding. Measured on the identical grep 3.0
+# binary, nothing else changed:
+#   LC_ALL=C        : grep's own rc=2 ("character value in \x{} or \o{} is too large") ->
+#                     the step's rc!=0-and-!=1 branch fires -> broken-check FAIL -> this
+#                     script's own overall exit=1. The mutation holds.
+#   LC_ALL=C.UTF-8  : grep's own rc=1 (clean -- NOT an error, and NOT a hit) -> neither
+#                     FAIL branch fires -> this script's own overall exit=0. The mutation
+#                     silently vanishes -- not because grep tolerated the escape, but
+#                     because grep never SAW the escape as out-of-range: (*UTF) is what
+#                     grep's own locale detection re-enables on its own.
+# That silent vanish is what happened in real CI on 2026-09-12, run 34683137897 (PR #25) --
+# this specific mutation's first execution there, 3 days 5h45m after 1f7a7e7 introduced it
+# -- because CI's shell runs in a UTF-8 locale. Reproduced on a second, independent PCRE2
+# build (Debian grep 3.8) with the same locale split, so this is not a grep-3.11-specific
+# quirk. Both grep exit codes above are decided at COMPILE TIME, not match time -- confirmed
+# against a zero-byte input file, where LC_ALL=C still errors and LC_ALL=C.UTF-8 still
+# does not, with nothing to match either way -- so the axis is locale-dependent-mode vs.
+# not, never "runtime vs compile-time" as an earlier draft of this comment claimed.
+#
+# An unterminated `[` fails to compile in every build and locale tested (grep 3.0/3.8/3.11,
+# 5 locales, 9/9 hard failures, none silent), because a character class is bounded grammar,
+# never conditioned on UTF mode. Scoped to the grep line's unique `FFA0}]` so the
+# surrounding explanatory comments and the OTHER grep -Pn line in this file (the
+# HTML-comment check) are left untouched.
+sed -i 's/FFA0}]/FFA0}/' "$SBX/.github/workflows/pmb-health.yml"
 out=$(run_in "$SBX"); rc=$?
 assert_equals "$rc" "1" "broken grep pattern: exits 1 rather than passing a scan that never ran"
 assert_contains "$out" "NOT scanned" "broken grep pattern: says plainly the file was not scanned"

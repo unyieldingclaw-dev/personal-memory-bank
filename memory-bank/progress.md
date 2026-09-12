@@ -70,6 +70,14 @@ the archive file, so existing `progress.md` <date> references still resolve.
 - **2026-08-28 (fix) — `mb init` agent delivery closed; the exported Work-MB briefs found stale**
 - **2026-08-28 (eviction) — `activeContext.md` resolved-entry pass; its own finding was false**
 
+## 2026-09-12 — PR #25 stays red after the grep-portability fix; a second, pre-existing failure
+
+`tests/test-mb-doctor.sh:1079`, check 15's `Resolve-Path`-throws assertion, fails on Linux `pwsh` in
+CI (run `34683137897`) alongside the grep-mutation failure fixed on `fix/baseline-health-ci-portability`
+-- independent of it, not introduced by either branch. Manifestation of the bracketed-`MB_HOME`
+divergence `CHANGELOG.md:58` already tracks as narrowed, not closed, and `[NS-51]` points at the audit
+spec for. Found by Opposition reading PR #25's live CI rather than trusting a green local run.
+
 ## 2026-09-11 — whole-repo review: the enforcement layer does not enforce; and a scratchpad collision
 
 **Eleven blocking findings, five domains, whole repository rather than a diff.** Full report preserved
