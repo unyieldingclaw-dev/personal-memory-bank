@@ -70,6 +70,171 @@ the archive file, so existing `progress.md` <date> references still resolve.
 - **2026-08-28 (fix) — `mb init` agent delivery closed; the exported Work-MB briefs found stale**
 - **2026-08-28 (eviction) — `activeContext.md` resolved-entry pass; its own finding was false**
 
+## 2026-09-11 — whole-repo review: the enforcement layer does not enforce; and a scratchpad collision
+
+**Eleven blocking findings, five domains, whole repository rather than a diff.** Full report preserved
+in `WHOLE-REPO-REVIEW.md`, held outside the repository (see "The patch and the report are NOT in
+this repository" below) rather than committed:
+the payload and the record were split after two review rounds found the payload was 88% of the diff
+and essentially all of the blocking findings.
+The ones that matter, and the Tier-1 conflict they sit inside:
+
+- **The review gate mints a valid marker for an UNREVIEWED tree — REPRODUCED on both shells.**
+  `review-reminders.sh` consumes the marker and writes `.pending-commit-presha` *before* the guarded
+  tool runs; if the call is then denied by any other hook, PostToolUse never fires and the residue
+  survives. `review-reminders-post.sh:43` then recomputes `diff_hash HEAD` at post time and writes it
+  as a fresh marker, so any later command whose text matches the verb launders the current tree into
+  an approved one. An `echo` is sufficient. Nothing stores the reviewed hash, so the reissue could not
+  be validated even in principle: the binding was missing, not the check. Sharpens `[NS-45]` (filed
+  INFERRED, never reproduced) and `[NS-24]` Task #33; strengthens `[NS-26]`'s `peek_marker()` case.
+  Two orphaned presha files sit in `.claude/worktrees/strange-bun-9a0ffc` and `sweet-poincare-ee03fc`.
+- **Two CI jobs cannot fail.** `.gitleaks.toml` has no `[[rules]]` and no `[extend] useDefault = true`,
+  so gitleaks runs an empty ruleset — reproduced with 8.30.1: no config finds two planted secrets, this
+  config finds zero. `standards/SECURITY-GUARDRAILS.md:394` asserts the opposite, on a public repo.
+  Separately `show_doctor()` contains no `exit` in either runtime, so `MB Doctor Self-Check` passes
+  while printing `[ERROR]` lines. Both are among PR #25's passing checks; `gh pr checks 25` names
+  them as `Secret Scan` (`pmb-health.yml`'s gitleaks job) and `MB Doctor Self-Check`; no tally is
+  stated here because the live one moves.
+  **No historical hit is a live credential** — checked before recording any of this on a public repo:
+  running gitleaks with `[extend] useDefault = true` over this branch's own line of history — the clone
+  is grafted at the parentless `030662c` (`cat .git/shallow`), so the scanned range is at most
+  `git rev-list --count 030662c..HEAD` plus that commit, NOT the project's full history, and no
+  full-history scan has been run from this clone — returns findings confined
+  to `fixtures/security/`, two `docs/superpowers/plans/` files and the two `MCP-SECURITY.md` copies,
+  and every secret value inspected is a visible placeholder. A planted canary was detected by the same
+  config, so it discriminates. The count is deliberately unstated: it differs between history mode and
+  worktree mode, and the report's own figure did not reproduce in either.
+- **Two Tier-1 conflicts, surfaced not reconciled.** `projectbrief.md:26` requires that security
+  guardrails "are always active" and `:43` forbids external dependencies. The findings above are
+  measured breaches of the first. The second is contradicted already, and was before this work:
+  `_review-gate-lib.sh`'s `resolve_cd_root()` shells out to `python3` and `check-contract.sh`
+  requires it outright, under a documented "fail open on missing dependency" convention. The fix adds
+  another caller, not a new class of dependency — for the current caller set run
+  `grep -rln 'python3 -c\|python3 -' scripts/`, which is wider than the two named here — an earlier draft of this entry mis-scoped it as
+  something the fix would introduce, which was wrong. `techContext.md`, the stable-tier authority on
+  the toolchain, records none of it. Tier 1 governs, so this is a decision to be taken rather than a
+  drift to close quietly: amend the constraint deliberately, or reimplement the python3 callers in
+  shell. Not taken, and older than this change.
+- **The gate is wired to one of two doors.** The `PowerShell` matcher runs `dangerous-commands.ps1`
+  only; `review-reminders` is bound to `Bash` alone, so a commit, push or PR merge issued through the
+  PowerShell tool meets no marker check. `review-reminders.ps1:56` never inspects `tool_name`, so the
+  gap is wiring, not capability. Most hook entries also fail OPEN when their pwsh twin launches,
+  drains stdin, then exits non-zero: the bash fallback reads an empty stream and exits 0. No count
+  is stated — an earlier draft said "eight of nine" and both numbers were wrong; parse
+  `.claude/settings.json` for the current one.
+- **Fourteen ordinary argument forms walk past both tiers**, each measured against a matched control
+  that was correctly denied: `git -C <dir> commit`, `git -c k=v commit`, `git -C <dir> push`,
+  `gh api .../pulls/N/merge`, and ten BLOCK-tier forms including `git push origin main --force`,
+  `rm -fr`, `rm -r -f`, `dd bs=... of=... if=...`, `curl | /bin/bash` and `curl | python3`. Both twins
+  also allow `rm -rf /` under a `toolInput.command` harness, widening `[NS-50]`(b) to the ps1 side.
+
+- **Four findings summarised here because the report that holds them is out of repo**, and this entry
+  itself calls it unrecoverable if that directory is lost. No sole-record claim is made: that needs a
+  per-finding search with its scope stated, and B10 in fact has a fuller in-repo record than this
+  summary at `scripts/mb.sh:2062-2076` — an earlier draft of this bullet asserted the opposite for all
+  four at once, which is the absence-claim shape `standards/CODE-REVIEW.md` rejects. (B8) The push gate's hash comparison had zero
+  test coverage — a mutation deleting the comparison left the suite fully green. (B9) A test removes
+  the live review-gate library from the working tree while it runs, disarming the gate for any
+  concurrent session. (B10) `mb upgrade` on PowerShell force-overwrites `standards/` from templates
+  that are known stale, so it can replace a correct governance file with a wrong one. (B11) Two
+  `mb doctor` checks cannot fire in this repo or in a fresh adopter. Full text: `WHOLE-REPO-REVIEW.md`
+  in the preserved directory.
+
+**A fix for the marker binding, the argument forms and the case hole is built and mutation-proved,
+and is NOT applied. It does NOT cover the interpreter wiring** — an earlier draft of this entry
+claimed it did, which was false: `grep '^+++ ' gate-fix-v2.patch` lists eight files, none of them
+`.claude/settings.json`, where the wiring defect lives. That matters more than the error, because
+the wiring is the bypass on the PRIMARY path here: pwsh runs first, and `review-reminders` is bound
+to the `Bash` matcher alone, so the fix as built leaves the live hole open. Named rather than numbered: an earlier draft said "the first,
+third and fourth" into a list that has since gained a bullet. It also closes a PRE-EXISTING hole this
+branch is named for — both matchers compared the executable case-sensitively, the parser via a
+case-sensitive basename that kept `.exe` and the raw fallback via lowercase literals in a `case`
+statement, so the uppercase and `.exe` spellings walked past both. Windows and macOS default
+filesystems are case-insensitive and this repo develops on Windows.
+
+The patch and the report are NOT in this repository. They are preserved at
+`C:/Users/Mizzo/Claude/pmb-session-artifacts/2026-09-11/`, deliberately: their whole reason for existing is
+that the fix cannot land until the PowerShell half is written, so committing them meant carrying a
+holding pen through review. Two rounds established the cost — the payload was 88% of the diff and
+23 of round 2's 38 findings were introduced by the previous round's own remediation. The durable
+record is what belongs in the memory bank; the payload gets its own review when it is worth one, and
+may not need one at all: once the fix is applied, the classifier and harnesses exist as real files
+under `scripts/` and `tests/` and a copy of an applied patch is dead weight.
+
+**The figures that were here have been deleted
+rather than corrected.** They were v1's, and every count disagreed with the harnesses; deleting
+decaying figures beat correcting them every time (`f70e84a`). What survives restating
+is qualitative: every guard in v2 goes red when removed, and the one guard whose mutation left the
+suite GREEN was redesigned out rather than kept, because a race is not something a sequential test can
+prove. Only the bash half exists; applying it alone would leave the primary path unfixed, since
+pwsh runs first here.
+
+**`activeContext.md`'s cap is still open and 29% of its pending-work list was mis-declared.** Read
+its margins the way the 2026-09-01 bullet below already prescribes — both dimensions live, act on the
+tighter — not from any level named here. Two attempts to trim it were reverted, and the pressure is
+`[NS-42]` in the field: the same squeeze pushed the PR #12 disposition into a gitignored `handoff.md`
+that the tooling then tells the operator to delete (`[NS-52]`). `Next Steps` holds almost all of the
+file, so any trim has to come from there.
+
+Every `[NS-N]` entry then present was re-verified against the repository rather than read — the rule
+being that a self-attested completion counts as UNMET — and it held: **14 carried a status the repo
+contradicts.** For the current denominator run
+`grep -cE '^[0-9]+\. \[NS-[0-9]+\]' memory-bank/activeContext.md`; it is one higher than the pass
+saw, because `[NS-52]` is added by this same change. `[NS-33]`'s WIP is in `stash@{0}`, not the working tree it claims, so a successor would
+look, find nothing, and conclude it was lost. `[NS-13]` still tracks writing an implementation plan
+that is already written and committed. `[NS-8]` says `mb.sh` hardcodes a command list it no longer
+hardcodes. Those corrections are NOT applied here; only the finding is recorded.
+
+**Attempt 1 — have the verifying agents rewrite the entries they had just checked.** Reverted. Its
+own review found the rewrite introducing factual errors at close to the rate it corrected them: a
+miscount inside a correction, a branch tip pinned into the very file that forbids pinning counts, and
+a commit cited that `merge-base --is-ancestor` places outside this shallow clone's history. **A
+verifying pass is a good detector and a bad author.**
+
+**Attempt 2 — move the eight largest entries out verbatim, leaving generated pointers.** Also
+reverted, for two reasons worth keeping. First, "a move cannot fabricate" was true of the move and
+false of the pointer generator: a non-greedy `**...**` match terminated on the `**` inside `[NS-48]`'s
+inline code span, emitting a truncated title that dropped both the consequence and "NOT APPLIED",
+while `[NS-26]` lost its operative rule — "do NOT rebase or replay" fell to zero occurrences in the
+live file, the rule that stops a worktree-branch merge regressing the review gate. Second, the
+destination is measured unread: `docs/RETRIEVAL-BASELINE-2026-09-09.md`, committed the same day,
+found content unique to `docs/archive/` entering zero of sixteen sessions while the pointer loaded in
+all sixteen. `CLAUDE.md` loads `memory-bank/` only. Relocating RESOLVED narrative is the validated
+use of that convention; relocating live rules is not the same move.
+
+**What the two failures establish is that this cap is not reachable by eviction or by paraphrase.**
+Eviction breaks retrieval, paraphrase fabricates, and condensation-in-place does both. The remaining
+option is the one `projectbrief.md` already mandates and `CLAUDE.md:9-16` already admits does not
+exist — state available at session start, detail fetched on demand — i.e. an index, not a list.
+That is `[NS-44]`, it is a design decision rather than an edit, and it is left open deliberately
+rather than approximated a third time in the same session.
+
+**The repo's own guards blocked their own repair three times in one session** — an `rm -rf` on a
+scratch path, a patch script containing the PR-merge phrase, and a JSON payload piped to a local
+script. Each was correct by the rule as written and wrong by intent. That is the false-positive half
+of the same text-matching defect the fix addresses, and it is why the substring matcher cannot simply
+be widened.
+
+**The `opposition` tool-allowlist caveat got a second, independent observation.**
+`.claude/agents/opposition.md:26-35` — added by `d795abb`, the same commit that added the allowlist —
+already records that those `Bash(...)` entries "declare INTENT, not an enforced boundary", measured
+once on 2026-08-27, and explicitly marks it **NOT established** whether that is general harness
+behaviour, version-specific, or a misread. It reproduced on 2026-09-11 in a different session: an
+agent spawned under that list ran `sha256sum`, `bash <script>` and a `> file` redirect. A second
+observation fifteen days later weakens the version-specific reading without settling the question,
+and nothing else changes — that file's operational consequence, that the list is not a security
+boundary and a real prohibition belongs in the agent's instructions and in hooks, already stands.
+**Orchestration finding, not a repo defect: a subagent silently overwrote another's scratch file.**
+Roughly thirty subagents across seven review rounds were all told to write scratch files to one shared
+session directory. A round-7 reviewer wrote its own `classify.py` (a transcript hit-counter) over the
+gate fix's `classify.py` (the payload classifier) — same name, no namespacing, no collision detection.
+The source survived only because it had already been copied into a scratch clone under a different
+name. The loss would have been silent, and the worse shape is the one that did not happen: reading
+another agent's file as if it were one's own and drawing conclusions from it. **Give each dispatched
+agent its own subdirectory, or require a per-agent filename prefix** — a shared flat scratch directory
+across parallel agents is a silent data-loss vector, and "write only under <scratch>" is not
+sufficient instruction.
+
 ## 2026-09-09 — a CI check that had never been able to fail, and what found it
 
 **It was found by planting a violation, not by reading.** The invisible-Unicode guard over
@@ -229,64 +394,32 @@ lists `[NS-30]` among the resolved; it reads "Shipped… but NOT closed in the f
   failing proxy for it in a repo where markdown IS the mechanism.** Now `[NS-48]`, deliberately not applied.
 - **`activeContext.md`'s binding dimension FLIPS between bytes and lines, so read BOTH live.** Condensing `[NS-47]` to a pointer bought byte headroom back; a later trim removed lines and inverted it again. No absolute is quoted here on purpose — every figure this bullet has carried went stale within days, including a "149 of 150 lines, exactly ONE more fits" that a trim on this same branch invalidated in both directions at once.
   Read each margin as `pmb-health.yml`'s cap minus the live measure — `git cat-file -s` for bytes, `wc -l` for lines — and act on whichever is tighter, not whichever this file last named. Bytes have been the tighter of the two throughout, but the ratio is deliberately not quoted: an earlier draft said "roughly 8x" and the very edit that introduced it moved the figure to ~5.8x. A trim that counts only one dimension will not help.
-## 2026-08-31 (post-review) — the gap fixes, and the one finding that came from reading ACR's source
+## Relocated 2026-08-29 → 2026-08-31 — four sections moved verbatim 2026-09-11
 
-Committed `6cae656` on an Approve verdict with eight accepted limits; these close five of them. What the
-commit message cannot carry:
+Moved to `docs/archive/progress-2026-08-29-to-31-gap-fixes-and-durable-lessons.md` **verbatim**, not
+summarised. **Delta, not a level: 12,448 bytes moved out.** Without the move this file could not have
+accepted the 2026-09-11 entry at all — the same cap deadlock recorded on 2026-08-23 and 2026-08-28.
+No level is quoted, and none should be reconstructed from this stub: read both margins live against
+`pmb-health.yml`'s caps.
 
-- **The most valuable finding of the whole review came from the ONE reviewer who opened the tool's source.**
-  Five domain agents reasoned about ACR from this repo's prose; Opposition read
-  the ACR build via the global `npm link` — NOT a `node_modules/` directory inside this repo, which does not exist. Measured there: `security` and `adversarial` both carry
-  `exclude: ['**/*.md']`, and the whole-agent "skipped by agentPolicy" line renders **only when EVERY changed
-  file matches** the exclude. So a markdown-dominant diff containing **one** non-markdown file emits **no Policy
-  line at all** while those agents review only that file. `filteredFiles` records it; the markdown formatter
-  never prints it. **That is the shape of most diffs in this repo**, and none of row 0's three signals fires on
-  it. A fourth signal was added TO THE TABLE and, in that first pass, **NOT to the procedure** — step 3 carried no
-  `--format json`, so the row instructed a check the workflow could not produce. Caught by four review domains and
-  fixed in the follow-up; recorded here because the first version of this entry called it closed. **Generalises: reviewing a tool's
-  behaviour from your own documentation of it cannot find a gap your documentation shares.**
-- **EVERY "ACR 1.15.0" MEASUREMENT IN THIS RECORD IS MISLABELLED, and the peer supplied the sharper rule.**
-  **THIS REPO ALREADY HAD THIS RULE.** `[NS-27]` recorded it on 2026-08-19 — *"Pin the version or record the SHA
-  before treating any ACR run as evidence"* — in `docs/archive/context-2026-08-22-verbose-next-steps.md`, live-pointed
-  from `activeContext.md`. The pointer was not followed; the rule was re-derived via an ACR source dive and a peer
-  round-trip and then credited to the peer. **A direct counter-example to `[NS-47]`(d)**, committed the same session,
-  which claims relocate-verbatim-plus-pointer means only what is LOADED loses detail. Here the detail was archived,
-  pointed at, on-topic — and still not retrieved. Resolution decayed on the READ path exactly as the objection that
-  killed Lumina's time-decay predicted. Mechanism, restated:
-  `ai-review-agent` here is an `npm link` into their working tree: `dist/` is whatever branch they have checked
-  out, built, changing without warning. **A version string is not an artifact identity.** My morning note only
-  said "a run straddling a rebuild has no clean signal" — too weak. Findings stand (they verified the
-  markdown-exclusion path in their own `src/`), but the labels become *linked working tree, commit
-  indeterminate*. `npm pack ai-review-agent@<v>` for anything asserted about the PUBLISHED tool. This also
-  closes the `earlyExit` discrepancy outright: the gating is on their `fix/early-exit-visibility` branch and I
-  read the memory-bank branch — my refusal to resolve it by guessing was the correct call on the evidence.
-- **I checked the peer's grep instead of accepting it, and it was overstated in a way that mattered.** They
-  reported `filteredFiles` reaching ZERO surfaces ("all producers, no renderer anywhere"). True of the four
-  RENDERED surfaces — but `runner.js` spreads the field onto the RESULT OBJECT and `formatJson()` is a raw
-  `JSON.stringify(result)`, so `--format json` carries it with no formatter opting in. **Had I taken the grep,
-  my new exit-0 fourth signal would have instructed a reviewer to check a field that does not exist.** A grep
-  over renderers cannot see a value that ships by being a property of the serialised object.
-- **A cause I had listed under exit 1 does not produce exit 1.** Measured against 1.15.0: a missing diff file
-  exits **4**. Three of the five listed causes measured correct, one wrong, one unmeasurable at this version —
-  against a cell that claimed "all four cases measured". Removed from row 1; row 4 was right all along. The
-  five-vs-four arithmetic was flagged by three domains and resolved by none of them; measuring resolved it.
-- **Every byte figure this session produced was CRLF-biased.** `.gitattributes` is `eol=lf`, `progress.md` is
-  CRLF in the worktree, so `wc -c` overstates by exactly one byte per line against the blobs CI measures
-  (33,375 vs 32,996 = +379 for 379 lines). The archive header's 30,448 was 213 bytes high for 213 lines. All
-  figures re-measured with `git cat-file -s`. **Measure the artifact CI measures, not the one on your disk.**
-- **Seven stale levels replaced with DELTAS, not refreshed levels** — Opposition's point, and the one I would
-  have got wrong: refreshing is the remediation that already failed twice at `pmb-health.yml:190-193`. A
-  re-measured level is true at the moment of correction and false after the next write.
-- **The parity glob fix was mutation-proved to close the hole, not merely to look right.** `*.md` → `*` with
-  `[ -f ]`, matching `mb.sh`'s discovery exactly. The mutation that was previously INVISIBLE (a non-`.md`
-  template file) now goes RED, as does a non-`.md` live orphan. **Found independently by four of five domains**
-  — the strongest corroboration signal in the review.
-- **Table rationale moved out of the cells into the `Why` block.** Two cells had reached ~800 characters,
-  mixing instruction with provenance and history, in a lookup table read under time pressure mid-review.
-- **NOT fixed, and deliberately:** the
-  Coverage Footer gained a `too old` value but ACR availability is still decided in two places with different
-  criteria; nothing still tests `change-review.md`'s semantics, and the executable half (`mb preflight` reads
-  `ACR_VER` and never compares it) is untouched.
+Citation survival grep-verified before the move; each original heading is preserved below and in the
+archive file, so existing `progress.md` <date> references still resolve.
+
+**STILL OPEN — carried forward, not relocated.** The four sections below are archived narrative, but
+four of their findings are self-marked unfixed, and `CLAUDE.md` loads `memory-bank/` only, so the
+archive cannot hold a live rule. (1) **The BLOCK-tier hook receives TRUNCATED payloads**:
+`.pmb-hook-errors.log` has carried `Unterminated string` since 2026-08-17, the hook then falls back
+to matching raw text, and **a BLOCK substring past the truncation point is not seen** — undiagnosed,
+and separate from the OEM-code-page fix. (2) **Mutate a scratch copy, not the shared tree** —
+copy-aside-and-restore can revert a peer's concurrent edit, and checksum-verifying the restore proves
+your copy intact, not that nobody else wrote. (3) ACR availability is decided in two places with
+different criteria, and `mb preflight` reads `ACR_VER` without ever comparing it. (4) `show_slim()`
+and `Show-Slim` exist in both shells and are dispatched from neither.
+
+- **2026-08-31 (post-review) — the gap fixes, and the one finding that came from reading ACR's source**
+- **2026-08-30 — two durable lessons; the change itself is in the commit message**
+- **2026-08-30 — Contract 1: what the commit message cannot carry**
+- **2026-08-29 — absence-claim scope rule (`a11e4df`); a review-gate defect recorded**
 
 ## Relocated 2026-08-31 — “what four Opposition rounds cost, and the one rule worth keeping”, moved verbatim 2026-09-09
 
@@ -296,89 +429,6 @@ demanded exactly what the cap forbade, and the gate was measured exiting 2 befor
 **18,208 bytes and 173 lines moved out.** Stated as a delta rather than
 before/after totals, which decay on the next edit. Second occurrence of this bind; see the archive
 file's header for why that is structural rather than incidental.
-
-## 2026-08-30 — two durable lessons; the change itself is in the commit message
-
-- **The startup-context ratchet was worktree-blind, and worktrees are the common multi-session
-  shape here.** It measured whichever `memory-bank/` sat beside it. From a subworktree that copy is
-  stale by construction — `CLAUDE.md` forbids updating memory-bank there — so the gate reported
-  **69,594 bytes "under" origin/main** when nothing had shrunk: a falsely reassuring green on the
-  one check meant to be unfoolable, in exactly the case that happens most (a side job spun up in a
-  worktree while the main session runs). Now resolved via `git rev-parse --git-common-dir`, so all
-  four readings — two shells x main-checkout/worktree — agree. **The general rule: a measurement
-  that varies by which session takes it is not a gate.**
-- **Correction to a claim I made earlier today: the review marker does NOT silently invalidate.**
-  I said a peer session's edit in a shared checkout would silently void an approved marker.
-  Verified false by reading `scripts/review-reminders.sh` and simulating both states: the hash is
-  bound to the WHOLE-tree diff, so any mismatch takes the `deny` branch with an explicit "the
-  working tree changed since then; re-run" message. It is fail-safe — it can cost a review pass,
-  never admit unreviewed code. The real multi-session cost is **wasted review passes**, not a
-  bypass.
-- **The genuine lost-update hazard is explicitly out of scope in this repo's own design.**
-  `worktree-concurrent-session-claims` (unmerged; only two comments reference it in live `scripts/`)
-  states in its own guide that claims "do nothing about two sessions concurrently editing
-  `activeContext.md` and losing an update. Different problem, not addressed here." So two sessions
-  in ONE checkout remain unprotected by design, not by oversight. **Practice consequence:
-  mutation-testing that copies a live file aside and restores it can revert a peer's concurrent
-  edit — checksum-verifying the restore proves my copy is intact, not that nobody else wrote in
-  between. Mutate a scratch copy, not the shared tree.**
-
-- **The BLOCK-tier hook receives TRUNCATED payloads, and that is still open.** Separate from the
-  OEM-code-page decoding bug fixed here. `.pmb-hook-errors.log` carries the same signature from
-  `2026-08-17` through today — `Unterminated string`, `Unexpected end when deserializing object` —
-  i.e. the JSON arrives incomplete, for a reason not diagnosed. On that path the hook falls back to
-  matching the raw text, so **a BLOCK substring past the truncation point is not seen.** The decoding
-  fix does not touch this and must not be read as having characterised the stdin path; the scope
-  limit is stated in the hook's own comment. Recorded here rather than `activeContext.md` because
-  that file has 484 bytes of headroom and this is a finding spanning commits, which is what this
-  file is for.
-
-Per the write-rate rule added to `standards/MEMORY-BANK.md` in this same change, what the commits
-already carry is not repeated here. Only what they cannot:
-
-- **Disproving one cause is not finding one.** `dangerous-commands.Tests.ps1:546` failed for weeks
-  with "cause unknown" after the leading hypothesis (`ConvertTo-Json` escaping non-ASCII) was
-  correctly tested and disproved — and the disproof ended the investigation instead of redirecting
-  it. What located the bug was arithmetic on the observed numbers: 275 = 5 + (135 x 2), every
-  high-bit byte becoming two, which is double-encoding and not escaping at all. **When a hypothesis
-  is disproved, measure the residual before proposing another mechanism.**
-- **When a correct threshold cannot be enforced yet, enforce monotonicity instead of waiting.** The
-  25 KB startup-context ceiling stayed advisory for months on sound reasoning — the repo is ~4x over
-  and failing on it would block the work needed to get under it. What went unnoticed is that
-  "advisory" was read as "may grow", and it did. Enforcing the DIRECTION costs nothing, cannot block
-  a reduction, and would have caught the growth. Generalises to any cap a codebase is already over.
-- **`projectbrief.md`'s Tier-1 goal now describes a mechanism that does not exist**, and `CLAUDE.md`
-  documents the read-all it actually does as interim. That gap is deliberate and OPEN, not settled;
-  `[NS-35]` decisions 1 and 3 are where it gets closed.
-
-## 2026-08-30 — Contract 1: what the commit message cannot carry
-
-- **Threshold parity was never measurement parity.** `mb.ps1` sized files with `Measure-Object
-  -Line`, which skips blank lines: `activeContext.md` read **118** where `wc -l` read **146**. All
-  three statements of the caps agreed the whole time, so every parity test passed while the two
-  shells disagreed about the number being compared. Found by RUNNING both, not by reading either.
-  **Generalises: a parity test over CONSTANTS says nothing about the MEASUREMENT applied to them.**
-- `show_slim()`/`Show-Slim` exist in both shells and are dispatched from neither. Pre-existing,
-  unfixed, advisory.
-- `/change-review` and `/code-review` use `Basis` for orthogonal things — detector provenance vs
-  evidentiary strength — so the absence-claim rule could not be forwarded wholesale; it hangs off
-  change-review's **Evidence** field, collision documented in place.
-
-## 2026-08-29 — absence-claim scope rule (`a11e4df`); a review-gate defect recorded
-
-- **The rule, its placement rationale and its four accepted limits are in `a11e4df`'s commit message
-  and are not restated here.** What that message does not cover follows.
-- **`[NS-45]` — the review gate destroys its marker before the guarded verb runs.**
-  `review-reminders.sh:92-93` writes `.pending-commit-presha` at PreToolUse;
-  `review-reminders-post.sh:40` and `.ps1:43` delete it on entry to the commit branch, *before* the
-  presha==postsha test that gates reissue — so its survival proves that branch never ran. A surviving
-  presha then lets a later text-matching command mint a marker for an unreviewed tree.
-  **Basis is INFERRED, not measured.** The chain is read from source; the bypass was never reproduced.
-  What was observed is narrower: an orphaned presha survived a run on 2026-08-29, and two more dated
-  2026-07-26 sit in worktrees.
-- **The defect lives in an untested branch.** `tests/test-review-reminders.sh` covers "the commit ran
-  and failed, HEAD unchanged" but nothing simulates the presha surviving because PostToolUse never
-  fired at all; `review-reminders-post.ps1`'s reissue path has no Pester coverage.
 
 ## Review rounds 4-9 (2026-08-23 → 2026-08-25) — relocated 2026-08-26, detail in `docs/MEMORY-BANK-PARADIGM-REVIEW.md`
 
