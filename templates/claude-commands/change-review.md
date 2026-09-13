@@ -56,7 +56,7 @@ Run only checks that are **fully local and offline** (no registry fetch, no modu
 - The 3 greps from `.github/workflows/pmb-health.yml`'s "Rules-File Integrity" job (invisible Unicode, hidden HTML comments, LLM bypass phrases) against `standards/`, `CLAUDE.md`, `templates/CLAUDE.md`
 - The credential grep and the placeholder (`TBD`/`TODO`) grep from the "Forbidden Patterns" job against the same file sets that job covers
 - "Template Integrity"'s check that hook scripts referenced in `templates/.claude/settings.json` exist under `templates/`
-**Run them with `bash scripts/baseline-health.sh` rather than by hand.** That script contains no copy of any check — it locates each one by name in `.github/workflows/pmb-health.yml`, lifts the body of its `run:` block and executes it verbatim under CI's own shell flags, so a ratcheted cap takes effect here with no edit anywhere. It covers the three greps, the credential and placeholder greps, Template Integrity, and the **whole** File Size job including the relocation-destination byte cap that hand-written lists forget. **Read its exit code and do not collapse the four:** `0` all passed; `1` a real check failed; `2` the workflow is absent, so every row is **Skipped** and nothing was verified — do not substitute remembered thresholds and do not report a pass, since this command ships to repositories that do not receive `pmb-health.yml`; `3` a step could not be extracted because the workflow was renamed or re-indented, which is **not** a passing tree. One caveat to the "offline" rule above: the File Size job's startup-context ratchet makes one shallow `git fetch --depth=1 origin main`, which fails soft.
+**Run them with `bash scripts/baseline-health.sh --no-fetch` rather than by hand.** That script contains no copy of any check — it locates each one by name in `.github/workflows/pmb-health.yml`, lifts the body of its `run:` block and executes it verbatim under CI's own shell flags, so a ratcheted cap takes effect here with no edit anywhere. It covers the three greps, the credential and placeholder greps, Template Integrity, and the **whole** File Size job including the relocation-destination byte cap that hand-written lists forget. **Read its exit code and do not collapse the four:** `0` all passed; `1` a real check failed; `2` the workflow is absent, so every row is **Skipped** and nothing was verified — do not substitute remembered thresholds and do not report a pass, since this command ships to repositories that do not receive `pmb-health.yml`; `3` a step could not be extracted because the workflow was renamed or re-indented, which is **not** a passing tree. `--no-fetch` is what makes the "offline" rule above actually true: without it, the File Size job's startup-context ratchet makes one shallow `git fetch --depth=1 origin main`; the flag neutralizes that line before the body runs, so the ratchet compares against whatever `origin/main` is already resolvable locally — understating growth on a stale baseline, never overstating it — instead of reaching the network.
 
 Do **not** attempt to replicate Semgrep (registry fetch), PSScriptAnalyzer (`Install-Module` fetch), or gitleaks (network action) — those are correctly CI-only per this repo's own layering rule, and this skill can't reliably or quickly reproduce a network-dependent tool.
 
@@ -307,11 +307,14 @@ Give it:
 
 Instruct it to, in order:
 
-1. Re-run Step 3.5's Baseline Repo Health checks itself, reading each check's definition out of
-   `.github/workflows/pmb-health.yml` rather than accepting this orchestrator's report that they
-   passed, and compare against the results handed over above. A **result** that differs from CI is
-   informational, exactly as Step 3.5 says. A **discrepancy between what was reported and what the
-   checks actually produce** is not: report it as a finding on the ordinary Severity/Basis rules.
+1. Re-run Step 3.5's Baseline Repo Health checks yourself: `bash scripts/baseline-health.sh
+   --no-fetch`. Pass `--no-fetch` — you must not perform a repository write, and the flag neutralizes
+   the one `git fetch` an extracted body would otherwise run without disabling the check that fetch
+   feeds. Do not decline the run or fall back to hand-deriving the checks from
+   `.github/workflows/pmb-health.yml` instead — that is exactly the unreliable reimplementation Step
+   3.5 exists to avoid. Compare against the results handed over above. A **result** that differs from
+   CI is informational, exactly as Step 3.5 says. A **discrepancy between what was reported and what
+   the checks actually produce** is not: report it as a finding on the ordinary Severity/Basis rules.
    **If this orchestrator did not supply its Step 3.5 results at all, report that omission as a
    finding**, and apply the same rule to any other item the `Give it:` list requires that you did
    not receive — a disagreement is loud, a missing payload item is silent, and the report looks

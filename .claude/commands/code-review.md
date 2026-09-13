@@ -106,10 +106,12 @@ needs a 20-line `awk` function with a fence-parity and a per-line backtick-parit
 | `2` | the workflow is **absent** | Every row **Skipped**. Nothing was verified. Do **not** substitute remembered thresholds and do **not** report a pass — this command ships to repositories that do not receive `pmb-health.yml`. |
 | `3` | a step could not be **extracted** | The workflow was renamed or re-indented, so nothing ran. **This is not a passing tree.** Report it as a finding against the tooling. |
 
-It is **not** fully offline: the File Size job's startup-context ratchet runs one shallow
-`git fetch --depth=1 origin main`, which fails soft. Semgrep, PSScriptAnalyzer and gitleaks are
-deliberately absent from the script — each needs a registry fetch, module install or network action,
-and per this repo's layering rule they are correctly CI-only.
+It is **not** fully offline by default: the File Size job's startup-context ratchet runs one shallow
+`git fetch --depth=1 origin main`, which fails soft. Pass `--no-fetch` to neutralize that (and any
+other `git fetch` an extracted body happens to contain) when this runs as a subagent that must not
+perform a repository write — see Step 5 instruction 1, which requires it. Semgrep, PSScriptAnalyzer
+and gitleaks are deliberately absent from the script — each needs a registry fetch, module install or
+network action, and per this repo's layering rule they are correctly CI-only.
 
 **Report the results; do not act on them.** List each check as a one-line pass/fail in the Step 6
 report, marking each failure diff-caused or pre-existing. If a cap fails on a file this diff
@@ -186,12 +188,15 @@ Give it:
 
 Instruct it to, in order:
 
-1. Re-run Step 3.5's deterministic checks itself, reading each check's definition out of
-   `.github/workflows/pmb-health.yml` rather than accepting this orchestrator's report that they
-   passed. The orchestrator reporting PASS is a claim like any other, and this command's premise is
-   that claims get checked rather than believed — an orchestrator's claim about its own work least
-   of all. Re-running costs seconds. Report any disagreement with the orchestrator's Step 3.5
-   results as a finding.
+1. Re-run Step 3.5's deterministic checks yourself: `bash scripts/baseline-health.sh --no-fetch`.
+   Pass `--no-fetch` — you must not perform a repository write, and the flag neutralizes the one
+   `git fetch` an extracted body would otherwise run (see Step 3.5's NETWORK note) without disabling
+   the check that fetch feeds. Do not decline the run or fall back to hand-deriving the checks from
+   `.github/workflows/pmb-health.yml` instead — that is exactly the unreliable reimplementation Step
+   3.5 exists to avoid. The orchestrator reporting PASS is a claim like any other, and this command's
+   premise is that claims get checked rather than believed — an orchestrator's claim about its own
+   work least of all. Re-running costs seconds. Report any disagreement with the orchestrator's Step
+   3.5 results as a finding.
 
    **If this orchestrator did not supply its Step 3.5 results at all, report that omission as a
    finding too**, and apply the same rule to any other item the `Give it:` list requires that you

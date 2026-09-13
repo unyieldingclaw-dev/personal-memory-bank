@@ -331,6 +331,60 @@ assert_contains "$out" "NOT scanned" "broken grep pattern: says plainly the file
 assert_contains "$out" "broken check, not a pass" "broken grep pattern: names it a broken check rather than a clean tree"
 assert_not_contains "$out" "baseline-health: PASS" "broken grep pattern: never reports an overall pass"
 
+# ---------------------------------------------------------------------------
+# 10. --no-fetch must (a) genuinely stop every `git fetch` an extracted body
+#     would otherwise run — proved by an executing shim, not by reading the
+#     script's own interceptor — and (b) leave the ratchet able to
+#     genuinely FAIL. (b) matters because (a) alone is cheap to fake: a flag
+#     that also disabled the comparison would pass (a) trivially. new_sandbox
+#     clones via `git clone`, which fetches every ref of the source repo, not
+#     only its checked-out branch — so origin/main is already resolvable with
+#     zero network calls, proved by the CONTROL test above (test 1) reporting
+#     an origin/main-relative margin with no --no-fetch and no prior fetch in
+#     this suite. That is what makes (b) provable in the same sandbox: growing
+#     the ratchet's own input can only reach a real FAIL if --no-fetch left
+#     the origin/main comparison itself intact.
+# ---------------------------------------------------------------------------
+SBX_D=$(new_sandbox) || { echo "  FAIL: could not create sandbox"; print_summary; exit 1; }
+SANDBOXES+=("$SBX_D"); SBX="$SBX_D/repo"
+
+# (a) — a `git` shim that logs its own invocation, then execs through to the
+# real git so the run's own plumbing (rev-parse, cat-file, ls-tree) still
+# succeeds. Only the log is inspected; the run's PASS/FAIL is unaffected by
+# the shim's presence, which is what lets this same sandbox carry (b) below.
+SHIM_D=$(mktemp -d) || { echo "  FAIL: could not create shim dir"; print_summary; exit 1; }
+SANDBOXES+=("$SHIM_D")
+SHIM_LOG="$SHIM_D/log.txt"
+REAL_GIT=$(command -v git)
+cat > "$SHIM_D/git" <<SHIMEOF
+#!/bin/bash
+echo "\$*" >> "$SHIM_LOG"
+exec "$REAL_GIT" "\$@"
+SHIMEOF
+chmod +x "$SHIM_D/git"
+
+out=$(cd "$SBX" && PATH="$SHIM_D:$PATH" bash scripts/baseline-health.sh --no-fetch 2>&1); rc=$?
+fetch_calls=$(grep -c '^fetch' "$SHIM_LOG" 2>/dev/null || true)
+assert_equals "0" "$rc" "--no-fetch on a clean clone: still exits 0"
+assert_equals "0" "${fetch_calls:-0}" "--no-fetch: zero git-fetch invocations reach git, proved by an executing shim rather than by reading the script's own interceptor"
+assert_contains "$out" "NOTE:" "--no-fetch: discloses the neutralization rather than silently absorbing it"
+
+# (b) — grow CLAUDE.md's WORKING COPY (uncommitted) past origin/main's
+# aggregate. CEIL is read live via `wc -c` on the working tree; BASE_CEIL
+# comes from `git cat-file ... origin/main:...`, already resolvable per the
+# header above with no fetch of any kind. 20 lines of 1000 characters add
+# ~20 KB — enough to clear the ~15 KB margin the control test (test 1)
+# reports against this same origin/main, while staying at 221 total lines,
+# nowhere near the unrelated 500/800-line markdown caps a few blocks below
+# in the same step. That isolation was verified directly (not asserted here
+# blind): the only FAIL line the step produces for this mutation is the
+# ratchet's own "startup context grew" message.
+awk 'BEGIN{for(i=0;i<20;i++){s=""; for(j=0;j<1000;j++) s=s "x"; print s}}' >> "$SBX/CLAUDE.md"
+out=$(cd "$SBX" && bash scripts/baseline-health.sh --no-fetch 2>&1); rc=$?
+assert_equals "1" "$rc" "--no-fetch: a genuinely grown aggregate still fails the ratchet — neutralizing the fetch does not neuter the comparison"
+assert_contains "$out" "FAIL: startup context grew" "--no-fetch: reports the ratchet's own growth message, not a generic failure"
+assert_not_contains "$out" "SKIP:  origin/main baseline unavailable" "--no-fetch: does not fall back to advisory-skip when origin/main was already resolvable locally"
+
 WF="$REPO_ROOT/.github/workflows/pmb-health.yml"
 
 # ANTI-VACUITY FLOOR, and it is the whole point of this block rather than a nicety. The enumeration
