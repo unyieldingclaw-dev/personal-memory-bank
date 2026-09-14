@@ -48,16 +48,19 @@ trap cleanup EXIT
 # and the cleanup trap iterated nothing — measured, five full repo clones (~80 MB) leaked per run.
 # The path is returned instead, and each call site appends it in the parent shell.
 new_sandbox() {
-    local d
+    local d main_oid
     d=$(mktemp -d) || return 1
     git -C "$REPO_ROOT" clone -q "$REPO_ROOT" "$d/repo" 2>/dev/null || return 1
     # Remote-tracking refs are not advertised by a clone source. In CI the checkout is detached,
     # so origin/main exists only as refs/remotes/origin/main and a nested clone silently loses it.
-    # Transfer that already-fetched ref explicitly; this is local setup, not a network fetch by
-    # baseline-health.sh, and keeps the --no-fetch ratchet test meaningful in both topologies.
-    if git -C "$REPO_ROOT" rev-parse --verify refs/remotes/origin/main >/dev/null 2>&1; then
-        git -C "$d/repo" fetch -q "$REPO_ROOT" \
-            refs/remotes/origin/main:refs/remotes/origin/main 2>/dev/null || return 1
+    # Fetch its object, then set and verify the ref separately: a direct refspec transfer from a
+    # shallow source can reject the ref update while still returning success. This is local setup,
+    # not a network fetch by baseline-health.sh, and keeps the --no-fetch ratchet meaningful.
+    if main_oid=$(git -C "$REPO_ROOT" rev-parse --verify refs/remotes/origin/main 2>/dev/null); then
+        git -C "$d/repo" fetch -q --no-tags "$REPO_ROOT" "$main_oid" 2>/dev/null || return 1
+        git -C "$d/repo" cat-file -e "$main_oid^{commit}" 2>/dev/null || return 1
+        git -C "$d/repo" update-ref refs/remotes/origin/main "$main_oid" || return 1
+        [ "$(git -C "$d/repo" rev-parse --verify refs/remotes/origin/main 2>/dev/null)" = "$main_oid" ] || return 1
     fi
     cp "$SCRIPT" "$d/repo/scripts/baseline-health.sh" || return 1
     # The clone carries COMMITTED state. The script is copied in above precisely

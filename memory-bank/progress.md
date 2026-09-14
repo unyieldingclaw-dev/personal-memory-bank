@@ -70,18 +70,22 @@ the archive file, so existing `progress.md` <date> references still resolve.
 - **2026-08-28 (fix) — `mb init` agent delivery closed; the exported Work-MB briefs found stale**
 - **2026-08-28 (eviction) — `activeContext.md` resolved-entry pass; its own finding was false**
 
-## 2026-09-14 — baseline-health's CI-only failure was a nested-clone ref assumption
+## 2026-09-14 — baseline-health's CI-only failure was a shallow nested-clone ref assumption
 
 `tests/test-baseline-health.sh` passed locally but its two `--no-fetch` ratchet assertions failed in
 `MB Command Tests`. Reproducing Actions' actual topology (shallow checkout, `origin/main` fetched,
 detached HEAD, no local branch) produced 42 pass / 2 fail: `new_sandbox` cloned the checkout and
 assumed that carried `origin/main`. It does not -- clone sources do not advertise remote-tracking
 refs, so the nested sandbox could not perform the comparison once `--no-fetch` suppressed recovery.
+The first correction used a direct local refspec transfer and passed a detached but non-shallow
+reproduction. It still failed in CI: from a shallow source Git copied the object, rejected the ref
+update, and returned success, leaving the same advisory skip hidden behind a green setup command.
 
-**Fixed in the harness only:** `new_sandbox` explicitly transfers the source checkout's already-
-fetched `refs/remotes/origin/main` into each sandbox via the local repository path. This performs no
-network access and leaves `scripts/baseline-health.sh`'s fetch interceptor unchanged. The identical
-detached-topology reproduction is green at 44 pass / 0 fail after the change.
+**Fixed in the harness only:** `new_sandbox` fetches the source checkout's already-fetched main
+object via the local repository path, then creates and verifies `refs/remotes/origin/main` as a
+separate step. This performs no network access and leaves `scripts/baseline-health.sh`'s fetch
+interceptor unchanged. The identical shallow, detached topology is green at 44 pass / 0 fail after
+the change.
 
 ## 2026-09-13 — check 15's real cause found and fixed: `$env:USERPROFILE`, not the bracket glob
 
