@@ -32,6 +32,30 @@ The `Basis` field classifies the epistemic origin of a finding — how the agent
 | `INFERRED` | Agent reasoned from a code pattern; behavior not directly confirmed |
 | `SPECULATIVE` | Suspected risk; consequence is uncertain |
 
+### Absence and attribution claims
+
+For a claim that something does *not* exist — is not referenced, appears in no other file, has no
+test, is unreachable — or that one thing cost or caused another, `VERIFIED` requires the **scope
+actually searched**, stated as the command, in the finding itself. The conclusion alone is not a Basis.
+
+- Not `VERIFIED` — the conclusion alone: *"no test covers THING"*
+- `VERIFIED` — the conclusion **plus** the command that established it and what it returned:
+  *"no test covers THING — `grep -rl 'PATTERN' PATHS` returned OUTPUT"*
+
+For attribution, state the decomposition and show the parts sum to the measured whole: *"this change
+cost N bytes"* is not a Basis; *"N net = A from the change itself, B from unrelated edits in the same
+commit, A + B = N against the measured whole"* is.
+
+**Match the command's reach to the assertion.** A filename filter cannot establish a claim about file
+*contents*; a single-directory search cannot establish a claim about the repository; a pattern written
+for the wrong syntax returns zero matches indistinguishable from a true absence. Where reach and
+assertion differ the finding is **unsupported** — not necessarily wrong, but not established — even
+though the command ran and its output was reported honestly — and the author cannot catch it by
+re-reading, because re-reading re-derives the claim inside the same scope. Only a stated scope lets
+a second reader see the gap.
+
+Run the command before writing its output. An unrun example is the same defect as an unrun test.
+
 ## Evidence Requirements
 
 Evidence must include a `file:line` reference. Prose alone ("this may cause...") is not valid evidence.
@@ -120,6 +144,7 @@ check discriminates. The vacuous test above would have passed such a gate cleanl
 - No Testing assessment
 - A Testing assessment that offers a non-discriminating test as evidence for a guard
 - A completion claim presented as verified with no command and no output behind it
+- An absence or attribution claim stated without the scope actually searched, as the command
 - No Opposition review
 - Repo mutation during review without explicit user request
 

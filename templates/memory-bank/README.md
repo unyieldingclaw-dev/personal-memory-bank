@@ -30,7 +30,7 @@ The AI reads all files in this directory at the start of every conversation, ens
 - `systemPatterns.md`: Consolidate similar patterns
 
 ### When Context Fills Up
-At 80% context, type "Handoff" and the AI will:
+At 40% context, type "Handoff" and the AI will:
 1. Create `handoff.md` in project root
 2. Stop working
 3. You start a new chat

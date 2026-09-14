@@ -384,7 +384,7 @@ show_clean() {
     # Slim check
     # WHY progress.md is checked here too, not just activeContext.md: mb doctor's own
     # File Sizes check (check_size, ~line 809) already measures progress.md against a
-    # 400-line cap -- this display only ever showed activeContext.md, so running `mb clean`
+    # 600-line cap -- this display only ever showed activeContext.md, so running `mb clean`
     # without also running `mb doctor` gave a false "maintenance pass complete" impression
     # even when progress.md was well over its own limit. Same thresholds as mb doctor's
     # check_size() and pmb-health.yml's CI file-size job, kept in sync deliberately.
@@ -406,8 +406,8 @@ show_clean() {
     PROGRESS_PATH="$MEMORY_BANK_PATH/progress.md"
     if [ -f "$PROGRESS_PATH" ]; then
         PROGRESS_LINES=$(wc -l < "$PROGRESS_PATH" | tr -d ' ')
-        echo "progress.md: $PROGRESS_LINES lines (max: 400)"
-        if [ "$PROGRESS_LINES" -gt 400 ]; then
+        echo "progress.md: $PROGRESS_LINES lines (max: 500)"
+        if [ "$PROGRESS_LINES" -gt 500 ]; then
             echo -e "${RED}ACTION NEEDED: File is over limit!${NC}"
         elif [ "$PROGRESS_LINES" -gt 250 ]; then
             echo -e "${YELLOW}RECOMMENDED: Consider archiving old entries${NC}"
@@ -464,16 +464,47 @@ invoke_commit() {
     # WHY: Detect subworktrees so we refuse memory-bank/ mutations from the wrong root.
     COMMON_GIT=$(git rev-parse --git-common-dir 2>/dev/null || true)
     LOCAL_GIT="$PWD/.git"
+    # An empty COMMON_GIT is the definitive not-in-a-repo signal, and it is answered here rather
+    # than inferred from the `git status` call below, which can also fail on an unreadable index
+    # -- a different condition that deserves a different message. Checked BEFORE the subworktree
+    # comparison because it is the more fundamental case. "Not a git repository" is the wording
+    # `mb doctor`'s Check 1 already uses for this condition -- at WARN there, ERROR here, because
+    # doctor is reporting and this command cannot proceed. (`mb status` does NOT check git state
+    # at all; an earlier version of this comment claimed it did.)
+    if [ -z "$COMMON_GIT" ]; then
+        echo -e "${RED}[ERROR] Not a git repository.${NC}"
+        echo -e "${YELLOW}Run mb commit from inside your project's git repository.${NC}"
+        echo ""
+        exit 1
+    fi
     if [ -n "$COMMON_GIT" ] && [ "$(realpath "$COMMON_GIT" 2>/dev/null)" != "$(realpath "$LOCAL_GIT" 2>/dev/null)" ]; then
         echo -e "${RED}[ERROR] You are in a git subworktree.${NC}"
         echo -e "${YELLOW}Commit memory-bank/ from the main worktree root instead.${NC}"
         echo ""
-        return
+        # ADOPTER-VISIBLE CONTRACT CHANGE: this path returned 0 before the commit that added this
+        # comment (no date is written here -- git blame supplies it and cannot go stale). Both of this
+        # function's refusal paths now exit non-zero, because no rule distinguished them -- each
+        # means "mb commit did not commit and your location is wrong". A refusal reporting
+        # success is a false-success signal: `mb commit && echo done` printed "done" from a
+        # subworktree having committed nothing.
+        exit 1
     fi
 
-    # WHY: 2>/dev/null suppresses git errors if not in a repo (graceful handling).
-    # --porcelain gives machine-readable output stable across git versions.
-    STATUS=$(git status --porcelain "$MEMORY_BANK_PATH" 2>/dev/null)
+    # WHY: --porcelain gives machine-readable output stable across git versions.
+    # NOT `|| true`. The not-in-a-repo case exits above, so a failure reaching here is a real one
+    # (corrupt or unreadable index, permissions) -- and `|| true` would leave STATUS empty, which
+    # the `-z` test below reports as "No changes in memory-bank/ to commit", exit 0. Reproduced
+    # against a repo with genuine uncommitted memory-bank changes and a truncated .git/index:
+    # `|| true` claimed there was nothing to commit and succeeded. That is the same false-success
+    # shape the subworktree branch above exists to remove, so failing loudly here is the point.
+    # `2>/dev/null` hides git's message but NOT its exit status, which is why this needs an
+    # explicit handler at all: bare, under `set -e`, it aborted with only the banner printed.
+    if ! STATUS=$(git status --porcelain "$MEMORY_BANK_PATH" 2>/dev/null); then
+        echo -e "${RED}[ERROR] git status failed in this repository.${NC}"
+        echo -e "${YELLOW}memory-bank/ was NOT inspected — resolve the git error and retry.${NC}"
+        echo ""
+        exit 1
+    fi
 
     if [ -z "$STATUS" ]; then
         echo -e "${YELLOW}No changes in memory-bank/ to commit${NC}"
@@ -657,6 +688,27 @@ invoke_init() {
     for f in "$TEMPLATES_DIR/claude-commands"/*; do
         [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/commands/$(basename "$f")" ".claude/commands/$(basename "$f")"
     done
+
+    # .claude/agents/ — auto-discovered from the template directory, never enumerated.
+    #
+    # WHY init needs this and cannot lean on `mb upgrade`: a fresh adopter runs init and nothing
+    # else, and the slash commands init DOES deliver dispatch agents BY NAME.
+    # templates/claude-commands/code-review.md and change-review.md both call
+    # `subagent_type: opposition`, so init shipped a review gate whose sole authority was a file it
+    # never copied — and code-review.md's documented fallback ("paste the body of
+    # .claude/agents/opposition.md in as the prompt") named that same missing file, so the
+    # degradation path was broken by the identical gap. Latent until d795abb made the agent a named
+    # dependency instead of a prose request for "a capable model".
+    #
+    # Agent delivery was added to invoke_upgrade and scoped to the one path that prompted it; this
+    # is the same fix on the path adopters actually take. The *.md filter matches
+    # Get-TemplateDirFile's on the pwsh side so both shells discover the same set — without it a
+    # stray README or editor backup dropped here would be delivered by one shell and not the other.
+    if [ -d "$TEMPLATES_DIR/.claude/agents" ]; then
+        for f in "$TEMPLATES_DIR/.claude/agents"/*.md; do
+            [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/agents/$(basename "$f")" ".claude/agents/$(basename "$f")"
+        done
+    fi
 
     # standards/ files — governance contracts referenced at runtime by commands
     if [ -d "$TEMPLATES_DIR/standards" ]; then
@@ -960,11 +1012,17 @@ show_doctor() {
     # 6. File sizes
     OVER_LIMIT=false
     check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb clean'${NC}" && OVER_LIMIT=true || true; }
-    [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   150
-    [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 300
-    [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    400
+# THRESHOLD SOURCE OF TRUTH: .github/workflows/pmb-health.yml's MB_FAIL map. Aligned 2026-08-27
+# after an audit found THREE divergences, in both directions: progress.md was stricter here (400)
+# than in CI (600), so `mb doctor` WARNed on files the shipped docs certified compliant; while
+# projectbrief.md (150 vs 120) and techContext.md (400 vs 300) were LOOSER here than CI, meaning a
+# clean `mb doctor` could still be followed by a red build. Only the progress.md case had been
+# recorded. `tests/test-threshold-parity.sh` now fails if these drift from CI again.
+    [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   80
+    [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 120
+    [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    120
     [ -f "memory-bank/activeContext.md"  ] && check_size "memory-bank/activeContext.md"  150
-    [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       400
+    [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       500
     [ "$OVER_LIMIT" = false ] && echo -e "${GREEN}[OK]   File sizes within limits${NC}"
 
     # 7. Handoff
@@ -1140,11 +1198,42 @@ show_doctor() {
     fi
 
     # 15. Startup context size ceiling — WARN >15 KB, ERROR >25 KB
+    # WORKTREE-AWARE. CLAUDE.md's Memory Bank section makes the MAIN worktree's memory-bank/
+    # authoritative ("If in a git worktree: read memory-bank/ from the main worktree ... Never
+    # update or commit memory-bank/ from a subworktree"). Measuring the subworktree's own copies
+    # instead was demonstrated to report 69,594 bytes UNDER origin/main from a worktree whose
+    # memory-bank is simply stale and smaller -- a phantom reduction, and a falsely reassuring
+    # green in exactly the case this repo hits most: a side job spun up in a worktree while the
+    # main session runs. Resolving to the main worktree makes the number identical from every
+    # session on this repo, which is the only way it means anything.
+    # Default to "." and override ONLY on genuine success. The first version wrote
+    # `cd "$(git rev-parse --git-common-dir || echo .)/.."`, which on git failure resolves to the
+    # PARENT of the cwd, not the cwd -- and the -d guard did not revert it, because a sibling
+    # directory named memory-bank exists. Reproduced here: it resolved to /c/Users/Mizzo/Claude,
+    # where an unrelated Memory-Bank project sits, and NTFS is case-insensitive -- doctor would
+    # have measured a different project. This matches the PowerShell twin, which assigns only
+    # inside its success branch.
+    STARTUP_ROOT="."
+    # `|| true` is load-bearing under `set -e` (top of file): a bare assignment whose command
+    # substitution exits non-zero aborts the whole script, and `git rev-parse` exits 128 outside
+    # a repo. Without it `mb doctor` died right here at 128 and checks 15-25 never ran, while the
+    # PowerShell twin -- which cannot fail this way -- completed. `2>/dev/null` suppresses git's
+    # message, not its exit status, so it is not a substitute for this.
+    _mb_common="$(git rev-parse --git-common-dir 2>/dev/null)" || true
+    if [ -n "$_mb_common" ] && [ -d "$_mb_common" ]; then
+        _mb_cand="$(cd "$_mb_common/.." 2>/dev/null && pwd)"
+        if [ -n "$_mb_cand" ] && [ -d "$_mb_cand/memory-bank" ]; then STARTUP_ROOT="$_mb_cand"; fi
+    fi
     CEILING_BYTES=0
-    [ -f "CLAUDE.md" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "CLAUDE.md" 2>/dev/null || echo 0)))
-    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
-        [ -f "memory-bank/$f" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "memory-bank/$f" 2>/dev/null || echo 0)))
-    done
+    [ -f "$STARTUP_ROOT/CLAUDE.md" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "$STARTUP_ROOT/CLAUDE.md" 2>/dev/null || echo 0)))
+    # Enumerated, not listed -- CLAUDE.md defines startup context as CLAUDE.md plus EVERY file in
+    # memory-bank/, and memory-bank/README.md was in no list. Matches .github/workflows/pmb-health.yml.
+    # RECURSIVE, matching the ls-tree -r baseline below. A memory-bank/*.md glob is not, so the
+    # two sides enumerated different sets and a 30,000-byte memory-bank/sub/notes.md was
+    # demonstrated invisible to the ratchet. Both sides recurse now.
+    while IFS= read -r f; do
+        CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "$f" 2>/dev/null || echo 0)))
+    done < <(find "$STARTUP_ROOT/memory-bank" -name "*.md" -type f 2>/dev/null)
     CEILING_KB=$(awk "BEGIN {printf \"%.1f\", $CEILING_BYTES / 1024}")
     if [ "$CEILING_BYTES" -gt 25600 ]; then
         echo -e "${RED}[ERROR] Startup context ${CEILING_KB} KB exceeds 25 KB limit — compact memory-bank/ immediately${NC}"
@@ -1152,6 +1241,43 @@ show_doctor() {
         echo -e "${YELLOW}[WARN] Startup context ${CEILING_KB} KB exceeds 15 KB — consider slimming memory-bank/${NC}"
     else
         echo -e "${GREEN}[OK]   Startup context: ${CEILING_KB} KB (warn: 15 KB, fail: 25 KB)${NC}"
+    fi
+    # The 25 KB line above is ADVISORY. What actually fails CI is the ratchet: this aggregate may
+    # not exceed its value on origin/main. Mirrored here because a threshold enforced only in CI
+    # gives a developer no local signal before the build reds -- the failure this repo already paid
+    # for once, recorded above check_size() as "a clean mb doctor followed by a red build".
+    # Same six files and same comparison as .github/workflows/pmb-health.yml; silent when no
+    # baseline is reachable, since an unavailable baseline is not evidence of growth.
+    RATCHET_BASE=$(git cat-file -s "origin/main:CLAUDE.md" 2>/dev/null || echo 0)
+    RATCHET_OK=1
+    [ "$RATCHET_BASE" -gt 0 ] || RATCHET_OK=0
+    RATCHET_FILES=0
+    # NUL-delimited: the unquoted `for f in $(git ls-tree ...)` form word-splits a filename with a
+    # space into two nonexistent paths, both lookups fail, RATCHET_OK goes 0, and the ratchet
+    # silently degrades to advisory. Demonstrated on a real tree with "memory-bank/space file.md".
+    # Success is the cat-file EXIT STATUS, not `-gt 0`: a legitimately empty file returns "0",
+    # which the old test read as failure while the PowerShell twin read as success.
+    # git cat-file -s reports the blob's exact byte size with no decoding step, which is why both
+    # shells use it rather than reconstructing the blob (that diverged by 1,698 bytes once).
+    while IFS= read -r -d '' f; do
+        case "$f" in *.md) ;; *) continue ;; esac
+        if b=$(git cat-file -s "origin/main:$f" 2>/dev/null); then
+            RATCHET_BASE=$((RATCHET_BASE + b))
+        else
+            RATCHET_OK=0
+        fi
+        RATCHET_FILES=$((RATCHET_FILES + 1))
+    done < <(git ls-tree -rz --name-only origin/main -- memory-bank/ 2>/dev/null)
+    # RATCHET_OK is only cleared INSIDE the loop, so a baseline with CLAUDE.md but zero
+    # memory-bank files -- the ordinary first-adoption shape -- left it true and produced a
+    # ~94 KB false regression. A partially-unreachable baseline is unreachable.
+    [ "$RATCHET_FILES" -gt 0 ] || RATCHET_OK=0
+    if [ "$RATCHET_OK" = "1" ] && [ "$RATCHET_BASE" -gt 0 ]; then
+        if [ "$CEILING_BYTES" -gt "$RATCHET_BASE" ]; then
+            echo -e "${YELLOW}[WARN] Startup context is $((CEILING_BYTES - RATCHET_BASE)) bytes above origin/main. PMB's own CI gates on this; an adopter's memory-bank-size.yml does NOT, so treat it as advisory outside PMB.${NC}"
+        else
+            echo -e "${GREEN}[OK]   Startup-context ratchet: $((RATCHET_BASE - CEILING_BYTES)) bytes under origin/main${NC}"
+        fi
     fi
 
     # 16. Hook error log — check for recent hook failures
@@ -1309,7 +1435,8 @@ show_doctor() {
         [ ! -f "$p" ] && continue
         last_rev=$(grep -m1 '^last-reviewed:' "$p" 2>/dev/null | sed 's/last-reviewed:[[:space:]]*//' | tr -d ' \r')
         [ -z "$last_rev" ] || [ "$last_rev" = "YYYY-MM-DD" ] && continue
-        last_commit=$(git log -1 --format="%as" -- "$p" 2>/dev/null)
+        # || true: same set -e trap as the git-common-dir call in the startup-context block.
+        last_commit=$(git log -1 --format="%as" -- "$p" 2>/dev/null) || true
         [ -z "$last_commit" ] && continue
         # WHY: YYYY-MM-DD dates sort lexicographically — string comparison is safe.
         if [[ "$last_commit" > "$last_rev" ]]; then
@@ -1478,6 +1605,7 @@ show_doctor() {
     if [ -d "$AGENTS_DIR" ]; then
         MISSING_NAME_AGENTS=()
         MISMATCHED_NAME_AGENTS=()
+        UNPINNED_REVIEW_AGENTS=()
         for f in "$AGENTS_DIR"/*.md; do
             [ ! -f "$f" ] && continue
             STEM=$(basename "$f" .md)
@@ -1496,7 +1624,37 @@ show_doctor() {
             elif [ "$AGENT_NAME" != "$STEM" ]; then
                 MISMATCHED_NAME_AGENTS+=("$f (name: $AGENT_NAME, filename: $STEM)")
             fi
+            # Review agents that decide whether code ships must PIN a capable model. An unpinned
+            # agent silently inherits CLAUDE_CODE_SUBAGENT_MODEL (haiku in this repo), and a cheap
+            # review that finds nothing is indistinguishable from a thorough one that finds
+            # nothing. Found live 2026-08-26: security-reviewer had no model: field and had been
+            # running on haiku. Nothing structural caught it, so this check exists.
+            case "$STEM" in
+                security-reviewer|opposition)
+                    # Normalization mirrors AGENT_NAME above, deliberately and in full. The
+                    # trailing-CR strip matters on Windows checkouts; the quote strip matters
+                    # because mb.ps1's equivalent does .Trim('"', "'"), so without it a
+                    # frontmatter `model: "haiku"` is caught by pwsh and silently missed by
+                    # bash -- a fresh sh/ps1 divergence of exactly the class this branch exists
+                    # to remove. Both found 2026-08-27.
+                    AGENT_MODEL=$(echo "$FM" | grep -m1 '^model:' \
+                        | sed 's/^model:[[:space:]]*//' \
+                        | sed -E 's/\r$//' \
+                        | sed -E 's/[[:space:]]+$//' \
+                        | sed -E 's/^"(.*)"$/\1/' \
+                        | sed -E "s/^'(.*)'\$/\1/")
+                    if [ -z "$AGENT_MODEL" ]; then
+                        UNPINNED_REVIEW_AGENTS+=("$f (no model: — inherits CLAUDE_CODE_SUBAGENT_MODEL)")
+                    elif [ "$AGENT_MODEL" = "haiku" ]; then
+                        UNPINNED_REVIEW_AGENTS+=("$f (model: haiku — cost-optimized, invalid for a review gate)")
+                    fi
+                    ;;
+            esac
         done
+        if [ "${#UNPINNED_REVIEW_AGENTS[@]}" -gt 0 ]; then
+            echo -e "${YELLOW}[WARN] ${#UNPINNED_REVIEW_AGENTS[@]} review agent(s) not pinned to a capable model:${NC}"
+            for a in "${UNPINNED_REVIEW_AGENTS[@]}"; do echo "       $a"; done
+        fi
         if [ "${#MISSING_NAME_AGENTS[@]}" -gt 0 ]; then
             echo -e "${YELLOW}[WARN] ${#MISSING_NAME_AGENTS[@]} agent(s) missing name: in frontmatter — Claude Code will silently fail to register them:${NC}"
             for a in "${MISSING_NAME_AGENTS[@]}"; do echo "       $a"; done
@@ -1554,7 +1712,9 @@ show_doctor() {
         tokens=$((bytes / 4))
         printf "    %-37s ~%d tokens\n" "$file" "$tokens"
     done
-    COMMIT_30D=$(git log --before="30 days ago" -1 --format="%H" -- "${STARTUP_FILES[@]}" 2>/dev/null)
+    # || true: same set -e trap as the git-common-dir call above. Outside a repo git exits 128,
+    # which aborted doctor here and so the graceful else branch below could never run.
+    COMMIT_30D=$(git log --before="30 days ago" -1 --format="%H" -- "${STARTUP_FILES[@]}" 2>/dev/null) || true
     if [ -n "$COMMIT_30D" ]; then
         TOTAL_30D=0
         for f in "${STARTUP_FILES[@]}"; do
@@ -1891,9 +2051,29 @@ invoke_upgrade() {
         "scripts/_review-gate-lib.ps1"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
+        # Review helper, not a hook. Bash-only ON PURPOSE: it works by extracting check bodies out
+        # of the CI workflow and running them, so a PowerShell twin would be a SECOND implementation
+        # of that extractor — reintroducing exactly the runtime divergence this script removes. Git
+        # Bash ships with Git for Windows, which this repo already requires (the suite is all bash).
+        "scripts/baseline-health.sh"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
+        # WHY standards/*.md are NOT here, despite scripts/mb.ps1 listing them: moving them into
+        # this array was attempted on 2026-09-03 (completing the port a453a5a began in mb.ps1) and
+        # REVERTED the same day on a Critical review finding. TEMPLATE_OWNED force-overwrites via
+        # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md is STALE, not
+        # genericized: the live file describes the current `.claude/plans` -> `mb plan promote`
+        # flow while the template still describes the superseded one ([NS-19], first sentence,
+        # still open). Force-overwriting would therefore replace a correct governance file with a
+        # known-wrong one. Three of the fifteen are also on test-mirror-parity.sh's STD_DIVERGE_OK
+        # allowlist, which asserts they must KEEP diverging.
+        #
+        # The two runtimes therefore disagree, deliberately and visibly: mb.ps1 force-overwrites
+        # standards, mb.sh does not. That disagreement is now pinned by an assertion in
+        # tests/test-mirror-parity.sh rather than left as an undocumented fact. Reconciling it is a
+        # real decision -- it needs templates/standards/WORKFLOW.md fixed first -- not a drift to
+        # be silently closed.
     )
 
     # WHY: Slash commands are auto-discovered from templates/claude-commands/ instead of
@@ -1913,9 +2093,10 @@ invoke_upgrade() {
     ADVISORY_DIFF=(
         # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
         "CLAUDE.md"
-        # Agent definitions likely contain project-specific tool lists and instructions
-        ".claude/agents/researcher.md"
-        ".claude/agents/security-reviewer.md"
+        # WHY agent definitions are no longer listed here: they moved to ADVISORY_CREATE and are
+        # auto-discovered — see the block immediately after that array. ADVISORY_DIFF SKIPS any
+        # target missing in the project, which is precisely wrong for agents: a newly-shipped agent
+        # is missing for every adopter by definition, so it would never be delivered at all.
     )
 
     # WHY: ADVISORY_CREATE — files that must exist for commands to work at runtime.
@@ -1950,6 +2131,30 @@ invoke_upgrade() {
         # notice, rather than having a workflow overwritten under it.
         ".github/workflows/memory-bank-size.yml"
     )
+
+    # WHY agent definitions are auto-discovered rather than listed: a static list silently goes
+    # stale the moment a new agent is added — the identical bug this file already documents for
+    # slash commands (accessibility-review.md and change-review.md shipped in 1.2.0 and were never
+    # added to the old hardcoded list, so `mb upgrade` never copied them into existing projects).
+    # It recurred immediately: `.claude/agents/opposition.md` was added 2026-08-26 and both review
+    # commands were changed to dispatch it BY NAME, while the hardcoded list here still named only
+    # researcher and security-reviewer. Every adopter would have received a review command
+    # referencing an agent `mb upgrade` never delivered, failing at the Opposition step — the gate's
+    # sole authority on whether a change ships.
+    #
+    # WHY ADVISORY_CREATE and not ADVISORY_DIFF, where agents used to live: ADVISORY_DIFF skips a
+    # target that is missing in the project. A newly-shipped agent is missing for EVERY adopter, so
+    # listing it there — hardcoded or discovered — still delivers nothing. ADVISORY_CREATE creates
+    # when absent and shows a diff rather than overwriting when the adopter has customized it,
+    # which is the behaviour agent definitions actually need.
+    #
+    # Paths resolve via _upgrade_src's default branch ($TEMPLATES_DIR/$target), so
+    # .claude/agents/X.md -> templates/.claude/agents/X.md with no mapping entry required.
+    if [ -d "$TEMPLATES_DIR/.claude/agents" ]; then
+        for f in "$TEMPLATES_DIR/.claude/agents"/*.md; do
+            [ -f "$f" ] && ADVISORY_CREATE+=(".claude/agents/$(basename "$f")")
+        done
+    fi
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X lives at templates/cursor/rules/X (no dot prefix) because

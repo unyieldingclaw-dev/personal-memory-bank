@@ -171,3 +171,150 @@ Describe "Invoke-Init review-reminders scripts (subprocess)" {
         }
     }
 }
+
+# WHY this block exists: the bash side got both a positive test and a completeness invariant for
+# agent delivery (tests/test-mb-upgrade.sh), and the pwsh side got neither -- despite ps1 discovery
+# being a SEPARATE implementation (Get-TemplateDirFile) from the bash glob. A pwsh-only adopter
+# could therefore silently not receive a newly-shipped agent, which is precisely the failure that
+# `mb upgrade`'s agent auto-discovery was written to close. Found 2026-08-27.
+Describe "Invoke-Upgrade agent advisory-create (subprocess)" {
+    BeforeAll {
+        $script:RepoRoot6 = $RepoRoot
+        $script:UpgradeAgentsProject = New-TestProject -Base $TestDrive -Name 'upgrade-agents-advisory'
+    }
+
+    It "delivers EVERY agent in templates/.claude/agents to a project that has none" {
+        $mbScript = Join-Path $script:RepoRoot6 'scripts/mb.ps1'
+        Push-Location $script:UpgradeAgentsProject
+        try {
+            git init -q 2>$null
+            git config user.email "test@test.com" 2>$null
+            git config user.name "Test" 2>$null
+            git commit -q --allow-empty -m "init" 2>$null
+
+            $env:MB_HOME = $script:RepoRoot6
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
+
+            # Simulate an adopter that predates the agents: clear whatever init delivered.
+            $agentsDir = Join-Path $script:UpgradeAgentsProject '.claude\agents'
+            if (Test-Path $agentsDir) {
+                Get-ChildItem $agentsDir -Filter '*.md' -File | Remove-Item -Force
+            }
+
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript upgrade 2>&1 | Out-Null
+
+            # COMPLETENESS INVARIANT, deliberately not "opposition.md exists": a hard-coded name
+            # would keep passing on the day a third agent is added and goes undelivered, which is
+            # the exact stale-list bug this feature replaced. Assert the delivered set covers the
+            # template set instead, so the check has no list of its own to go stale.
+            $expected = Get-ChildItem (Join-Path $script:RepoRoot6 'templates/.claude/agents') -Filter '*.md' -File |
+                        Select-Object -ExpandProperty Name | Sort-Object
+            $expected.Count | Should -BeGreaterThan 0
+            $missing = @()
+            foreach ($name in $expected) {
+                if (-not (Test-Path (Join-Path $agentsDir $name))) { $missing += $name }
+            }
+            ($missing -join ',') | Should -BeExactly ''
+        } finally {
+            Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            Pop-Location
+        }
+    }
+}
+
+# WHY a separate Describe from the Invoke-Upgrade agent block above: `upgrade` and `init` are
+# different delivery paths with different code, and agent delivery was built into `upgrade` only.
+# A fresh adopter runs `init`, never `upgrade`, so the path the review gate actually depends on
+# was the one with no coverage. Asserting it through `upgrade` would have kept reporting green.
+Describe "Invoke-Init agent delivery (subprocess)" {
+    BeforeAll {
+        $script:RepoRoot7 = $RepoRoot
+        $script:InitAgentsProject = New-TestProject -Base $TestDrive -Name 'init-agents-delivery'
+    }
+
+    It "delivers EVERY agent in templates/.claude/agents on a bare mb init" {
+        $mbScript = Join-Path $script:RepoRoot7 'scripts/mb.ps1'
+        Push-Location $script:InitAgentsProject
+        try {
+            git init -q 2>$null
+            git config user.email "test@test.com" 2>$null
+            git config user.name "Test" 2>$null
+            git commit -q --allow-empty -m "seed" 2>$null
+
+            $env:MB_HOME = $script:RepoRoot7
+            # No upgrade anywhere in this test, deliberately: init alone must be sufficient.
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
+
+            # COMPLETENESS INVARIANT -- see the bash twin in tests/test-mb-init.sh for the full
+            # rationale. Derived from templates/ at runtime, never enumerated, and asserted
+            # non-empty so an absent template directory fails loudly instead of passing on an
+            # empty comparison.
+            $expected = Get-ChildItem (Join-Path $script:RepoRoot7 'templates/.claude/agents') -Filter '*.md' -File |
+                        Select-Object -ExpandProperty Name | Sort-Object
+            $expected.Count | Should -BeGreaterThan 0
+
+            $agentsDir = Join-Path $script:InitAgentsProject '.claude\agents'
+            $missing = @()
+            foreach ($name in $expected) {
+                if (-not (Test-Path (Join-Path $agentsDir $name))) { $missing += $name }
+            }
+            ($missing -join ',') | Should -BeExactly ''
+        } finally {
+            Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            Pop-Location
+        }
+    }
+}
+
+
+# WHY this exists: the review-agent model-pin check (mb doctor check 25) shipped in d795abb with
+# BASH coverage ONLY (tests/test-mb-doctor.sh). Its own comment calls it security-relevant -- an
+# unpinned review agent silently inherits CLAUDE_CODE_SUBAGENT_MODEL=haiku, and a cheap review that
+# finds nothing looks exactly like a thorough one that finds nothing. A pwsh-only adopter had no
+# test behind the check at all. Subprocess, matching the other doctor-path tests: Show-Doctor writes
+# to the host rather than returning a value.
+Describe "Show-Doctor review-agent model pin (subprocess)" {
+    BeforeAll {
+        $script:RepoRootPin = $RepoRoot
+        $script:PinProject  = New-TestProject -Base $TestDrive -Name 'doctor-model-pin'
+        $script:PinAgents   = Join-Path $script:PinProject '.claude\agents'
+        New-Item -ItemType Directory -Force -Path $script:PinAgents | Out-Null
+
+        # Defined here, not in the Describe body: a function declared directly in a Describe block
+        # is not in scope inside It. Pester runs BeforeAll in the container scope, so this is.
+        function Invoke-PinDoctor {
+            Push-Location $script:PinProject
+            try {
+                $env:MB_HOME = $script:RepoRootPin
+                & pwsh -NoLogo -ExecutionPolicy Bypass -File (Join-Path $script:RepoRootPin 'scripts/mb.ps1') doctor 2>&1 | Out-String
+            } finally { Pop-Location }
+        }
+    }
+
+    BeforeEach {
+        # security-reviewer is a gate agent and is always well-formed here, so each case below
+        # isolates the ONE field under test on `opposition` alone.
+        Set-Content -Path (Join-Path $script:PinAgents 'security-reviewer.md') -Encoding utf8 -Value @(
+            '---', 'name: security-reviewer', 'model: sonnet', 'description: t', '---', 'body')
+    }
+
+    It "stays silent when every review agent pins a capable model" {
+        Set-Content -Path (Join-Path $script:PinAgents 'opposition.md') -Encoding utf8 -Value @(
+            '---', 'name: opposition', 'model: opus', 'description: t', '---', 'body')
+        Invoke-PinDoctor | Should -Not -Match 'not pinned to a capable model'
+    }
+
+    # The two mutations. Without these the test above would pass against a DELETED check, which is
+    # the defect class standards/CODE-REVIEW.md names: a check that cannot fail is not a check.
+    It "WARNs when a review agent declares no model at all" {
+        Set-Content -Path (Join-Path $script:PinAgents 'opposition.md') -Encoding utf8 -Value @(
+            '---', 'name: opposition', 'description: t', '---', 'body')
+        Invoke-PinDoctor | Should -Match 'not pinned to a capable model'
+    }
+
+    It "WARNs when a review agent is pinned to the cost-optimized model" {
+        Set-Content -Path (Join-Path $script:PinAgents 'opposition.md') -Encoding utf8 -Value @(
+            '---', 'name: opposition', 'model: haiku', 'description: t', '---', 'body')
+        Invoke-PinDoctor | Should -Match 'not pinned to a capable model'
+    }
+}

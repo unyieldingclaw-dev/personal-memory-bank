@@ -29,6 +29,26 @@ assert_not_contains() {
   fi
 }
 
+# WHY this exists rather than reaching for assert_contains: assert_contains is an unanchored,
+# case-insensitive grep, so it reports PASS whenever the expected value is a SUBSTRING of the actual
+# one. Comparing two interpolated values with it therefore false-passes on a whole class of real
+# drift -- "1200" contains "120", "12.5" contains "2.5". That was demonstrated live in
+# tests/test-threshold-parity.sh and tests/test-mb-upgrade.sh, and three call sites had already
+# hand-rolled a SAME/DIFFERENT verdict-word workaround around the missing primitive. Use this
+# whenever both sides are values; use assert_contains only when the pattern is genuinely a pattern.
+assert_equals() {
+  local actual="$1" expected="$2" desc="$3"
+  if [ "$actual" = "$expected" ]; then
+    echo "  PASS: $desc"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: $desc"
+    echo "    Expected exactly: '$expected'"
+    echo "    Actual:           '$actual'"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 assert_exit_zero() {
   local code="$1" desc="$2"
   if [ "$code" -eq 0 ]; then

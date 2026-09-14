@@ -48,7 +48,13 @@ Never ask the user to repeat constraints, decisions, or context already document
 
 **User triggers handoff** by either:
 - Typing "Handoff" (explicit trigger)
-- Telling the agent the context % is at or above 80%
+- Telling the agent the context % is at or above 40%
+
+> This was 80% until 2026-08-28. That figure was reasoned from rule re-injection — Cursor re-injects
+> these `.mdc` rules every response, so instructions survive a full context. True, but it only covers
+> losing your *rules*. It does not cover output quality degrading as input length grows, which is
+> independent of the IDE and is the larger cost. See `standards/MEMORY-BANK.md`, "Implications for
+> Handoff Thresholds".
 
 **When handoff is triggered**, you MUST:
 1. **STOP** all work immediately
@@ -76,8 +82,7 @@ Recognize these shortcuts and respond accordingly:
 |---------|--------|
 | `mb update` | Update all relevant Memory Bank files based on current session |
 | `mb status` | Show file sizes, last updated timestamps, and health check |
-| `mb clean` | Move old session history from activeContext.md to AGENTS.md |
-| `mb clean` | Trim activeContext.md to essentials (<100 lines target) |
+| `mb clean` | Trim activeContext.md to essentials and archive old progress.md entries (subsumes the former `mb compact`) |
 | `mb commit` | Stage and commit all Memory Bank changes |
 
 ## Auto-Update Behavior

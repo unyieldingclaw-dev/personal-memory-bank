@@ -62,6 +62,35 @@ positives and for what the gate deliberately does not cover (`GIT_CONFIG_*` env 
 
 If BLOCK or CONFIRM is triggered, the tool call is denied before it executes. WARN surfaces the access as advisory text and lets the command proceed.
 
+#### Matching is case-insensitive — and in `.sh`, **patterns must be written in lower case**
+
+Every tier matches without regard to case, in both shells. `.ps1` gets this from
+`OrdinalIgnoreCase` / `RegexOptions.IgnoreCase` at each site. `.sh` gets it by folding the command
+to lower case **once** — `cmd_lc` and `cmd_loose_lc`, built beside `cmd_loose` — and matching every
+`case` against those folded views.
+
+**The rule when adding a pattern to `dangerous-commands.sh`: write it in lower case.** `block`,
+`block_boundary`, `confirm`, `confirm_boundary` and `warn` compare `$1` against an already-folded
+subject and do **not** fold `$1` themselves. An upper-case pattern therefore matches nothing, ever —
+silently, and **fail-open**. Nothing at the call site looks wrong; the guard simply stops guarding.
+This is why `chmod -R 777` is spelled `chmod -r 777` in **the script's** pattern list, while the
+tier lists above show the command as an operator would actually type it. The real `chmod -R 777` is
+still caught, because the *subject* is folded before comparison.
+
+`confirm_regex` is the exception — its patterns go to `grep -qziE`, which folds via `-i`, so case
+there is unconstrained.
+
+**Why the patterns aren't just folded per call** (the obvious alternative, which was built and then
+reverted): folding `$1` inside each matcher costs a `printf | tr` subshell per matcher *call* —
+about 25 per invocation, on a hook that runs on **every single Bash tool call**. Measured over 10
+runs of one benign command: **1.07s → 2.33s per invocation**. Folding the two subjects once instead
+costs two subshells total and measures at parity with the pre-fold baseline.
+
+Both suites assert this structurally, so the fail-open trap is a red test rather than a silent
+hole: no matcher may match against an unfolded view, and no pattern argument may contain an
+upper-case letter. Both mirrors (`scripts/` and `templates/scripts/`) are checked, plus a
+byte-identity assertion between them.
+
 Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). Configured in `.claude/settings.json` with two matchers — one for `Bash` (with sh fallback) and one for `PowerShell` (PS-only):
 
 ```json
@@ -112,18 +141,20 @@ Fires after every `Write` or `Edit` tool call. Reads the edited file path from t
 
 ### 5. PreCompact Memory Gate (`PreCompact`)
 
-Fires before Claude Code compacts context. Runs two content-based quality checks on the memory bank **or** bypasses via `handoff.md`.
+Fires before Claude Code compacts context. Runs two content-based quality checks on the memory bank **or** bypasses via a `handoff.md` dated today.
 
 **Exit codes:**
-- **Exits 0** — both checks pass (or `handoff.md` bypass is present). Compaction proceeds normally.
+- **Exits 0** — both checks pass (or a `handoff.md` dated today is present). Compaction proceeds normally.
 - **Exits 2** — one or more checks fail. **Compaction is blocked.** Claude Code treats a non-zero exit from a PreCompact hook as a block signal. The hook prints an actionable message explaining what to do.
 
-**To unblock:** address the failing check (see below), then retry. Alternatively, create `handoff.md` to bypass the gate (the handoff file signals that session state has been captured via the Handoff Protocol).
+**To unblock:** address the failing check (see below), then retry. Alternatively, create a `handoff.md` **dated today** to bypass the gate (the handoff file signals that session state has been captured via the Handoff Protocol).
+
+**Why the date matters.** Until 2026-08-27 the bypass triggered on the file merely existing. A handoff is meant to be deleted once merged into `memory-bank/` (Handoff Protocol step 5), so one that outlives its session is spent — yet it kept handing out a free pass. A handoff dated 2026-08-26 was found still in a repo root on 2026-08-27, silently disabling this gate for every compaction in a long session. The bypass was inverted: the staler the handoff, the more likely the memory bank actually needed checking. A stale handoff now removes only the *bypass* — it is not itself a failure, so a genuinely fresh memory bank still passes.
 
 **Detection logic (content-based, not mtime):**
 - **Check 1 — `activeContext.md` substantive content:** counts non-frontmatter, non-heading, non-empty lines with ≥20 characters. Requires ≥3 such lines. A file that was only touched (e.g. `last-reviewed` timestamp updated) fails this check.
 - **Check 2 — `progress.md` dated entry:** looks for at least one line starting with today's date (or a markdown heading/list prefix followed by today's date). The date must appear at the start of a line — embedded dates in prose do not count.
-- **Bypass:** `handoff.md` present in the project root skips both checks.
+- **Bypass:** `handoff.md` dated today in the project root skips both checks.
 
 **Fails open:** unexpected errors (missing runtimes, unreadable files) exit 0 silently and log to `.pmb-hook-errors.log`.
 
@@ -144,11 +175,13 @@ Implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and `scripts/pre-c
 
 Note: `PreCompact` hooks have no `matcher` field — the hook type applies to the compaction event itself, not to a specific tool.
 
-### 6. Agent Delegation Depth Check (`PreToolUse` — Agent tool)
+### 6. Agent Spawn-Volume Advisory (`PreToolUse` — Agent tool)
 
-Fires before every `Agent` tool call. Tracks nested agent delegation depth and emits a WARN when depth exceeds the budget defined in `standards/PERFORMANCE-BUDGET.md` (default: ≤1 subagent deep). Implemented in `scripts/delegation-depth-check.ps1` and `scripts/delegation-depth-check.sh`.
+Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and emits a WARN once it exceeds the budget in `standards/PERFORMANCE-BUDGET.md` (default: ≤6 spawns per rolling 2-hour window). Always exits 0 — advisory, never blocking. Implemented in `scripts/delegation-depth-check.ps1` and `scripts/delegation-depth-check.sh`.
 
-**Runtime state file:** The hook stores its counter in `.pmb-delegation-depth` in the project root (gitignored). This file is created automatically on the first agent dispatch and resets after 2 hours of inactivity. Delete it manually to reset the depth counter mid-session without restarting.
+**It does not measure nesting depth, despite the name.** There is no `PostToolUse:Agent` event, so a hook cannot tell a returned agent from a running one — six parallel agents and a six-deep chain are indistinguishable to it. The file name, state file and internal variable still say "depth" for compatibility; the semantics have only ever been a spawn count. This entry described it as nesting depth, with a ≤1 default, until 2026-09-03; the shipped scripts had used 6 since `5c0e8c9`.
+
+**Runtime state file:** The hook stores its counter in `.pmb-delegation-depth` in the project root (gitignored). This file is created automatically on the first agent dispatch and resets after 2 hours of inactivity. Delete it manually to reset the spawn counter mid-session without restarting.
 
 **Hook error logging:** Unexpected errors are logged to `.pmb-hook-errors.log`.
 

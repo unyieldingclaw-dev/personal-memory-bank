@@ -3,16 +3,76 @@
 # Blocks compaction unless the memory bank shows substantive session work:
 #   1. activeContext.md has ≥3 substantive content lines (not just a last-reviewed touch)
 #   2. progress.md contains at least one entry dated today
+# A handoff.md dated TODAY bypasses both; a stale one does not (see the bypass block below).
 # Exits 2 to block compaction; exits 0 to allow. Fails open on errors.
 
 today=$(date +%Y-%m-%d)
 
-# Bypass: handoff.md present means state is captured via handoff protocol
-if [ -f "handoff.md" ]; then
-    exit 0
-fi
-
 BLOCK_REASONS=()
+
+# Bypass: a handoff.md means state is captured via the Handoff Protocol -- but ONLY if the handoff
+# is from today.
+#
+# WHY the staleness test exists: until 2026-08-27 this was a bare `[ -f handoff.md ]` existence
+# check. A handoff is written immediately before a context boundary and is meant to be deleted once
+# merged into memory-bank/ (Handoff Protocol step 5). One that outlives its session is therefore
+# either consumed or abandoned -- in both cases it no longer represents captured state, yet it kept
+# handing out a free pass. That was not hypothetical: a handoff dated 2026-08-26 was found still
+# sitting in the repo root on 2026-08-27, silently disabling this entire gate for every compaction
+# in a long session. The bypass was doing the opposite of its job -- the staler the handoff, the
+# more likely the memory bank actually needed the check.
+#
+# WHY today rather than an age in hours: it matches check 2's own "entry dated today" convention, so
+# the gate has one notion of freshness rather than two.
+#
+# WHY an unreadable mtime falls through instead of bypassing: a bypass that cannot be verified must
+# not be honoured. Falling through is safe -- it runs the ordinary checks, it does not hard-block.
+# WHY two mtime readers: `date -r FILE` is a GNU extension. On BSD/macOS `date -r` takes SECONDS,
+# so it rejects a path and yields empty -- which fell through to "date could not be read" and
+# silently removed the bypass on every macOS run. That failed safe (the gate stayed on) but it also
+# meant the documented handoff bypass never worked there, which is not what the protocol promises.
+# `stat -f` is the BSD spelling and is tried only when the GNU form yields nothing, so the GNU path
+# is unchanged.
+#
+# WHY THE VALUE IS VALIDATED BY SHAPE AND NOT MERELY BY EMPTINESS: an earlier version of this
+# comment claimed "if both fail the variable stays empty." That was FALSE, and measurably so.
+# `2>/dev/null || printf ''` discards stderr and the exit code, but NOT stdout already written --
+# and GNU `stat -f` means `--file-system`, not BSD's format-string flag, so it consumes `%Sm` and
+# `%Y-%m-%d` as extra file operands (erroring, suppressed) while the real trailing operand SUCCEEDS
+# and prints ~108 bytes of raw filesystem fields. Command substitution captures that, so the
+# variable ends up non-empty garbage. Reproduced 2026-09-03 on GNU coreutils 8.32: exit status 1,
+# stdout `handoff.md 20ce71e00000000 255 3e72eff 4096 ...`.
+#
+# The gate never mis-fired on it, because a 108-byte string cannot equal "$today" -- so this was a
+# DIAGNOSTIC defect, not a bypass: the note below took the "dated X, not today" branch and printed
+# the filesystem dump where a date belongs, instead of saying the date could not be read. It was
+# also unreachable in practice on GNU, since `[ -f ]` guarantees `date -r` succeeds there; the
+# combination needed is a non-GNU `date` with a GNU-style `stat`.
+#
+# Validating the SHAPE fixes all of that at once and makes the stated invariant true on every
+# platform rather than only where the fallback happens to be unreachable: anything that is not
+# exactly YYYY-MM-DD is discarded, so a partial-output reader is indistinguishable from a failed
+# one, and the unverifiable-bypass branch below applies as documented.
+if [ -f "handoff.md" ]; then
+    handoff_date=$(date -r "handoff.md" +%Y-%m-%d 2>/dev/null || printf '')
+    [ -z "$handoff_date" ] && handoff_date=$(stat -f %Sm -t %Y-%m-%d "handoff.md" 2>/dev/null || printf '')
+    case "$handoff_date" in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;   # a real date; keep it
+        *) handoff_date='' ;;                             # empty, partial, or garbage; discard
+    esac
+    if [ -n "$handoff_date" ] && [ "$handoff_date" = "$today" ]; then
+        exit 0
+    fi
+    # WHY a note rather than a BLOCK_REASON: a stale handoff REMOVES THE BYPASS, it is not itself a
+    # failure. If the memory bank is genuinely fresh the gate must still pass. Appending this to
+    # BLOCK_REASONS instead was the first implementation and it hard-blocked a healthy bank -- caught
+    # by tests/test-pre-compact-check.sh's "stale but fresh" case, which exists for that reason.
+    if [ -n "$handoff_date" ]; then
+        STALE_HANDOFF_NOTE="handoff.md is dated $handoff_date, not today ($today) — a stale handoff no longer represents captured state, so it did not bypass this gate. Merge it into memory-bank/ and delete it (Handoff Protocol step 5)."
+    else
+        STALE_HANDOFF_NOTE="handoff.md is present but its modification date could not be read — an unverifiable bypass is not honoured. Delete it if it is spent."
+    fi
+fi
 
 # Check 1: activeContext.md — must have ≥3 substantive lines
 # Substantive = non-frontmatter, non-heading, non-empty, ≥20 chars
@@ -62,5 +122,7 @@ printf '[PreCompact] Compaction quality gate: %d check(s) failed.\n' "${#BLOCK_R
 for reason in "${BLOCK_REASONS[@]}"; do
     printf '  - %s\n' "$reason"
 done
-printf 'Fix the above, then compact. Or create handoff.md to bypass via the Handoff Protocol.\n'
+# Printed only alongside a real failure: it explains why the handoff did not save them.
+[ -n "${STALE_HANDOFF_NOTE:-}" ] && printf '  note: %s\n' "$STALE_HANDOFF_NOTE"
+printf 'Fix the above, then compact. Or create a handoff.md dated today to bypass via the Handoff Protocol.\n'
 exit 2

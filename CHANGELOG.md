@@ -2,7 +2,357 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`mb commit` never worked on Windows, and now does.** `mb.ps1` compared two `Resolve-Path`
+  results with `-ne`. `Resolve-Path` returns a `PathInfo`, which has no value equality, so that
+  compared **references** and was unconditionally true — it returned `True` even where both sides
+  resolved to the identical string in a healthy main worktree. The subworktree guard therefore
+  fired in **every repository**, so `mb commit` refused everywhere on the documented Windows entry
+  point (`install.bat` → `mb.bat` → `pwsh mb.ps1`). `mb.sh` was never affected; it compares
+  `realpath` strings. Logged since 2026-06-18 as audit finding C5 with a root cause — "symlinks or
+  UNC paths … in some cases" — that was wrong in both halves: incidence was 100%, and no symlink
+  or UNC path was involved. Comparing `.Path` fixes it. **A refusal-only test cannot catch this**
+  (it passes against the broken form), so the new coverage asserts the main-worktree happy path.
+- **`mb commit` also broke, both ways, on any repository path containing `[` or `]`** — legal on
+  Windows. `Resolve-Path` treats its argument as a **wildcard**, so a bracketed path resolves to
+  `$null`. With a bracket on one side only, one real string faced a `$null` and the subworktree
+  guard fired in a healthy main worktree: `mb.ps1` refused with "You are in a git subworktree"
+  (exit 1) where `mb.sh` correctly reported "No changes" (exit 0). With a bracket on **both**
+  sides — a bracketed main repo and a bracketed subworktree — both resolved to `$null`, `$null -ne
+  $null` is false, and the guard did not fire at all: `mb commit` returned "No changes" and exit 0
+  from inside a genuine subworktree. That second direction is the more dangerous one, a refusal
+  that should have fired and silently did not, and it was found only after the first was fixed.
+  Both are closed by `-LiteralPath`, which disables globbing.
+- **`mb doctor` aborted at exit 128 in any non-git directory, skipping checks 15–25.** Three bare
+  command-substitution assignments ran under `set -e`, where a non-zero `git` exit kills the
+  script; `2>/dev/null` hides git's message but not its status. Two of the three predate this
+  release. `mb.ps1` was never affected — PowerShell does not abort on a native command's exit code.
+- **`mb doctor` check 15 reported `[OK]` for a repository measuring 27 KB against a 25 KB hard
+  limit** (27,607 B versus a 25,600 B ceiling — 27 KB in total, not 27 KB in excess), whenever
+  it ran inside a subworktree whose main repo path contains `[` or `]`. That check resolved
+  `--git-common-dir` with a wildcard `Resolve-Path` carrying no `-ErrorAction`, so a bracketed path
+  resolved to `$null` and `Split-Path -Parent $null`
+  threw `ParameterBindingValidationException`. The throw is the visible half and the lesser one:
+  doctor does not die on it. It prints a raw stack trace, continues with the startup root still at
+  `"."`, and therefore measures the **subworktree's own** memory-bank instead of the main
+  worktree's — the phantom-reduction failure that check's worktree-awareness exists to prevent.
+  Measured with the main worktree inflated past the ceiling and the subworktree left small:
+  pre-fix printed `[OK] Startup context: 0.6 KB`, post-fix printed `[ERROR] 27 KB exceeds 25 KB`,
+  and a non-bracketed path printed the `[ERROR]` either way — so the bracket is the cause, not
+  mere absence. The `Test-Path`, `Get-ChildItem` and `Get-Item` calls in the same check are the
+  same wildcard class and never threw at all; they were the silent half of the same wrong-root
+  measurement. All five calls in that check — four cmdlet kinds, `Test-Path` appearing twice — are
+  now `-LiteralPath`.
+- **`mb.ps1` would not start at all at an `MB_HOME` containing `[` or `]`, while `mb.sh` worked.**
+  The startup guard (top-level script scope in `scripts/mb.ps1`, above the first function
+  definition; no line number, for the reason the bullet below gives) tests
+  `Test-Path (Join-Path $RepoRoot 'templates')` with `$RepoRoot = $env:MB_HOME`. Wildcard
+  `Test-Path` cannot match a bracketed path, so mb refused to start against its own installation
+  with `[ERROR] MB_HOME '...' is not a valid PMB installation (templates/ not found)` and exit 1 —
+  measured rc=1 versus `mb.sh` rc=0 at the same `MB_HOME`, and rc=0 for both at a non-bracketed one.
+  Now `-LiteralPath`, which is also a security sharpening rather than only a usability fix: a
+  wildcard `Test-Path` can be satisfied by some *other* directory the pattern happens to match, so
+  the guard could pass for a path that is not the one about to be used. Measured — with
+  `$RepoRoot` set to `<base>\evil*` and a real `evilX\templates`, wildcard `Test-Path` returns
+  `True` and `-LiteralPath` returns `False`.
+- **The bracketed-`MB_HOME` divergence is NARROWED BY THIS CHANGE, NOT CLOSED — do not read the
+  entry above as closing it.** `mb.ps1` now starts, but further `Test-Path` calls on
+  `$RepoRoot`-derived paths still glob. **Neither a count nor line numbers are given for that
+  subset, deliberately** — both decay, and several attempts at each were wrong; the figure to act on
+  is the AST-exact superset below (115). Regenerate the current set from the PowerShell AST:
+  variables assigned from an expression containing `$RepoRoot`, followed transitively through
+  path-valued derivations of `$TemplatesDir`, then every `Test-Path` lacking `-LiteralPath` that
+  references one — then **audit the result by scope, not by variable name**, which is where every
+  count attempted here went wrong: `$dir` enters the closure from a single template-path assignment
+  and then name-collides with three unrelated destination-path variables in other functions. Report
+  the procedure and the superset; do not quote a subset integer.
+  Measured against the **fixed** build at a bracketed `MB_HOME` whose `templates/`, `standards/`,
+  `fixtures/` and `VERSION` all genuinely exist, versus a plain one — **five** doctor checks give
+  different results, not the three an earlier draft claimed:
+  check 0 `[OK] Memory Bank v1.2.1` → `[WARN] VERSION file not found`; check 2 `[OK] Templates
+  found` → `[ERROR] Templates not found`; check 12's `[WARN] No .pmb-version found` line **absent
+  entirely**; check 13 `[OK] Security regression fixtures present (9/9)` → `[WARN] fixtures/security/
+  not found`; check 14's `[OK] Standards count: 15 (budget: <= 20)` line **absent entirely**. Checks
+  12 and 14 do not fail — they silently disappear, because neither has an `else` branch. `mb.sh doctor`
+  at the same bracketed `MB_HOME` prints the same results it prints at a plain one — check 12 is a
+  `[WARN]` in both, so it is not literally `[OK]` across the board. So the symptom
+  moved from an exit-1 at startup into false and missing results across five governance checks — a
+  smaller blast radius, the same class, and by this entry's own standard (a false OK outranks a
+  crash) not obviously an improvement in kind.
+- **A separate bracketed-path defect, found while checking the above and recorded rather than
+  fixed: `mb doctor` cannot write `.pmb-checksums` when the CURRENT WORKING DIRECTORY contains `[`
+  or `]`, in `mb.ps1` only.** The path is passed to `Set-Content -Path` as a bare CWD-relative
+  string, so PowerShell wildcard-resolves it against a bracketed `$PWD`. Measured, `mb.ps1` against
+  `mb.sh` at the same CWD:
+  - With **no** `.pmb-checksums` present, the write fails on every run and the file is never
+    created: `[OK] Integrity checksums - baseline established on this run` followed immediately by
+    `[WARN] Could not write .pmb-checksums: An object at the specified path ... does not exist, or
+    has been filtered`. Because nothing is persisted, the next run baselines again — so on such a
+    project the check can never detect a modification, though it never claims to have verified one
+    either.
+  - With a `.pmb-checksums` already present (written by `mb.sh`, which is unaffected), verification
+    **does** work — `[OK] Integrity checksums verified - no external modifications detected`. A CWD
+    containing `[` still fails to refresh it, warning every run; a CWD containing only `]` refreshes
+    successfully. So `]` breaks creation but not refresh, and `[` breaks both.
+  - `mb.sh` writes and verifies correctly at all three CWD shapes. The read path is unaffected in
+    both runtimes — only the write fails.
+  It matters for scoping that this is neither `$RepoRoot`-derived nor argument-driven, so it lies
+  outside every derivation audit finding C9 gives, and project paths are likelier to contain
+  brackets than install paths. The CWD-relative population is deliberately not enumerated here.
+- **Also still open, deliberately:** `mb setup <path>` and `mb init <path>` reject an existing
+  bracketed directory as nonexistent, and **115 of `mb.ps1`'s 118 `Test-Path` calls still glob**
+  (AST-counted; the 118 occupy 116 distinct lines and the globbing 115 occupy 113 — the three
+  exceptions were all added by this change).
+  Neither command has coverage exercising its `<path>` argument, which is the branch carrying the
+  defect — though both have *some* pwsh coverage: `mb init` runs as a subprocess at
+  `tests/mb-setup.Tests.ps1:122,163,196,246`, and `mb setup`'s helpers `Get-MbMode`,
+  `Get-MbUpgradeAnalysis` and `Invoke-MbVerify` — each reachable only through `Invoke-Setup` — are
+  unit-tested in the same file, all run in CI via `Invoke-Pester`. The deferral rests on that
+  argument-level gap alone, not on an absence of coverage. Recorded as audit finding C9 in
+  `docs/superpowers/specs/2026-06-18-mb-commands-audit.md`, which carries the derivation for the
+  remaining population rather than a snapshot of it.
+- **A failed `git status` was mishandled in `mb commit` — differently in each runtime, so the two
+  are described separately rather than blended.** On a corrupt or unreadable index, `mb.ps1`
+  reported "No changes in memory-bank/ to commit" and exited **0**, claiming a clean tree it had
+  never successfully inspected; `mb.sh` did *not* do that — being a bare assignment under `set -e`,
+  it aborted at exit **128** with only its banner printed, the same class as the `mb doctor` abort
+  above. Both now print an explicit error and exit 1. Stated per-runtime because an earlier draft
+  of this entry attributed the false-success symptom to both, and only `mb.ps1` ever had it.
+
+### Changed
+- **BREAKING (exit codes): `mb commit`'s refusal paths now exit `1` instead of `0`,** in both
+  runtimes. Previously "not a git repository" and "you are in a git subworktree" printed an
+  `[ERROR]` and exited **0**, so `mb commit && <next>` ran the success branch having committed
+  nothing. No rule distinguished the two paths from any other failure; both mean the command did
+  not commit. **If you script `mb commit`, check the exit code** — a wrapper relying on `0` will
+  now see a failure where it previously saw silent success. Note this arrives quietly: `mb.sh` and
+  `mb.ps1` are not in `TEMPLATE_OWNED` and `templates/scripts/` ships no `mb.*`, so `mb upgrade`
+  does **not** deliver them — you receive this when your PMB clone updates, with no diff shown.
+
+### Added
+- **`tests/test-mirror-parity.sh` now cross-checks the two runtimes' `TEMPLATE_OWNED` sets against
+  each other, and compares hooks structurally.** The previous sweep derived its guarded set from
+  `scripts/mb.sh` alone and guarded it with `count > 0` — a floor that cannot detect erosion:
+  truncating the array from 29 entries to 1 left the suite green while assertions silently fell
+  123 to 81. `scripts/mb.ps1`'s `$templateOwned` is an independent, hand-maintained declaration of
+  the same intent, so the two anchor each other. They **deliberately differ** — `mb.ps1`
+  force-overwrites `standards/*.md` and `mb.sh` leaves them advisory — so the assertion pins the
+  *shape* of that difference rather than demanding equality: every `mb.ps1`-only entry must be a
+  `standards/*` file, `mb.sh` must own nothing `mb.ps1` lacks, and the divergence must still exist.
+  It therefore also goes red if someone reconciles the runtimes, forcing that to be a decision
+  rather than a drift. No count appears anywhere in it — "they differ by 15 entries" would have been
+  the same decaying absolute this release removes elsewhere. The `settings.json`
+  check also compares `(event, matcher, commands)` triples rather than `"command":` lines only:
+  moving the `dangerous-commands` matcher from `Bash` to `Write|Edit` — unhooking the BLOCK-tier
+  guard from every Bash call — passed the old check and fails the new one.
+- **`tests/test-pre-compact-check.sh` covers the BSD mtime fallback**, which no test could previously
+  reach: every case ran where GNU `date -r` succeeds, so the fallback line never executed, on any
+  runner (all CI jobs are `ubuntu-latest`). A stub `date` that rejects `-r` exactly as BSD does now
+  exercises both outcomes, including the macOS bypass the fix promised — previously self-attested.
+- **Startup-context ratchet — a new hard-failing CI check.** `CLAUDE.md` plus every
+  `memory-bank/**/*.md` is summed and compared against the same total on `origin/main`; a pull
+  request that increases it fails. The 25 KB ceiling this repo is still far over stays advisory —
+  what is enforced is the *direction*, because "advisory" had been read as "may grow", and it did.
+  Reductions are always free. If the baseline cannot be fetched the check degrades to advisory and
+  says so, rather than failing on an unavailable baseline.
+- **`tests/test-threshold-parity.sh` additionally asserts that `mb doctor` is never looser than the
+  CI shipped to adopters** — the direction that produces a clean local check followed by a red
+  build. Equality is deliberately *not* asserted; see the cap-sources entry under Changed.
+
+### Changed
+- **The Handoff Protocol's step 4 now requires a paste-able launch block.** It previously said to
+  respond *only* "Handoff ready at `handoff.md`" — which withholds the session title, branch and
+  worktree the next session is opened with, so the user has to ask for them every time.
+  `templates/handoff.md` already labelled the title "the user pastes this when opening the next
+  session", so the intent was there; only the response format had not caught up. Both `CLAUDE.md`
+  and its template are updated. The block's facts must be verified with a command rather than
+  transcribed — a wrong branch there sends the successor into the wrong worktree.
+- **The agent-delegation hook's budget is documented as what it actually measures.**
+  `standards/PERFORMANCE-BUDGET.md`, `standards/AGENTIC-SAFETY.md` and `docs/HOOKS-GUIDE.md` (plus
+  `templates/` mirrors) said "≤1 delegation depth" while the shipped hook had warned above **6
+  cumulative spawns** since `5c0e8c9` — and cited `PERFORMANCE-BUDGET.md` as the authority for a
+  number that document contradicted. The change to 6 had never been disclosed here either. The
+  docs now separate the two limits and say which is enforced: spawn count is checked, nesting depth
+  is not and **cannot** be, because there is no `PostToolUse:Agent` event, so six parallel agents
+  and a six-deep chain are indistinguishable to a hook. `AGENTIC-SAFETY.md` previously told
+  operators a WARN meant "a subagent is attempting to spawn another subagent"; that reading sent
+  them hunting for something the counter cannot see, on a signal ordinary fan-out produces.
+- **`README.md`'s memory-bank cap paragraph corrected on two counts.** It called
+  `.github/workflows/memory-bank-size.yml` "the workflow you receive" — but `mb init` delivers no
+  `.github/` path at all; only `mb upgrade` adds it, so a project set up with `mb init` alone has no
+  CI enforcement of these caps. And its unqualified "`mb doctor` is never looser than your CI" held
+  only for the shipped defaults, one sentence before telling the reader to tune those defaults.
+- **`/change-review` Job 7 no longer enumerates `ai-review-agent`'s internal fields; it states an
+  invariant.** Exit `0` never earns an unqualified clean pass, the coverage-signal list is marked
+  INDICATIVE rather than exhaustive, and per-field reliability is documented as build-dependent and
+  to be re-derived rather than remembered. Four review rounds were spent keeping a precise
+  description of that tool current; every version was correct when written and wrong within a day,
+  because the local install is a link into another working tree that rebuilds without warning.
+  The exit-code table also gained a catch-all, a version preflight (`--chunk` needs >= 1.10.0), and
+  a mandatory `--format json`. A known gap is documented in place: that tool's security and
+  adversarial agents exclude `**/*.md`, which on a markdown-dominant diff means they review only the
+  remainder while the rendered report says nothing about it.
+- **Cursor's handoff threshold lowered from 80% to 40%, matching Claude Code.** The 80% was
+  documented and deliberate — justified on rule re-injection, which addresses the *continuity* cost
+  of a full context but not the *quality* cost. **Adopters using Cursor: you will be prompted to
+  hand off considerably earlier than before.** The reasoning is deliberately not restated here; it
+  lives in `standards/MEMORY-BANK.md` under "Implications for Handoff Thresholds", including why a
+  Cursor-specific number should not be re-derived from rule-persistence behaviour.
+
+  A second, independent reason applies: `memory-bank/systemPatterns.md` already stated the trigger
+  as 40% with no IDE qualifier, so two governing documents were in conflict with no stated
+  arbitration between them. That reasoning is **not restated here** — it now lives alongside the
+  rest in `standards/MEMORY-BANK.md`, which is the governed home for it. The *general* gap it
+  exposes (nothing states whether a `standards/` document outranks a `memory-bank/` one) remains
+  open and is tracked separately.
+
+  **The two scaffold templates that also carried the old 80% are corrected here:**
+  `templates/AGENTS.md` (three places) and `templates/memory-bank/README.md`. Note their
+  distribution differs — `README.md` ships via `mb init`; **`AGENTS.md` has no `mb` CLI
+  distribution path at all** and reaches projects only through the standalone
+  `scripts/init-memory-bank.sh`, which is a separate pre-existing gap.
+- **Review agents now pin their model in frontmatter.** `.claude/agents/security-reviewer.md`
+  pins `sonnet`, the new `.claude/agents/opposition.md` pins `opus`, and `researcher.md` states
+  `haiku` deliberately. Previously none declared a model, so all three silently inherited
+  `CLAUDE_CODE_SUBAGENT_MODEL=haiku` from `.claude/settings.json` — a security review and the
+  opposition gate were running cost-optimized, producing output shaped identically to a thorough
+  pass with nothing recording which model produced it. **Adopters: your `security-reviewer` will
+  now run on a more capable model than before.**
+- **`mb doctor` check 25 additionally warns when `security-reviewer` or `opposition` is missing a
+  `model:` field, or pins `haiku`.** `researcher` is deliberately exempt. Both shells.
+- **Memory-bank line caps aligned to this repo's CI in both runtimes.** An audit found three
+  divergences running in both directions. The figures below are the values **as of that audit**,
+  not the shipped ones: `progress.md` was stricter at runtime (400) than in CI (600), while
+  `projectbrief.md` (150 vs 120) and `techContext.md` (400 vs 300) were LOOSER at runtime than in
+  CI — so a clean `mb doctor` could be followed by a red build. Only the first had been recorded.
+  The caps have since been ratcheted down; read the shipped values from
+  `.github/workflows/pmb-health.yml`, never from this entry.
+  `tests/test-threshold-parity.sh` now fails if those sources drift again.
+- **Scope limit, stated because the entry above is easy to over-read:** there are **four** cap
+  sources, not three. `templates/.github/workflows/memory-bank-size.yml` — the CI adopters actually
+  receive — is deliberately looser, because its caps are starting defaults an adopter tunes, and
+  forcing this repo's ratcheted values onto a fresh install would red their first build. Equality
+  across all four is therefore the wrong invariant. What is now asserted is the **direction**:
+  `mb doctor` must never be looser than the CI it ships beside, since that is the combination that
+  produces a clean local check followed by a red build.
+- **`standards/MEMORY-BANK.md` eviction criteria amended.** The two age-based `progress.md` rows
+  (>6 months, >3 months) were removed: they had never fired and could not, since the repo is four
+  months old while `progress.md` measurably grows ~8 KB/day. They are replaced by a
+  citation-survival test, chosen because it reproduces all four historical relocation outcomes
+  including the one that was reverted. Destinations that are living documents must now carry a
+  registered size cap.
+
+### Fixed
+- **The PreCompact handoff-bypass validates the mtime it reads by SHAPE, not merely by emptiness.**
+  The fallback's comment claimed "if both fail the variable stays empty." False on GNU: `2>/dev/null
+  || printf ''` discards stderr and the exit code but not stdout already written, and GNU `stat -f`
+  means `--file-system`, so it consumed the format arguments as file operands while the real operand
+  succeeded — printing ~108 bytes of filesystem fields that command substitution captured.
+  Reproduced on coreutils 8.32. The gate never mis-fired (a 108-byte string cannot equal today's
+  date), so this was diagnostic, not a bypass: the stale-handoff note printed the filesystem dump
+  where a date belongs instead of saying the date could not be read. Anything not exactly
+  `YYYY-MM-DD` is now discarded, which makes the stated invariant true on every platform rather
+  than only where the fallback happens to be unreachable. The `.ps1` twin never had this defect —
+  it reads `LastWriteTime` and yields either a formatted date or `$null`.
+- **`mb init` never delivered `.claude/agents/*.md`, so a fresh adopter's review gate was dead on
+  arrival.** `init` copied every `templates/claude-commands/*` — including `code-review.md` and
+  `change-review.md`, which each dispatch `subagent_type: opposition` **by name** — while containing
+  zero references to `.claude/agents`. The documented fallback was broken by the same gap:
+  `code-review.md:98` says to fall back to `general-purpose` "pasting the body of
+  `.claude/agents/opposition.md` in as the prompt", a file `init` also never delivered. So the gate
+  failed at Opposition — its sole authority on whether a change ships — with no graceful
+  degradation. Latent while the commands asked for "a capable model" in prose; **live from the
+  moment agents became a named dependency** earlier in this same release. Both shells now
+  auto-discover `templates/.claude/agents/*.md`, matching the delivery already present in
+  `mb upgrade`. **Adopters who ran `mb init` on an affected version: run `mb upgrade` to receive the
+  agent definitions**, or re-run `mb init` — it creates only what is missing and preserves existing
+  files.
+
+  Cause worth naming, because it is the recurring one: agent delivery *was* fixed, for `mb upgrade`,
+  and scoped to the single path that prompted it. `init` is the path adopters actually take. The
+  regression tests added on both shells derive their expected set from `templates/.claude/agents/`
+  at runtime and assert that set is non-empty, so neither a newly added agent nor an empty template
+  directory can pass silently.
+- **`templates/CLAUDE.md` described the PreCompact hook as warning when it blocks.** The shipped
+  copy still documented the original 2026-05-28 design ("the hook always exits 0 — compaction is
+  never blocked"); the behaviour changed to a hard exit-2 block and the template was never updated,
+  so adopters were told to expect a warning and got a refused compaction with no explanation. Now
+  states the real conditions, including the dated-handoff bypass.
+- **`standards/MEMORY-BANK.md` instructed `mb compact`, which exits 2.** The command was folded into
+  `mb clean` and now only prints a redirect. Inverted drift: `templates/standards/MEMORY-BANK.md`
+  already carried the correct instruction, so adopters were right and this repo's own copy was wrong.
+- **The `.cursor/rules` mirrors had no drift guard.** Those files are `TEMPLATE_OWNED` — `mb upgrade`
+  overwrites the live copies from `templates/cursor/rules/` unconditionally — yet nothing verified
+  the two agreed, so a stale governance rule could ship to every adopter with no signal.
+  `tests/test-mirror-parity.sh` now compares them in both directions, auto-discovering the files
+  rather than hard-coding a list.
+- **The PreCompact memory-bank freshness gate was bypassed by any `handoff.md`, however old.**
+  `pre-compact-check.sh`/`.ps1` short-circuited on a bare existence check with no staleness test, so a
+  spent handoff left in the repo root silently disabled the gate for every compaction. Both shells now
+  require the handoff to be dated today. A stale handoff removes only the *bypass* — it is not itself a
+  failure, so a genuinely fresh memory bank still passes. The hook had **no test coverage in either
+  shell**; `tests/test-pre-compact-check.sh` now covers it.
+- **`mb upgrade` would never have delivered a newly-added agent.** `ADVISORY_DIFF` hard-coded two
+  agent paths in both shells — the same stale-list bug already documented for slash commands in
+  1.2.0. Agents are now auto-discovered from `templates/.claude/agents/*.md` into
+  `ADVISORY_CREATE` (not `ADVISORY_DIFF`, which skips targets that are missing — and a
+  newly-shipped agent is missing for every adopter by definition).
+- **`mb upgrade` (PowerShell only) could deliver non-agent files into `.claude/agents/`.**
+  `Get-TemplateDirFile` had no extension filter while the bash glob used `*.md`, so a stray
+  `README`, `.txt` or editor backup in the template directory would be copied by pwsh and not by
+  bash. The helper now takes an opt-in `-Filter`, passed `*.md` at the agents call site only.
+- `.claude/agents/opposition.md`'s description advertised "never writes review markers"
+  unconditionally, contradicting both its own body and the marker write that
+  `.claude/commands/code-review.md` Step 5.3 requires of it on an Approve verdict.
+- Both review commands instructed the orchestrator to pass "`sonnet` or higher" to the opposition
+  agent. An explicit `model` parameter overrides frontmatter, so a compliant orchestrator would
+  have silently downgraded the `opus` pin added to prevent exactly that. Both now specify `opus`.
+
+### Documentation
+- **Recorded a cross-project provenance gap.** The ACR session holds a memory-bank entry attributing
+  a specific `ai-review-agent` timeout measurement (a 616 s agent runtime against a 282,240 ms
+  ceiling) to a brief from this project. That measurement exists nowhere in PMB — not in
+  `memory-bank/`, `docs/`, `docs/archive/`, or the ACR brief in the operator's Downloads. It was
+  reported back as unsourced rather than reconstructed from the formula, and ACR was advised to
+  re-derive it with instrumentation rather than treat it as evidence.
+- `memory-bank/activeContext.md` stated `progress.md` was at "599/60,000 — ZERO bytes of headroom,
+  deadlock is live". The file was well under both caps by then; the claim was stale from the
+  moment the relocation landed, in the same branch that left the paragraph unedited. No
+  replacement byte count is recorded here — two attempts to pin one went stale inside this very
+  branch, so the number is left to `wc -c` and the CI caps. Its `mb.sh:831` /
+  `mb.ps1:1090` citations were also simply wrong (`mb.sh:409,410,967`, `mb.ps1:1189`).
+- `memory-bank/progress.md` recorded the relocation as taking the file to a specific byte count.
+  Two successive attempts to state that number (40,063, then 46,956) were each already stale when
+  written, because entries kept being appended after the measurement. No byte count is recorded in
+  any of the three files any more — the relocation's effect is stated as bytes REMOVED (20,953),
+  which does not decay, and current size is left to `wc -c` and the CI caps.
+- New `[NS-42]` (write-rate control — eviction is symptom relief; the file grew +24,355 bytes in
+  three days and `docs/archive/` already holds 149,711 relocated bytes) and `[NS-43]` (the review
+  gate structurally forbids commit-splitting, and its purely textual matcher denies any command
+  that merely mentions a guarded pattern).
+- Agent definitions now carry a scope caveat: their `Bash(...)` entries declare intent and were
+  observed not to constrain Bash in practice, so they must not be relied on as a security boundary.
+
 ### Security
+- **`scripts/dangerous-commands.ps1` (and its `templates/` mirror) now decodes hook stdin with an
+  explicit `StreamReader`+`UTF8Encoding` instead of `$input | Out-String`,** which was re-decoding
+  bytes through the console code page and mangling non-ASCII payloads before any tier could match
+  them. **This is a measured trade, not a pure win, and the losing side is stated deliberately.**
+  Across a 10-case byte matrix: the new path correctly matches UTF-16 LE/BE and UTF-32 LE/BE input
+  carrying a BOM — four encodings the old path silently failed to match — but it no longer matches
+  two *malformed hybrids* (a `FF FE` or `FE FF` prefix followed by UTF-8 bytes) that the old path
+  did match. Those hybrids are not emitted by the documented producer, which writes byte 0 of this
+  stream; that containment is INFERRED about a third-party binary, not verified here. Coverage is
+  3 of the 10 cases; UTF-16 BE, UTF-32 LE/BE and both hybrids are asserted nowhere. Adopters running
+  hooks under `pwsh` get the four gained encodings and the two lost hybrids.
+- **A word-splitting bug could silently disable a required CI check.** The startup-context job
+  enumerated files with an unquoted command substitution, so any tracked path containing a space
+  word-split into nonexistent paths, the baseline lookup failed, and the check reported PASS while
+  skipping its own work. Now NUL-delimited (`git ls-tree -rz`). Demonstrated against a real tree.
+- **`mb doctor`'s worktree path resolution is fixed** (`git rev-parse --git-common-dir`): from a
+  subworktree it previously measured whichever `memory-bank/` sat beside it, which is stale by
+  construction, and reported a large false margin on the one check meant to be unfoolable.
+
 - `scripts/dangerous-commands.sh`/`.ps1` (and `templates/` mirrors): commit-signing bypass is now
   CONFIRM-tier, alongside the existing `--no-verify` entry. Covers `commit.gpgsign` set to any
   value git resolves as false (`false`/`0`/`no`/`off`, any case, quoted or bare) via `git -c` or
@@ -129,13 +479,58 @@
   discriminate either — neutering the original line left them byte-identically green, so the guard
   for the NBSP platform-parity bug was already dead while still looking healthy. Redundant
   normalization in a matcher does not add safety; it removes testability.
+- **Closed a case-sensitivity bypass that spanned three tiers on the `.sh` side** (`[NS-37]`).
+  `block()`, `block_boundary()`, `confirm()` and `warn()` all matched with a bare POSIX `case`,
+  which is case-sensitive, while **every** corresponding site in the `.ps1` twin uses
+  `OrdinalIgnoreCase` or `RegexOptions.IgnoreCase`. Only `confirm_regex()` (`grep -i`) and
+  `confirm_boundary()` (which folded per call) already agreed. So a mixed-case payload got **no
+  verdict at all** from bash and a verdict from PowerShell — `DrOp TaBlE`, `Rm -Rf`, `| BASH`,
+  `--NO-VERIFY` and `SUDO RM` were each live on the shell that runs wherever `pwsh` is absent,
+  which includes CI. Not cosmetic: SQL keywords are case-insensitive to the engine, and on the
+  default case-insensitive Windows and macOS filesystems a shell resolves `RM` to the same
+  binary as `rm`.
+- Fixed at the **mechanism**, not per entry: both command views are folded once, hoisted beside
+  `cmd_loose`, and all six matchers now read the same pair. The two lowercase SQL literals
+  (`drop table`, `drop database`) added by an earlier per-instance patch are **removed** — they
+  fixed the two entries someone thought of, left every other pattern and both other tiers
+  evadable by one shifted keystroke, and were themselves evaded by a *mixed*-case spelling.
+  Their removal also restores structural parity with `$blockPatterns` on the `.ps1` side, which
+  never carried them.
+- **Why widening the fix past the BLOCK tier could not open a new hole:** folding both sides of
+  an ASCII comparison is monotone — it can only ever *add* a match, never remove one. The whole
+  risk is therefore false positives, bounded by the existing word-boundary checks and pinned by
+  negative controls (`| SHA256SUM`, `| Shasum` — the collision that forced `block_boundary()` to
+  exist, and which this repo's own review-gate hash verification depends on). One accepted cost
+  is now pinned rather than left implicit: a mixed-case trigger quoted inside a commit message
+  blocks, exactly as the upper-case spelling already did.
+- Added a **completeness invariant** to both suites: no matcher may match against a non-lowered
+  view, asserted structurally over `scripts/` *and* `templates/scripts/`, plus a byte-identity
+  check between the two mirrors. This is the check payload cases cannot make — round 9's lesson
+  in this same file is that a mutation proof shows a mechanism works *where it is wired* and
+  says nothing about whether every matcher is wired to it. The de-escaped-view retrofit missed
+  one matcher of five; the case-folding retrofit then missed four of six.
+- The cross-shell `assert_parity` helper gained a `block` arm — every parity case in the suite
+  had been a CONFIRM case, so the entire BLOCK tier went unchecked for divergence, which is
+  where this defect lived. Its `pass` arm now also asserts no *false* BLOCK, the failure mode a
+  folding change actually risks. Absolute (non-parity) assertions were added on the `.ps1` side
+  so that dropping `IgnoreCase` there cannot make the two shells agree at the wrong answer while
+  the parity block stays green.
 
-### Note — session-claims items below are in-flight, not shipped
-The four `Added` items below are implemented and committed on the not-yet-merged branch
-`worktree-concurrent-session-claims`, not on this branch/tag — see `[NS-18]` in
-`memory-bank/activeContext.md`.
+## Pending — NOT part of any release
 
-### Added
+**This section is not release notes and must not be renamed at tag-cut.** It was previously a
+`### Added` block inside `[Unreleased]`, carrying a note that its contents were unshipped. The note
+was correct but structurally unsafe: renaming `## [Unreleased]` to a version number — the one
+mechanical step of cutting a release — would have swept four features that do not exist in this
+repository into the release notes for a tag that does not contain them. Moved to its own
+`##`-level section on 2026-09-02 so that rename cannot reach it.
+
+Everything below is implemented and committed on the not-yet-merged branch
+`worktree-concurrent-session-claims`, not on this branch or tag — see `[NS-18]` in
+`memory-bank/activeContext.md`. Move these items into a release section only when that branch
+actually merges.
+
+### Pending — session-claims (branch `worktree-concurrent-session-claims`)
 - `scripts/session-claims.sh`/`.ps1`: coordinate multiple Claude Code sessions working the same
   repo at once via a gitignored, self-pruning `.claude/session-claims.json` registry —
   `prune`/`list`/`claim`/`release`/`force-clear`/`notify`, `mkdir`-based lock with 30s staleness
@@ -148,344 +543,18 @@ The four `Added` items below are implemented and committed on the not-yet-merged
   Steps list, documented in `standards/MEMORY-BANK.md` and wired into `CLAUDE.md`'s
   session-start/handoff protocol.
 
-## [1.2.1] — 2026-08-03 (mb.ps1 review-reminders export gap)
-
-### Fixed
-- `scripts/mb.ps1`: `Invoke-Init`'s hook-scripts copy loop excluded `review-reminders.sh`/`.ps1` and `review-reminders-post.sh`/`.ps1` — only `Invoke-Upgrade`'s `$templateOwned`/gap-detection got the 1.2.0 (review-gate hardening) fix, so a fresh PowerShell `mb init` shipped a `settings.json` referencing hook scripts never actually copied into `scripts/` (they'd only appear on a subsequent `mb upgrade`). This closes the PowerShell-side twin of the same-day `mb.sh` fix below. Added regression coverage: `tests/mb-setup.Tests.ps1` asserts `mb init` (subprocess) creates all 4 files.
-
-## [1.2.1] — 2026-08-03 (mb.sh review-reminders export gap)
-
-### Fixed
-- `scripts/mb.sh`: `templates/.claude/settings.json` invokes `scripts/review-reminders.sh`/`.ps1` and `scripts/review-reminders-post.sh`/`.ps1` directly for the commit/push review gate, but none of the 4 files were in `mb init`'s hook-scripts copy loop or `mb upgrade`'s `TEMPLATE_OWNED` array — a fresh `mb init`/`mb upgrade` shipped a `settings.json` referencing hook scripts that were never actually copied into the target project's `scripts/` directory, silently disabling the review gate for every project onboarded via `mb.sh` (only this repo's own native copies worked). `scripts/mb.ps1` got the `TEMPLATE_OWNED` half of this fix in 1.2.0 (review-gate hardening) but not the corresponding `mb.sh` change — this closes that parity gap. Added regression coverage: `tests/test-mb-init.sh` asserts all 4 files are created by `mb init`; `tests/test-mb-upgrade.sh` asserts `mb upgrade` restores them via `TEMPLATE_OWNED`.
-
-### Known gap, not fixed here (closed above)
-- `scripts/mb.ps1`'s `Invoke-Init` copy loop also excludes these 4 files (only its `TEMPLATE_OWNED`/gap-detection got the 1.2.0 fix) — PowerShell `mb init` on a fresh project has the same bug. Tracked separately.
-
-### Changed
-- `scripts/review-reminders.sh/.ps1` + `-post.sh/.ps1`: `sha256_file`/`diff_hash`/`resolve_cd_root` (bash) and `Get-FileHashHex`/`Get-CommitDiffHash`/`Get-PushDiffHash` (PowerShell) were duplicated verbatim across all 4 files (a fix to one had to be manually ported to the others, and had already missed once — see the 2026-07-09 trailing-newline bug). Extracted into new shared dot-sourced libs, `scripts/_review-gate-lib.sh`/`.ps1` (mirrored in `templates/scripts/`); all 4 hook files now dot-source instead of defining locally. `review-reminders-post.ps1` also now calls the shared `Get-CommitDiffHash`/`Get-PushDiffHash` instead of inlining its own third copy of the same pattern (confirmed byte-identical output before and after — a structural dedup, not a behavior fix).
-- A missing/corrupt lib file makes the sourcing hook fail open (gate skipped), matching this repo's established convention — but since a dot-sourced file is invisible to the existing settings.json-derived hook-existence checks, added a new hardcoded check (`scripts/check-review-gate-lib-presence.sh`, called by both `mb doctor` and the CI `template-integrity` job) so this new failure mode doesn't slip through undetected the way `review-reminders*.sh/.ps1` themselves briefly did.
-
-## [1.2.1] — 2026-07-04 (template scaffolding gap)
-
-### Fixed
-- `templates/CLAUDE.md` references `docs/CONTRACTS-GUIDE.md` and `docs/HOOKS-GUIDE.md`, but neither file existed anywhere under `templates/` — `mb init`/`mb upgrade`/`mb setup` never scaffolded them into downstream projects, leaving every project's `CLAUDE.md` pointing at docs that don't exist. Discovered via `mb-setup.bat` flagging governance gaps on an existing project.
-- Added `templates/docs/CONTRACTS-GUIDE.md` (verbatim copy of PMB's own guide, already generic) and `templates/docs/HOOKS-GUIDE.md` (trimmed — dropped PMB-repo-specific "bug found and fixed" postmortem prose, kept the reusable hook reference).
-- `scripts/mb.ps1`: `Invoke-Init`, `Invoke-Upgrade`'s `$templateOwned`, and `Get-MbUpgradeAnalysis`'s gap-detection now all auto-discover `templates/docs/*.md` (same pattern already used for `templates/claude-commands/*` — a hardcoded list of these went stale before, per the existing comment on that fix).
-- `scripts/mb.sh`: `invoke_init` now copies `templates/docs/*`; `invoke_upgrade`'s `ADVISORY_CREATE` now includes both doc files (create-if-missing, matching how `mb.sh` already handles other reference docs).
-
-### Remediation for already-scaffolded projects
-Any project that ran `mb init`/`mb setup` before this fix has a `CLAUDE.md` with dangling doc references. Re-running `mb upgrade` in that project after upgrading to PMB 1.2.1 will create the two missing files (now template-owned / advisory-create, so "create if missing" applies retroactively).
-
-## [1.2.0] — 2026-07-03 (review-gate hardening)
-
-### Fixed
-- `scripts/dangerous-commands.ps1/.sh`, `scripts/check-contract.ps1/.sh`: read the wrong JSON field path (flat `.command`/`.file_path` instead of nested `tool_input.command`/`tool_input.file_path`) and signaled denial via exit codes, which `settings.json`'s fail-open wrapper silently erased — both hooks were near-total no-ops. Fixed to use `hookSpecificOutput.permissionDecision: "deny"`.
-- `scripts/check-contract.ps1/.sh`: schema bug — read `scope.files` instead of the documented `scope: [{file, op}]` array. `.sh` version also had a Windows CRLF bug from Python's `print()` breaking exact-match comparisons.
-- `scripts/dangerous-commands.ps1/.sh`: pipe-to-shell BLOCK pattern collided with `sha256sum`/`shasum` — fixed with word-boundary matching.
-- Hash mismatch between documented review-gate commands and hook verification: PowerShell's pipeline re-tokenizes external-command output, so array-join hashing didn't reproduce the byte stream a raw shell pipe sees. Fixed by hashing a file written via redirection instead.
-- `.claude/settings.json` + `templates/.claude/settings.json`: stale `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` bumped to `65` to match current guidance.
-
-### Added
-- `scripts/review-reminders.ps1/.sh` + `-post.ps1/.sh`: `PreToolUse`/`PostToolUse` hook pair mechanically enforcing review-before-commit/push via a SHA-256 diff-hash marker (see ai-code-review-agent CHANGELOG for full design). Wired into PMB's own live `.claude/settings.json` (dogfooding) and added to `scripts/mb.ps1`'s `$templateOwned` list so `mb init`/`mb upgrade` distribute it to downstream projects.
-- `docs/HOOKS-GUIDE.md`: documented the fixed dangerous-commands/check-contract mechanisms and the review-gate hash-binding/atomic-consume/reissue design.
-
-## [1.2.0] — 2026-07-04 (CI health fixes)
-
-### Fixed
-- **`.github/workflows/pmb-health.yml` SAST job** — `semgrep --config "p/bash"` returned HTTP 404 (no longer a resolvable registry ruleset); switched to `--config auto`.
-- **Rules-File Integrity "hidden HTML comments" check** — false-positived on `standards/RULES-FILE-INTEGRITY.md`'s own backtick-wrapped documentation examples. Refined to strip fenced code blocks and paired inline-code spans before matching, with two guard rails found necessary through two rounds of adversarial review: (1) an odd count of ``` fence markers falls back to inline-only stripping, so a malformed fence can't hide the rest of a file from the check; (2) an odd count of backticks *on a single line* leaves that line unstripped entirely, since a naive `` s/`[^`]*`//g `` still pairs a stray backtick with an unrelated later one and silently deletes everything between — including a real hidden comment placed right after the stray backtick. (Two earlier variants — a single-character negative lookbehind, then a stripper without the per-line parity guard — were each found bypassable in review and replaced before shipping.)
-- **Forbidden Patterns "spec placeholder grep"** — false-positived on two spec docs' own code-formatted examples of the TBD/TODO pattern. Uses the identical strip-fenced-code-and-paired-backticks helper (with both guard rails) as the fix above.
-- **PowerShell Lint** — added `scripts/PSScriptAnalyzerSettings.psd1` excluding `PSAvoidUsingWriteHost` project-wide (every `.ps1` here is a CLI/hook script whose job is console output); added `Write-Verbose` diagnostics to 22 previously-empty `catch {}` blocks; added a UTF-8 BOM to the 17 `.ps1` files that needed it; renamed `Normalize-MbLine` → `Format-MbLine` in `mb.ps1` (not an approved PowerShell verb); removed the dead `Invoke-InstallHooks` function (~92 lines, zero call sites); added targeted suppressions for `$DryRun`/`$Force` false-positive unused-parameter warnings (both read via script-scope chaining in nested functions).
-- **`.claude/commands/change-review.md` marker-hash commands** — both the Bash and PowerShell snippets were missing the `git diff HEAD` fallback that `scripts/review-reminders.sh`/`.ps1` actually use when no `origin/main` upstream exists; added to match exactly.
-
-### Added
-- **`.claude/commands/change-review.md` Step 3.5 — Baseline Repo Health** — a new informational-only, offline-only spot-check against the whole working tree (not diff-scoped), so a diff-clean review doesn't silently approve a change sitting on a CI-red base branch. Never blocking; explicitly excludes network-dependent tools (Semgrep, PSScriptAnalyzer, gitleaks), which remain CI-only per this repo's layered-enforcement design.
-
-## [1.2.0] — 2026-07-03 (agent frontmatter fix)
-
-### Fixed
-- **`.claude/agents/*.md` missing `name:` field** — Claude Code silently fails to register a custom subagent without a `name:` frontmatter field; `researcher.md` and `security-reviewer.md` (plus their `templates/.claude/agents/` copies) had this bug. Added `name:` to all 4 files.
-- **`.claude/commands/health-check.md`** — corrected a mislabeled "Check 24" reference to the actual staleness check (check 9); removed the only non-functional `@agent-name` invocation-syntax mention in the repo.
-- **`mb doctor` check 25 ("Agent frontmatter") elif-suppression** — a directory with both a missing-`name:` agent and a mismatched-`name:` agent only reported the first; now both report independently.
-- **`mb doctor` check 25 `name:` extraction** — now scoped to the frontmatter block only (was scanning the whole file), strips surrounding quotes, and no longer over-strips internal spaces from multi-word values, on both `mb.sh` and `mb.ps1`.
-- **`mb.ps1` check 24 (Plan hygiene) port** — was previously missing entirely from `mb.ps1`, leaving `mb.sh`/`mb.ps1` doctor check counts out of sync; ported, including a `ParseExact` try/catch guard matching sibling call sites (was unguarded, could abort the rest of `mb doctor` on an unparseable git date) and a frontmatter-presence match aligned with `mb.sh`'s looser `grep -c '^---'` behavior.
-- **"24 checks" → "25 checks"** — updated `README.md` (both occurrences), `.claude/commands/health-check.md`, `docs/COMMANDS-REFERENCE.md` (was already stale at "20 checks"; table extended through check 25), and `tests/test-mb-doctor.sh` header.
-
-### Added
-- **`mb doctor` check 25 ("Agent frontmatter")** — scans `.claude/agents/*.md`, warns on missing or filename-mismatched `name:` fields, in both `mb.sh` and `mb.ps1`.
-- **`mb doctor` check 25 live/template parity check** — in the PMB source repo (where `templates/.claude/agents/` exists), warns if a live agent file diverges from its template copy.
-
-## [1.2.0] — 2026-06-26 (additional hardening)
-
-### Fixed
-- `scripts/mb.sh`: doctor check 5 token budget drift — replaced `grep -c` with `grep -q` + explicit 0/1 assignment (was permanently SKIP in Git Bash due to double-output bug)
-- `tests/test-mb-doctor.sh`: added EXIT trap guards to all 4 sites that mutated `$REPO_ROOT` directly — git status now clean after any test outcome
-- `scripts/check-contract.sh` + `.ps1`: empty scope `[]` no longer fires spurious out-of-scope warning; malformed JSON now emits visible warning instead of silent pass; handles both ACR `[{file,op}]` and PMB `{files:[]}` scope schemas
-- `.claude/commands/health-check.md`: removed deprecated `mb validate` and `mb audit` (now aliases for `mb doctor`); replaced with `mb status` and doctor staleness review
-- `.github/workflows/pmb-health.yml`: PSScriptAnalyzer now checks `-Severity Error,Warning`; gitleaks-action pinned to commit SHA `ff98106e`
-
-### Added
-- `.github/dependabot.yml`: weekly GitHub Actions version tracking
-- `.claude/commands/change-review.md` Job 7: now passes `--diff <tmpfile>` to ACR (was reviewing wrong diff surface for non-default invocations)
-
----
-
-## 1.2.0 — 2026-06-24
-
-### Added
-- **Comprehensive bash test suite** — expanded from 3 tested commands to all 11 `mb` commands. Added 8 new test files covering `mb doctor` (25 cases — all 24 checks + clean baseline), `mb status` (6 cases), `mb verify-integrity` (3 cases), `mb query` (4 cases), `mb init` (3 cases), `mb clean` (2 cases), `mb commit` (2 cases), and `mb upgrade` (3 cases). Total test count: 115 assertions across 11 suites.
-- **CI: `powershell-lint` job** — PSScriptAnalyzer at Error severity on all `.ps1` files in `scripts/` and `templates/scripts/`. CI now has 9 jobs total.
-- **CI: `mb-doctor-self-check` job** — runs `mb doctor` against the PMB repo itself on every push, surfacing drift in memory-bank, standards count, plan hygiene, and hook config.
-
-### Fixed
-- **`mb doctor` check 2 + check 13 fixture restore hardened** — test previously renamed entire `templates/` or `fixtures/security/` directories; now renames a single subdirectory with conditional restore, preventing data loss if interrupted.
-
-### Changed
-- **`mb doctor` checks 22 & 23: O(n²) → pre-cached normalization** — normalized strings are now pre-built once before the outer loop in both `mb.sh` and `mb.ps1`, eliminating ~10,000 subprocess spawns per doctor run on 100-line files.
-- **`show_budget` find pipe** — replaced `find | xargs wc -c` with `find -exec wc -c {} +` (single `wc` call instead of one per file) in `mb.sh`.
-- **`mb help` deprecated aliases** — both `mb.sh` and `mb.ps1` now show a `Deprecated aliases` section at the bottom of help output. `mb.ps1` Show-Help also gains `plan`, `preflight`, and `change-check` in the active commands list (parity with `mb.sh`).
-
-### Documentation
-- **`docs/HOOKS-GUIDE.md`** — added section 6 (Agent Delegation Depth Check) documenting the `.pmb-delegation-depth` runtime state file, 2-hour reset behavior, and error logging.
-- **`.claude/commands/health-check.md`** — corrected `mb doctor` check count from 20 to 24.
-
----
-
-## 1.1.2 — 2026-06-24
-
-### Fixed
-- **`settings.json` invalid JSON** — missing comma in the `permissions.allow` array (after `"Bash(python -m ruff *)"`) caused strict JSON parsers to reject the file. Added the missing comma.
-- **`pre-compact-check` false positives** — the progress.md date check used a free substring search (`grep -q "$today"`), which matched dates embedded in prose (e.g. "see spec from 2026-06-24") and incorrectly allowed compaction. Fixed to require the date at the start of a line (optionally preceded by a markdown heading or list prefix). Applied to `scripts/pre-compact-check.sh`, `scripts/pre-compact-check.ps1`, and their template copies.
-- **Missing `TRUNCATE TABLE` and `DELETE FROM` guardrails** — both patterns were listed as CONFIRM-tier in `standards/SECURITY-GUARDRAILS.md` but absent from the dangerous-commands scripts. Added to `scripts/dangerous-commands.sh`, `scripts/dangerous-commands.ps1`, and their template copies. Shell scripts include explicit lowercase variants for POSIX case-sensitivity parity; PowerShell uses its native case-insensitive matching.
-- **`templates/scripts/pre-compact-check.sh` stale whitespace trimming** — template was still using a `sed` subprocess per line; synced with the live script's pure bash parameter expansion (~100 fewer process spawns per compaction check).
-
-### Documentation
-- **`docs/HOOKS-GUIDE.md`** — updated CONFIRM pattern count from 5 to 7; corrected PreCompact detection logic description from mtime-based to content-based (the actual implementation).
-
----
-
-## 1.1.1 — 2026-06-18
-
-### Fixed
-- **`check-contract.ps1` / `check-contract.sh` stdin fix** — both live and template copies were reading tool input from `$env:CLAUDE_TOOL_INPUT` (PowerShell) / `os.environ.get('CLAUDE_TOOL_INPUT')` (bash), an env var that Claude Code never sets. Hooks were silently failing open on every invocation. Fixed to read stdin: `$input | Out-String` (PowerShell) and `HOOK_INPUT=$(cat 2>/dev/null)` (bash).
-- **`mb.sh` TEMPLATE_OWNED parity** — `scripts/pre-push-check.sh` and `scripts/pre-push-check.ps1` were missing from the bash `TEMPLATE_OWNED` array; `mb upgrade` on bash systems would silently skip overwriting these files. `mb.ps1` and the `invoke_init` for-loop already had them. Now consistent across all four sites.
-- **`docs/HOOKS-GUIDE.md` per-project example** — "Lint Before Commit" example used `echo "$CLAUDE_TOOL_INPUT"` (same broken env-var pattern). Fixed to `HOOK_INPUT=$(cat 2>/dev/null); echo "$HOOK_INPUT"`.
-- **`docs/QUICK-REFERENCE.md` doctor check count** — description read "16-point diagnostic"; doctor has had 20 checks since v1.0.8.
-
----
-
-## 1.1.0 — 2026-06-11
-
-### Changed
-- **Git hooks migrated to `core.hooksPath = .githooks`** — hooks are now versioned in the project repo (`.githooks/pre-push`, `.githooks/pre-commit`) and distributed via `mb upgrade` (TEMPLATE_OWNED). `mb init` and `mb upgrade` set `core.hooksPath = .githooks` automatically. `mb upgrade` performs one-shot cleanup of the old `.git/hooks/pre-push` shim on legacy projects.
-- **Pre-commit hook now active** — `.githooks/pre-commit` existed in the PMB repo but was dead (`core.hooksPath` not set). Now fires on every commit: blocks `handoff.md` staging, warns if `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is missing from `.claude/settings.json`.
-- **`mb doctor` check 4 updated** — verifies `.githooks/pre-push` presence and `core.hooksPath = .githooks`; bash doctor gains equivalent check (previously missing).
-- **`docs/HOOKS-GUIDE.md`** — new "Git Hooks (versioned)" section documents the two hooks, `core.hooksPath` activation, and migration path from `.git/hooks/`.
-
-### Breaking
-- Projects using PMB hooks must run `mb upgrade` to activate the new layout. After upgrade, `.git/hooks/pre-push` is removed (if it is the PMB shim) and hooks run from `.githooks/` instead.
-
----
-
-## 1.0.9 — 2026-06-11
-
-### Added
-- **`mb update` alias** — `mb update` now runs the same upgrade logic as `mb upgrade`; documented in `docs/COMMANDS-REFERENCE.md`
-
-### Changed
-- **Hook script performance** — behavioral no-ops, same output, fewer processes:
-  - `check-contract.sh`: 3 Python spawns + 6 sed subshells → single Python heredoc invocation
-  - `pre-compact-check.sh`: sed subprocess per line → bash parameter expansion
-  - `mb doctor` check 10: 7 grep calls per file → 1 combined grep per file
-  - `mb doctor` check 17: echo|grep per line (~400 subshells) → grep directly on file (2 calls)
-
----
-
-## 1.0.8 — 2026-06-06
-
-### Added
-- **Command consolidation finalized** — `mb verify-integrity` added as an explicit command; all 8 deprecated aliases updated to clearer redirect messages; `mb clean` output references corrected from `mb slim`/`mb archive`/`mb compact`
-- **`mb doctor` Check 17 — Semantic drift detection** — scans `activeContext.md` and `progress.md` for transition/removal language (`deprecated`, `migrated from`, `replaced by`, `no longer`, `switching from`, etc.) and surfaces matching lines for human review against stable files; heuristic, low-noise (skips frontmatter, headings, blank lines)
-- **`mb doctor` Check 18 — Old stable decisions** — flags `authority:stable` or `authority:immutable` files whose `last-reviewed` date is >180 days ago; prompts review to confirm decisions are still accurate
-- **`mb doctor` Check 19 — Cross-file contradiction detection** — verifies authority hierarchy is consistent with PMB conventions (`projectbrief.md=immutable`, `systemPatterns.md/techContext.md=stable`, `activeContext.md=volatile`, `progress.md=accumulating`); also checks for negation language under shared `##` headings across stable vs. volatile files
-- **`mb doctor` Check 20 + `mb verify-integrity` — Integrity checksums** — computes SHA-256 of all 5 memory-bank files; stores in `.pmb-checksums` (gitignored); on next run, compares against baseline and reports [ERROR] for any file modified outside mb tooling; `mb verify-integrity` runs this check standalone
-- **Compaction quality gate** — `pre-compact-check.ps1`/`.sh` now BLOCK compaction (exit 2) unless: (1) `activeContext.md` has ≥3 substantive content lines and (2) `progress.md` has an entry dated today; `handoff.md` bypasses the gate; errors remain fails-open (exit 0)
-- **Agent delegation depth enforcement** — new `scripts/delegation-depth-check.ps1`/`.sh`; wired as `PreToolUse` hook on the `Agent` tool in `.claude/settings.json`; emits WARN when delegation depth exceeds budget (≤1 per `PERFORMANCE-BUDGET.md`); state stored in `.pmb-delegation-depth` (gitignored), resets after 2h inactivity
-- **`mb doctor` checks 15–16 added to `mb.sh`** — previously only in PowerShell; bash script now has parity on startup context ceiling and hook error log checks
-- **`.gitignore` entries** — `.pmb-checksums`, `.pmb-delegation-depth`, and `.pmb-hook-errors.log` added to project root `.gitignore`; `mb init` now adds all three to new project `.gitignore`
-- **`standards/AGENTIC-SAFETY.md`** — new "Agent Delegation Depth Enforcement" section documenting the hook behavior, threat model, budget limit, and how to disable
-
-### Changed
-- `mb init` allowlist expanded: `delegation-depth-check.ps1`/`.sh` added to exported hook scripts
-- `mb upgrade` `TEMPLATE_OWNED` expanded: `delegation-depth-check.ps1`/`.sh` now overwritten on upgrade
-- `docs/COMMANDS-REFERENCE.md` — updated to 20-check doctor table; `mb verify-integrity` added to command table
-- All deprecated alias redirect messages changed from past-tense to present-tense ("has been integrated" → "is now part of")
-
----
-
-## 1.0.7 — 2026-06-06
-
-### Added
-- **G1 — PowerShell tool hook** — `dangerous-commands.ps1` now intercepts both the Bash and PowerShell Claude Code tools; 8 PowerShell-native BLOCK patterns added: `Remove-Item -Recurse -Force`, `Remove-Item -Force -Recurse`, `Format-Volume`, `| Invoke-Expression`, `|Invoke-Expression`, `| iex`, `|iex`; both `.claude/settings.json` and `templates/.claude/settings.json` updated
-- **G2 — Hook failure alerting** — all 4 hook scripts (`dangerous-commands`, `check-contract`, `pre-compact-check`, `update-reviewed`) append a timestamped entry to `.pmb-hook-errors.log` on unexpected error; `mb doctor` Check 16 reports log presence and recent entries as WARN; `mb init` adds `.pmb-hook-errors.log` to `.gitignore` for new projects
-- **G3 — Contract scope hard-block mode** — `PMB_CONTRACT_HARD_BLOCK=1` env var promotes contract scope warnings to hard blocks (exit 2) in both `check-contract.ps1` and `check-contract.sh`; documented in `standards/SECURITY-GUARDRAILS.md` with `env` block example
-- **G4 — First-push secret scan** — `pre-push-check.ps1` / `.sh` now falls back to `git log --not --remotes -p` when no upstream tracking ref exists, scanning all commits not yet on any remote; large-files check (Check 6) also fixed for the no-upstream case; replaces the previous `[SKIP]` behavior
-- **G5 — Rules-file integrity CI** — new `rules-file-integrity` job in `pmb-health.yml`: three steps — invisible Unicode characters (U+200B/C/D/FEFF/202E/00AD/2066-2069), hidden HTML comments (`<!--`), LLM bypass phrases in `CLAUDE.md` / `templates/CLAUDE.md`
-- **G6 — SAST CI** — new `sast` job in `pmb-health.yml`: Semgrep CLI with `p/bash` ruleset scanning `scripts/` and `templates/scripts/`; exits non-zero on any finding
-- **`mb doctor` Check 15** — startup context size ceiling: WARN if `CLAUDE.md` + `memory-bank/` total exceeds 15 KB, ERROR if over 25 KB
-- **`mb doctor` Check 16** — hook error log: WARN with entry count and last 3 lines if `.pmb-hook-errors.log` exists and is non-empty
-- **`install.bat`** — GUI folder picker to init first project at install time; `mb-new-project.bat` launcher; `pick-folder.ps1` helper
-
-### Changed
-- **mb commands redesigned (8 primary commands)** — `mb doctor` now absorbs `audit`, `validate`, and `budget`; `mb clean` added (absorbs `compact`, `update`, `archive`, `slim`); `mb upgrade` absorbs `install-hooks`; deprecated commands still work as redirects; `mb help` updated to show 8 primary commands
-- **`.pmb-version`** initialized in the PMB repo itself (was missing)
-
----
-
-## 1.0.6 — 2026-06-03
-
-### Changed
-- **`standards/CODE-REVIEW.md`** — replaced `Confidence: High|Medium|Low` with `Basis: VERIFIED|INFERRED|SPECULATIVE`; added Basis Classification and Evidence Requirements sections with per-basis evidence rules; tightened blocking semantics (`Blocking: true` requires `Severity >= High AND Basis != SPECULATIVE`); updated Required Report Sections to `Supported Findings` + `Predicted Risks`; added three new Failure Criteria (missing `file:line`, evidence not materially supporting claim, SPECULATIVE marked blocking); added Compatibility Note
-- **`templates/standards/CODE-REVIEW.md`** — mirrors `standards/CODE-REVIEW.md` (distribution template)
-- **`.claude/commands/code-review.md`** — Step 4 updated to reference `Basis` field definitions; Step 6 report template split into `## Supported Findings` (VERIFIED/INFERRED) and `## Predicted Risks` (SPECULATIVE, omitted if empty)
-- **`templates/claude-commands/code-review.md`** — mirrors `.claude/commands/code-review.md`
-
-**Breaking change:** `Confidence` field removed from the code review finding schema. Consumers parsing review output must update to `Basis`.
-
-*(Note: VERSION 1.0.5 was not bumped at the time of that release; version counter corrected here.)*
-
----
-
-## 1.0.5 — 2026-06-03
-
-### Added
-- **`/pmb-status` slash command** — fast state check (the `git status` of PMB); answers "can I work?" with 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present; surfaces attention items with one-line remediation hints; no deep validation (that belongs in `/health-check`); distributed via `mb init` and `mb upgrade`
-- **`templates/claude-commands/pmb-status.md`** — distribution template for `/pmb-status`
-
-### Changed
-- **`mb status`** — replaced file-size table with the same 5-signal state check that backs `/pmb-status`; now answers "can I work?" rather than "are files within size limits?" (size budget info remains available via `mb doctor`)
-
----
-
-## 1.0.4 — 2026-05-31
-
-### Added
-- `standards/SECURITY-RULES.md` — rule registry (SEC-001–009) for structured security findings
-- `standards/TRUST-CLASSIFICATION.md` — TRUSTED/SEMI_TRUSTED/UNTRUSTED source classification reference
-- `standards/PERFORMANCE-BUDGET.md` — explicit limits for standards count, memory entries, agent delegation depth
-- `fixtures/security/` — 9 known-bad code samples for security regression testing (SEC-001–009)
-- `mb doctor` Check 13: verifies `fixtures/security/` structure (9 subdirectories)
-- `mb doctor` Check 14: counts `standards/*.md` files; warns if > 20
-- `/health-check` step 5: runs `/security-review` against security fixtures, reports caught/missed per rule ID
-- Structured finding format for `/security-review` command and security-reviewer agent: Rule ID, Evidence, Confidence, Fix
-- Trust level note in security-reviewer agent for prompt-injection and rules-file-integrity findings
-- All 3 new standards distributed via `mb init` and `mb upgrade` (ADVISORY_CREATE)
-
----
-
-## 1.0.3 — 2026-05-29
-
-### Added
-- **Standards distribution** — `mb init` now copies 12 `standards/` files (`CODE-REVIEW.md`, `WORKFLOW.md`, `SECURITY-GUARDRAILS.md`, `CODE-QUALITY.md`, `ACCESSIBILITY.md`, `AGENTIC-SAFETY.md`, `LOGGING.md`, `MCP-SECURITY.md`, `MEMORY-BANK.md`, `RULES-FILE-INTEGRITY.md`, `SECRETS.md`, `SUPPLY-CHAIN.md`) into new projects so slash commands can reference governance contracts at runtime
-- **`ADVISORY_CREATE` category in `mb upgrade`** — standards files are created if missing in adopted projects; shows advisory diff if the file has been customized rather than silently overwriting
-- **`.pmb-version` tracking** — `mb init` writes `.pmb-version` to the target project; `mb upgrade` writes and checks it against the local PMB version
-- **Remote version check in `mb upgrade`** — soft non-blocking check against GitHub `VERSION` at upgrade time; warns if a newer PMB version is available; silently skips if unreachable
-- **`mb doctor` check 11** — warns if any of the 4 required standards files (`CODE-REVIEW.md`, `WORKFLOW.md`, `SECURITY-GUARDRAILS.md`, `CODE-QUALITY.md`) are missing; advises `mb upgrade` to install
-- **`mb doctor` check 12** — warns if `.pmb-version` is absent or drifted from the local PMB version; advises `mb upgrade`
-- **Pre-push git hook** — `scripts/pre-push-check.ps1` (Windows/pwsh) and `scripts/pre-push-check.sh` (POSIX/bash) with 7 checks: merge conflicts, conflict markers, dirty tree, missing `.gitattributes`, secrets scan (blocks on AWS/API/PAT patterns), large files >500 KB, and `mb validate`; distributed via `mb init`; `templates/hooks/pre-push` shim auto-detects pwsh/bash at runtime
-- **`mb install-hooks`** — retrofit subcommand for projects that ran `mb init` before the pre-push hook was added; copies hook scripts and installs `.git/hooks/pre-push`; supports `--dry-run`
-
----
-
-## 1.0.2 — 2026-05-27
-
-### Added
-- **`/test-audit` command** — inline diagnostic for test coverage gaps; covers scope detection, framework auto-detect (Jest, Vitest, pytest, Go, RSpec, Rust), source-to-test mapping, empty test file check, framework config check, and CI test step check; severity: [HIGH] missing, [MEDIUM] empty/CI gap, [LOW] no framework/config/CI
-- **`/health-check` command** — PMB-specific repo health check; runs `mb doctor` + `mb validate` + `mb audit` and prints a labeled summary with overall status (PMB repo only, not distributed via `mb init`)
-- **`docs/COMMANDS-REFERENCE.md`** — comprehensive reference for all `mb` CLI commands, slash commands, Claude Code built-in commands, and `mb doctor` check details
-
-### Fixed
-- `mb upgrade` now includes `.claude/commands/test-audit.md` in `$templateOwned` so adopted projects receive the test-audit command on upgrade
-- README version badge corrected from `1.0.0` to `1.0.2`
-
----
-
-## 1.0.1 — 2026-05-27
-
-### Fixed
-- Stop hook documentation: heading now reads "excluded from install template"; clarified that PMB's own `.claude/settings.json` keeps it deliberately for interactive Windows sessions
-- Contract threshold: raised from "more than one file" to "4 or more files" with sensitive-domain list
-- Compaction/handoff language: corrected numerically backwards sentence about 50%/40% thresholds
-- CI workflow renamed: `governance.yml` → `pmb-health.yml`; internal `name:` updated to "PMB Health"
-
----
-
-## 1.0.0 — 2026-05-14
-
-First stable personal release. Crossed from "organized prompt files" into governed operational memory infrastructure.
-
-### Added
-- **Authority hierarchy** — deterministic conflict resolution between memory-bank files (immutable → stable → volatile → accumulating)
-- **3-dimension frontmatter** — `review-cycle`, `retention`, `staleness-threshold` replacing a coarse single `ttl` field
-- **Hierarchical tags** — `domain/concept` format (`auth/session`, `infra/postgres`) replacing flat tags
-- **Automated `last-reviewed`** — PostToolUse hook updates frontmatter whenever a memory-bank file is edited
-- **Partitioned archive** — `docs/archive/context/`, `docs/archive/progress/`, `docs/archive/decisions/` replacing a single monolithic ARCHIVE.md
-- **`mb audit`** — freshness audit flagging stale and overdue files by staleness-threshold
-- **`mb query`** — tag-based retrieval with partial hierarchical matching
-- **`mb compact`** — AI-driven compaction prompt for deduplication and summarization
-- **`mb init`** — zero-config project initializer with checkmark UX
-- **`mb validate`** — required-file and frontmatter health check
-- **`mb doctor`** — full diagnostic (git, templates, hooks, file sizes, handoff state)
-- **`mb budget`** — token overhead check (CLAUDE.md + memory-bank/ sizes)
-- **Worktree guard** — `mb commit` refuses mutations from git subworktrees
-- **`install.bat`** — Windows double-click installer (sets MB_HOME, registers `mb` globally)
-- **`install.sh`** — Mac/Linux installer (sets MB_HOME in shell rc, registers `mb` globally)
-- **`scripts/update-reviewed.ps1` + `.sh`** — PostToolUse hook scripts for auto last-reviewed
-- **AGENTIC-SAFETY.md** — indirect prompt injection defense and task boundary standard
-- **`task-boundary.md` template** — agentic session scoping
-
-### Changed
-- **README** — rewritten outcomes-first with progressive disclosure (advanced features behind collapsible sections)
-- **MEMORY-BANK.md** — added authority tiers, eviction criteria, archive structure, worktree guidance, tag-based retrieval, and memory compaction sections
-- **Archive strategy** — all references to monolithic `docs/ARCHIVE.md` replaced with partitioned `docs/archive/`
-- **`mb help`** — reorganized with new commands listed first; examples added
-
-### Removed
-- Monolithic archive pattern (`docs/ARCHIVE.md`) — replaced by partitioned subdirectories
-
----
-
-## 0.2.0 — 2026-05-01
-
-Personal standard modernization. Added 2025 Claude Code features.
-
-### Added
-- Hooks template with dangerous-command blocker (PreToolUse)
-- `.claude/agents/` — `researcher.md` and `security-reviewer.md` subagent definitions
-- AI antipatterns + dependency validation in `/code-review` command
-- Verification-first pattern in WORKFLOW.md phase 4
-- `external-content-is-data` rule in CLAUDE.md and AGENTIC-SAFETY cross-reference
-- Token budget section in CLAUDE.md and global `~/.claude/CLAUDE.md`
-- Karpathy coding principles
-- `mb budget` command
-
----
-
-## 0.1.0 — 2026-04-29
-
-Initial personal fork from enterprise Memory Bank standard.
-
-### Changed
-- Stripped Eric Nolan branding, binary assets, enterprise training materials
-- Removed compliance-only standards (Data Classification, Model Governance, OWASP LLM Top 10)
-- Removed incident runbooks, team onboarding scripts
-- Trimmed CLAUDE.md, LOGGING.md to personal-use scope
-
-### Kept
-- Memory Bank 5-file system + handoff protocol
-- Security Guardrails (BLOCK/CONFIRM/WARN)
-- Code Quality, Workflow, Logging standards
-- Supply Chain, MCP Security, Rules-File Integrity (reference)
-- Claude Code commands (`/code-review`, `/feature-dev`, `/security-review`)
-- Cursor rules
-- Init scripts, mb utility
+## Released history
+
+Versions **0.1.0 (2026-04-29) through 1.2.1 (2026-08-03)** live in
+`docs/archive/changelog-0.1.0-to-1.2.1.md`. They were moved there on 2026-09-07 because this file
+had reached 901 lines against the 800-line hard cap in `.github/workflows/pmb-health.yml`'s File
+Size job — with only 8 lines of headroom before this change.
+
+New released sections belong **here**, not in that archive. When this file approaches the cap again,
+move the oldest sections to a **new** dated archive file. Never append to an existing one:
+`docs/archive/README.md` and `standards/MEMORY-BANK.md` both require one topic or period per file,
+and `pmb-health.yml` exempts `docs/archive/` from its *byte* caps because archives do not grow.
+Note the 800-line markdown cap still applies there — `docs/archive/*.md` is inside the File Size
+job's scope — so appending would eventually red the build in the archive too, which is precisely the
+failure this move exists to stop repeating. An earlier version of this pointer said the opposite,
+and a later one claimed the archive directory was unwatched; neither was true.

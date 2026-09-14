@@ -49,7 +49,18 @@ param(
 $RepoRoot = if ($env:MB_HOME) { $env:MB_HOME } else { Split-Path -Parent $PSScriptRoot }
 # WHY: Validate MB_HOME points to a real PMB installation before trusting it for script paths.
 # An attacker-controlled MB_HOME could otherwise load a crafted pick-folder.ps1 or templates.
-if ($env:MB_HOME -and -not (Test-Path (Join-Path $RepoRoot 'templates') -PathType Container)) {
+# -LiteralPath is load-bearing and cannot weaken this guard, only sharpen it. Without it Test-Path
+# globs, so an MB_HOME containing [ or ] -- legal on Windows -- fails to match its own real
+# templates/ and every mb.ps1 command dies here with a false "templates/ not found", while mb.sh at
+# the same MB_HOME runs normally: measured rc=1 vs rc=0 on a tree whose templates/ was present.
+# The globbing also cuts the other way, which is why this is a security fix and not only a usability
+# one: a wildcard Test-Path can be satisfied by some OTHER directory the pattern happens to match,
+# so the guard could pass for a path that is not the one about to be used. This is one of 118
+# Test-Path CALLS in this file, on 116 distinct lines; 115 still glob and are recorded as audit
+# finding C9. Counted from the PowerShell AST, which is why calls and lines differ -- an earlier
+# version of this comment said "call sites ... measured by excluding comment lines", which names a
+# method (grep -v '^ *#') that yields 116, not the 118 it was attached to. Not fixed here.
+if ($env:MB_HOME -and -not (Test-Path -LiteralPath (Join-Path $RepoRoot 'templates') -PathType Container)) {
     Write-Host "[ERROR] MB_HOME '$env:MB_HOME' is not a valid PMB installation (templates/ not found)." -ForegroundColor Red
     exit 1
 }
@@ -98,7 +109,7 @@ function Get-CachedPmbVersion {
     if (-not (Test-Path $versionFile)) { return }
     $script:PmbLocalVersion = (Get-Content $versionFile -Raw).Trim()
 
-    $cacheDir = if ($env:MB_VERSION_CACHE_DIR) { $env:MB_VERSION_CACHE_DIR } else { Join-Path $env:USERPROFILE ".mb" }
+    $cacheDir = if ($env:MB_VERSION_CACHE_DIR) { $env:MB_VERSION_CACHE_DIR } else { Join-Path $HOME ".mb" }
     $cacheFile = Join-Path $cacheDir "version-check-cache.json"
     $checkUrl = if ($env:MB_VERSION_CHECK_URL) { $env:MB_VERSION_CHECK_URL } else { "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" }
     $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -186,10 +197,18 @@ function Test-PmbVersionStale {
 # duplicated guard+enumerate boilerplate; each call site keeps its own target-path mapping,
 # since that part legitimately differs (.claude/commands/ vs docs/).
 function Get-TemplateDirFile {
-    param([string]$TemplatesDir, [string]$Subdir)
+    # WHY -Filter is opt-in with a '*' default rather than '*.md': the claude-commands and docs
+    # call sites have always discovered every file in their directory, and narrowing them here
+    # would silently stop delivering any non-.md template they legitimately carry. Only the
+    # .claude/agents site passes '*.md', to match the bash side's glob in scripts/mb.sh (grep for the .claude/agents *.md glob -- no line number, it has been wrong twice).
+    # Found 2026-08-27: the two shells discovered different sets. It was harmless only by
+    # coincidence -- templates/.claude/agents/ happens to contain nothing but .md files -- so a
+    # stray README, .txt, or editor backup dropped there would have been delivered into an
+    # adopter's agents directory by pwsh and not by bash.
+    param([string]$TemplatesDir, [string]$Subdir, [string]$Filter = '*')
     $dir = Join-Path $TemplatesDir $Subdir
     if (-not (Test-Path $dir)) { return @() }
-    return @(Get-ChildItem $dir -File)
+    return @(Get-ChildItem $dir -File -Filter $Filter)
 }
 
 function Get-MbUpgradeAnalysis {
@@ -220,7 +239,9 @@ function Get-MbUpgradeAnalysis {
         'scripts/review-reminders.ps1',   'scripts/review-reminders.sh',
         'scripts/review-reminders-post.ps1', 'scripts/review-reminders-post.sh',
         'scripts/_review-gate-lib.sh',    'scripts/_review-gate-lib.ps1',
-        'scripts/warn-stale-review-marker.sh', 'scripts/warn-stale-review-marker.ps1'
+        'scripts/warn-stale-review-marker.sh', 'scripts/warn-stale-review-marker.ps1',
+        # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
+        'scripts/baseline-health.sh'
     )
     $govMissing = @($templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) })
 
@@ -560,7 +581,7 @@ function Show-Slim {
 
     $path = Join-Path $MemoryBankPath "activeContext.md"
     if (Test-Path $path) {
-        $lines = (Get-Content $path | Measure-Object -Line).Lines
+        $lines = @(Get-Content $path).Count
         Write-Host "Current size: $lines lines" -ForegroundColor Yellow
         Write-Host "Target: 50-100 lines"
         Write-Host "Maximum: 150 lines"
@@ -594,7 +615,7 @@ function Show-Clean {
     Write-Host "--- Slim Check ---" -ForegroundColor Yellow
     $path = Join-Path $MemoryBankPath "activeContext.md"
     if (Test-Path $path) {
-        $lines = (Get-Content $path | Measure-Object -Line).Lines
+        $lines = @(Get-Content $path).Count
         Write-Host "activeContext.md: $lines lines (target: 50-100, max: 150)"
         if ($lines -gt 150) {
             Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
@@ -605,6 +626,27 @@ function Show-Clean {
         }
     } else {
         Write-Host "Warning: activeContext.md not found" -ForegroundColor Yellow
+    }
+
+    # WHY progress.md is checked here and not only in `mb doctor`: running `mb clean` without also
+    # running `mb doctor` gave a false "maintenance pass complete" impression even when progress.md
+    # was well over its own limit. The bash twin fixed that in Show-Clean (scripts/mb.sh) and the
+    # fix was never mirrored here, so pwsh users kept getting exactly that impression. Same
+    # thresholds as mb doctor's check_size() and pmb-health.yml's MB_FAIL/MB_WARN, kept in sync
+    # deliberately -- tests/test-threshold-parity.sh compares all three statements of them.
+    $progressPath = Join-Path $MemoryBankPath "progress.md"
+    if (Test-Path $progressPath) {
+        $progressLines = @(Get-Content $progressPath).Count
+        Write-Host "progress.md: $progressLines lines (max: 500)"
+        if ($progressLines -gt 500) {
+            Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
+        } elseif ($progressLines -gt 250) {
+            Write-Host "RECOMMENDED: Consider archiving old entries" -ForegroundColor Yellow
+        } else {
+            Write-Host "OK: File is within target range" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "Warning: progress.md not found" -ForegroundColor Yellow
     }
     Write-Host ""
 
@@ -655,17 +697,78 @@ function Invoke-Commit {
     # that resolves to .git/ inside $PWD. In a subworktree it's a different path.
     $commonGitDir = git rev-parse --git-common-dir 2>$null
     $localGitDir  = Join-Path $PWD ".git"
-    if ($commonGitDir -and (Resolve-Path $commonGitDir -ErrorAction SilentlyContinue) -ne (Resolve-Path $localGitDir -ErrorAction SilentlyContinue)) {
+    # An empty $commonGitDir is the definitive not-in-a-repo signal, answered here rather than
+    # inferred from the `git status` call below, which can also fail on an unreadable index.
+    # Checked BEFORE the subworktree comparison because it is the more fundamental case.
+    # "Not a git repository" is the wording `mb doctor`'s Check 1 already uses for this condition
+    # -- at WARN there, ERROR here, because doctor is reporting and this command cannot proceed.
+    # (`mb status` does NOT check git state at all; an earlier version of this comment said it did.)
+    if (-not $commonGitDir) {
+        Write-Host "[ERROR] Not a git repository." -ForegroundColor Red
+        Write-Host "Run mb commit from inside your project's git repository." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+    # .Path on BOTH sides is load-bearing, and this line is the whole reason `mb commit` never
+    # worked on Windows. Resolve-Path returns a PathInfo, which has no value equality, so
+    # `$a -ne $b` compares REFERENCES and is unconditionally true -- it returned true even when
+    # both sides resolved to the identical string in a healthy main worktree. The guard therefore
+    # fired in EVERY repository, so `mb commit` refused everywhere and never committed anything
+    # via mb.bat -> pwsh -> here, which is the documented Windows entry point (install.bat).
+    # Measured before and after: current form true/true (main worktree, subworktree); .Path form
+    # false/true, which is the discrimination the comparison was always supposed to make.
+    # Comparing .Path strings matches the bash twin, which compares realpath output.
+    # Recorded as C5 in docs/superpowers/specs/2026-06-18-mb-commands-audit.md, whose stated root
+    # cause ("symlinks or UNC paths ... in some cases") is wrong -- incidence is 100%.
+    #
+    # -LiteralPath is the second half of the same defect and is equally load-bearing. Without it
+    # Resolve-Path treats its argument as a WILDCARD, so any repo whose path contains [ or ] --
+    # legal on Windows -- resolves to $null on both sides, `.Path` yields $null, and $null -ne
+    # $null is false... except the LOCAL side is what fails first in practice, leaving one real
+    # string against a $null and firing the guard. Measured in a healthy main worktree at a
+    # bracketed path: wildcard Resolve-Path null=True, -LiteralPath null=False; end to end,
+    # mb.ps1 said "You are in a git subworktree" (rc=1) where mb.sh correctly said "No changes"
+    # (rc=0). Fixing only the equality half would have left a narrower version of the same
+    # 100%-for-those-users refusal, and a fresh sh/ps1 exit-code divergence with it.
+    #
+    # BOTH directions occur. Review measured the second one AFTER the paragraph above was written,
+    # which had reasoned the both-null case away as not arising in practice: with a bracket on both
+    # sides (main `main[x]`, subworktree `sub[y]`, both real `git worktree add`) both sides resolve
+    # to $null, $null -ne $null is False, and the guard does NOT fire -- pre-fix pwsh returned rc=0
+    # "No changes" from inside a genuine subworktree. That is a false NEGATIVE, the more dangerous
+    # direction: a refusal that should have fired, silently didn't. A bracket on only one side
+    # leaves one real string and still fires correctly, which is why the false-positive framing
+    # surfaced first and the worse case hid behind it.
+    if ($commonGitDir -and (Resolve-Path -LiteralPath $commonGitDir -ErrorAction SilentlyContinue).Path -ne (Resolve-Path -LiteralPath $localGitDir -ErrorAction SilentlyContinue).Path) {
         Write-Host "[ERROR] You are in a git subworktree." -ForegroundColor Red
         Write-Host "Commit memory-bank/ from the main worktree root instead." -ForegroundColor Yellow
         Write-Host ""
-        return
+        # ADOPTER-VISIBLE CONTRACT CHANGE: this path returned 0 before the commit that added this
+        # comment (no date here -- git blame supplies it and cannot go stale). Both refusal
+        # paths now exit non-zero, matching mb.sh. A refusal reporting success is a false-success
+        # signal: `mb commit; if ($LASTEXITCODE -eq 0) {...}` treated a refusal as a commit.
+        exit 1
     }
 
-    # WHY: 2>$null suppresses git errors if not in a repo (graceful handling).
-    # --porcelain gives machine-readable output (stable across git versions).
+    # WHY: --porcelain gives machine-readable output (stable across git versions).
+    # The not-in-a-repo case exits above. An earlier version of this comment claimed `2>$null`
+    # was itself "graceful handling if not in a repo" -- it suppresses git's message, not its
+    # exit status. That claim was word-for-word identical in mb.sh, where under `set -e` it was
+    # actively wrong and aborted the command at 128; here it merely fell through to the
+    # misleading "No changes" below. Same false comment, two different wrong behaviours.
+    # $LASTEXITCODE is checked rather than trusting an empty $status: a genuine git failure
+    # (corrupt or unreadable index) and a genuinely clean memory-bank/ BOTH leave $status empty,
+    # and the `-not $status` test below reports the second as "No changes" with exit 0. Reporting
+    # a failed inspection as "nothing to commit" is the same false-success shape the subworktree
+    # branch above exists to remove. Mirrors the `if ! STATUS=$(...)` handler in mb.sh.
     $status = git status --porcelain $MemoryBankPath 2>$null
-    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] git status failed in this repository." -ForegroundColor Red
+        Write-Host "memory-bank/ was NOT inspected — resolve the git error and retry." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+
     if (-not $status) {
         Write-Host "No changes in memory-bank/ to commit" -ForegroundColor Yellow
         return
@@ -876,6 +979,13 @@ function Invoke-Init {
     # .claude/commands/
     foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "claude-commands")) {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"
+    }
+
+    # .claude/agents/ — auto-discovered; full rationale at the same site in scripts/mb.sh.
+    # -Filter '*.md' is required for parity: Get-TemplateDirFile defaults to '*', which would
+    # deliver stray non-agent files the bash glob skips.
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir ".claude/agents" -Filter "*.md")) {
+        Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\agents\$($f.Name)") -Label ".claude/agents/$($f.Name)"
     }
 
     # standards/ files — governance contracts referenced at runtime by commands
@@ -1120,7 +1230,7 @@ function Show-Doctor {
     # WHY a document that states NO number passes: deferring to the setting by name is the
     # correct way to write it, and is what the project CLAUDE.md already does. This check exists
     # to catch a COPIED value that has gone stale, so having nothing to copy is a pass, not a gap.
-    $globalClaude = Join-Path $env:USERPROFILE ".claude\CLAUDE.md"
+    $globalClaude = Join-Path $HOME ".claude/CLAUDE.md"
     $tbSettings = ".claude/settings.json"
     $tbTrue = $null
     if (Test-Path $tbSettings) {
@@ -1182,11 +1292,17 @@ function Show-Doctor {
     # 6. File sizes
     $hasOverLimit = $false
     $sizeSpecs = @(
-        @{Name="projectbrief.md"; Max=150},
-        @{Name="systemPatterns.md"; Max=300},
-        @{Name="techContext.md"; Max=400},
+        # THRESHOLD SOURCE OF TRUTH: .github/workflows/pmb-health.yml's MB_FAIL map. Aligned 2026-08-27
+        # after an audit found THREE divergences, in both directions: progress.md was stricter here (400)
+        # than in CI (600), so `mb doctor` WARNed on files the shipped docs certified compliant; while
+        # projectbrief.md (150 vs 120) and techContext.md (400 vs 300) were LOOSER here than CI, meaning a
+        # clean `mb doctor` could still be followed by a red build. Only the progress.md case had been
+        # recorded. `tests/test-threshold-parity.sh` now fails if these drift from CI again.
+        @{Name="projectbrief.md"; Max=80},
+        @{Name="systemPatterns.md"; Max=120},
+        @{Name="techContext.md"; Max=120},
         @{Name="activeContext.md"; Max=150},
-        @{Name="progress.md"; Max=400}
+        @{Name="progress.md"; Max=500}
     )
     foreach ($s in $sizeSpecs) {
         $p = "memory-bank/$($s.Name)"
@@ -1386,13 +1502,54 @@ function Show-Doctor {
     }
 
     # 15. Startup context size ceiling — WARN >15 KB, ERROR >25 KB
-    $ceilingFiles = @()
-    if (Test-Path "CLAUDE.md") { $ceilingFiles += "CLAUDE.md" }
-    foreach ($f in @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")) {
-        $p = "memory-bank/$f"
-        if (Test-Path $p) { $ceilingFiles += $p }
+    # WORKTREE-AWARE -- see the bash twin for the full rationale. A subworktree's own memory-bank
+    # is stale by construction (CLAUDE.md forbids updating it there), so measuring it reported a
+    # phantom 69,594-byte reduction.
+    $startupRoot = "."
+    $commonDir = (& git rev-parse --git-common-dir 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $commonDir) {
+        # -LiteralPath throughout. Resolve-Path, Test-Path, Get-ChildItem and Get-Item all treat
+        # -Path as a WILDCARD, so any repo whose path contains [ or ] silently resolves to nothing.
+        # This Resolve-Path was the loudest instance in the file: it carried no -ErrorAction, so
+        # `Split-Path -Parent $null` threw ParameterBindingValidationException. An earlier draft of
+        # this comment said "alone among the four" -- that was false and review caught it. TWO of
+        # the file's four Resolve-Path call SITES lacked -ErrorAction: this one and the one in
+        # Invoke-Setup (no line number on purpose -- three drafts of the surrounding record carried
+        # mb.ps1 line numbers and all three went stale, the last within minutes of being derived).
+        # Sites, not calls: the AST reports five Resolve-Path calls on
+        # four lines, because the mb commit guard puts two on one line. Do not read this block as
+        # evidence that the others are guarded;
+        # Invoke-Setup's is not, and it is part of audit finding C9.
+        #
+        # The throw is NOT the serious half. Doctor does not die on it -- it prints the stack trace,
+        # carries on with $startupRoot still ".", and so measures the SUBWORKTREE's own memory-bank
+        # rather than the main worktree's, which is precisely the phantom reduction the
+        # WORKTREE-AWARE note above this block exists to prevent. Measured with the main worktree
+        # inflated past the ceiling and the subworktree left small: pre-fix printed
+        # "[OK] Startup context: 0.6 KB" for a tree measuring 27 KB against a 25 KB hard limit
+        # (27,607 B vs a 25,600 B ceiling -- 27 KB in total, not in excess), post-fix printed
+        # the [ERROR], and a non-bracketed path printed the [ERROR] either way -- so the bracket is
+        # the cause, not mere absence. A false OK in a governance check outranks a crash.
+        #
+        # Reachable only from inside a subworktree, since only there does git return an absolute
+        # --git-common-dir instead of a relative `.git`. The other four calls in this check (two
+        # Test-Path, one Get-ChildItem, one Get-Item -- five calls of four cmdlet kinds in total)
+        # never threw at all;
+        # they were the silent half of the same wrong-root measurement.
+        $resolvedCommon = (Resolve-Path -LiteralPath $commonDir -ErrorAction SilentlyContinue).Path
+        if ($resolvedCommon) {
+            $candidate = Join-Path (Split-Path -Parent $resolvedCommon) ""
+            if (Test-Path -LiteralPath (Join-Path $candidate "memory-bank")) { $startupRoot = $candidate }
+        }
     }
-    $ceilingBytes = ($ceilingFiles | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum
+    $ceilingFiles = @()
+    if (Test-Path -LiteralPath (Join-Path $startupRoot "CLAUDE.md")) { $ceilingFiles += (Join-Path $startupRoot "CLAUDE.md") }
+    # Enumerated, not listed -- matches .github/workflows/pmb-health.yml; README.md was in no list.
+    # -Recurse, matching the ls-tree -r baseline below -- see the bash twin for why.
+    foreach ($mb in (Get-ChildItem -LiteralPath (Join-Path $startupRoot "memory-bank") -Filter "*.md" -File -Recurse -ErrorAction SilentlyContinue)) {
+        $ceilingFiles += $mb.FullName
+    }
+    $ceilingBytes = ($ceilingFiles | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum
     $ceilingKB = [math]::Round($ceilingBytes / 1KB, 1)
     if ($ceilingBytes -gt 25600) {
         Write-Host "[ERROR] Startup context ${ceilingKB} KB exceeds 25 KB limit — compact memory-bank/ immediately" -ForegroundColor Red
@@ -1400,6 +1557,31 @@ function Show-Doctor {
         Write-Host "[WARN] Startup context ${ceilingKB} KB exceeds 15 KB — consider slimming memory-bank/" -ForegroundColor Yellow
     } else {
         Write-Host "[OK]   Startup context: ${ceilingKB} KB (warn: 15 KB, fail: 25 KB)" -ForegroundColor Green
+    }
+    # The 25 KB line above is ADVISORY. What actually fails CI is the ratchet: this aggregate may not
+    # exceed its value on origin/main. Mirrored here for the same reason as the bash twin -- a
+    # threshold enforced only in CI gives no local signal before the build reds. Same six files and
+    # same comparison as .github/workflows/pmb-health.yml; silent when no baseline is reachable.
+    $ratchetBase = 0; $ratchetOk = $true
+    $ratchetPaths = @("CLAUDE.md") + (@(& git ls-tree -r --name-only origin/main -- memory-bank/ 2>$null) | Where-Object { $_ -like "*.md" })
+    # A baseline with CLAUDE.md but zero memory-bank files left $ratchetOk true and produced a
+    # ~94 KB false regression on the ordinary first-adoption shape. Count what was enumerated.
+    $ratchetFiles = 0
+    foreach ($rf in $ratchetPaths) {
+        # git cat-file -s, not `git show`: reconstructing the blob's text and re-encoding it
+        # diverged from the bash twin by 1,698 bytes -- the same character-vs-byte class fixed
+        # earlier in Show-Clean. The blob size is a number git already knows; ask for it.
+        $sz = & git cat-file -s "origin/main:$rf" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $sz) { $ratchetBase += [int]$sz } else { $ratchetOk = $false }
+        if ($rf -like "memory-bank/*") { $ratchetFiles++ }
+    }
+    if ($ratchetFiles -eq 0) { $ratchetOk = $false }
+    if ($ratchetOk -and $ratchetBase -gt 0) {
+        if ($ceilingBytes -gt $ratchetBase) {
+            Write-Host "[WARN] Startup context is $($ceilingBytes - $ratchetBase) bytes above origin/main. PMB's own CI gates on this; an adopter's memory-bank-size.yml does NOT, so treat it as advisory outside PMB." -ForegroundColor Yellow
+        } else {
+            Write-Host "[OK]   Startup-context ratchet: $($ratchetBase - $ceilingBytes) bytes under origin/main" -ForegroundColor Green
+        }
     }
 
     # 16. Hook error log — check for recent hook failures
@@ -1744,6 +1926,7 @@ function Show-Doctor {
     if (Test-Path $agentsDir) {
         $missingNameAgents = @()
         $mismatchedNameAgents = @()
+        $unpinnedReviewAgents = @()
         Get-ChildItem -Path $agentsDir -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
             $stem = $_.BaseName
             # Scope to the frontmatter block only, so a body line starting with "name:"
@@ -1762,6 +1945,29 @@ function Show-Doctor {
             } elseif ($agentName -ne $stem) {
                 $mismatchedNameAgents += "$($_.FullName) (name: $agentName, filename: $stem)"
             }
+            # Review agents that decide whether code ships must PIN a capable model. An unpinned
+            # agent silently inherits CLAUDE_CODE_SUBAGENT_MODEL (haiku in this repo), and a cheap
+            # review that finds nothing is indistinguishable from a thorough one that finds nothing.
+            # Found live 2026-08-26: security-reviewer had no model: field and had been running on
+            # haiku. researcher is deliberately excluded -- haiku IS right for retrieval work.
+            if ($stem -in @('security-reviewer', 'opposition')) {
+                $agentModel = ""
+                if ($fmMatch.Success) {
+                    $modelMatch = [regex]::Match($fmMatch.Groups[1].Value, '(?m)^model:\s*(.+)$')
+                    if ($modelMatch.Success) {
+                        $agentModel = $modelMatch.Groups[1].Value.Trim().Trim('"', "'")
+                    }
+                }
+                if ([string]::IsNullOrEmpty($agentModel)) {
+                    $unpinnedReviewAgents += "$($_.FullName) (no model: -- inherits CLAUDE_CODE_SUBAGENT_MODEL)"
+                } elseif ($agentModel -eq 'haiku') {
+                    $unpinnedReviewAgents += "$($_.FullName) (model: haiku -- cost-optimized, invalid for a review gate)"
+                }
+            }
+        }
+        if ($unpinnedReviewAgents.Count -gt 0) {
+            Write-Host "[WARN] $($unpinnedReviewAgents.Count) review agent(s) not pinned to a capable model:" -ForegroundColor Yellow
+            foreach ($a in $unpinnedReviewAgents) { Write-Host "       $a" }
         }
         if ($missingNameAgents.Count -gt 0) {
             Write-Host "[WARN] $($missingNameAgents.Count) agent(s) missing name: in frontmatter — Claude Code will silently fail to register them:" -ForegroundColor Yellow
@@ -2128,6 +2334,8 @@ function Invoke-Upgrade {
         "scripts/review-reminders-post.ps1"
         "scripts/_review-gate-lib.sh"
         "scripts/_review-gate-lib.ps1"
+        # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
+        "scripts/baseline-health.sh"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
@@ -2155,9 +2363,10 @@ function Invoke-Upgrade {
     $advisoryDiff = @(
         # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
         "CLAUDE.md"
-        # Agent definitions likely contain project-specific tool lists and instructions
-        ".claude/agents/researcher.md"
-        ".claude/agents/security-reviewer.md"
+        # WHY agent definitions are no longer listed here: they moved to $advisoryCreate and are
+        # auto-discovered — see the block below it. $advisoryDiff SKIPS any target missing in the
+        # project, which is precisely wrong for agents: a newly-shipped agent is missing for every
+        # adopter by definition, so it would never be delivered at all.
     )
 
     # WHY: $advisoryCreate holds files that must exist at runtime but may legitimately carry
@@ -2171,6 +2380,20 @@ function Invoke-Upgrade {
     # mb upgrade never copied them into existing projects). mb init already discovers commands this
     # way; this keeps upgrade and init on a single source of truth.
     $templateOwned += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "claude-commands" | ForEach-Object { ".claude/commands/$($_.Name)" })
+
+    # WHY agent definitions are auto-discovered rather than listed: a static list silently goes
+    # stale the moment a new agent is added — the same bug documented for slash commands just above.
+    # It recurred immediately: .claude/agents/opposition.md was added 2026-08-26 and both review
+    # commands were changed to dispatch it BY NAME, while the hardcoded list here still named only
+    # researcher and security-reviewer — so every adopter would have received a review command
+    # referencing an agent mb upgrade never delivered, failing at the Opposition step, which is the
+    # gate's sole authority on whether a change ships.
+    #
+    # WHY $advisoryCreate and not $advisoryDiff, where agents used to live: $advisoryDiff skips a
+    # target missing in the project, and a newly-shipped agent is missing for EVERY adopter, so
+    # listing it there delivers nothing. $advisoryCreate creates when absent and diffs rather than
+    # overwrites when customized. Must stay in sync with scripts/mb.sh's equivalent block.
+    $advisoryCreate += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir ".claude/agents" -Filter "*.md" | ForEach-Object { ".claude/agents/$($_.Name)" })
 
     # WHY: Guide docs (docs/CONTRACTS-GUIDE.md, docs/HOOKS-GUIDE.md, ...) are referenced from
     # templates/CLAUDE.md but were never scaffolded into projects — mb init/upgrade had no

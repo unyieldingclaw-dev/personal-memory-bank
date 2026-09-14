@@ -27,8 +27,65 @@ $CONFIRM_MSG = "CONFIRM REQUIRED: {0}. Run manually if intentional."
 $WARN_MSG    = "WARNING: {0}. Proceeding."
 
 try {
-    # WHY: $input | Out-String matches how update-reviewed.ps1 reads stdin from Claude Code hooks.
-    $raw = $input | Out-String
+    # WHY a raw UTF-8 read rather than `$input | Out-String`: PowerShell decodes piped stdin using
+    # [Console]::InputEncoding, which on Windows is the OEM console code page -- ibm437 on the
+    # machine where this was found, never UTF-8. Any non-ASCII byte in a command therefore arrived
+    # mangled. Proven end-to-end 2026-08-30 by probing the child process: 45 U+3042 characters
+    # (50 chars / 140 UTF-8 bytes) reached the hook as 140 single-byte CP437 characters, which
+    # re-encode to 275 UTF-8 bytes -- so the size guard below over-counted by ~2x and could fire a
+    # spurious CONFIRM on a command well under the limit. Fail-safe in direction, wrong regardless.
+    # SCOPE OF THIS FIX, stated so it is not over-read: it corrects the DECODING of stdin. It does
+    # not address TRUNCATION -- .pmb-hook-errors.log records JSON-parse failures of the form
+    # "Unterminated string" and "Unexpected end when deserializing object" both before and after
+    # this change, which means the payload sometimes arrives incomplete for a reason not
+    # diagnosed here. On that path the catch block below falls back to raw matching, and a BLOCK
+    # substring past the truncation point would not be seen. Open, not closed.
+    # The sh twin is not affected, because bash hands piped bytes to the script unchanged and never
+    # re-decodes them through a code page. (dangerous-commands.sh's round-8 comment is about a
+    # DIFFERENT bug -- ${#cmd} counting locale characters rather than bytes -- and is cited here
+    # only as evidence this pair has been bitten by character-vs-byte confusion before, NOT as
+    # support for the claim about stdin decoding.)
+    # IsInputRedirected guards the interactive case, where ReadToEnd() would otherwise block --
+    # preserving the fail-open-on-empty-stdin behaviour the early exit below depends on.
+    # detectEncodingFromByteOrderMarks is $true, and this is a TRADE, not a pure win.
+    #
+    # Measured across 10 byte-level cases against three variants ($true = here, $false, and main's
+    # pre-branch `$input | Out-String`):
+    #   $true  DENIES utf8/utf8-BOM and UTF-16 LE+BE and UTF-32 LE+BE with BOM; PASSES the malformed
+    #          FF FE-or-FE FF followed by UTF-8 hybrid.
+    #   $false is behaviourally IDENTICAL to main on all eight real-encoding cases, and DENIES the
+    #          two hybrid cases.
+    # So $true gains four genuine multi-byte encodings and loses two malformed hybrids. Both classes
+    # are unreachable through the documented producer -- Claude Code writes byte 0 of this stdin and
+    # emits BOM-less UTF-8 -- which is INFERRED about a third-party binary, not verified here.
+    #
+    # THE HISTORY, because three wrong versions were recorded before this one:
+    #   (1) "A UTF-16 BOM bypasses the BLOCK tier" -- reproduced with the FF FE + UTF-8 hybrid, which
+    #       no producer emits. Set $false to fix it.
+    #   (2) "$false was a regression that introduced a bypass" -- also wrong. $false matches main
+    #       exactly on every real encoding; it fixed nothing and broke nothing.
+    #   (3) "The hybrid failed to match for a reason unrelated to the setting" -- falsified by
+    #       measurement: the setting is the ONLY reason. $true passes it, $false denies it.
+    # The reusable lesson is that each wrong version was asserted from a proxy rather than measured
+    # against the real input, including the self-critical one.
+    #
+    # The fix that actually mattered is the StreamReader with UTF8Encoding replacing
+    # `$input | Out-String`, which corrects OEM-code-page decoding of the common no-BOM path.
+    #
+    # COVERAGE, counted rather than inferred from the Describe's existence: 3 of the 10 cases above
+    # are asserted in tests/dangerous-commands.Tests.ps1 "encoding pinning (raw bytes)" -- utf8
+    # no-BOM, utf8+BOM, and utf16LE+BOM, plus a benign control. UTF-16 BE, UTF-32 LE/BE and BOTH
+    # hybrids are asserted nowhere in tests/. So the single-setting revert IS pinned (flipping to
+    # $false turns the utf16LE case red), but the breadth of the trade is not: a change that keeps
+    # UTF-16 LE working while breaking BE or UTF-32 would ship green.
+    # An earlier draft of this line said "all ten", inferred from the Describe rather than counted --
+    # which is the same proxy-for-measurement error the paragraph above records three times.
+    $raw = if ([Console]::IsInputRedirected) {
+        (New-Object System.IO.StreamReader(
+            [Console]::OpenStandardInput(),
+            (New-Object System.Text.UTF8Encoding($false)),
+            $true)).ReadToEnd()
+    } else { "" }
     if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
     $data = $raw | ConvertFrom-Json -ErrorAction Stop
     # WHY .tool_input.command, not .command: the real payload nests everything under

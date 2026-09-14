@@ -19,8 +19,11 @@ jobs:
           FAIL=0
 
           echo "=== memory-bank files (per-file limits) ==="
-          declare -A MB_WARN=( [projectbrief.md]=80  [activeContext.md]=100 [systemPatterns.md]=200 [techContext.md]=200 [progress.md]=250 )
-          # progress.md's line FAIL was raised 400 -> 600 on 2026-08-24. WHY: at 400 lines the file
+          declare -A MB_WARN=( [projectbrief.md]=50  [activeContext.md]=100 [systemPatterns.md]=80  [techContext.md]=80  [progress.md]=250 )
+          # progress.md's line FAIL was raised 400 -> 600 on 2026-08-24, then RATCHETED BACK to 500
+          # on 2026-08-30 once an archive pass made room. The history below explains the raise and
+          # is kept because the reasoning still governs -- but read it against the CURRENT value of
+          # 500, not the 600 it argued for. WHY the raise happened: at 400 lines the file
           # was 39,590 bytes against a 48,000 WARN and a 60,000 FAIL, so the LINE cap bound first --
           # and the line cap is the metric this very block's comment already identifies as measuring
           # the wrong dimension. It was not a theoretical problem: the file sat at 400/400 and could
@@ -29,7 +32,7 @@ jobs:
           # absorbed by a single subsequent entry. Raising it to 600 puts the byte WARN (~485 lines
           # at this file's ~99 chars/line) first, so the metric that tracks real context cost is the
           # one that fires. The line cap stays as a secondary tripwire against pathological growth.
-          declare -A MB_FAIL=( [projectbrief.md]=120 [activeContext.md]=150 [systemPatterns.md]=300 [techContext.md]=300 [progress.md]=600 )
+          declare -A MB_FAIL=( [projectbrief.md]=80  [activeContext.md]=150 [systemPatterns.md]=120 [techContext.md]=120 [progress.md]=500 )
           # WHY byte limits alongside line limits: a line cap measures the wrong dimension --
           # collapsing multi-line entries into one long line satisfies it while saving zero
           # tokens. That is not hypothetical: on 2026-08-19 a cap breach in activeContext.md was
@@ -46,13 +49,26 @@ jobs:
           # on files that are already over. This is deliberately a ratchet -- as files shrink,
           # lower MB_FAIL_BYTES toward MB_WARN_BYTES. A FAIL value that is never tightened is a
           # cap in name only.
-          declare -A MB_WARN_BYTES=( [projectbrief.md]=9600 [activeContext.md]=18000 [systemPatterns.md]=24000 [techContext.md]=24000 [progress.md]=48000 )
+          #
+          # RATCHETED DOWN 2026-08-30. The three smallest files held 96,777 bytes of unused
+          # ceiling at 2-4% of allocation while activeContext.md and progress.md sat at 98-99%.
+          # (projectbrief.md is Tier 1 IMMUTABLE, not STABLE; an earlier draft here said
+          # 'stable-tier files', contradicting the Authority Tiers table.) --
+          # caps manufacturing emergencies in two files and enforcing nothing in three.
+          # projectbrief 20000->8000, systemPatterns/techContext 40000->12000, all still 5-10x
+          # live size: a guardrail, not the tripwire this comment warns about. progress.md
+          # 60000->55000 and lines 600->500 after a 20,452-byte verbatim archive pass the same day.
+          # No resulting absolute is quoted: two earlier drafts of this comment each named one and
+          # each was stale before the branch merged, because entries kept being appended after the
+          # measurement. The delta is the part that does not decay. activeContext.md is UNCHANGED at 45000 -- it has not
+          # shrunk, and tightening a cap on a file at 98% is exactly that tripwire.
+          declare -A MB_WARN_BYTES=( [projectbrief.md]=4000 [activeContext.md]=18000 [systemPatterns.md]=6000  [techContext.md]=6000  [progress.md]=48000 )
           # activeContext.md sits at ~39 KB as of 2026-08-19, so a 40000 ceiling would have left
           # ~600 bytes of headroom and gone red on the next ordinary edit -- a tripwire, not a
           # guardrail. 45000 catches genuine runaway while the WARN at 18000 carries the real
           # signal. RATCHET THIS DOWN once activeContext.md is actually trimmed; a ceiling that
           # only ever moves up is not a cap.
-          declare -A MB_FAIL_BYTES=( [projectbrief.md]=20000 [activeContext.md]=45000 [systemPatterns.md]=40000 [techContext.md]=40000 [progress.md]=60000 )
+          declare -A MB_FAIL_BYTES=( [projectbrief.md]=8000  [activeContext.md]=45000 [systemPatterns.md]=12000 [techContext.md]=12000 [progress.md]=55000 )
           while IFS= read -r -d '' file; do
             base=$(basename "$file")
             warn=${MB_WARN[$base]:-80}
@@ -79,6 +95,39 @@ jobs:
             fi
           done < <(find memory-bank -name "*.md" -print0 2>/dev/null)
 
+          # === relocation destinations (living documents only) ===
+          # WHY this block exists: `standards/MEMORY-BANK.md`'s Eviction Criteria permit moving
+          # completed progress.md entries verbatim to a bounded destination. "Bounded" has two
+          # branches. Archive files under Archive Structure are bounded by construction -- one
+          # topic or period per file, never appended -- so they are deliberately NOT checked here.
+          # A *living* destination is the hazard: it is appended to indefinitely, so without a cap
+          # a relocation just moves content from a capped file into an unbounded one and reports
+          # the cap "resolved". That was live on 2026-08-26: docs/MEMORY-BANK-PARADIGM-REVIEW.md
+          # had taken two relocations and stood at 693 lines / 56,732 bytes under no cap at all.
+          #
+          # WHY the thresholds differ in KIND from the memory-bank ones above: these files are NOT
+          # re-read at session start -- that is the entire point of relocating into them -- so the
+          # number does not bound startup context cost. It bounds unchecked accretion. Set above
+          # present size per this workflow's existing ratchet convention, and RATCHET DOWN as the
+          # file is genuinely trimmed; a ceiling that only ever moves up is not a cap.
+          declare -A DEST_WARN_BYTES=( [MEMORY-BANK-PARADIGM-REVIEW.md]=64000 )
+          declare -A DEST_FAIL_BYTES=( [MEMORY-BANK-PARADIGM-REVIEW.md]=96000 )
+          for dest in "${!DEST_WARN_BYTES[@]}"; do
+            f="docs/$dest"
+            [ -f "$f" ] || continue
+            bytes=$(wc -c < "$f")
+            warnb=${DEST_WARN_BYTES[$dest]}
+            failb=${DEST_FAIL_BYTES[$dest]}
+            if [ "$bytes" -gt "$failb" ]; then
+              echo "FAIL: $f ($bytes bytes -- limit $failb)"
+              FAIL=1
+            elif [ "$bytes" -gt "$warnb" ]; then
+              echo "WARN: $f ($bytes bytes -- warn $warnb)"
+            else
+              echo "OK:   $f ($bytes bytes)"
+            fi
+          done
+
           # === Aggregate startup-context budget ===
           # WHY this exists in addition to the per-file caps above: `mb doctor` check 15 has long
           # declared an AGGREGATE ceiling (WARN >15 KB, ERROR >25 KB across CLAUDE.md plus the five
@@ -101,13 +150,97 @@ jobs:
           echo "=== aggregate startup context (mirrors mb doctor check 15) ==="
           CEIL=0
           [ -f CLAUDE.md ] && CEIL=$((CEIL + $(wc -c < CLAUDE.md)))
-          for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
-            [ -f "memory-bank/$f" ] && CEIL=$((CEIL + $(wc -c < "memory-bank/$f")))
-          done
+          # Enumerated, not listed: CLAUDE.md defines startup context as CLAUDE.md plus EVERY file
+          # in memory-bank/, and memory-bank/README.md (1,116 B) was in no list. A seventh file
+          # added later would have fallen through to the per-file default cap, letting ~30 KB of
+          # startup growth land while the ratchet below printed "under". Both sides enumerate, so
+          # they always measure the same set.
+          # RECURSIVE, matching the ls-tree -r baseline below. A `memory-bank/*.md` glob is NOT
+          # recursive, so the two sides enumerated different sets: a 30,000-byte file at
+          # memory-bank/sub/notes.md was demonstrated invisible to the ratchet while the recursive
+          # per-file pass above still measured it. Both sides recurse now, so "same set" is true.
+          while IFS= read -r f; do
+            CEIL=$((CEIL + $(wc -c < "$f")))
+          done < <(find memory-bank -name "*.md" -type f 2>/dev/null)
           CEIL_KB=$(awk "BEGIN {printf \"%.1f\", $CEIL / 1024}")
+          # RATCHET, added 2026-08-30, REDESIGNED the same day after review.
+          #
+          # The 25 KB ceiling stays advisory because the repo is still ~4x over it and failing on
+          # that would block the work needed to get under it. But "advisory" was being read as "may
+          # grow", and it did. So the CEILING is advisory while the DIRECTION is enforced.
+          #
+          # WHY A MERGE-BASE COMPARISON AND NOT A CHECKED-IN CONSTANT: the first version of this
+          # block hardcoded STARTUP_BASELINE=108973, and review killed it on two counts, both right.
+          # (1) It was a TRIPWIRE, the exact thing the comment fifty lines above defines and refuses
+          # to set: 1,024 bytes of slack against six files, when the median recent progress.md entry
+          # is ~2,700 bytes and scripts/pre-compact-check.sh REQUIRES an entry dated today before it
+          # will allow a compaction. Growth is not optional here, so a sub-1% allowance would have
+          # red-lined a required, enforce_admins check on the next ordinary PR. (2) "Only ever
+          # decrease" was asserted in a comment and enforced by nothing -- the constant lived in a
+          # file any PR could edit, so the monotonicity being sold was unenforceable by construction,
+          # and the documented remedy ("justify raising it") is the raise-the-cap-while-blocked-by-
+          # the-cap shape this repo already recorded as an anti-pattern.
+          #
+          # Comparing against origin/main fixes both: the baseline cannot be rewritten by the PR
+          # being judged, and it falls automatically as main shrinks, which is what a ratchet is.
+          # Reductions are always free. This branch lands NET NEGATIVE against main, so it blocks
+          # runaway growth rather than ordinary work -- but read that as a ONE-TIME CREDIT, not
+          # recurring headroom. It exists because this branch archived a large block of prose; the
+          # next branch inherits the lower baseline and starts at zero margin. NO ABSOLUTE IS QUOTED
+          # HERE, deliberately: three earlier drafts said ~16 KB, ~15 KB and 13,107 B, and all three
+          # were stale before the branch merged -- the third was exactly right at the commit that
+          # wrote it and wrong two commits later. This check computes the margin live and prints it;
+          # read it from that output, never from this comment. (An earlier draft of this very
+          # sentence said "twenty lines below" and was itself wrong by twenty-two lines -- a distance
+          # is a level too, and decays on any edit between the two points.) That is the same
+          # decaying-absolute problem the archive header two directories over refuses to repeat.
+          #
+          # The fetch is explicit because actions/checkout defaults to a shallow, single-commit
+          # clone; without it `git show origin/main:` finds nothing. If the fetch fails (fork, no
+          # network, main absent) the check DEGRADES TO ADVISORY rather than failing the build --
+          # an unavailable baseline is not evidence of growth.
+          git fetch --depth=1 origin main >/dev/null 2>&1 || true
+          BASE_CEIL=$(git cat-file -s "origin/main:CLAUDE.md" 2>/dev/null || echo 0)
+          BASE_OK=1
+          [ "$BASE_CEIL" -gt 0 ] || BASE_OK=0
+          BASE_FILES=0
+          # NUL-delimited. The unquoted `for f in $(git ls-tree ...)` form word-splits any filename
+          # containing a space into nonexistent paths; both lookups fail, BASE_OK goes 0, and this
+          # REQUIRED, enforce_admins check silently degrades to "SKIP: baseline unavailable" while
+          # still reporting PASS. Once such a filename is on main it disables the ratchet repo-wide
+          # for every later PR. Demonstrated against a real tree with "memory-bank/space file.md".
+          # Success is the cat-file EXIT STATUS, not `-gt 0`, so a legitimately empty file counts as
+          # resolved -- the PowerShell twin already treated it that way and the two disagreed.
+          while IFS= read -r -d '' f; do
+            case "$f" in *.md) ;; *) continue ;; esac
+            if b=$(git cat-file -s "origin/main:$f" 2>/dev/null); then
+              BASE_CEIL=$((BASE_CEIL + b))
+            else
+              BASE_OK=0
+            fi
+            BASE_FILES=$((BASE_FILES + 1))
+          done < <(git ls-tree -rz --name-only origin/main -- memory-bank/ 2>/dev/null)
+          # F3: BASE_OK is only cleared INSIDE the loop, so a baseline with CLAUDE.md but zero
+          # memory-bank files (the ordinary first-adoption shape) left it TRUE and produced a
+          # ~94 KB false regression. A partially-unreachable baseline is unreachable.
+          [ "$BASE_FILES" -gt 0 ] || BASE_OK=0
+          if [ "$BASE_OK" = "1" ] && [ "$BASE_CEIL" -gt 0 ]; then
+            BASE_KB=$(awk "BEGIN {printf \"%.1f\", $BASE_CEIL / 1024}")
+            if [ "$CEIL" -gt "$BASE_CEIL" ]; then
+              echo "FAIL: startup context grew ${CEIL_KB} KB vs ${BASE_KB} KB on origin/main (+$((CEIL - BASE_CEIL)) bytes)"
+              echo "      The aggregate budget is a ratchet: it may shrink, never grow. Archive to"
+              echo "      docs/archive/ per standards/MEMORY-BANK.md's eviction rules, or move detail"
+              echo "      out of CLAUDE.md or memory-bank/. Reductions always pass."
+              FAIL=1
+            else
+              echo "OK:    startup context ${CEIL_KB} KB vs ${BASE_KB} KB on origin/main ($((BASE_CEIL - CEIL)) bytes under)"
+            fi
+          else
+            echo "SKIP:  origin/main baseline unavailable -- ratchet advisory this run"
+          fi
           if [ "$CEIL" -gt 25600 ]; then
             echo "OVER:  startup context ${CEIL_KB} KB exceeds the 25 KB ceiling (~$((CEIL / 4)) tokens per session start, re-paid after every compaction)"
-            echo "       advisory for now -- see the WHY above; fix via 'mb clean' or archiving to docs/archive/"
+            echo "       ceiling advisory; the origin/main no-regression ratchet above is ENFORCED"
           elif [ "$CEIL" -gt 15360 ]; then
             echo "WARN:  startup context ${CEIL_KB} KB exceeds the 15 KB warn line (~$((CEIL / 4)) tokens per session start)"
           else
@@ -305,17 +438,53 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          # Scan CLAUDE.md and standards/ for invisible Unicode chars that could
-          # smuggle hidden instructions: zero-width space (U+200B), zero-width
-          # non-joiner/joiner (U+200C/D), BOM (U+FEFF), RTL override (U+202E),
-          # soft hyphen (U+00AD), directional isolates (U+2066-2069).
+          # Scan CLAUDE.md and standards/ for invisible Unicode that could smuggle
+          # hidden instructions: the whole Cf (Format) category — zero-width
+          # space/joiner, BOM, bidi overrides and isolates, soft hyphen, word
+          # joiner, and the Tag block — plus the Hangul fillers, which are Lo
+          # rather than Cf but still render as blank.
           FAIL=0
           FILES=$(find standards CLAUDE.md templates/CLAUDE.md -name "*.md" -o -name "CLAUDE.md" 2>/dev/null | sort -u)
           while IFS= read -r file; do
             [ -f "$file" ] || continue
-            # grep -P matches literal bytes for the Unicode code points
-            if LC_ALL=C grep -Pn '[\x{200B}\x{200C}\x{200D}\x{FEFF}\x{202E}\x{00AD}\x{2066}-\x{2069}]' "$file" 2>/dev/null; then
+            # THREE THINGS HERE ARE LOAD-BEARING; each stops a specific wrong fix.
+            #
+            # 1. (*UTF), NOT LC_ALL=C. Until 2026-09-08 this used LC_ALL=C with an
+            #    enumerated \x{...} class. LC_ALL=C puts PCRE in 8-bit non-UTF mode
+            #    where \x{200B} exceeds the single-byte maximum, so grep aborted on
+            #    its own pattern ("character value in \x{} or \o{} is too large",
+            #    status 2), a 2>/dev/null hid the message, status 2 made the `if`
+            #    false, and the step printed OK over a tree containing a real
+            #    U+200B. It had never been able to fail since the day it was
+            #    written, and was found by planting a violation rather than by
+            #    reading it. MEASURED, so nobody repeats it: merely DROPPING
+            #    LC_ALL=C does NOT fix this — the ambient locale can be non-UTF-8
+            #    too, and was on the machine where this was found. (*UTF) forces
+            #    UTF mode regardless of locale.
+            #
+            # 2. A CATEGORY, NOT A LIST. The enumeration missed the Unicode Tag
+            #    block (U+E0000-E007F), which hides an entire ASCII payload one
+            #    invisible character per letter and renders blank in terminals and
+            #    in GitHub's diff viewer — the strongest vector of the set, absent
+            #    from a list written to stop exactly this. It also missed U+2060,
+            #    interchangeable with the U+200B it did block. \p{Cf} is the
+            #    category the technique relies on, so it covers those and whatever
+            #    Unicode adds later, with no list to keep current. The four
+            #    explicit points are Hangul fillers: category Lo, not Cf, but they
+            #    render as blank. Do not "simplify" this back to an enumeration.
+            #
+            # 3. THE STATUS IS READ, NOT SWALLOWED — that is what made the original
+            #    failure silent. 0 = a real hit, 1 = clean, anything else means grep
+            #    itself failed, which is a BROKEN CHECK and must be loud rather than
+            #    quietly green. `|| rc=$?` keeps this exempt from `set -e`, which
+            #    `shell: bash` sets via -eo pipefail.
+            rc=0
+            grep -Pn '(*UTF)[\p{Cf}\x{115F}\x{1160}\x{3164}\x{FFA0}]' "$file" || rc=$?
+            if [ "$rc" -eq 0 ]; then
               echo "FAIL: $file — invisible Unicode character(s) found above"
+              FAIL=1
+            elif [ "$rc" -ne 1 ]; then
+              echo "FAIL: $file — grep exited $rc, so this file was NOT scanned. This is a broken check, not a pass."
               FAIL=1
             fi
           done <<< "$FILES"
@@ -466,6 +635,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
+      # WHY this job needs the fetch too: actions/checkout leaves a shallow clone with no
+      # refs/remotes/origin/main, and test-threshold-parity.sh's baseline probe resolves the same
+      # origin/main blobs the file-size job's ratchet does. Without it the probe measures an absent
+      # ref and fails here while the identical primitive succeeds one job over -- a result that
+      # varies by which job takes the measurement, which this repo does not accept as a gate.
+      # The STEP is tolerant; the JOB is not, and the difference matters. `|| true` only stops a
+      # fetch failure from being reported as a step error -- the probe downstream produces the
+      # precise verdict, and unlike the file-size job's SKIP path it FAILS HARD on an unresolved
+      # baseline. stderr is deliberately NOT discarded: the remedy the probe prints is "fetch it",
+      # so a reader who cannot see git's reason for the fetch failing is sent back to the step that
+      # already tried. stdout is quiet because success has nothing to say.
+      - name: Fetch main for the origin/main baseline probe
+        shell: bash
+        run: git fetch --depth=1 origin main >/dev/null || true
+
       - name: Run mb command tests
         shell: bash
         run: bash tests/run.sh
@@ -499,6 +683,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
+
+      # Same shallow-clone reason as the mb-command-tests job. mb doctor's startup-context ratchet
+      # reads the same origin/main blobs, so on a shallow checkout it has never once executed here
+      # -- and both mb.sh and mb.ps1 take the no-baseline path with no else branch, printing
+      # NOTHING rather than a SKIP.
+      #
+      # Across the three enforcers test-threshold-parity.sh keeps in parity (grep RATCHET_SOURCES:
+      # this workflow, mb.sh, mb.ps1) one condition produces TWO behaviours -- visible SKIP in
+      # file-size, silence in both doctors. The suite's hard FAIL is a third behaviour but belongs
+      # to the parity CHECKER, which that variable deliberately excludes from the enforcer set.
+      #
+      # This closes ONE of the two silences. mb.ps1's ratchet stays unexercised in CI: it is
+      # reached only through Invoke-Pester, whose only doctor path runs inside a fixture built by
+      # tests/setup.sh with no remote, so origin/main resolves nowhere for the PowerShell twin.
+      # NOTE 2026-09-06: this makes the ratchet line appear in this job's output for the first
+      # time. Read it against the file-size job's figures rather than assuming the two agree.
+      # stderr is kept for the same reason as the mb-command-tests fetch above.
+      - name: Fetch main for mb doctor's startup-context ratchet
+        shell: bash
+        run: git fetch --depth=1 origin main >/dev/null || true
 
       - name: Run mb doctor on this repo
         shell: bash

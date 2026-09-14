@@ -21,10 +21,20 @@ This is my personal AI coding standard — a set of rules, templates, and comman
 
 ## Non-Negotiable Requirements
 
-- Memory Bank files are read at session start — they persist context across conversations
+- Memory Bank state is available at session start: an index is loaded, detail is fetched on
+  demand — context persists across conversations without every file being loaded in full
 - Security guardrails (BLOCK/CONFIRM/WARN) are always active
 - Code quality standards apply to all generated code
 - 7-phase workflow for non-trivial features
+
+## Meta-Rule for This File
+
+**Immutable-tier entries state GOALS, never MECHANISMS.** The requirement above previously read
+"Memory Bank files are read at session start" — a 2024 implementation frozen into the tier that
+cannot be revised, which then blocked its own replacement: the mechanism could not be improved
+without amending a file marked `review-cycle: never`. A goal ("state is available") admits better
+mechanisms; a mechanism ("files are read") forbids them. Amended 2026-08-30 under explicit prior
+authorization, sequenced after the commit-signing change landed (`030662c`).
 
 ## Constraints
 
