@@ -51,6 +51,14 @@ new_sandbox() {
     local d
     d=$(mktemp -d) || return 1
     git -C "$REPO_ROOT" clone -q "$REPO_ROOT" "$d/repo" 2>/dev/null || return 1
+    # Remote-tracking refs are not advertised by a clone source. In CI the checkout is detached,
+    # so origin/main exists only as refs/remotes/origin/main and a nested clone silently loses it.
+    # Transfer that already-fetched ref explicitly; this is local setup, not a network fetch by
+    # baseline-health.sh, and keeps the --no-fetch ratchet test meaningful in both topologies.
+    if git -C "$REPO_ROOT" rev-parse --verify refs/remotes/origin/main >/dev/null 2>&1; then
+        git -C "$d/repo" fetch -q "$REPO_ROOT" \
+            refs/remotes/origin/main:refs/remotes/origin/main 2>/dev/null || return 1
+    fi
     cp "$SCRIPT" "$d/repo/scripts/baseline-health.sh" || return 1
     # The clone carries COMMITTED state. The script is copied in above precisely
     # because of that — and the workflow it extracts from needs identical
@@ -337,11 +345,11 @@ assert_not_contains "$out" "baseline-health: PASS" "broken grep pattern: never r
 #     script's own interceptor — and (b) leave the ratchet able to
 #     genuinely FAIL. (b) matters because (a) alone is cheap to fake: a flag
 #     that also disabled the comparison would pass (a) trivially. new_sandbox
-#     clones via `git clone`, which fetches every ref of the source repo, not
-#     only its checked-out branch — so origin/main is already resolvable with
-#     zero network calls, proved by the CONTROL test above (test 1) reporting
-#     an origin/main-relative margin with no --no-fetch and no prior fetch in
-#     this suite. That is what makes (b) provable in the same sandbox: growing
+#     explicitly transfers the source checkout's already-fetched origin/main,
+#     because a nested clone does not advertise remote-tracking refs. The ref is
+#     therefore resolvable with zero network calls, proved by the CONTROL test above reporting
+#     an origin/main-relative margin with no --no-fetch after that local transfer. That is what
+#     makes (b) provable in the same sandbox: growing
 #     the ratchet's own input can only reach a real FAIL if --no-fetch left
 #     the origin/main comparison itself intact.
 # ---------------------------------------------------------------------------

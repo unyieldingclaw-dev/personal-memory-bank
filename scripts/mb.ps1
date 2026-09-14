@@ -109,7 +109,7 @@ function Get-CachedPmbVersion {
     if (-not (Test-Path $versionFile)) { return }
     $script:PmbLocalVersion = (Get-Content $versionFile -Raw).Trim()
 
-    $cacheDir = if ($env:MB_VERSION_CACHE_DIR) { $env:MB_VERSION_CACHE_DIR } else { Join-Path $env:USERPROFILE ".mb" }
+    $cacheDir = if ($env:MB_VERSION_CACHE_DIR) { $env:MB_VERSION_CACHE_DIR } else { Join-Path $HOME ".mb" }
     $cacheFile = Join-Path $cacheDir "version-check-cache.json"
     $checkUrl = if ($env:MB_VERSION_CHECK_URL) { $env:MB_VERSION_CHECK_URL } else { "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" }
     $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -1230,7 +1230,7 @@ function Show-Doctor {
     # WHY a document that states NO number passes: deferring to the setting by name is the
     # correct way to write it, and is what the project CLAUDE.md already does. This check exists
     # to catch a COPIED value that has gone stale, so having nothing to copy is a pass, not a gap.
-    $globalClaude = Join-Path $env:USERPROFILE ".claude\CLAUDE.md"
+    $globalClaude = Join-Path $HOME ".claude/CLAUDE.md"
     $tbSettings = ".claude/settings.json"
     $tbTrue = $null
     if (Test-Path $tbSettings) {
