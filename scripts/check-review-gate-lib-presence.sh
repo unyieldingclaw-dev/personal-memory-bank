@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # scripts/check-review-gate-lib-presence.sh — hardcoded (not settings.json-derived) existence
 # check: if review-reminders.sh/.ps1/-post.sh/-post.ps1 exist in <dir>, the matching
-# _review-gate-lib.sh/.ps1 must exist too.
+# library must exist; pre-hooks also require their native classifier.
 #
 # WHY hardcoded, not folded into the existing dynamic settings.json-parsing check: a
 # dot-sourced lib is never referenced in settings.json's command strings -- it's only
@@ -24,11 +24,19 @@ dir="${1:?usage: check-review-gate-lib-presence.sh <dir>}"
 fail=0
 
 if { [ -f "$dir/review-reminders.sh" ] || [ -f "$dir/review-reminders-post.sh" ]; } && [ ! -f "$dir/_review-gate-lib.sh" ]; then
-    echo "ERROR: $dir/_review-gate-lib.sh missing but $dir/review-reminders.sh/-post.sh present -- the review-gate hook will fail open (gate silently disabled)"
+    echo "ERROR: $dir/_review-gate-lib.sh missing but $dir/review-reminders.sh/-post.sh present -- the review-gate hook pair is incomplete"
     fail=1
 fi
 if { [ -f "$dir/review-reminders.ps1" ] || [ -f "$dir/review-reminders-post.ps1" ]; } && [ ! -f "$dir/_review-gate-lib.ps1" ]; then
-    echo "ERROR: $dir/_review-gate-lib.ps1 missing but $dir/review-reminders.ps1/-post.ps1 present -- the review-gate hook will fail open (gate silently disabled)"
+    echo "ERROR: $dir/_review-gate-lib.ps1 missing but $dir/review-reminders.ps1/-post.ps1 present -- the review-gate hook pair is incomplete"
+    fail=1
+fi
+if [ -f "$dir/review-reminders.sh" ] && [ ! -f "$dir/_review-gate-classify.py" ]; then
+    echo "ERROR: $dir/_review-gate-classify.py missing but $dir/review-reminders.sh present -- global-option command forms can bypass classification"
+    fail=1
+fi
+if [ -f "$dir/review-reminders.ps1" ] && [ ! -f "$dir/_review-gate-classify.ps1" ]; then
+    echo "ERROR: $dir/_review-gate-classify.ps1 missing but $dir/review-reminders.ps1 present -- global-option command forms can bypass classification"
     fail=1
 fi
 

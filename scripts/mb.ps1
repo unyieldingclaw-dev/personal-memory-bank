@@ -239,6 +239,7 @@ function Get-MbUpgradeAnalysis {
         'scripts/review-reminders.ps1',   'scripts/review-reminders.sh',
         'scripts/review-reminders-post.ps1', 'scripts/review-reminders-post.sh',
         'scripts/_review-gate-lib.sh',    'scripts/_review-gate-lib.ps1',
+        'scripts/_review-gate-classify.py', 'scripts/_review-gate-classify.ps1',
         'scripts/warn-stale-review-marker.sh', 'scripts/warn-stale-review-marker.ps1',
         # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
         'scripts/baseline-health.sh'
@@ -945,7 +946,7 @@ function Invoke-Init {
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
     # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
-    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1","review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-lib.sh","_review-gate-lib.ps1","warn-stale-review-marker.sh","warn-stale-review-marker.ps1")) {
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1","review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-lib.sh","_review-gate-lib.ps1","_review-gate-classify.py","_review-gate-classify.ps1","warn-stale-review-marker.sh","warn-stale-review-marker.ps1")) {
         Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
     }
 
@@ -1192,13 +1193,19 @@ function Show-Doctor {
         # cannot see it going missing.
         if ((Test-Path "scripts/review-reminders.ps1") -or (Test-Path "scripts/review-reminders-post.ps1")) {
             if (-not (Test-Path "scripts/_review-gate-lib.ps1")) {
-                Write-Host "[ERROR] scripts/_review-gate-lib.ps1 missing but scripts/review-reminders.ps1/-post.ps1 present -- the review-gate hook will fail open (gate silently disabled)" -ForegroundColor Red
+                Write-Host "[ERROR] scripts/_review-gate-lib.ps1 missing but scripts/review-reminders.ps1/-post.ps1 present -- the review-gate hook pair is incomplete" -ForegroundColor Red
             }
+        }
+        if ((Test-Path "scripts/review-reminders.ps1") -and -not (Test-Path "scripts/_review-gate-classify.ps1")) {
+            Write-Host "[ERROR] scripts/_review-gate-classify.ps1 missing but scripts/review-reminders.ps1 present -- global-option command forms can bypass classification" -ForegroundColor Red
         }
         if ((Test-Path "scripts/review-reminders.sh") -or (Test-Path "scripts/review-reminders-post.sh")) {
             if (-not (Test-Path "scripts/_review-gate-lib.sh")) {
-                Write-Host "[ERROR] scripts/_review-gate-lib.sh missing but scripts/review-reminders.sh/-post.sh present -- the review-gate hook will fail open (gate silently disabled)" -ForegroundColor Red
+                Write-Host "[ERROR] scripts/_review-gate-lib.sh missing but scripts/review-reminders.sh/-post.sh present -- the review-gate hook pair is incomplete" -ForegroundColor Red
             }
+        }
+        if ((Test-Path "scripts/review-reminders.sh") -and -not (Test-Path "scripts/_review-gate-classify.py")) {
+            Write-Host "[ERROR] scripts/_review-gate-classify.py missing but scripts/review-reminders.sh present -- global-option command forms can bypass classification" -ForegroundColor Red
         }
         # Git hooks — versioned via core.hooksPath
         if (Test-Path ".githooks/pre-push") {
@@ -2334,6 +2341,8 @@ function Invoke-Upgrade {
         "scripts/review-reminders-post.ps1"
         "scripts/_review-gate-lib.sh"
         "scripts/_review-gate-lib.ps1"
+        "scripts/_review-gate-classify.py"
+        "scripts/_review-gate-classify.ps1"
         # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
         "scripts/baseline-health.sh"
         "scripts/warn-stale-review-marker.sh"

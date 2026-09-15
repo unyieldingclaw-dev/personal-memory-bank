@@ -14,10 +14,10 @@
 # Move-Item's underlying rename is a single filesystem operation -- if the source doesn't
 # exist, the move simply fails, collapsing "does it exist" and "claim it" into one step.
 #
-# WHY this also records a pre-state SHA before consuming the marker: see the companion
-# PostToolUse hook (review-reminders-post.ps1/.sh) -- if the gated commit/push then fails,
-# that hook detects the relevant git ref didn't move and reissues the marker, so a rejected
-# attempt (e.g. a separate pre-commit hook) doesn't force a pointless re-review.
+# WHY only commit attempts get failure recovery: HEAD identifies the exact ref a commit can
+# move, so the PostToolUse hook can prove failure. A push may target a different remote/ref
+# from @{u}; inferring success from the configured upstream minted a fresh marker after a
+# successful alternate-remote push. Push markers therefore remain single-use on every attempt.
 #
 # WHY match "git\s+commit\b" anywhere in $cmd instead of anchoring to command start/operators:
 # an anchored regex (^|[;&|]\s*)git\s+commit\b misses real shapes -- multi-line Bash tool
@@ -46,27 +46,102 @@
 # turn. hookSpecificOutput.permissionDecision = "deny" is the mechanism that actually denies
 # the tool call before it executes.
 #
-# Get-FileHashHex/Get-CommitDiffHash/Get-PushDiffHash/Resolve-CdRoot are defined in
-# _review-gate-lib.ps1 -- see that file for their WHY (byte-parity hashing, worktree-safe
-# root resolution). Dot-sourced inside this same try/catch so a missing/corrupt lib fails
-# open (exit 0, gate skipped) exactly like a malformed stdin payload does.
-try {
-    $raw = [Console]::In.ReadToEnd()
-    if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
-    $cmd = ($raw | ConvertFrom-Json).tool_input.command
-    . (Join-Path $PSScriptRoot "_review-gate-lib.ps1")
-} catch { exit 0 }
+function Deny {
+    param([string]$Reason)
+    @{
+        hookSpecificOutput = @{
+            hookEventName            = 'PreToolUse'
+            permissionDecision       = 'deny'
+            permissionDecisionReason = $Reason
+        }
+    } | ConvertTo-Json -Compress | Write-Output
+}
 
-if (-not $cmd) { exit 0 }
+$raw = [Console]::In.ReadToEnd()
+if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
+
+# Classify before loading anything that can fail. A known guarded action must fail closed
+# when its library or repository root is unavailable; read-only commands remain unaffected.
+$verdict = $null
+$cmd = $null
+try {
+    . (Join-Path $PSScriptRoot '_review-gate-classify.ps1')
+    $verdict = Get-ReviewGateVerdictFromPayload $raw
+    $payload = $raw | ConvertFrom-Json -ErrorAction Stop
+    $toolInput = $payload.tool_input
+    if ($null -eq $toolInput) { $toolInput = $payload.toolInput }
+    $cmd = $toolInput.command
+} catch {
+    # Preserve the old conservative raw matcher for malformed payloads or a missing
+    # classifier. Lowercasing closes the executable-case hole on this fallback path.
+    $lower = $raw.ToLowerInvariant()
+    $fallbackMatches = @()
+    if ($lower.Contains('git commit')) { $fallbackMatches += 'COMMIT' }
+    if ($lower.Contains('git push')) { $fallbackMatches += 'PUSH' }
+    if ($lower.Contains('gh pr merge')) { $fallbackMatches += 'MERGE' }
+    $verdict = if ($fallbackMatches.Count -gt 1) { 'MULTI' }
+        elseif ($fallbackMatches.Count -eq 1) { $fallbackMatches[0] }
+        else { 'NONE' }
+}
+
+if ($verdict -eq 'NONE') { exit 0 }
+if ($verdict -eq 'MULTI') {
+    Deny 'Review gate: compound commands containing multiple guarded actions must be run separately so each action receives its own authorization.'
+    exit 0
+}
+if ($verdict -eq 'MERGE') {
+    Deny 'This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run the merge command yourself.'
+    exit 0
+}
+
+try {
+    . (Join-Path $PSScriptRoot '_review-gate-lib.ps1')
+} catch {
+    Deny 'Review gate cannot run: scripts/_review-gate-lib.ps1 is missing or unreadable, so the marker check is unavailable. Restore the file before committing or pushing.'
+    exit 0
+}
 
 # WHY this exists: `git rev-parse --show-toplevel` below trusts the hook process's own
 # ambient cwd, which is empirically wrong for some dispatched-subagent sessions. $cmd is
 # already the parsed command string (via ConvertFrom-Json above), so extracting a leading cd
 # path is a plain regex, no new dependency needed. Falls back to the ambient resolution on
 # any failure -- a session where ambient cwd is already correct is completely unaffected.
+$commandContext = Get-ReviewGateCommandContext $cmd
+if ($commandContext.Unsupported) {
+    Deny "Review gate cannot safely bind this command's explicit --git-dir/--work-tree context to a repository. Run the command from that repository instead."
+    exit 0
+}
+$contextDir = (Get-Location).Path
+$contextFailed = $false
+foreach ($contextPath in @($commandContext.Paths)) {
+    try {
+        $candidate = if ([System.IO.Path]::IsPathRooted($contextPath)) {
+            $contextPath
+        } else {
+            Join-Path $contextDir $contextPath
+        }
+        $contextDir = (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).Path
+    } catch {
+        $contextFailed = $true
+        break
+    }
+}
+if ($contextFailed) {
+    Deny "Review gate cannot resolve the command's explicit repository path, so it cannot verify the correct marker."
+    exit 0
+}
 $cdRoot = Resolve-CdRoot -Cmd $cmd
-$root = if ($cdRoot) { $cdRoot } else { git rev-parse --show-toplevel 2>$null }
-if (-not $root) { exit 0 }
+$root = if (@($commandContext.Paths).Count -gt 0) {
+    git -C $contextDir rev-parse --show-toplevel 2>$null
+} elseif ($cdRoot) {
+    $cdRoot
+} else {
+    git rev-parse --show-toplevel 2>$null
+}
+if (-not $root) {
+    Deny 'Review gate cannot run: the repository root could not be resolved, so the marker check is unavailable.'
+    exit 0
+}
 
 # WHY Set-Location here, not -C $root on every git call below: resolving $root fixes where
 # the marker is looked FOR, but the diff-hash functions and $preSha rev-parse call further
@@ -74,22 +149,14 @@ if (-not $root) { exit 0 }
 # assumption just fixed above, at different call sites. Anchoring the rest of this script to
 # $root once, here, means every git call downstream is correct by construction instead of
 # needing -C $root at each individual site.
-try { Set-Location $root } catch { exit 0 }
-
-function Deny {
-    param([string]$Reason)
-    @{
-        hookSpecificOutput = @{
-            hookEventName            = "PreToolUse"
-            permissionDecision       = "deny"
-            permissionDecisionReason = $Reason
-        }
-    } | ConvertTo-Json -Compress | Write-Output
+try { Set-Location $root } catch {
+    Deny "Review gate cannot run: the resolved repository root '$root' is not enterable."
+    exit 0
 }
 
-function Test-AndConsumeMarker {
-    param([string]$Marker, [string]$ExpectedHash)
-    $claimed = "$Marker.claimed"
+function Claim-Marker {
+    param([string]$Marker)
+    $claimed = "$Marker.claimed.$PID"
     # WHY [System.IO.File]::Move, not the Move-Item cmdlet: empirically verified (see
     # scripts/mb.ps1's Get-CachedPmbVersion, hardened for the same reason) that Move-Item -Force
     # is NOT the atomic primitive it looks like on this platform's PowerShell 7/NTFS stack --
@@ -100,32 +167,65 @@ function Test-AndConsumeMarker {
     try {
         [System.IO.File]::Move($Marker, $claimed, $true)
     } catch {
-        return $false
+        return $null
     }
     $content = $null
-    try { $content = (Get-Content $claimed -Raw -ErrorAction Stop).Trim() } catch { Write-Verbose "Could not read consumed marker '$claimed'; treating as empty." }
-    Remove-Item $claimed -Force -ErrorAction SilentlyContinue
-    return ($content -and $content -eq $ExpectedHash)
+    try { $content = (Get-Content $claimed -Raw -ErrorAction Stop).Trim() } catch {}
+    return [PSCustomObject]@{ Marker = $Marker; Claimed = $claimed; Content = $content }
 }
 
-if ($cmd -match 'git\s+commit\b') {
-    $expected = Get-CommitDiffHash
-    $marker = Join-Path $root '.claude/.code-review-ok'
-    if (Test-AndConsumeMarker $marker $expected) {
-        $preSha = git rev-parse HEAD 2>$null
-        if ($preSha) { $preSha | Set-Content (Join-Path $root '.claude/.pending-commit-presha') }
-    } else {
-        Deny "Run /code-review before committing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the working tree changed since then; re-run /code-review."
+function Release-Marker {
+    param($Claim)
+    try { [System.IO.File]::Move($Claim.Claimed, $Claim.Marker, $true) } catch {}
+}
+
+function Drop-Marker {
+    param($Claim)
+    Remove-Item $Claim.Claimed -Force -ErrorAction SilentlyContinue
+}
+
+$emptyDiffSha = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+
+switch ($verdict) {
+    'COMMIT' {
+        $expected = Get-CommitDiffHash
+        $marker = Join-Path $root '.claude/.code-review-ok'
+        if (-not $expected -or $expected -eq $emptyDiffSha) {
+            Deny 'Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review.'
+            break
+        }
+        $claim = Claim-Marker $marker
+        if ($null -eq $claim) {
+            Deny 'Run /code-review before committing -- it writes a diff-bound review-ok marker this hook checks.'
+        } elseif ($claim.Content -eq $expected) {
+            Drop-Marker $claim
+            $preSha = git rev-parse HEAD 2>$null
+            if ($preSha) { "$preSha $expected" | Set-Content (Join-Path $root '.claude/.pending-commit-presha') }
+        } else {
+            Release-Marker $claim
+            Deny 'Run /code-review before committing -- the working tree no longer matches the reviewed diff.'
+        }
+        break
     }
-} elseif ($cmd -match 'git\s+push\b') {
-    $expected = Get-PushDiffHash
-    $marker = Join-Path $root '.claude/.change-review-ok'
-    if (Test-AndConsumeMarker $marker $expected) {
-        $preSha = git rev-parse '@{u}' 2>$null
-        if ($preSha) { $preSha | Set-Content (Join-Path $root '.claude/.pending-push-presha') }
-    } else {
-        Deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
+    'PUSH' {
+        $expected = Get-PushDiffHash
+        $marker = Join-Path $root '.claude/.change-review-ok'
+        if (-not $expected -or $expected -eq $emptyDiffSha) {
+            Deny 'Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review.'
+            break
+        }
+        $claim = Claim-Marker $marker
+        if ($null -eq $claim) {
+            Deny 'Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks.'
+        } elseif ($claim.Content -eq $expected) {
+            Drop-Marker $claim
+            # A push can target any remote/ref, so @{u} cannot prove whether it succeeded.
+            # Decline ambiguous recovery: a failed attempt needs a fresh change review.
+            Remove-Item (Join-Path $root '.claude/.pending-push-presha') -Force -ErrorAction SilentlyContinue
+        } else {
+            Release-Marker $claim
+            Deny 'Run /change-review before pushing -- the branch no longer matches the reviewed diff.'
+        }
+        break
     }
-} elseif ($cmd -match 'gh\s+pr\s+merge\b') {
-    Deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run this gh pr merge command yourself."
 }
