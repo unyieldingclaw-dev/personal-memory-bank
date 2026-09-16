@@ -68,7 +68,7 @@ function Get-ReviewGateGitVerb {
     return $null
 }
 
-function Get-ReviewGateLeadingCdPaths {
+function Get-ReviewGateLeadingCdPath {
     param([string]$Command)
     $patternText = @'
 ^cd\s+(?:"([^"]+)"|'([^']+)')\s*&&\s*
@@ -85,7 +85,7 @@ function Get-ReviewGateLeadingCdPaths {
     return @($paths)
 }
 
-function Get-ReviewGateGitContextPaths {
+function Get-ReviewGateGitContextPath {
     param([string[]]$Tokens)
     $paths = @()
     $i = 0
@@ -141,7 +141,7 @@ function Get-ReviewGateVerdictFromInvocation {
     return $null
 }
 
-function Remove-ReviewGateOuterQuotes {
+function ConvertFrom-ReviewGateOuterQuote {
     param([string]$Value)
     $value = $Value.Trim()
     if ($value.Length -ge 2 -and $value[0] -eq $value[$value.Length - 1] -and
@@ -253,7 +253,7 @@ function Split-ReviewGateCommand {
     return @($segments) + @($nested)
 }
 
-function Get-ReviewGateNestedCommands {
+function Get-ReviewGateNestedCommand {
     param([string]$Executable, [string[]]$Rest)
     $base = Get-ReviewGateBaseName $Executable
     $bare = @($Rest | ForEach-Object { $_.Trim([char[]]@('"', "'")) })
@@ -262,7 +262,7 @@ function Get-ReviewGateNestedCommands {
             $option = $bare[$i]
             if ($option.StartsWith('-') -and -not $option.StartsWith('--') -and
                 $option.Substring(1).Contains('c')) {
-                return ,(Remove-ReviewGateOuterQuotes $Rest[$i + 1])
+                return ,(ConvertFrom-ReviewGateOuterQuote $Rest[$i + 1])
             }
         }
         return @()
@@ -270,7 +270,7 @@ function Get-ReviewGateNestedCommands {
     if ($script:ReviewGatePowerShellLaunchers -contains $base) {
         for ($i = 0; $i -lt $bare.Count; $i++) {
             if ($bare[$i].ToLowerInvariant() -in @('-c', '-command') -and $i + 1 -lt $Rest.Count) {
-                return ,(Remove-ReviewGateOuterQuotes (($Rest | Select-Object -Skip ($i + 1)) -join ' '))
+                return ,(ConvertFrom-ReviewGateOuterQuote (($Rest | Select-Object -Skip ($i + 1)) -join ' '))
             }
         }
         return @()
@@ -278,7 +278,7 @@ function Get-ReviewGateNestedCommands {
     if ($base -eq 'cmd') {
         for ($i = 0; $i -lt $bare.Count; $i++) {
             if ($bare[$i].ToLowerInvariant() -in @('/c', '/k') -and $i + 1 -lt $Rest.Count) {
-                return ,(Remove-ReviewGateOuterQuotes (($Rest | Select-Object -Skip ($i + 1)) -join ' '))
+                return ,(ConvertFrom-ReviewGateOuterQuote (($Rest | Select-Object -Skip ($i + 1)) -join ' '))
             }
         }
         return @()
@@ -292,7 +292,7 @@ function Get-ReviewGateNestedCommands {
             $i += if ($script:ReviewGateSshWithArg -ccontains $option -and $i + 1 -lt $Rest.Count) { 2 } else { 1 }
         }
         if ($i + 1 -lt $Rest.Count) {
-            return ,(Remove-ReviewGateOuterQuotes (($Rest | Select-Object -Skip ($i + 1)) -join ' '))
+            return ,(ConvertFrom-ReviewGateOuterQuote (($Rest | Select-Object -Skip ($i + 1)) -join ' '))
         }
         return @()
     }
@@ -307,22 +307,22 @@ function Get-ReviewGateNestedCommands {
                 -not $option.Contains('=') -and $i + 1 -lt $Rest.Count) { 2 } else { 1 }
         }
         if ($i -lt $Rest.Count) {
-            return ,(Remove-ReviewGateOuterQuotes (($Rest | Select-Object -Skip $i) -join ' '))
+            return ,(ConvertFrom-ReviewGateOuterQuote (($Rest | Select-Object -Skip $i) -join ' '))
         }
         return @()
     }
     if ($base -eq 'busybox' -and $Rest.Count -gt 0 -and
         $script:ReviewGateShellLaunchers -contains (Get-ReviewGateBaseName $Rest[0])) {
-        return ,(Remove-ReviewGateOuterQuotes ($Rest -join ' '))
+        return ,(ConvertFrom-ReviewGateOuterQuote ($Rest -join ' '))
     }
     return @()
 }
 
-function Get-ReviewGateGuardedInvocations {
+function Get-ReviewGateGuardedInvocation {
     param([string]$Command, [string[]]$InheritedPaths = @(), [int]$Depth = 0)
     if ($Depth -gt 8) { return @() }
-    $prefixPaths = @($InheritedPaths) + @(Get-ReviewGateLeadingCdPaths $Command)
-    $matches = [System.Collections.Generic.List[object]]::new()
+    $prefixPaths = @($InheritedPaths) + @(Get-ReviewGateLeadingCdPath $Command)
+    $guardedInvocations = [System.Collections.Generic.List[object]]::new()
     foreach ($segment in @(Split-ReviewGateCommand $Command)) {
         if ([string]::IsNullOrWhiteSpace($segment)) { continue }
         $tokens = @([regex]::Matches($segment, '"(?:\\.|[^"])*"|''(?:\\.|[^''])*''|\S+') | ForEach-Object { $_.Value })
@@ -331,31 +331,31 @@ function Get-ReviewGateGuardedInvocations {
         $verdict = Get-ReviewGateVerdictFromInvocation $leading.Executable $leading.Rest
         if ($verdict) {
             $gitContext = if ((Get-ReviewGateBaseName $leading.Executable) -eq 'git') {
-                Get-ReviewGateGitContextPaths $leading.Rest
+                Get-ReviewGateGitContextPath $leading.Rest
             } else { [PSCustomObject]@{ Paths = @(); Unsupported = $false } }
-            $matches.Add([PSCustomObject]@{
+            $guardedInvocations.Add([PSCustomObject]@{
                 Verdict = $verdict
                 Paths = @($prefixPaths) + @($gitContext.Paths)
                 Unsupported = $gitContext.Unsupported
             })
             continue
         }
-        foreach ($nestedCommand in @(Get-ReviewGateNestedCommands $leading.Executable $leading.Rest)) {
-            foreach ($match in @(Get-ReviewGateGuardedInvocations $nestedCommand $prefixPaths ($Depth + 1))) {
-                $matches.Add($match)
+        foreach ($nestedCommand in @(Get-ReviewGateNestedCommand $leading.Executable $leading.Rest)) {
+            foreach ($guardedInvocation in @(Get-ReviewGateGuardedInvocation $nestedCommand $prefixPaths ($Depth + 1))) {
+                $guardedInvocations.Add($guardedInvocation)
             }
         }
     }
-    return @($matches)
+    return @($guardedInvocations)
 }
 
 function Get-ReviewGateCommandContext {
     param([string]$Command)
-    $matches = @(Get-ReviewGateGuardedInvocations $Command)
-    if ($matches.Count -gt 1) {
+    $guardedInvocations = @(Get-ReviewGateGuardedInvocation $Command)
+    if ($guardedInvocations.Count -gt 1) {
         return [PSCustomObject]@{ Verdict = 'MULTI'; Paths = @(); Unsupported = $false }
     }
-    if ($matches.Count -eq 1) { return $matches[0] }
+    if ($guardedInvocations.Count -eq 1) { return $guardedInvocations[0] }
     return [PSCustomObject]@{ Verdict = 'NONE'; Paths = @(); Unsupported = $false }
 }
 
@@ -379,7 +379,7 @@ function Get-ReviewGateVerdictFromPayload {
 if ($MyInvocation.InvocationName -ne '.') {
     try {
         $raw = [Console]::In.ReadToEnd()
-        Write-Output -NoEnumerate (Get-ReviewGateVerdictFromPayload $raw)
+        Get-ReviewGateVerdictFromPayload $raw
         exit 0
     } catch {
         exit 1

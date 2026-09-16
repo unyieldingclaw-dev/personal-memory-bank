@@ -15,29 +15,9 @@ lineage: []
 
 ## 2026-09-15 — review-gate paired paths corrected and opposition-approved
 
-The bounded follow-up to the 2026-09-11 enforcement findings is complete on
-`fix/enforcement-layer-paired-paths`. The one permitted opposition pass initially found three
-real bypasses: a first-match classifier let one marker cover a guarded command chain; naïve
-operator splitting and broad launcher scans treated quoted prose as executable commands; and push
-recovery inferred every push's result from `@{u}`, minting a fresh marker after an alternate-remote
-success.
-
-Both native classifiers now collect all guarded invocations and emit `MULTI`; both pre-hooks deny
-that result before a marker can be claimed. Segmentation is quote-aware and launcher handling is
-syntax-specific (shell, PowerShell, cmd, ssh, xargs), so command-bearing arguments are inspected
-without scanning arbitrary data. Commit recovery remains bound to `HEAD` and the reviewed hash;
-push recovery is deliberately declined because the actual remote/ref cannot be proven from the
-configured upstream. The Bash and PowerShell templates mirror the live files.
-
-Focused evidence: classifier 39/39, native classifier/wiring Pester 23/23, hook integration 71/71,
-installer 23/23, upgrade 49/49, presence 14/14, Windows installer Pester 14/14, and mutation
-baseline 44/44 with 15/15 targeted removals detected. The mutation harness itself was corrected to
-initialize each copied source tree as a standalone temporary Git repository; preserving a linked
-worktree's `.git` pointer had created two unpushed local baseline commits, both recovered with a
-mixed reset to `103b146` while preserving all changes. The temporary directories were removed.
-The same opposition reviewer re-checked only these corrections and returned **Approve**. The final
-CI-equivalent suites passed once: every registered Bash suite and Pester 128/128. Normal branch
-delivery remains.
+This branch closes three reviewed bypasses: classifiers collect every guarded invocation and emit `MULTI`; quote-aware, syntax-specific launcher handling avoids scanning arbitrary data; and unverifiable push recovery is declined while commit recovery remains bound to `HEAD` and the reviewed hash. Live/template twins match.
+Focused evidence: classifier 39/39, classifier/wiring Pester 23/23, hooks 71/71, installer 23/23, upgrade 49/49, presence 14/14, Windows installer 14/14, and mutation baseline 44/44 with 15/15 removals detected; the corrected harness recovered two unintended local baseline commits without losing changes.
+The permitted opposition re-check approved the corrections. Final CI-equivalent suites passed once: every registered Bash suite and Pester 128/128. PR delivery remains.
 
 ## Relocated 2026-08-12 → 2026-08-18 — five sections moved verbatim 2026-08-28
 
