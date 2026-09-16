@@ -154,7 +154,7 @@ try { Set-Location $root } catch {
     exit 0
 }
 
-function Claim-Marker {
+function Move-ReviewGateMarkerToClaim {
     param([string]$Marker)
     $claimed = "$Marker.claimed.$PID"
     # WHY [System.IO.File]::Move, not the Move-Item cmdlet: empirically verified (see
@@ -170,16 +170,20 @@ function Claim-Marker {
         return $null
     }
     $content = $null
-    try { $content = (Get-Content $claimed -Raw -ErrorAction Stop).Trim() } catch {}
+    try { $content = (Get-Content $claimed -Raw -ErrorAction Stop).Trim() } catch {
+        Write-Verbose "Could not read claimed marker '$claimed'; treating its content as empty."
+    }
     return [PSCustomObject]@{ Marker = $Marker; Claimed = $claimed; Content = $content }
 }
 
-function Release-Marker {
+function Restore-ReviewGateMarkerFromClaim {
     param($Claim)
-    try { [System.IO.File]::Move($Claim.Claimed, $Claim.Marker, $true) } catch {}
+    try { [System.IO.File]::Move($Claim.Claimed, $Claim.Marker, $true) } catch {
+        Write-Verbose "Could not restore claimed marker '$($Claim.Claimed)' to '$($Claim.Marker)'."
+    }
 }
 
-function Drop-Marker {
+function Complete-ReviewGateMarkerClaim {
     param($Claim)
     Remove-Item $Claim.Claimed -Force -ErrorAction SilentlyContinue
 }
@@ -194,15 +198,15 @@ switch ($verdict) {
             Deny 'Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review.'
             break
         }
-        $claim = Claim-Marker $marker
+        $claim = Move-ReviewGateMarkerToClaim $marker
         if ($null -eq $claim) {
             Deny 'Run /code-review before committing -- it writes a diff-bound review-ok marker this hook checks.'
         } elseif ($claim.Content -eq $expected) {
-            Drop-Marker $claim
+            Complete-ReviewGateMarkerClaim $claim
             $preSha = git rev-parse HEAD 2>$null
             if ($preSha) { "$preSha $expected" | Set-Content (Join-Path $root '.claude/.pending-commit-presha') }
         } else {
-            Release-Marker $claim
+            Restore-ReviewGateMarkerFromClaim $claim
             Deny 'Run /code-review before committing -- the working tree no longer matches the reviewed diff.'
         }
         break
@@ -214,16 +218,16 @@ switch ($verdict) {
             Deny 'Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review.'
             break
         }
-        $claim = Claim-Marker $marker
+        $claim = Move-ReviewGateMarkerToClaim $marker
         if ($null -eq $claim) {
             Deny 'Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks.'
         } elseif ($claim.Content -eq $expected) {
-            Drop-Marker $claim
+            Complete-ReviewGateMarkerClaim $claim
             # A push can target any remote/ref, so @{u} cannot prove whether it succeeded.
             # Decline ambiguous recovery: a failed attempt needs a fresh change review.
             Remove-Item (Join-Path $root '.claude/.pending-push-presha') -Force -ErrorAction SilentlyContinue
         } else {
-            Release-Marker $claim
+            Restore-ReviewGateMarkerFromClaim $claim
             Deny 'Run /change-review before pushing -- the branch no longer matches the reviewed diff.'
         }
         break
