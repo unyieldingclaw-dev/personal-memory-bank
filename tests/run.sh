@@ -38,6 +38,7 @@ run_suite "mb-backlog"           "$REPO_ROOT/tests/test-mb-backlog.sh"
 run_suite "pre-push-check"       "$REPO_ROOT/tests/test-pre-push-check.sh"
 run_suite "threshold-parity"     "$REPO_ROOT/tests/test-threshold-parity.sh"
 run_suite "pre-compact-check"    "$REPO_ROOT/tests/test-pre-compact-check.sh"
+run_suite "codex-compaction-hooks" "$REPO_ROOT/tests/test-codex-compaction-hooks.sh"
 run_suite "mirror-parity"        "$REPO_ROOT/tests/test-mirror-parity.sh"
 run_suite "baseline-health"     "$REPO_ROOT/tests/test-baseline-health.sh"
 

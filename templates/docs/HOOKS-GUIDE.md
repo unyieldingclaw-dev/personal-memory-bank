@@ -4,7 +4,10 @@
      (PMB's own postmortem/bug-history prose removed, everything else kept). If you edit
      shared content there, mirror the change here by hand — no generation step enforces this. -->
 
-Hooks run deterministically at Claude Code lifecycle points. Unlike `CLAUDE.md` (which is advisory — Claude can drift), hooks **always execute** and can block or modify Claude's actions.
+PMB uses native lifecycle hooks where the platform exposes an enforceable event. Claude Code and
+Codex can run deterministic compaction hooks; Cursor's `preCompact` event is observational, so its
+handoff rule remains advisory. Unlike instruction files, configured hooks execute outside the
+model's discretion, subject to platform enablement and trust settings.
 
 ## Hook Types
 
@@ -123,9 +126,23 @@ Fires after every `Write` or `Edit` tool call. Reads the edited file path from t
 
 ### 5. PreCompact Memory Gate (`PreCompact`)
 
-Fires before Claude Code compacts context. Runs two content-based quality checks on the memory bank **or** bypasses via a `handoff.md` dated today.
+The same content policy protects Claude Code and Codex, but each platform has a different hook
+response contract. Cursor cannot enforce the policy before compaction.
 
-**Exit codes:**
+| Platform | Before compaction | After compaction |
+|----------|-------------------|------------------|
+| Claude Code | `.claude/settings.json` runs the checker; exit 2 blocks | Instructions require a Memory Bank reread |
+| Codex | Trusted `.codex/hooks.json` runs an adapter; JSON `continue: false` blocks | `SessionStart` with `source: compact` injects the recovery checklist |
+| Cursor | The 40% rule is proactive/advisory; native `preCompact` cannot block or modify compaction | The always-applied rule instructs a Memory Bank reread |
+
+Codex project hooks must be reviewed and trusted in `/hooks`; a local feature setting or managed
+policy can disable them. See the [Codex hooks documentation](https://learn.chatgpt.com/docs/hooks)
+and [Cursor hooks documentation](https://prod.cursor.com/docs/hooks).
+
+The shared checker runs two content-based quality checks on the memory bank **or** bypasses via a
+`handoff.md` dated today.
+
+**Claude Code exit codes:**
 - **Exits 0** — both checks pass (or a `handoff.md` dated today is present). Compaction proceeds normally.
 - **Exits 2** — one or more checks fail. **Compaction is blocked.** Claude Code treats a non-zero exit from a PreCompact hook as a block signal. The hook prints an actionable message explaining what to do.
 
@@ -140,7 +157,8 @@ Fires before Claude Code compacts context. Runs two content-based quality checks
 
 **Fails open:** unexpected errors (missing runtimes, unreadable files) exit 0 silently and log to `.pmb-hook-errors.log`.
 
-Implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and `scripts/pre-compact-check.sh` (POSIX/sh):
+The shared policy is implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and
+`scripts/pre-compact-check.sh` (POSIX/sh). Claude Code wires it directly:
 
 ```json
 "PreCompact": [
@@ -155,7 +173,11 @@ Implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and `scripts/pre-c
 ]
 ```
 
-Note: `PreCompact` hooks have no `matcher` field — the hook type applies to the compaction event itself, not to a specific tool.
+That no-matcher note applies to this Claude Code wiring. Codex uses `matcher: "manual|auto"` for
+`PreCompact` and `matcher: "^compact$"` for recovery. Its
+`scripts/codex-compaction-hook.{sh,ps1}` adapters translate policy exit 2 into valid
+`{"continue":false}` JSON and emit the post-compaction recovery checklist; `.codex/hooks.json`
+wires both events.
 
 ### 6. Agent Spawn-Volume Advisory (`PreToolUse` — Agent tool)
 

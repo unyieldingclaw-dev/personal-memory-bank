@@ -1,0 +1,34 @@
+{
+  "description": "PMB compaction readiness and recovery hooks.",
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/scripts/codex-compaction-hook.sh\" pre",
+            "commandWindows": "pwsh -NoProfile -NonInteractive -File \"$(git rev-parse --show-toplevel)/scripts/codex-compaction-hook.ps1\" -Mode pre",
+            "timeout": 30,
+            "statusMessage": "Checking PMB compaction readiness"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "^compact$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/scripts/codex-compaction-hook.sh\" recover",
+            "commandWindows": "pwsh -NoProfile -NonInteractive -File \"$(git rev-parse --show-toplevel)/scripts/codex-compaction-hook.ps1\" -Mode recover",
+            "timeout": 30,
+            "statusMessage": "Restoring PMB context after compaction",
+            "additionalContextLimit": 1000
+          }
+        ]
+      }
+    ]
+  }
+}

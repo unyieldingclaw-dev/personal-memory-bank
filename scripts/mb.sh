@@ -640,8 +640,14 @@ invoke_init() {
     # CLAUDE.md
     copy_if_new "$TEMPLATES_DIR/CLAUDE.md" "$TARGET/CLAUDE.md" "CLAUDE.md"
 
+    # AGENTS.md is the portable project-local instruction surface used by Codex and other tools.
+    copy_if_new "$TEMPLATES_DIR/AGENTS.md" "$TARGET/AGENTS.md" "AGENTS.md"
+
     # .claude/settings.json
     copy_if_new "$TEMPLATES_DIR/.claude/settings.json" "$TARGET/.claude/settings.json" ".claude/settings.json"
+
+    # Codex lifecycle wiring. The exact definition still requires user trust in Codex /hooks.
+    copy_if_new "$TEMPLATES_DIR/.codex/hooks.json" "$TARGET/.codex/hooks.json" ".codex/hooks.json"
 
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
@@ -652,6 +658,7 @@ invoke_init() {
                   pre-push-check.sh pre-push-check.ps1 \
                   delegation-depth-check.sh delegation-depth-check.ps1 \
                   pre-compact-check.sh pre-compact-check.ps1 \
+                  codex-compaction-hook.sh codex-compaction-hook.ps1 \
                   review-reminders.sh review-reminders.ps1 \
                   review-reminders-post.sh review-reminders-post.ps1 \
                   _review-gate-lib.sh _review-gate-lib.ps1 \
@@ -2031,6 +2038,8 @@ invoke_upgrade() {
         ".cursor/rules/rules-file-integrity.mdc"
         # Claude Code settings — hook wiring, not project-specific
         ".claude/settings.json"
+        # Codex hook wiring — deterministic lifecycle configuration, trusted explicitly in /hooks
+        ".codex/hooks.json"
         # Hook scripts — deterministic enforcement scripts, no project customization
         "scripts/dangerous-commands.sh"
         "scripts/dangerous-commands.ps1"
@@ -2044,6 +2053,8 @@ invoke_upgrade() {
         "scripts/delegation-depth-check.ps1"
         "scripts/pre-compact-check.sh"
         "scripts/pre-compact-check.ps1"
+        "scripts/codex-compaction-hook.sh"
+        "scripts/codex-compaction-hook.ps1"
         "scripts/review-reminders.sh"
         "scripts/review-reminders.ps1"
         "scripts/review-reminders-post.sh"
@@ -2106,6 +2117,8 @@ invoke_upgrade() {
     # Create if missing (unlike ADVISORY_DIFF which skips missing files), but show
     # a diff rather than silently overwriting if the file has been customized.
     ADVISORY_CREATE=(
+        # Cross-tool instructions may carry project-specific rules; create or diff, never overwrite.
+        "AGENTS.md"
         "standards/CODE-REVIEW.md"
         "standards/WORKFLOW.md"
         "standards/SECURITY-GUARDRAILS.md"

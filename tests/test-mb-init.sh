@@ -31,6 +31,10 @@ for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progr
 done
 
 assert_file_exists "$TMPDIR_INIT/.pmb-version" "mb init creates .pmb-version"
+assert_file_exists "$TMPDIR_INIT/AGENTS.md" "mb init creates project-local AGENTS.md"
+assert_file_exists "$TMPDIR_INIT/.codex/hooks.json" "mb init creates project-local Codex hook wiring"
+assert_file_exists "$TMPDIR_INIT/scripts/codex-compaction-hook.sh" "mb init creates the Codex bash adapter"
+assert_file_exists "$TMPDIR_INIT/scripts/codex-compaction-hook.ps1" "mb init creates the Codex PowerShell adapter"
 
 for f in CONTRACTS-GUIDE.md HOOKS-GUIDE.md; do
   assert_file_exists "$TMPDIR_INIT/docs/$f" "mb init creates docs/$f"

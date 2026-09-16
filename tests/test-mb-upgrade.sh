@@ -61,6 +61,28 @@ assert_exit_zero $? "mb upgrade exits 0"
 assert_file_exists "$TMPDIR_UP/scripts/_review-gate-classify.py" "upgrade restores TEMPLATE_OWNED Python classifier"
 assert_file_exists "$TMPDIR_UP/scripts/_review-gate-classify.ps1" "upgrade restores TEMPLATE_OWNED PowerShell classifier"
 
+echo ""
+echo "--- template sync: restores Codex hook wiring and adapters ---"
+rm -f "$TMPDIR_UP/.codex/hooks.json" \
+      "$TMPDIR_UP/scripts/codex-compaction-hook.sh" \
+      "$TMPDIR_UP/scripts/codex-compaction-hook.ps1"
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0 while restoring Codex hooks"
+assert_file_exists "$TMPDIR_UP/.codex/hooks.json" "upgrade restores TEMPLATE_OWNED Codex hook wiring"
+assert_file_exists "$TMPDIR_UP/scripts/codex-compaction-hook.sh" "upgrade restores TEMPLATE_OWNED Codex bash adapter"
+assert_file_exists "$TMPDIR_UP/scripts/codex-compaction-hook.ps1" "upgrade restores TEMPLATE_OWNED Codex PowerShell adapter"
+
+echo ""
+echo "--- advisory create: AGENTS.md is delivered without overwriting customization ---"
+rm -f "$TMPDIR_UP/AGENTS.md"
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0 while creating missing AGENTS.md"
+assert_file_exists "$TMPDIR_UP/AGENTS.md" "upgrade creates missing AGENTS.md"
+printf '# Project-specific agent rules\nkeep-this-customization\n' > "$TMPDIR_UP/AGENTS.md"
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_contains "$(cat "$TMPDIR_UP/AGENTS.md")" "keep-this-customization" "upgrade preserves customized AGENTS.md"
+assert_contains "$output" "AGENTS.md.*differs from template" "upgrade reports customized AGENTS.md for manual review"
+
 # ── Template sync: ALL command files are auto-discovered, not a hardcoded subset ─
 # Regression test: TEMPLATE_OWNED used to hardcode 4 of 8 command files
 # (code-review.md, feature-dev.md, security-review.md, pmb-status.md), so

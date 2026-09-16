@@ -2,20 +2,28 @@
 
 ## Memory Bank
 
-At the start of every session, if `memory-bank/` exists in the project root:
+At the start of every session, and again after any context compaction, if `memory-bank/` exists in the project root:
 1. Read `memory-bank/projectbrief.md` — non-negotiable requirements and constraints
 2. Read `memory-bank/systemPatterns.md` — architecture decisions and patterns to follow
 3. Read `memory-bank/techContext.md` — tech stack, dependencies, environment
 4. Read `memory-bank/activeContext.md` — current focus and next steps
 5. Read `memory-bank/progress.md` — what is complete and planned
 
-Never ask for information already in Memory Bank. Never violate constraints in projectbrief.md.
+Treat Memory Bank as authoritative for priority and rationale. Never ask for information already in Memory Bank. Never violate constraints in projectbrief.md.
 Never write secrets, credentials, API keys, PII, production data, or full code dumps to memory-bank/ files.
 
-At session end or before context hits 40%:
+At session end, before a planned compaction, or when the user reports context at or above 40%:
 1. Update `memory-bank/activeContext.md` — current state, key decisions, blockers
 2. Update `memory-bank/progress.md` — what shipped, what is queued
-3. If context is at 40%, create `handoff.md` and stop (see Handoff Protocol below)
+3. Create `handoff.md` only when ephemeral in-flight state is not already captured in Memory Bank
+
+The 40% threshold is a proactive fallback, not proof that every tool exposes a native blocking event.
+
+## Platform Compaction Support
+
+- **Claude Code:** `.claude/settings.json` runs an executable `PreCompact` gate that can block compaction until Memory Bank state is current.
+- **Codex:** `.codex/hooks.json` runs an executable `PreCompact` gate and a `SessionStart` recovery hook for `source: compact`. Project hooks run only after the exact hook definition is trusted in `/hooks`; local feature or managed-policy settings can disable them.
+- **Cursor:** `.cursor/rules/memory-bank.mdc` provides an always-applied advisory workflow. Cursor's native `preCompact` event is observational and cannot block or modify compaction, so the user-reported 40% trigger remains proactive rather than enforced.
 
 ## Verification-First
 
@@ -56,10 +64,16 @@ Always follow this sequence for any non-trivial feature:
 
 ## Handoff Protocol
 
-When context hits 40% or user types "Handoff":
+When the user types "Handoff" or reports context at or above 40%:
 1. STOP all work immediately
-2. CREATE `handoff.md` with: accomplishments, files modified, service state, commands to resume, pending tasks
-3. RESPOND only: "Handoff ready at `handoff.md`. Start a new conversation."
-4. STOP — do not continue
+2. Verify `memory-bank/activeContext.md` and `memory-bank/progress.md` are current; update them first if needed
+3. CREATE `handoff.md` only for ephemeral in-flight state: interrupted file/line, uncommitted diff, non-default process state, the next command, and a pointer to `activeContext.md` for priority
+4. RESPOND only: "Handoff ready at `handoff.md`. Start a new conversation."
+5. STOP — do not continue
 
-When starting a new conversation: check for `handoff.md` first, read it, merge into Memory Bank, delete it, continue.
+After compaction or when starting a new conversation:
+1. Re-read all five Memory Bank files first; do not rely on a compaction summary
+2. Read `handoff.md` second if present, treating it only as an ephemeral supplement
+3. Reconcile it with `activeContext.md`'s Next Steps and surface any conflict
+4. Verify the current git branch/worktree, uncommitted diff, running services, and next test before resuming
+5. Merge any durable information into Memory Bank, delete the spent `handoff.md`, and resume from the verified state
