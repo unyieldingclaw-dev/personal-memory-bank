@@ -53,6 +53,14 @@ assert_exit_zero $? "mb upgrade exits 0"
 assert_file_exists "$TMPDIR_UP/scripts/_review-gate-lib.sh" "upgrade restores TEMPLATE_OWNED _review-gate-lib.sh"
 assert_file_exists "$TMPDIR_UP/scripts/_review-gate-lib.ps1" "upgrade restores TEMPLATE_OWNED _review-gate-lib.ps1"
 
+echo ""
+echo "--- template sync: restores review-gate classifiers ---"
+rm -f "$TMPDIR_UP/scripts/_review-gate-classify.py" "$TMPDIR_UP/scripts/_review-gate-classify.ps1"
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0"
+assert_file_exists "$TMPDIR_UP/scripts/_review-gate-classify.py" "upgrade restores TEMPLATE_OWNED Python classifier"
+assert_file_exists "$TMPDIR_UP/scripts/_review-gate-classify.ps1" "upgrade restores TEMPLATE_OWNED PowerShell classifier"
+
 # ── Template sync: ALL command files are auto-discovered, not a hardcoded subset ─
 # Regression test: TEMPLATE_OWNED used to hardcode 4 of 8 command files
 # (code-review.md, feature-dev.md, security-review.md, pmb-status.md), so

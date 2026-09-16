@@ -162,7 +162,7 @@ Describe "Invoke-Init review-reminders scripts (subprocess)" {
             $env:MB_HOME = $script:RepoRoot5
             & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
 
-            foreach ($f in @("review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1")) {
+            foreach ($f in @("review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-classify.py","_review-gate-classify.ps1")) {
                 Test-Path (Join-Path $script:InitReviewRemindersProject "scripts\$f") | Should -Be $true
             }
         } finally {

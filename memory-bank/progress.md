@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-09-11
+last-reviewed: 2026-09-15
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,12 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-09-15 — review-gate paired paths corrected and opposition-approved
+
+This branch closes three reviewed bypasses: classifiers collect every guarded invocation and emit `MULTI`; quote-aware, syntax-specific launcher handling avoids scanning arbitrary data; and unverifiable push recovery is declined while commit recovery remains bound to `HEAD` and the reviewed hash. Live/template twins match.
+Focused evidence: classifier 39/39, classifier/wiring Pester 23/23, hooks 71/71, installer 23/23, upgrade 49/49, presence 14/14, Windows installer 14/14, and mutation baseline 44/44 with 15/15 removals detected; the corrected harness recovered two unintended local baseline commits without losing changes.
+The permitted opposition re-check approved the corrections. Final CI-equivalent suites passed once: every registered Bash suite and Pester 128/128. PR delivery remains.
 
 ## Relocated 2026-08-12 → 2026-08-18 — five sections moved verbatim 2026-08-28
 
