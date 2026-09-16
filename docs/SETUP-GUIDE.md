@@ -4,13 +4,14 @@ A step-by-step guide to implementing the Memory Bank in your project.
 
 ## Prerequisites
 
-- A code editor (Cursor or VS Code with Claude Code)
+- A supported coding assistant (Claude Code, Codex, or Cursor)
 - A project to add Memory Bank to
 - 15-30 minutes for initial setup
 
 ## One-Time Global Setup (Do This First)
 
-Run this once on your machine. It installs the `mb` command, global rules, and slash commands that apply to **every project automatically** — no per-project copying needed.
+Run this once on your machine. It installs the `mb` command, Claude Code rules and slash commands,
+and Cursor user rules. Project-local Codex instructions and hooks are installed by `mb init`.
 
 **Windows:**
 ```
@@ -22,9 +23,11 @@ install.bat
 chmod +x install.sh && ./install.sh
 ```
 
-This copies global `CLAUDE.md`, `AGENTS.md`, Cursor rules, and Claude Code slash commands to the right locations, then registers the `mb` utility on your PATH.
+This copies the Claude Code and Cursor global files to their native locations, then registers the
+`mb` utility on your PATH. There is no single global instruction path shared by every tool.
 
-After global setup, the only per-project step is scaffolding the `memory-bank/` directory (below).
+After global setup, run `mb init` in each project to scaffold Memory Bank and its project-local
+Claude Code, Codex, and Cursor integration files.
 
 ## Quick Start (5 minutes)
 
@@ -36,7 +39,8 @@ Navigate to your project directory and run:
 mb init
 ```
 
-This creates the `memory-bank/` directory with template files, adds `CLAUDE.md` and `.cursor/rules/` if they don't exist, and wires up the hook scripts.
+This creates the `memory-bank/` directory, adds `CLAUDE.md`, `AGENTS.md`, and `.cursor/rules/` when
+missing, installs `.codex/hooks.json`, and delivers the Claude Code and Codex hook scripts.
 
 ### Option 2: Manual Setup
 
@@ -61,10 +65,16 @@ This creates the `memory-bank/` directory with template files, adds `CLAUDE.md` 
    │   ├── code-quality.mdc
    │   ├── workflow.mdc
    │   └── rules-file-integrity.mdc
-   ├── CLAUDE.md                    # For Claude Code (project-level)
-   └── AGENTS.md                    # Cross-tool (Claude Code + Cursor + Codex + Gemini)
+   ├── .codex/
+   │   └── hooks.json               # Codex compaction gate + recovery
+   ├── scripts/
+   │   ├── codex-compaction-hook.sh
+   │   └── codex-compaction-hook.ps1
+   ├── CLAUDE.md                    # Claude Code project instructions
+   └── AGENTS.md                    # Codex project instructions; portable where supported
    ```
-   Note: If you completed the one-time global setup above, `CLAUDE.md` and the Cursor rules are already active globally — the per-project copies are for project-specific overrides only.
+   Note: The global setup does not replace project-local `.codex/hooks.json`; Codex hooks are
+   trusted per definition in each project.
 
 ## Fill In Your Project Details (15-20 minutes)
 
@@ -173,7 +183,7 @@ Initialize your progress tracker:
 1. In your AI conversation, type: "Handoff"
 2. The AI should create `handoff.md` and stop
 3. Start a new conversation
-4. The AI should read `handoff.md` and know the context
+4. The AI should read all five Memory Bank files first, then `handoff.md` as an ephemeral supplement
 
 ## IDE-Specific Setup
 
@@ -205,11 +215,27 @@ The `.cursor/rules/*.mdc` files are automatically loaded. Verify by:
 
 **Slash commands** (`/feature-dev`, `/security-review`) require files in `~/.claude/commands/` — see the global setup section above.
 
+### Codex
+
+`AGENTS.md` supplies the project-local protocol. `.codex/hooks.json` adds an enforceable
+pre-compaction gate and a post-compaction recovery instruction, but project hooks do not run until
+their exact definition is trusted.
+
+1. Open Codex from the project root
+2. Run `/hooks`, inspect the PMB hook definitions, and trust them
+3. Make sure `memory-bank/activeContext.md` and `memory-bank/progress.md` are current
+4. Run `/compact` and verify that the recovery instruction causes all five Memory Bank files to be
+   reread before work resumes
+
+If `.codex/hooks.json` changes, its hash changes and Codex requires another `/hooks` review. Local
+feature settings or managed policy may disable project hooks; in that case `AGENTS.md` remains
+advisory and cannot guarantee the gate.
+
 ## Daily Usage
 
 ### Starting a Session
 
-1. Open your project in Cursor/VS Code
+1. Open your project in Claude Code, Codex, or Cursor
 2. Start AI conversation
 3. AI automatically has full context
 
@@ -227,9 +253,9 @@ Use quick commands:
 ### Continuing After Handoff
 
 1. Start new conversation
-2. AI reads `handoff.md` automatically
-3. Continue where you left off
-4. AI merges handoff into Memory Bank
+2. AI reads all five Memory Bank files first
+3. AI reads `handoff.md` second, reconciles it with `activeContext.md`, and verifies git/test state
+4. AI merges durable state into Memory Bank, deletes the spent handoff, and continues
 
 ## Troubleshooting
 

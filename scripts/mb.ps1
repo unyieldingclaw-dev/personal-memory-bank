@@ -230,12 +230,14 @@ function Get-MbUpgradeAnalysis {
     # because Invoke-Upgrade handles them with advisory-diff logic rather than overwrite.
     $templateOwned = @(
         '.claude/settings.json',
+        '.codex/hooks.json',
         'scripts/dangerous-commands.ps1', 'scripts/dangerous-commands.sh',
         'scripts/check-contract.ps1',     'scripts/check-contract.sh',
         'scripts/update-reviewed.ps1',    'scripts/update-reviewed.sh',
         'scripts/pre-push-check.ps1',     'scripts/pre-push-check.sh',
         'scripts/delegation-depth-check.ps1', 'scripts/delegation-depth-check.sh',
         'scripts/pre-compact-check.ps1',  'scripts/pre-compact-check.sh',
+        'scripts/codex-compaction-hook.ps1', 'scripts/codex-compaction-hook.sh',
         'scripts/review-reminders.ps1',   'scripts/review-reminders.sh',
         'scripts/review-reminders-post.ps1', 'scripts/review-reminders-post.sh',
         'scripts/_review-gate-lib.sh',    'scripts/_review-gate-lib.ps1',
@@ -245,6 +247,7 @@ function Get-MbUpgradeAnalysis {
         'scripts/baseline-health.sh'
     )
     $govMissing = @($templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) })
+    if (-not (Test-Path (Join-Path $ProjectPath 'AGENTS.md'))) { $govMissing += 'AGENTS.md' }
 
     # WHY: templates/claude-commands/ holds slash commands that are governance artifacts
     # (change-review, accessibility-review, etc.) installed alongside hook scripts.
@@ -940,13 +943,19 @@ function Invoke-Init {
     # CLAUDE.md
     Copy-IfNew -Src (Join-Path $TemplatesDir "CLAUDE.md") -Dst (Join-Path $Target "CLAUDE.md") -Label "CLAUDE.md"
 
+    # AGENTS.md is the portable project-local instruction surface used by Codex and other tools.
+    Copy-IfNew -Src (Join-Path $TemplatesDir "AGENTS.md") -Dst (Join-Path $Target "AGENTS.md") -Label "AGENTS.md"
+
     # .claude/settings.json
     Copy-IfNew -Src (Join-Path $TemplatesDir ".claude\settings.json") -Dst (Join-Path $Target ".claude\settings.json") -Label ".claude/settings.json"
+
+    # Codex lifecycle wiring. The exact definition still requires user trust in Codex /hooks.
+    Copy-IfNew -Src (Join-Path $TemplatesDir ".codex\hooks.json") -Dst (Join-Path $Target ".codex\hooks.json") -Label ".codex/hooks.json"
 
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
     # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
-    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1","review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-lib.sh","_review-gate-lib.ps1","_review-gate-classify.py","_review-gate-classify.ps1","warn-stale-review-marker.sh","warn-stale-review-marker.ps1")) {
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1","codex-compaction-hook.sh","codex-compaction-hook.ps1","review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-lib.sh","_review-gate-lib.ps1","_review-gate-classify.py","_review-gate-classify.ps1","warn-stale-review-marker.sh","warn-stale-review-marker.ps1")) {
         Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
     }
 
@@ -2322,6 +2331,8 @@ function Invoke-Upgrade {
         ".cursor/rules/rules-file-integrity.mdc"
         # Claude Code settings — hook wiring, not project-specific
         ".claude/settings.json"
+        # Codex hook wiring — deterministic lifecycle configuration, trusted explicitly in /hooks
+        ".codex/hooks.json"
         # Hook scripts — deterministic enforcement scripts, no project customization
         "scripts/dangerous-commands.sh"
         "scripts/dangerous-commands.ps1"
@@ -2335,6 +2346,8 @@ function Invoke-Upgrade {
         "scripts/delegation-depth-check.ps1"
         "scripts/pre-compact-check.sh"
         "scripts/pre-compact-check.ps1"
+        "scripts/codex-compaction-hook.sh"
+        "scripts/codex-compaction-hook.ps1"
         "scripts/review-reminders.sh"
         "scripts/review-reminders.ps1"
         "scripts/review-reminders-post.sh"
@@ -2381,7 +2394,10 @@ function Invoke-Upgrade {
     # WHY: $advisoryCreate holds files that must exist at runtime but may legitimately carry
     # project-local edits (unlike $templateOwned, which is pure governance substrate with no
     # expected customization). Standards files were moved to $templateOwned — see comment above.
-    $advisoryCreate = @()
+    $advisoryCreate = @(
+        # Cross-tool instructions may carry project-specific rules; create or diff, never overwrite.
+        "AGENTS.md"
+    )
 
     # WHY: Slash commands are auto-discovered from templates/claude-commands/ instead of hardcoded —
     # a static list silently goes stale whenever a new command file is added (accessibility-review.md

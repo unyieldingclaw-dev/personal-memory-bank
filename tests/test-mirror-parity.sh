@@ -209,6 +209,16 @@ for name in $STD_DIVERGE_OK; do
     fi
 done
 
+# ── AGENTS.md delivery surfaces: PMB-specific live file + generic portable template ─────
+echo ""
+echo "--- AGENTS.md live/template recovery contract ---"
+assert_file_exists "$REPO_ROOT/AGENTS.md" "AGENTS.md: live project file exists"
+assert_file_exists "$REPO_ROOT/templates/AGENTS.md" "AGENTS.md: portable template exists"
+assert_contains "$(cat "$REPO_ROOT/AGENTS.md")" "After compaction or when starting a new conversation" "AGENTS.md: PMB-specific live file requires post-compaction recovery"
+assert_contains "$(cat "$REPO_ROOT/templates/AGENTS.md")" "After compaction or when starting a new conversation" "AGENTS.md: portable template requires post-compaction recovery"
+assert_contains "$(cat "$REPO_ROOT/AGENTS.md")" "Read.*memory-bank.*FIRST" "AGENTS.md: PMB-specific live file keeps Memory Bank authoritative"
+assert_contains "$(cat "$REPO_ROOT/templates/AGENTS.md")" "Read.*Memory Bank files first" "AGENTS.md: portable template keeps Memory Bank authoritative"
+
 # ── the rest of TEMPLATE_OWNED: hook scripts, git hooks, settings.json ──────────────────
 # WHY this block exists: the three families above cover .cursor/rules, .claude/commands and
 # standards/ -- but mb.sh's TEMPLATE_OWNED array is far larger, and everything in it is

@@ -44,7 +44,9 @@ Never ask the user to repeat constraints, decisions, or context already document
 
 ## Context Management and Handoffs
 
-**CRITICAL RULE**: The agent cannot see context percentage - only the user sees it in the UI.
+**Support boundary**: This rule is advisory. The agent cannot see context percentage; only the user
+sees it in the UI. Cursor's native `preCompact` hook is observational and cannot block or modify
+compaction, so PMB does not claim executable pre-compaction enforcement in Cursor.
 
 **User triggers handoff** by either:
 - Typing "Handoff" (explicit trigger)
@@ -56,23 +58,20 @@ Never ask the user to repeat constraints, decisions, or context already document
 > independent of the IDE and is the larger cost. See `standards/MEMORY-BANK.md`, "Implications for
 > Handoff Thresholds".
 
-**When handoff is triggered**, you MUST:
+**When the proactive handoff is triggered**, you MUST:
 1. **STOP** all work immediately
-2. **CREATE** `handoff.md` in project root with:
-   - Summary of what was accomplished
-   - All files modified this session
-   - Current service state (running/stopped, ports)
-   - Commands to resume work
-   - Pending tasks and known issues
-   - Context for next agent to continue seamlessly
-3. **RESPOND** with only: "Handoff ready at `handoff.md`. Start a new conversation."
-4. **STOP RESPONDING** - do not continue working or answer more questions
+2. Verify `memory-bank/activeContext.md` and `memory-bank/progress.md` are current; update them first
+3. **CREATE** `handoff.md` only for ephemeral in-flight state: interrupted file/line, uncommitted
+   diff, non-default process state, the next command, and a pointer to `activeContext.md` for priority
+4. **RESPOND** with only: "Handoff ready at `handoff.md`. Start a new conversation."
+5. **STOP RESPONDING** - do not continue working or answer more questions
 
-**When a new conversation starts** (next agent):
-1. Check for `handoff.md` in project root - if exists, read it FIRST
-2. Merge relevant info into `memory-bank/progress.md` and `memory-bank/activeContext.md`
-3. Delete `handoff.md` after merging
-4. Continue work from where previous agent stopped
+**After compaction or when a new conversation starts**:
+1. Re-read all five Memory Bank files FIRST; they are authoritative
+2. Check for `handoff.md` and read it SECOND as an ephemeral supplement
+3. Reconcile it with `activeContext.md`'s Next Steps and surface any conflict
+4. Verify branch/worktree, uncommitted diff, running services, and the next test
+5. Merge durable information into Memory Bank, delete the spent `handoff.md`, and resume from verified state
 
 ## Quick Commands
 

@@ -119,7 +119,9 @@ Copy-Item .\templates\CLAUDE.md "$env:USERPROFILE\.claude\CLAUDE.md"
 
 For project-specific overrides, add a `CLAUDE.md` to the project root. It merges with the global one.
 
-**AGENTS.md alternative:** Place `AGENTS.md` at `~/.claude/AGENTS.md` for a single file readable by Claude Code, Cursor, Codex, and Gemini CLI. See `docs/CLAUDE-CODE-PLUGINS.md` for details.
+**AGENTS.md baseline:** Put `AGENTS.md` at the project root for Codex and other tools that support
+the convention. Codex's global path is `~/.codex/AGENTS.md`; Claude Code and Cursor continue to use
+their native global paths. There is no universal `~/.claude/AGENTS.md` path.
 
 ## Side-by-Side Comparison
 
@@ -144,6 +146,17 @@ At the start of every conversation (and after any context compaction), silently 
 
 At the start of every conversation (and after any context compaction), silently read ALL files in memory-bank/...
 ```
+
+### Compaction and Handoff Boundary
+
+| Platform | Enforceable before compaction | Recovery after compaction |
+|----------|-------------------------------|---------------------------|
+| Claude Code | Yes — `.claude/settings.json` `PreCompact` can block | `CLAUDE.md` requires the Memory Bank reread |
+| Codex | Yes — after `.codex/hooks.json` is trusted in `/hooks` | `SessionStart(source=compact)` injects the recovery checklist |
+| Cursor | No — `preCompact` is observational; the 40% trigger is advisory | `memory-bank.mdc` instructs the reread |
+
+On every platform, Memory Bank is read first and `handoff.md` second. The handoff carries only
+ephemeral in-flight state and never replaces the authoritative Memory Bank.
 
 ### Security Guardrails
 
@@ -225,7 +238,7 @@ $header + ($content -join "`n`n---`n`n") | Set-Content CLAUDE.md
 | **User-Level Rules** | `~/.cursor/rules/` | `~/.claude/CLAUDE.md` (global) |
 | **Auto-reload** | Yes | Yes |
 | **Memory Bank** | Full support | Full support |
-| **Handoff Protocol** | Works | Works |
+| **Handoff Protocol** | Advisory/proactive | Blocking `PreCompact` gate |
 | **Quick Commands** | Works | Works |
 
 ## Recommendations
