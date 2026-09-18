@@ -4,9 +4,9 @@
      (PMB's own postmortem/bug-history prose removed, everything else kept). If you edit
      shared content there, mirror the change here by hand — no generation step enforces this. -->
 
-PMB uses native lifecycle hooks where the platform exposes an enforceable event. Claude Code and
-Codex can run deterministic compaction hooks; Cursor's `preCompact` event is observational, so its
-handoff rule remains advisory. Unlike instruction files, configured hooks execute outside the
+PMB uses native lifecycle hooks where the platform exposes an enforceable event. Claude Code can
+block compaction; Codex provides deterministic post-compaction recovery; Cursor's `preCompact` event
+is observational, so its handoff rule remains advisory. Unlike instruction files, configured hooks execute outside the
 model's discretion, subject to platform enablement and trust settings.
 
 ## Hook Types
@@ -124,15 +124,15 @@ Fires after every `Write` or `Edit` tool call. Reads the edited file path from t
 
 **Hook error logging (G2):** unexpected errors are logged to `.pmb-hook-errors.log`.
 
-### 5. PreCompact Memory Gate (`PreCompact`)
+### 5. PreCompact Memory Gate and Codex Recovery
 
-The same content policy protects Claude Code and Codex, but each platform has a different hook
-response contract. Cursor cannot enforce the policy before compaction.
+Claude Code enforces the content policy before compaction. Codex instead injects recovery context
+after compaction; Cursor cannot enforce the policy before compaction.
 
 | Platform | Before compaction | After compaction |
 |----------|-------------------|------------------|
 | Claude Code | `.claude/settings.json` runs the checker; exit 2 blocks | Instructions require a Memory Bank reread |
-| Codex | Trusted `.codex/hooks.json` runs an adapter; JSON `continue: false` blocks | `SessionStart` with `source: compact` injects the recovery checklist |
+| Codex | No gate — Codex `PreCompact` `continue: false` ends the active turn | Trusted `SessionStart` with `source: compact` injects the recovery checklist |
 | Cursor | The 40% rule is proactive/advisory; native `preCompact` cannot block or modify compaction | The always-applied rule instructs a Memory Bank reread |
 
 Codex project hooks must be reviewed and trusted in `/hooks`; a local feature setting or managed
@@ -140,7 +140,7 @@ policy can disable them. See the [Codex hooks documentation](https://learn.chatg
 and [Cursor hooks documentation](https://prod.cursor.com/docs/hooks).
 
 The shared checker runs two content-based quality checks on the memory bank **or** bypasses via a
-`handoff.md` dated today.
+`handoff.md` dated today. Claude Code runs it as its gate; in Codex it remains an explicit manual diagnostic.
 
 **Claude Code exit codes:**
 - **Exits 0** — both checks pass (or a `handoff.md` dated today is present). Compaction proceeds normally.
@@ -173,11 +173,11 @@ The shared policy is implemented in `scripts/pre-compact-check.ps1` (Windows/pws
 ]
 ```
 
-That no-matcher note applies to this Claude Code wiring. Codex uses `matcher: "manual|auto"` for
-`PreCompact` and `matcher: "^compact$"` for recovery. Its
-`scripts/codex-compaction-hook.{sh,ps1}` adapters translate policy exit 2 into valid
-`{"continue":false}` JSON and emit the post-compaction recovery checklist; `.codex/hooks.json`
-wires both events.
+That no-matcher note applies to this Claude Code wiring. Codex deliberately has no `PreCompact`
+handler: its documented `continue: false` behavior ends the active turn, which cannot safely enforce
+a state that needs agent or user action. Codex uses `matcher: "^compact$"` for `SessionStart`;
+its `scripts/codex-compaction-hook.{sh,ps1}` adapters emit only the post-compaction recovery
+checklist.
 
 ### 6. Agent Spawn-Volume Advisory (`PreToolUse` — Agent tool)
 

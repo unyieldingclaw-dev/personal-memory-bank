@@ -33,10 +33,10 @@ At the start of every conversation, and again after any context compaction, sile
 The same Memory Bank readiness policy is exposed through different platform capabilities:
 
 - **Claude Code:** `.claude/settings.json` runs the executable checker before compaction; policy exit 2 blocks.
-- **Codex:** trusted `.codex/hooks.json` runs `PreCompact` for manual and automatic compaction. Its adapter translates policy exit 2 to Codex's `continue: false` JSON contract, and `SessionStart(source=compact)` injects the recovery checklist before work resumes. Project hooks run only after the exact definition is trusted in `/hooks`; local feature or managed-policy settings can disable them.
+- **Codex:** trusted `.codex/hooks.json` runs only `SessionStart(source=compact)`, which injects the recovery checklist before the immediate continuation. Codex does not run the `PreCompact` gate: its documented `continue: false` behavior ends the active turn and can leave no visible remedy. Project hooks run only after the exact definition is trusted in `/hooks`; local feature or managed-policy settings can disable them.
 - **Cursor:** `.cursor/rules/memory-bank.mdc` is advisory. Cursor's native `preCompact` event is observational and cannot block or modify compaction, so the 40% handoff remains proactive rather than enforced.
 
-The shared policy blocks unless `activeContext.md` has ≥3 substantive content lines AND `progress.md` has an entry dated today. A `handoff.md` **dated today** bypasses the gate; a stale one does not (fixed 2026-08-27 — it previously bypassed on mere existence, so a spent handoff silently disabled the gate).
+Claude Code's shared checker blocks unless `activeContext.md` has ≥3 substantive content lines AND `progress.md` has an entry dated today. It remains an explicit manual diagnostic in Codex — run `bash scripts/pre-compact-check.sh` (or `pwsh scripts/pre-compact-check.ps1`) yourself before compacting if in doubt; a `handoff.md` **dated today** bypasses the checker, while a stale one does not (fixed 2026-08-27 — it previously bypassed on mere existence, so a spent handoff silently disabled the gate).
 
 **After any compaction:** Re-read ALL `memory-bank/` files immediately, read `handoff.md` second if present, reconcile it with `activeContext.md`, verify git/worktree/test state, summarize recovered context to the user, and confirm where to resume if mid-task. **Do not continue from memory or the compaction summary alone.**
 
@@ -77,7 +77,7 @@ Scope:
 Type "approved" to begin, or tell me what to adjust.
 ```
 
-**On "approved":** Write `.Codex/contracts/active-task.json` with the schema from `docs/CONTRACTS-GUIDE.md`. Set `expires_at` to 8 hours from now.
+**On "approved":** Write `.codex/contracts/active-task.json` with the schema from `docs/CONTRACTS-GUIDE.md`. Set `expires_at` to 8 hours from now.
 
 **During work:** If the hook warns that a write is outside the declared scope, pause and confirm with the user before proceeding.
 
@@ -119,9 +119,8 @@ This is the single highest-leverage habit for improving output quality.
 
 ## Tools
 
-- **Hooks** — `.Codex/settings.json` enforces rules deterministically (format, lint, block dangerous ops). See `docs/HOOKS-GUIDE.md`.
-- **Agents** — `.Codex/agents/` defines specialized subagents (security-reviewer, researcher, opposition). Spawn with: "use the security-reviewer agent". `opposition` is dispatched by the review commands, not usually by hand.
-- **MCP** — connect external services via `Codex mcp add`. See `standards/MCP-SECURITY.md` before adding any server.
+- **Hooks** — `.codex/hooks.json` runs the `SessionStart(source=compact)` recovery hook once trusted via `/hooks`. See `docs/HOOKS-GUIDE.md`.
+- **MCP** — connect external services via Codex's own MCP configuration. See `standards/MCP-SECURITY.md` before adding any server.
 
 ## Handoff Protocol
 
@@ -172,11 +171,11 @@ After compaction or when starting a new conversation:
 
 Nominal defaults are per-model: `high` for Sonnet, `xhigh` for Opus. **An explicitly set level overrides that default and does not follow a model switch.** Verified 2026-08-19: `CLAUDE_EFFORT=high` was live in the environment — note the name, *not* the `CLAUDE_CODE_EFFORT_LEVEL` this file previously cited, and not present in any `settings.json`, so something outside config sets it (most likely the harness/selector). Selecting Opus left it on `high`, i.e. below Opus's nominal default, with nothing surfacing the mismatch. So after `/model opus`, raise effort deliberately; it will not track the model on its own. Check with `env | grep -i effort` when in doubt. Downshift just as deliberately: `medium` for routine single-file edits, config changes, and well-specified mechanical work (real token savings, no quality cost); `low` only for formatting and file moves.
 
-**Also check `MAX_THINKING_TOKENS`** (`.Codex/settings.json` env block, currently `10000`). Exact interaction with model and effort is not verifiable from inside this repo, but it plausibly bounds reasoning depth independently of both — so a raised effort level may still be capped by it. Worth revisiting before deep architecture or security-boundary work.
+**Also check `MAX_THINKING_TOKENS`** if Codex's own configuration exposes it — this repo does not currently set it anywhere under `.codex/`. Exact interaction with model and effort is not verifiable from inside this repo, but it plausibly bounds reasoning depth independently of both — so a raised effort level may still be capped by it. Worth revisiting before deep architecture or security-boundary work.
 
 **Compact at task boundaries — the threshold and enforcement mechanism are platform-specific:**
 - Claude Code can set its threshold with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`; its configured `PreCompact` checker blocks stale state
-- Codex controls its own automatic threshold; after `.codex/hooks.json` is trusted, `PreCompact` blocks stale state and `SessionStart(source=compact)` injects recovery context
+- Codex controls its own automatic threshold; after `.codex/hooks.json` is trusted, `SessionStart(source=compact)` injects recovery context without terminating the active turn
 - Cursor has no blocking pre-compaction event, so use the proactive 40% handoff rule
 - Compact manually at natural boundaries before that point:
   - After planning: `/compact Focus on decisions and file paths`

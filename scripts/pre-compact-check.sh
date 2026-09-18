@@ -118,7 +118,7 @@ if [ "${#BLOCK_REASONS[@]}" -eq 0 ]; then
     exit 0
 fi
 
-printf '[PreCompact] Compaction quality gate: %d check(s) failed.\n' "${#BLOCK_REASONS[@]}"
+printf 'Compaction paused — PMB state needs attention. %d check(s) failed.\n' "${#BLOCK_REASONS[@]}"
 for reason in "${BLOCK_REASONS[@]}"; do
     printf '  - %s\n' "$reason"
 done

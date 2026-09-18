@@ -56,6 +56,7 @@ echo "--- no handoff, thin memory bank: blocks compaction ---"
 D="$TMPDIR_PC/thin"; make_bank "$D" thin
 assert_contains "code=$(hook_code "$D")" "code=2" "thin memory bank with no handoff exits 2 (block)"
 out="$(run_hook "$D")"
+assert_contains "$out" "Compaction paused — PMB state needs attention." "block message begins with a clear paused-state explanation"
 assert_contains "$out" "substantive line" "block message names the activeContext.md failure"
 assert_contains "$out" "no entry dated" "block message names the progress.md failure"
 

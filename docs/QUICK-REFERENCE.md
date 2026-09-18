@@ -129,7 +129,7 @@ Four rules that reduce common LLM over-engineering. Active in all projects via `
 | Codex (project) | `AGENTS.md` + `.codex/hooks.json` | Single project; hooks require `/hooks` trust |
 | Codex (global) | `~/.codex/AGENTS.md` | All Codex projects |
 
-Compaction support: Claude Code can block with `PreCompact`; trusted Codex hooks can block and run
+Compaction support: Claude Code can block with `PreCompact`; trusted Codex hooks run only
 `SessionStart(source=compact)` recovery; Cursor's 40% handoff remains advisory because its native
 `preCompact` event cannot block or modify compaction.
 

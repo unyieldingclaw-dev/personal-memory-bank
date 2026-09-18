@@ -63,7 +63,7 @@ compaction, so PMB does not claim executable pre-compaction enforcement in Curso
 2. Verify `memory-bank/activeContext.md` and `memory-bank/progress.md` are current; update them first
 3. **CREATE** `handoff.md` only for ephemeral in-flight state: interrupted file/line, uncommitted
    diff, non-default process state, the next command, and a pointer to `activeContext.md` for priority
-4. **RESPOND** with only: "Handoff ready at `handoff.md`. Start a new conversation."
+4. **RESPOND** with only: "Context nearing compaction — handoff ready at `handoff.md`. Start a new conversation."
 5. **STOP RESPONDING** - do not continue working or answer more questions
 
 **After compaction or when a new conversation starts**:
