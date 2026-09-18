@@ -22,7 +22,7 @@ The 40% threshold is a proactive fallback, not proof that every tool exposes a n
 ## Platform Compaction Support
 
 - **Claude Code:** `.claude/settings.json` runs an executable `PreCompact` gate that can block compaction until Memory Bank state is current.
-- **Codex:** `.codex/hooks.json` runs an executable `PreCompact` gate and a `SessionStart` recovery hook for `source: compact`. Project hooks run only after the exact hook definition is trusted in `/hooks`; local feature or managed-policy settings can disable them.
+- **Codex:** `.codex/hooks.json` runs only a `SessionStart` recovery hook for `source: compact`; it deliberately has no turn-terminating `PreCompact` gate. Project hooks run only after the exact hook definition is trusted in `/hooks`; local feature or managed-policy settings can disable them.
 - **Cursor:** `.cursor/rules/memory-bank.mdc` provides an always-applied advisory workflow. Cursor's native `preCompact` event is observational and cannot block or modify compaction, so the user-reported 40% trigger remains proactive rather than enforced.
 
 ## Verification-First

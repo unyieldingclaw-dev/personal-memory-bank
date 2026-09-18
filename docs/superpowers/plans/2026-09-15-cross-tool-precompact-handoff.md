@@ -1,5 +1,14 @@
 # Cross-Tool Pre-Compaction Handoff Implementation Plan
 
+> **SUPERSEDED 2026-09-17 — do not execute this plan.** Success Criteria #2/#3 below and Task 2's
+> steps require Codex to run a turn-terminating `PreCompact` gate. That gate shipped, then was found
+> to cause three reproduced silent turns in the desktop UI (`continue:false` ended the active turn
+> without surfacing its `systemMessage`) and was deliberately removed in favor of a recovery-only
+> `SessionStart(source=compact)` hook — see `memory-bank/activeContext.md`'s `[NS-53]` and
+> `memory-bank/progress.md`'s 2026-09-16/17 entries for the incident and the fix. Running this plan
+> today would reintroduce the removed defect. Left in place, unedited below, as the historical record
+> of what was originally built and why — this banner is the only change.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. This repository task is an explicit one-primary-agent exception: execute inline and do not dispatch subagents.
 
 **Goal:** Make PMB's Claude, Cursor, and Codex handoff claims match what each platform can actually enforce, including deterministic Codex pre-compaction blocking and post-compaction recovery.

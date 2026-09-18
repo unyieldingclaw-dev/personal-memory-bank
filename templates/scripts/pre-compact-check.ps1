@@ -90,7 +90,7 @@ try {
 
     if ($blockReasons.Count -eq 0) { exit 0 }
 
-    Write-Host "[PreCompact] Compaction quality gate: $($blockReasons.Count) check(s) failed."
+    Write-Host "Compaction paused — PMB state needs attention. $($blockReasons.Count) check(s) failed."
     foreach ($reason in $blockReasons) {
         Write-Host "  - $reason"
     }

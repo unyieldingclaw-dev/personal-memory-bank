@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-09-15
+last-reviewed: 2026-09-17
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,7 +16,7 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-09-14 (branch unmerged; for the count run `git rev-list --count origin/main..HEAD`)
+## Last Updated: 2026-09-17 (verify branch and SHA from Git, not this file)
 
 ## Trim History
 
@@ -37,9 +37,9 @@ the detail those entries were condensed from. Older: `docs/archive/context-2026-
 
 ## Current Focus
 
-**Branch `fix/enforcement-layer-paired-paths`, unmerged.** Read counts and SHAs from git, never this file. PR #25 is merged at `103b146`; its post-merge main run passed all ten jobs.
+**Branch `fix/codex-precompact-recovery-only`, off `main` at PR #27 (`5c386808`), uncommitted.** Codex no longer registers a `PreCompact` gate, retains immediate `SessionStart(source=compact)` recovery, and keeps Claude's checker and the clear cross-platform wording.
 
-**Current change:** paired Bash/PowerShell review-gate correction from `C:/Users/Mizzo/Claude/pmb-session-artifacts/2026-09-11/`. The shared classifier now rejects multiple guarded actions as `MULTI`, parses quoted text and launcher command arguments safely, and declines unverifiable push recovery; atomic marker lifecycle, reviewed-hash-bound commit recovery, empty-diff refusal, fail-closed guarded paths, `git -C` target binding, PowerShell wiring and template delivery remain intact. Focused suites and 15/15 mutations are green; the sole opposition re-check approved; the final CI-equivalent Bash suite and Pester 128/128 passed on 2026-09-15. Delivery remains.
+**Resolved investigation — PreCompact UX failure:** three reproduced silent turns were the documented consequence of Codex `PreCompact` returning `continue:false`, not a hook hang; the desktop UI did not surface its `systemMessage`. User approved recovery-only Codex support: the `PreCompact` handler and its adapter branch were removed, while `SessionStart(source=compact)` continues to inject recovery context before the immediate continuation. Focused verification: pre-compact 23/0, Codex recovery 17/0, mirror parity 146 or 148 depending on whether `python3` is on PATH (both counts are real; `test-mirror-parity.sh:391` gates two assertions on it). Opposition review (4 domains + adjudication) then found two Blocking issues, both fixed in this same branch — `[NS-53]` — plus non-blocking notes on `AGENTS.md`'s stale manual-diagnostic pointer and this file's own branch-name/numbering slips, also fixed here.
 
 **Whole-repo review 2026-09-11:** eleven findings remain the source record in `progress.md`; this branch addresses only the two approved enforcement-layer findings and their paired-path consequences. The external artifact directory remains the provenance source, not a second checkout.
 
@@ -62,6 +62,7 @@ the detail those entries were condensed from. Older: `docs/archive/context-2026-
 
 ## Next Steps
 
+53. [NS-53] ✅ **DONE on `fix/codex-precompact-recovery-only`, uncommitted.** Opposition's two Blocking findings on the Codex PreCompact recovery-only diff: (1) `memory-bank/progress.md` broke the 500-line File Size cap — fixed by relocating the 2026-09-09 section to `docs/archive/`. (2) `tests/test-codex-compaction-hooks.sh`'s structural JSON assertions silently no-op'd on a parse failure (mutation-proven reachable even with both `python3`/`pwsh` nominally on PATH) — fixed to fall through python3→pwsh on a non-zero exit, and to fail loudly (not skip) only when a parser was present but produced no usable output, matching `test-mirror-parity.sh`'s anti-vacuity pattern. Also fixed in the same pass: `docs/superpowers/plans/2026-09-15-cross-tool-precompact-handoff.md` marked superseded (still directed rebuilding the removed blocking gate); `AGENTS.md`'s stale `.Codex/settings.json` hooks pointer and missing manual-diagnostic invocation.
 0. [NS-0] **Resume `mb backlog` Tasks 2-5** from `.claude/worktrees/backlog-feature` (branch `worktree-backlog-feature`, Task 1 committed at `3c6cb3d`) — full detail archived, see above. Task contract there expired 2026-07-24T00:59:18Z — re-propose. Full task specs: `docs/superpowers/plans/2026-07-14-backlog-feature.md`.
 1. [NS-1] **Decide what to do with unrelated uncommitted WIP** (`/ai-review` merge-gate nudge + a "Hook-Enforced Review Gate" section in `standards/WORKFLOW.md`) — no matching commit/branch/memory-bank entry found anywhere as of last check. Needs its own review + commit decision.
 3. [NS-3] **Merge two pending worktree branches:** `worktree-cross-repo-write-boundary` and `worktree-fix-workflow-doc-paths` (single commit `b52f63d`). Both need a PR + user-run merge. **Correction (2026-08-19, Opus): port, do NOT merge** — see `[NS-26]`. cross-repo-write-boundary is **12 commits**, not 8; its `check-repo-boundary.{sh,ps1}` are absent from `main` so the feature is real work worth porting, but it conflicts on `review-reminders-post.sh`, which on `main` carries 2 `write_marker_atomic` sites it predates. (It does *not* contain `_review-gate-lib.sh` at all — an earlier draft of this entry wrongly cited that file as the regression vector; corrected by independent review.) `fix-workflow-doc-paths` is the one tractable item (1 conflict hunk, doc-only) but still needs a main-forward touch: `main` gained `WORKFLOW.md`'s Phase 3.5 after it forked.
