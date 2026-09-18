@@ -291,4 +291,4 @@ Run `mb clean` to get an AI prompt that deduplicates and summarizes memory, or m
 
 - [Memory Bank Standard](../standards/MEMORY-BANK.md) - Full documentation
 - [Quick Reference](QUICK-REFERENCE.md) - One-page cheatsheet
-- [Cursor vs Claude Code](CURSOR-VS-CLAUDE.md) - IDE differences
+- [Cursor vs Claude Code vs Codex](CURSOR-VS-CLAUDE.md) - IDE differences
