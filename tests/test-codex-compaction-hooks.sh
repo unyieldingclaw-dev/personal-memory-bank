@@ -91,6 +91,20 @@ if [ -f "$ADAPTER_SH" ]; then
   assert_contains "$recovery_out" "re-read all five memory-bank files" "recovery context requires the full memory-bank reread"
   assert_contains "$recovery_out" "handoff.md" "recovery context reconciles a handoff supplement"
   assert_contains "$recovery_out" "verified" "recovery resumes from verified state"
+
+  # WHY: [ValidateSet('pre','recover')] and the case statement's pre) branch were removed from
+  # both adapters when the turn-terminating PreCompact gate was removed (2026-09-18) -- any mode
+  # other than "recover" must now silently no-op rather than error, since a stale trusted Codex
+  # hook definition on a user's disk could still invoke the adapter with the old "pre" argument.
+  # Nothing asserted this fail-open contract until now; a regression that made either adapter
+  # error or print on "pre"/no-argument would have shipped undetected.
+  pre_out=$(cd "$TMPDIR_CODEX/bash-recovery" && bash scripts/codex-compaction-hook.sh pre 2>&1)
+  assert_exit_zero "$?" "bash adapter fails open (exit 0) on the legacy 'pre' argument"
+  assert_equals "$pre_out" "" "bash adapter emits no output on the legacy 'pre' argument"
+
+  noarg_out=$(cd "$TMPDIR_CODEX/bash-recovery" && bash scripts/codex-compaction-hook.sh 2>&1)
+  assert_exit_zero "$?" "bash adapter fails open (exit 0) with no argument"
+  assert_equals "$noarg_out" "" "bash adapter emits no output with no argument"
 fi
 
 if command -v pwsh >/dev/null 2>&1 && [ -f "$ADAPTER_PS1" ]; then
@@ -99,6 +113,14 @@ if command -v pwsh >/dev/null 2>&1 && [ -f "$ADAPTER_PS1" ]; then
   ps_out=$(cd "$TMPDIR_CODEX/pwsh-recovery" && pwsh -NoProfile -NonInteractive -File scripts/codex-compaction-hook.ps1 -Mode recover 2>&1)
   assert_contains "$ps_out" "re-read all five memory-bank files" "PowerShell recovery context requires the full memory-bank reread"
   assert_contains "$ps_out" "handoff.md" "PowerShell recovery context reconciles a handoff supplement"
+
+  ps_pre_out=$(cd "$TMPDIR_CODEX/pwsh-recovery" && pwsh -NoProfile -NonInteractive -File scripts/codex-compaction-hook.ps1 -Mode pre 2>&1)
+  assert_exit_zero "$?" "PowerShell adapter fails open (exit 0) on the legacy 'pre' mode"
+  assert_equals "$ps_pre_out" "" "PowerShell adapter emits no output on the legacy 'pre' mode"
+
+  ps_noarg_out=$(cd "$TMPDIR_CODEX/pwsh-recovery" && pwsh -NoProfile -NonInteractive -File scripts/codex-compaction-hook.ps1 2>&1)
+  assert_exit_zero "$?" "PowerShell adapter fails open (exit 0) with no -Mode argument"
+  assert_equals "$ps_noarg_out" "" "PowerShell adapter emits no output with no -Mode argument"
 fi
 
 print_summary

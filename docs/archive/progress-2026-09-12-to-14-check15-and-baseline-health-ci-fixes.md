@@ -8,9 +8,11 @@ startup-context ratchet (`CLAUDE.md` + all `memory-bank/*.md`) against `origin/m
 required, admin-enforced `File Size` CI check that may shrink, never grow. **Delta, not a level:
 3,892 bytes moved out of `progress.md`** (this file's own verbatim body). No before/after total is stated here on purpose — see
 `docs/archive/progress-2026-08-19-to-21-escalation-and-bundle-1.md` for why a level would be false
-the moment anything else in that file changed. These were the oldest full-detail sections not yet
-relocated (the 2026-08-12 and earlier material below them in `progress.md` was already condensed to
-archive-pointers on 2026-08-23/29).
+the moment anything else in that file changed. `## 2026-09-11` in `progress.md` predates these three
+sections but was intentionally left in place, not overlooked — `activeContext.md`'s Current Focus
+still cites it as the source record for the whole-repo review's open findings; see that file for the
+current count. The 2026-08-12 and earlier material was already condensed to archive-pointers on
+2026-08-23/29.
 
 **Citation survival was grep-verified before the move**: `grep -n "2026-09-1[234]" memory-bank/activeContext.md`
 found two references — `[NS-37]` and `[NS-51]`, both reading "Full record: `progress.md` ... 2026-09-13→14"
