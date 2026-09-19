@@ -1115,6 +1115,13 @@ function Show-Doctor {
     Write-Host ""
 
     $driftFound = $false
+    # Genuinely fatal conditions only -- set at the six sites below. Deliberately excludes
+    # the checksum-mismatch and startup-context-ceiling [ERROR] lines further down: both are
+    # advisory by this code's own design (checksum drift is explicitly "permitted" per its own
+    # message and is [WARN], not [ERROR], in Invoke-VerifyIntegrity's equivalent check; the
+    # ceiling breach is tracked separately as NS-44). Found 2026-09-19: doctor's exit code was
+    # never set, so CI's "MB Doctor Self-Check" job could never fail. Mirrors scripts/mb.sh.
+    $fatalFound = $false
 
     # 0. Version
     $versionFile = Join-Path $RepoRoot "VERSION"
@@ -1139,6 +1146,7 @@ function Show-Doctor {
         Write-Host "[OK]   Templates found (MB_HOME = $RepoRoot)" -ForegroundColor Green
     } else {
         Write-Host "[ERROR] Templates not found — run install.bat from the memory-bank repo" -ForegroundColor Red
+        $fatalFound = $true
     }
 
     # 3. Required files
@@ -1150,12 +1158,14 @@ function Show-Doctor {
         Write-Host "[OK]   All memory-bank files present" -ForegroundColor Green
     } else {
         Write-Host "[ERROR] One or more memory-bank files missing — run 'mb init'" -ForegroundColor Red
+        $fatalFound = $true
     }
 
     if (Test-Path "CLAUDE.md") {
         Write-Host "[OK]   CLAUDE.md present" -ForegroundColor Green
     } else {
         Write-Host "[ERROR] CLAUDE.md missing — run 'mb init'" -ForegroundColor Red
+        $fatalFound = $true
     }
 
     # 4. Hooks
@@ -1203,18 +1213,22 @@ function Show-Doctor {
         if ((Test-Path "scripts/review-reminders.ps1") -or (Test-Path "scripts/review-reminders-post.ps1")) {
             if (-not (Test-Path "scripts/_review-gate-lib.ps1")) {
                 Write-Host "[ERROR] scripts/_review-gate-lib.ps1 missing but scripts/review-reminders.ps1/-post.ps1 present -- the review-gate hook pair is incomplete" -ForegroundColor Red
+                $fatalFound = $true
             }
         }
         if ((Test-Path "scripts/review-reminders.ps1") -and -not (Test-Path "scripts/_review-gate-classify.ps1")) {
             Write-Host "[ERROR] scripts/_review-gate-classify.ps1 missing but scripts/review-reminders.ps1 present -- global-option command forms can bypass classification" -ForegroundColor Red
+            $fatalFound = $true
         }
         if ((Test-Path "scripts/review-reminders.sh") -or (Test-Path "scripts/review-reminders-post.sh")) {
             if (-not (Test-Path "scripts/_review-gate-lib.sh")) {
                 Write-Host "[ERROR] scripts/_review-gate-lib.sh missing but scripts/review-reminders.sh/-post.sh present -- the review-gate hook pair is incomplete" -ForegroundColor Red
+                $fatalFound = $true
             }
         }
         if ((Test-Path "scripts/review-reminders.sh") -and -not (Test-Path "scripts/_review-gate-classify.py")) {
             Write-Host "[ERROR] scripts/_review-gate-classify.py missing but scripts/review-reminders.sh present -- global-option command forms can bypass classification" -ForegroundColor Red
+            $fatalFound = $true
         }
         # Git hooks — versioned via core.hooksPath
         if (Test-Path ".githooks/pre-push") {
@@ -1375,6 +1389,7 @@ function Show-Doctor {
                     $ancestor = ($lm.Groups[1].Value.Trim() -replace '@.*', '').Trim()
                     if (-not [string]::IsNullOrWhiteSpace($ancestor) -and -not (Test-Path $ancestor)) {
                         $integrityIssues += @{Level="ERROR"; Msg="memory-bank/$f lineage root missing: $ancestor (recovery impossible)"}
+                        $fatalFound = $true
                     }
                 }
             }
@@ -1886,6 +1901,7 @@ function Show-Doctor {
     if (Test-Path $scratchDir) {
         $trackedScratch = @(git ls-files $scratchDir 2>$null)
         if ($trackedScratch.Count -gt 0) {
+            $fatalFound = $true
             Write-Host "[ERROR] $($trackedScratch.Count) scratch plan(s) in $scratchDir are tracked by git" -ForegroundColor Red
             foreach ($f in $trackedScratch) { Write-Host "       $f" }
             Write-Host "       Fix: git rm --cached $scratchDir/*.md" -ForegroundColor Red
@@ -2073,6 +2089,13 @@ function Show-Doctor {
     Show-Validate
 
     Show-Budget
+
+    # `exit` (not `return`) terminates the whole process even from inside this function --
+    # matching mb.sh, where `set -e` makes show_doctor's `return 1` abort the script directly
+    # from the dispatch case, skipping the update-notifier block that would otherwise run next.
+    if ($fatalFound) {
+        exit 1
+    }
 }
 
 function Show-Audit {
