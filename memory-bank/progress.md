@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-09-18
+last-reviewed: 2026-09-19
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,12 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-09-19 — NS-44 design (PR #33); NS-55 opened; write-rate fix confirmed insufficient
+
+Design narrative in commit `31ad347`/PR body; shallow-clone mechanism in `[NS-55]` — not restated. Recorded here:
+- `[NS-37]`/`[NS-51]`/`[NS-53]` verified genuinely done (PRs #25/#28 `MERGED`, fixes present in code) — evicted to fund this entry plus `[NS-44]`/`[NS-55]` inside the zero-margin ratchet.
+- The write-rate fix ("stop restating commit messages") is correct but insufficient: this entry is compliant and still cost bytes against a ratchet at exactly 0 margin. `[NS-42]` remains open.
 
 ## 2026-09-18 — PR #28 and #29 merged; both change-review push-gates run for the first time
 

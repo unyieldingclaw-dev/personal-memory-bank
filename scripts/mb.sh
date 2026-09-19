@@ -824,6 +824,13 @@ show_doctor() {
     echo -e "${CYAN}======${NC}"
     echo ""
     DRIFT_FOUND=false
+    # Genuinely fatal conditions only -- set at the six sites below. Deliberately excludes
+    # the checksum-mismatch and startup-context-ceiling [ERROR] lines further down: both are
+    # advisory by this code's own design (checksum drift is explicitly "permitted" per its own
+    # message and is [WARN], not [ERROR], in `mb verify-integrity`'s equivalent check; the
+    # ceiling breach is tracked separately as NS-44). Found 2026-09-19: doctor's exit code was
+    # always 0 regardless of what it printed, so CI's "MB Doctor Self-Check" job could never fail.
+    FATAL_FOUND=false
 
     # 0. Version
     VERSION_FILE="$REPO_ROOT/VERSION"
@@ -846,6 +853,7 @@ show_doctor() {
         echo -e "${GREEN}[OK]   Templates found (REPO_ROOT = $REPO_ROOT)${NC}"
     else
         echo -e "${RED}[ERROR] Templates not found — run install.sh from memory-bank repo${NC}"
+        FATAL_FOUND=true
     fi
 
     # 3. Required files
@@ -857,12 +865,14 @@ show_doctor() {
         echo -e "${GREEN}[OK]   All memory-bank files present${NC}"
     else
         echo -e "${RED}[ERROR] One or more memory-bank files missing — run 'mb init'${NC}"
+        FATAL_FOUND=true
     fi
 
     if [ -f "CLAUDE.md" ]; then
         echo -e "${GREEN}[OK]   CLAUDE.md present${NC}"
     else
         echo -e "${RED}[ERROR] CLAUDE.md missing — run 'mb init'${NC}"
+        FATAL_FOUND=true
     fi
 
     # 4. Hooks
@@ -902,6 +912,10 @@ show_doctor() {
         fi
         LIB_CHECK_OUT=$(sh "$SCRIPT_DIR/check-review-gate-lib-presence.sh" "scripts" 2>&1) || true
         if [ -n "$LIB_CHECK_OUT" ]; then
+            # FATAL_FOUND set here, not inside the loop below: that loop's stdin comes via a
+            # pipe, which bash runs in a subshell -- an assignment made inside it would be
+            # invisible to this function once the pipe exits.
+            FATAL_FOUND=true
             echo "$LIB_CHECK_OUT" | while IFS= read -r line; do
                 echo -e "${RED}[ERROR] $line${NC}"
             done
@@ -1074,6 +1088,7 @@ show_doctor() {
                     if echo "$ancestor" | grep -q '/'; then continue; fi
                     if [ -n "$ancestor" ] && [ ! -e "$ancestor" ]; then
                         INTEGRITY_ISSUES+=("${RED}[ERROR] memory-bank/$f lineage root missing: $ancestor (recovery impossible)${NC}")
+                        FATAL_FOUND=true
                     fi
                 fi
             done <<< "$fm"
@@ -1560,6 +1575,7 @@ show_doctor() {
     if [ -d "$SCRATCH_PLAN_DIR" ]; then
         TRACKED=$(git ls-files "$SCRATCH_PLAN_DIR" 2>/dev/null | wc -l | tr -d ' ')
         if [ "$TRACKED" -gt 0 ]; then
+            FATAL_FOUND=true
             echo -e "${RED}[ERROR] $TRACKED scratch plan(s) in $SCRATCH_PLAN_DIR are tracked by git${NC}"
             git ls-files "$SCRATCH_PLAN_DIR" 2>/dev/null | while read -r f; do echo "       $f"; done
             echo -e "       Fix: git rm --cached $SCRATCH_PLAN_DIR/*.md"
@@ -1758,6 +1774,13 @@ show_doctor() {
     show_validate
 
     show_budget
+
+    # Under `set -e` (top of file), this return propagates directly to the process exit
+    # code: `doctor)  show_doctor ;;` calls this as a bare statement, so a non-zero return
+    # here aborts the script immediately, skipping the update-notifier block below --
+    # matching how every other failing command in this dispatch already behaves.
+    [ "$FATAL_FOUND" = true ] && return 1
+    return 0
 }
 
 show_budget() {

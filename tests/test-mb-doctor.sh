@@ -1082,4 +1082,54 @@ else
     rm -rf "$TMPDIR_BRACKET"
 fi
 
+# ── Check 26: exit code reflects fatal vs. advisory findings ─────────────────
+# Added 2026-09-19 (2026-09-11 whole-repo review, finding 2): doctor's exit code was always 0
+# regardless of what it printed, so CI's "MB Doctor Self-Check" job could never fail on a real
+# problem. Fixed by gating only on the genuinely fatal [ERROR] sites (FATAL_FOUND in
+# scripts/mb.sh) -- checksum-mismatch and the startup-context ceiling stay advisory by design
+# (see that variable's own comment) and must NOT flip the exit code, so both directions are
+# asserted here, not just the fatal one. A test that only checks the fatal case would pass on a
+# blanket "any [ERROR] -> exit 1" implementation too, which is the wrong-grained fix this
+# section exists to rule out.
+echo ""
+echo "--- check 26: exit code reflects fatal vs. advisory findings ---"
+
+TMPDIR_EXITCODE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-exitcode-test)"
+trap 'rm -rf "$TMPDIR_EXITCODE"' EXIT
+
+mkdir -p "$TMPDIR_EXITCODE/memory-bank" "$TMPDIR_EXITCODE/standards"
+for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
+    write_mb_file "$TMPDIR_EXITCODE/memory-bank/$f" "stable" "90"
+done
+for s in WORKFLOW.md CODE-QUALITY.md SECURITY-GUARDRAILS.md CODE-REVIEW.md; do
+    echo "# $s" > "$TMPDIR_EXITCODE/standards/$s"
+done
+# No CLAUDE.md -- the fatal condition under test.
+(cd "$TMPDIR_EXITCODE" && git init -q && git config user.email t@t.com && git config user.name T && git commit -q --allow-empty -m init)
+
+output=$(cd "$TMPDIR_EXITCODE" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+rc=$?
+assert_contains "$output" "\[ERROR\] CLAUDE.md missing" "check 26: fatal fixture actually has the CLAUDE.md-missing [ERROR]"
+assert_equals "$rc" "1" "check 26: fatal condition (CLAUDE.md missing) — doctor exits 1"
+
+rm -rf "$TMPDIR_EXITCODE"
+trap - EXIT
+
+# Advisory only: a checksum mismatch prints [ERROR] but must not make doctor exit non-zero.
+(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor > /dev/null 2>&1)
+echo "External modification." >> "$TMPDIR_DOC/memory-bank/progress.md"
+output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+rc=$?
+assert_contains "$output" "\[ERROR\].*hash mismatch" "check 26: advisory-only fixture actually has a checksum-mismatch [ERROR]"
+assert_equals "$rc" "0" "check 26: advisory-only condition (checksum mismatch) — doctor still exits 0"
+
+restore_mb "$TMPDIR_DOC" "progress.md" "accumulating" "30"
+rm -f "$TMPDIR_DOC/.pmb-checksums"
+
+# Clean baseline must also exit 0.
+output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
+rc=$?
+assert_not_contains "$output" "\[ERROR\]" "check 26: clean baseline has no [ERROR]"
+assert_equals "$rc" "0" "check 26: clean baseline — doctor exits 0"
+
 print_summary
