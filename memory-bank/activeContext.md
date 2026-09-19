@@ -37,7 +37,7 @@ the detail those entries were condensed from. Older: `docs/archive/context-2026-
 
 ## Current Focus
 
-**Codex PreCompact recovery-only policy: merged.** PR #28 (policy fix — Codex no longer registers a `PreCompact` gate, retains `SessionStart(source=compact)` recovery; opposition-approved across both `/code-review` and `/change-review`) and PR #29 (`CURSOR-VS-CLAUDE.md` three-way rewrite, same dual-review pattern, required to merge after #28) both merged 2026-09-18, in that required order. Full narrative: `progress.md`'s 2026-09-16→18 entries.
+**Codex PreCompact recovery-only policy: merged.** PR #28 (policy fix — Codex no longer registers a `PreCompact` gate, retains `SessionStart(source=compact)` recovery; opposition-approved across both `/code-review` and `/change-review`) and PR #29 (`CURSOR-VS-CLAUDE.md` three-way rewrite, same dual-review pattern, required to merge after #28) both merged 2026-09-18, in that required order. Full narrative: `docs/archive/progress-2026-09-16-to-17-codex-precompact-reproduction-and-review.md` (09-16→17) plus `progress.md`'s 2026-09-18 entry.
 
 **Whole-repo review 2026-09-11:** eleven findings remain the source record in `progress.md`; PR #28 addressed only the two approved enforcement-layer findings and their paired-path consequences. The external artifact directory remains the provenance source, not a second checkout.
 
