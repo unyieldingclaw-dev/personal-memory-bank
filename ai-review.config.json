@@ -3,6 +3,8 @@
     "security": {
       "exclude": [
         "memory-bank/**",
+        "templates/memory-bank/**",
+        "examples/**/memory-bank/**",
         "docs/**",
         "templates/docs/**",
         "standards/**",
@@ -13,6 +15,8 @@
     "adversarial": {
       "exclude": [
         "memory-bank/**",
+        "templates/memory-bank/**",
+        "examples/**/memory-bank/**",
         "docs/**",
         "templates/docs/**",
         "standards/**",

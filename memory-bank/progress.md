@@ -20,7 +20,9 @@ plus a peer's live ACR run reproducing 3 hallucinated findings on real `activeCo
 Revised to restore those excludes plus `templates/docs/**`, narrow `fixtures/security/**` to its
 README, and empirically confirm (live runs, not grep) `.claude/commands/security-review.md` and
 `.claude/agents/security-reviewer.md` are safe to admit. Grep alone missed that narrative prose,
-not just code fences, triggers the misread.
+not just code fences, triggers the misread. **Round 2:** same gap on `templates/memory-bank/**`
+— reproduced live (one run hit `high`); `examples/**` mirror added by analogy, confirmed via policy
+check only.
 
 ## 2026-09-19 — NS-44 design (PR #33); NS-55 opened; write-rate fix confirmed insufficient
 
