@@ -13,6 +13,15 @@ lineage: []
 
 # Progress
 
+## 2026-09-19 — `ai-review.config.json` ships NS-48; first draft was a near-miss
+
+First draft dropped `memory-bank/**`/`docs/**` from NS-48's own plan — caught by 2 domain reviewers
+plus a peer's live ACR run reproducing 3 hallucinated findings on real `activeContext.md` prose.
+Revised to restore those excludes plus `templates/docs/**`, narrow `fixtures/security/**` to its
+README, and empirically confirm (live runs, not grep) `.claude/commands/security-review.md` and
+`.claude/agents/security-reviewer.md` are safe to admit. Grep alone missed that narrative prose,
+not just code fences, triggers the misread.
+
 ## 2026-09-19 — NS-44 design (PR #33); NS-55 opened; write-rate fix confirmed insufficient
 
 Design narrative in commit `31ad347`/PR body; shallow-clone mechanism in `[NS-55]` — not restated. Recorded here:
