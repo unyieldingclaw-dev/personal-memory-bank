@@ -140,9 +140,18 @@ decision to make if this bound proves insufficient in practice, not something th
 
 `standards/MEMORY-BANK.md`'s current Eviction Criteria table says *"Next Steps item completed → move
 to `progress.md` immediately"* and *"Issue marked resolved → delete — do not archive."* Observed
-practice already disagrees: live entries like `[NS-37]` and `[NS-51]` are marked "✅ DONE" and kept in
-place with a pointer, not deleted. This is a pre-existing, undocumented drift between the standard and
-actual behavior, found while researching this design.
+practice has deviated from this for entries with live inbound citations: the 2026-08-28 eviction record
+(`docs/archive/progress-2026-08-28-round3-gate-passes-and-brief-staleness.md`) stubbed a cited entry in
+place rather than deleting it, explicitly noting this reflects "not a new convention." **Updated
+2026-09-19:** a separate, still-open PR (#34, `77587d1`) instead deletes `[NS-37]`/`[NS-51]`/`[NS-53]`
+outright, following the standard's literal text. Two of the three — `[NS-37]` (cited by
+`[NS-38]`/`[NS-40]`) and `[NS-53]` (cited, as a load-bearing pointer inside a still-retained
+superseded-plan banner, by `docs/superpowers/plans/2026-09-15-cross-tool-precompact-handoff.md:7`) —
+are exactly the situation that record says to stub, not delete. That's the undocumented drift this
+design exists to resolve: not a repo torn between two conventions, but one recorded convention the
+written standard doesn't capture, that a good-faith cleanup pass can still violate by following the
+letter of the stale rule instead. Evidence trail: `progress.md`'s 2026-08-26 entry and
+`docs/archive/progress-2026-09-12-to-14-check15-and-baseline-health-ci-fixes.md`.
 
 **Decision: follow observed practice, and fix the standard to match, as part of this work** —
 deletion would lose citations other entries make to a resolved one, and the terse-stub-with-pointer
@@ -335,10 +344,15 @@ correctness" philosophy. No LLM judgment involved in the check itself:
   invariant, so a future entry hand-wrapped across multiple lines WARNs instead of silently breaking
   a later migration's boundary detection.
 
-**Expect the DONE-entry check to WARN immediately on first run**, against pre-existing entries like
-`[NS-37]` and `[NS-51]` that are already marked DONE and already older than 14 days. That's the check
-correctly surfacing a real, pre-existing backlog on day one — not a false positive from a check that
-assumes a clean slate. Document this in the rollout so it isn't mistaken for a bug.
+**Updated 2026-09-19 — this design's own drift examples may be gone by the time the check exists.**
+`[NS-37]`/`[NS-51]`/`[NS-53]` — discussed above as the entries a separate, still-open PR (#34,
+`77587d1`) targets for outright deletion — may not be live by the time this check is implemented. This
+design is a spec only: the DONE-entry-WARN check has no implementation yet, so it has no "first run"
+until a later plan lands the code, by which point these entries (and possibly others) may already be
+gone regardless of merge order between this doc and #34. The synthetic fire-case fixture below is
+therefore **load-bearing, not a formality**: it's the only proof this check can fire that doesn't depend on any
+particular backlog existing when it's implemented — exactly the "check that cannot fail" trap this
+repo's own standard warns against.
 
 **Every new WARN condition needs a dedicated fire-case fixture, not just a clean-input pass** — per
 this repo's own rule that "a check that cannot fail does not count as a check"
