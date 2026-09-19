@@ -318,3 +318,54 @@ Describe "Show-Doctor review-agent model pin (subprocess)" {
         Invoke-PinDoctor | Should -Match 'not pinned to a capable model'
     }
 }
+
+# WHY this exists: 2026-09-11 whole-repo review, finding 2 -- Show-Doctor never set an exit code
+# reflecting what it found, so CI's "MB Doctor Self-Check" job (mb.sh only) and any
+# PowerShell-only adopter's own doctor run could never fail on a real problem. Fixed by gating
+# only on genuinely fatal conditions (see $fatalFound in scripts/mb.ps1); checksum-mismatch and
+# the startup-context ceiling stay advisory by design and must NOT flip the exit code. Both
+# directions are asserted, not just the fatal one -- a test that only checks the fatal case
+# would also pass against a blanket "any [ERROR] -> exit 1" implementation, which is the
+# wrong-grained fix this section exists to rule out (mirrors tests/test-mb-doctor.sh check 26).
+Describe "Show-Doctor exit code (subprocess)" {
+    BeforeAll {
+        $script:RepoRootExit = $RepoRoot
+
+        function Invoke-ExitDoctor {
+            param([string]$ProjectPath)
+            Push-Location $ProjectPath
+            try {
+                $env:MB_HOME = $script:RepoRootExit
+                $out = & pwsh -NoLogo -ExecutionPolicy Bypass -File (Join-Path $script:RepoRootExit 'scripts/mb.ps1') doctor 2>&1 | Out-String
+                [PSCustomObject]@{ Output = $out; ExitCode = $LASTEXITCODE }
+            } finally {
+                Pop-Location
+                Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "exits non-zero when a fatal condition is present (CLAUDE.md and memory-bank both missing)" {
+        $p = New-TestProject -Base $TestDrive -Name 'doctor-exit-fatal'
+        $result = Invoke-ExitDoctor -ProjectPath $p
+        $result.Output | Should -Match 'CLAUDE\.md missing'
+        $result.ExitCode | Should -Be 1
+    }
+
+    It "exits 0 when the only finding is the advisory checksum mismatch" {
+        $p = New-TestProject -Base $TestDrive -Name 'doctor-exit-checksum'
+        $mb = Join-Path $p 'memory-bank'
+        New-Item -ItemType Directory -Force -Path $mb | Out-Null
+        foreach ($f in @("projectbrief.md", "systemPatterns.md", "techContext.md", "activeContext.md", "progress.md")) {
+            Set-Content -Path (Join-Path $mb $f) "---`nauthority: stable`nlast-reviewed: 2026-01-01`n---`n# $f`nContent."
+        }
+        Set-Content -Path (Join-Path $p 'CLAUDE.md') "# Project`nCLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40"
+
+        Invoke-ExitDoctor -ProjectPath $p | Out-Null   # baseline run establishes checksums
+        Add-Content -Path (Join-Path $mb 'progress.md') 'External modification.'
+
+        $result = Invoke-ExitDoctor -ProjectPath $p
+        $result.Output | Should -Match 'hash mismatch'
+        $result.ExitCode | Should -Be 0
+    }
+}
