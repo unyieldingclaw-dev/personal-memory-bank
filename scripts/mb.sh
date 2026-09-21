@@ -163,7 +163,7 @@ show_help() {
     echo "  upgrade           Propagate current governance templates to this project"
     echo "  verify-integrity  Check and refresh memory-bank file integrity checksums"
     echo "  plan              Plan management: status, list, promote, archive"
-    echo "  backlog           Backlog management: add, list, show, promote, dismiss"
+    echo "  backlog           Backlog management: add, list, show, promote, dismiss, resolve"
     echo "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
     echo "  change-check      Post-change summary: diff stats, file types, /change-review job preview"
     echo "  help              Show this help message"
@@ -2619,7 +2619,7 @@ backlog_field() {
 }
 
 # backlog_set_status — rewrites a backlog item's status field. Shared by
-# promote/dismiss so a future change to how the field is rewritten (e.g.
+# promote/dismiss/resolve so a future change to how the field is rewritten (e.g.
 # also bumping last-reviewed) only needs one edit.
 backlog_set_status() {
     sed -i.bak "s/^status:.*/status: $2/" "$1" && rm -f "${1}.bak"
@@ -2791,6 +2791,20 @@ invoke_backlog_dismiss() {
     FILE=$(backlog_resolve_slug "$SLUG" "Usage: mb backlog dismiss <slug>") || exit 1
     backlog_set_status "$FILE" "dismissed"
     echo -e "${GREEN}Dismissed: $SLUG${NC}"
+}
+
+# invoke_backlog_resolve — for an item fixed directly, outside the promote/plan
+# pipeline. Neither existing terminal status fits that case: `dismissed` means
+# dropped, not done; `promoted` means a plan stub was seeded, which never
+# happened here. Without this, an already-fixed item has no accurate status to
+# move to and is stuck `open` indefinitely. No status guard (unlike promote):
+# resolving has no destructive side effect to guard against — it only flips
+# the status field, matching dismiss's existing unconditional behavior.
+invoke_backlog_resolve() {
+    SLUG="$1"
+    FILE=$(backlog_resolve_slug "$SLUG" "Usage: mb backlog resolve <slug>") || exit 1
+    backlog_set_status "$FILE" "resolved"
+    echo -e "${GREEN}Resolved: $SLUG${NC}"
 }
 
 invoke_plan_promote() {
@@ -3092,9 +3106,10 @@ case "$COMMAND" in
             show)     show_backlog_item "${3:-}" ;;
             promote)  invoke_backlog_promote "${3:-}" ;;
             dismiss)  invoke_backlog_dismiss "${3:-}" ;;
+            resolve)  invoke_backlog_resolve "${3:-}" ;;
             *)
                 echo -e "${RED}Unknown backlog subcommand: $SUBCMD${NC}"
-                echo -e "${YELLOW}Usage: mb backlog <add|list|show|promote|dismiss>${NC}"
+                echo -e "${YELLOW}Usage: mb backlog <add|list|show|promote|dismiss|resolve>${NC}"
                 exit 1
                 ;;
         esac

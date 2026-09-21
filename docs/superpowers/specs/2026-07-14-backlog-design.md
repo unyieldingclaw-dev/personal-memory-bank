@@ -5,6 +5,9 @@
 **Revised:** 2026-08-16 — added slug-validation requirement, plan-lifecycle reconciliation for
 `related_plan`, and an implementation note on a resurrected prior attempt. See "Implementation
 Notes" and the two additions under "Design" below.
+**Revised:** 2026-09-21 — added a `resolved` status and `mb backlog resolve <slug>` command, for an
+item fixed directly outside the promote/plan pipeline (neither `promoted` nor `dismissed` fits: no
+plan stub was seeded, and the item wasn't dropped). See "Storage" and "Commands" below.
 
 ## Problem
 
@@ -40,7 +43,7 @@ strip leading/trailing hyphens, truncate to 50 characters. On collision, append 
 
 Frontmatter:
 ```yaml
-status: open              # open | promoted | dismissed
+status: open              # open | promoted | dismissed | resolved
 created: 2026-07-14
 last-reviewed: 2026-07-14
 staleness-threshold: 90d  # same field/convention as memory-bank/*.md
@@ -54,7 +57,14 @@ CLI-settable either. Adjustable by hand-editing the file's frontmatter afterward
 item genuinely needs a different threshold.
 
 No `investigating` status — an item someone's actively looking into is still `open`; a separate
-status was considered and cut as unnecessary granularity (see "Rejected Alternatives").
+status was considered and cut as unnecessary granularity (see "Rejected Alternatives"). `resolved`
+(added 2026-09-21) is not the same kind of addition: `investigating` was rejected because it named
+no real, distinct outcome — an item under investigation is still just open. `resolved` names one
+that `promoted` and `dismissed` don't: closed by being fixed directly, neither seeded into a plan
+nor dropped. That it's also excluded from the default `list`, like the other two, is a consequence
+of naming a real terminal outcome, not the justification for adding it — the exclusion follows from
+any non-`open` status by construction and so cannot itself distinguish a warranted addition from an
+unwarranted one.
 
 ### Commands
 
@@ -63,13 +73,14 @@ status was considered and cut as unnecessary granularity (see "Rejected Alternat
 | Subcommand | Behavior |
 |---|---|
 | `mb backlog add "<title>" ["<description>"]` | Creates the file with the frontmatter above. Description is an optional second positional argument (non-interactive — `mb` runs non-interactively in normal use, including when Claude invokes it on the user's behalf); if omitted, the body is left empty for later editing. |
-| `mb backlog list` | Lists `open` items only by default (slug, title, age); `--all` includes `promoted`/`dismissed` |
+| `mb backlog list` | Lists `open` items only by default (slug, title, age); `--all` includes `promoted`/`dismissed`/`resolved` |
 | `mb backlog show <slug>` | Prints one item's full content |
 | `mb backlog promote <slug>` | Seeds a plan draft stub in `.claude/plans/` (title + description carried over as a starting point — not a finished plan), sets `status: promoted` and `related_plan:` on the backlog file. This only *starts* the existing plan lifecycle — the normal `superpowers:writing-plans` → `mb plan promote` flow still applies afterward to turn the stub into a real, user-approved plan in `docs/plans/`. `mb backlog promote` and `mb plan promote` are two different steps in the same lifecycle, not the same operation — deliberately, since a backlog item becoming "worth working on" doesn't mean its plan content has been written or approved yet. The backlog file is kept, not deleted, as an audit trail. |
 | `mb backlog dismiss <slug>` | Sets `status: dismissed`; kept for history, excluded from default `list` |
+| `mb backlog resolve <slug>` | Sets `status: resolved`; kept for history, excluded from default `list`. For an item fixed directly, outside the promote/plan pipeline — `dismissed` would misrepresent it as dropped rather than done, and `promoted` would misrepresent it as having gone through the plan-stub flow. No `status: open` guard, unlike `promote`: resolving has no destructive side effect (no stub file, nothing to overwrite) to guard against. |
 
-**Slug validation:** `show`, `promote`, and `dismiss` all take a slug from argv and use it to build
-a filesystem path under `docs/backlog/` (and, for `promote`, a `.claude/plans/` stub path plus a
+**Slug validation:** `show`, `promote`, `dismiss`, and `resolve` all take a slug from argv and use it
+to build a filesystem path under `docs/backlog/` (and, for `promote`, a `.claude/plans/` stub path plus a
 sed substitution against the backlog file). Every subcommand that accepts a slug argument must
 reject anything outside the exact charset `slugify`/`unique_slug` can ever produce (lowercase
 alphanumeric + hyphen, non-empty) before touching the filesystem — an unvalidated slug containing
@@ -173,7 +184,7 @@ the couple of infra-diagnostic commands (`/pmb-status`, `/mb-drift`).
 
 | File | Change |
 |---|---|
-| `scripts/mb.sh` / `scripts/mb.ps1` | New `backlog` command: `add`/`list`/`show`/`promote`/`dismiss` subcommands, with slug validation on every subcommand that takes a slug argument. Also modifies each file's existing `plan promote` implementation to reconcile any backlog item's `related_plan` (see "Plan-lifecycle reconciliation") — these are separate code paths in `mb.sh` and `mb.ps1` and both need the change |
+| `scripts/mb.sh` / `scripts/mb.ps1` | New `backlog` command: `add`/`list`/`show`/`promote`/`dismiss`/`resolve` subcommands, with slug validation on every subcommand that takes a slug argument. Also modifies each file's existing `plan promote` implementation to reconcile any backlog item's `related_plan` (see "Plan-lifecycle reconciliation") — these are separate code paths in `mb.sh` and `mb.ps1` and both need the change. (`resolve` added 2026-09-21.) |
 | `docs/backlog/` | New directory; one file per backlog item. Committed to git (durable, unlike `.claude/plans/`'s gitignored scratch drafts) |
 | `mb doctor` | New check: flag `open` items past their `staleness-threshold` |
 | `mb status` | New line: live open-item count |
