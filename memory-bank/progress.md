@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-09-19
+last-reviewed: 2026-09-21
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,18 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-09-21 — `ai-review.config.json` test guard ships (PR #40); mid-session data-loss recovery
+
+Built `tests/test-ai-review-config.sh` (20 assertions, closes the loop `[NS-48]` opened) asserting only
+on ACR's deterministic `policy`/`filteredFiles` fields, never finding content (non-deterministic: 3/4 runs
+of the identical diff found nothing, 1 found `high`).
+
+**Mid-session data loss:** `git checkout -- <file>` on a file only ever `git add -N`'d (intent-to-add, no
+blob) reverted it to 0 bytes, not prior content — destroyed a fully-reviewed ~411-line draft with no
+backup/stash/reflog trace. Reconstructed from conversation memory. General git pitfall, not PMB-specific.
+
+CI-enforcement scope, array-symmetry correction: see commit `cf301a0` (not restated, per `[NS-42]`).
 
 ## 2026-09-19 — `ai-review.config.json` ships NS-48; first draft was a near-miss
 
