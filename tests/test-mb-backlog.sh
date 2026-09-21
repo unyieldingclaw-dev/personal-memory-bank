@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # tests/test-mb-backlog.sh — regression test for the mb backlog command family
 #
-# WHY this test exists: proves add/list/show/promote/dismiss all behave as designed
-# in docs/superpowers/specs/2026-07-14-backlog-design.md — slug generation and
-# collision handling, default list excludes promoted/dismissed, promote seeds a
-# .claude/plans/ stub without touching docs/plans/, dismiss/promote never delete
-# the backlog file (audit trail).
+# WHY this test exists: proves add/list/show/promote/dismiss/resolve all behave as
+# designed in docs/superpowers/specs/2026-07-14-backlog-design.md — slug generation
+# and collision handling, default list excludes promoted/dismissed/resolved, promote
+# seeds a .claude/plans/ stub without touching docs/plans/, dismiss/promote/resolve
+# never delete the backlog file (audit trail).
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -108,6 +108,25 @@ cd - > /dev/null || exit 1
 assert_file_exists "$TMPDIR_DISMISS/docs/backlog/to-dismiss.md" "mb backlog dismiss: file is kept, not deleted"
 content=$(cat "$TMPDIR_DISMISS/docs/backlog/to-dismiss.md")
 assert_contains "$content" "status: dismissed" "mb backlog dismiss: status updated to dismissed"
+
+# ── resolve: sets status, keeps the file, excludes from default list ────────
+echo ""
+echo "--- resolve: sets status: resolved, file is kept ---"
+TMPDIR_RESOLVE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-bl-test)"
+ALL_TMPDIRS+=("$TMPDIR_RESOLVE")
+setup_test_project "$TMPDIR_RESOLVE"
+cd "$TMPDIR_RESOLVE" || exit 1
+bash "$MB" backlog add "Open Item" > /dev/null 2>&1
+bash "$MB" backlog add "To Resolve" > /dev/null 2>&1
+bash "$MB" backlog resolve to-resolve > /dev/null 2>&1
+list_output=$(bash "$MB" backlog list 2>&1)
+list_all_output=$(bash "$MB" backlog list --all 2>&1)
+cd - > /dev/null || exit 1
+assert_file_exists "$TMPDIR_RESOLVE/docs/backlog/to-resolve.md" "mb backlog resolve: file is kept, not deleted"
+content=$(cat "$TMPDIR_RESOLVE/docs/backlog/to-resolve.md")
+assert_contains "$content" "status: resolved" "mb backlog resolve: status updated to resolved"
+assert_not_contains "$list_output" "to-resolve" "mb backlog list: excludes resolved items by default"
+assert_contains "$list_all_output" "to-resolve" "mb backlog list --all: includes resolved items"
 
 # ── promote: seeds a .claude/plans/ stub, sets status + related_plan ────────
 echo ""

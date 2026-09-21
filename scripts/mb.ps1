@@ -413,7 +413,7 @@ function Show-Help {
     Write-Host "  setup             Initialize or upgrade a project — folder picker, auto-detects mode"
     Write-Host "  verify-integrity  Check and refresh memory-bank file integrity checksums"
     Write-Host "  plan              Plan management: status, list, promote, archive"
-    Write-Host "  backlog           Backlog management: add, list, show, promote, dismiss"
+    Write-Host "  backlog           Backlog management: add, list, show, promote, dismiss, resolve"
     Write-Host "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
     Write-Host "  change-check      Post-change summary: diff stats, file types, /change-review job preview"
     Write-Host "  help              Show this help message"
@@ -3002,11 +3002,12 @@ function Invoke-PlanPromote {
 
 # ConvertTo-BacklogSlug / Get-UniqueBacklogSlug / Test-BacklogSlugValid /
 # Invoke-BacklogAdd / Get-BacklogField / Set-BacklogStatus / Resolve-BacklogSlug /
-# Show-BacklogList / Show-BacklogItem / Invoke-BacklogPromote / Invoke-BacklogDismiss
+# Show-BacklogList / Show-BacklogItem / Invoke-BacklogPromote / Invoke-BacklogDismiss /
+# Invoke-BacklogResolve
 # -- PowerShell port of mb.sh's backlog_slugify/backlog_unique_slug/
 # backlog_validate_slug/invoke_backlog_add/backlog_field/backlog_set_status/
 # backlog_resolve_slug/show_backlog_list/show_backlog_item/invoke_backlog_promote/
-# invoke_backlog_dismiss. Mirrors that implementation's behavior and guards
+# invoke_backlog_dismiss/invoke_backlog_resolve. Mirrors that implementation's behavior and guards
 # (slug charset validation, malformed-frontmatter checks, status:open guard on
 # re-promote) -- see scripts/mb.sh for the original WHY comments on each guard;
 # not re-derived here to avoid drift between the two copies of the same rationale.
@@ -3073,8 +3074,9 @@ function Get-BacklogField {
 
 # WHY plain -replace is safe here despite the general $&/$1-in-replacement hazard
 # (see Invoke-PlanPromote's WHY comment above): $Status is always one of this
-# file's own hardcoded literals ("promoted"/"dismissed"), never derived from user
-# input, so no replacement-string token injection is reachable through this path.
+# file's own hardcoded literals ("promoted"/"dismissed"/"resolved"), never derived
+# from user input, so no replacement-string token injection is reachable through
+# this path.
 function Set-BacklogStatus {
     [CmdletBinding(SupportsShouldProcess)]
     param([string]$Path, [string]$Status)
@@ -3215,6 +3217,20 @@ function Invoke-BacklogDismiss {
     Write-Host "Dismissed: $Slug" -ForegroundColor Green
 }
 
+# Invoke-BacklogResolve -- for an item fixed directly, outside the promote/plan
+# pipeline. Neither existing terminal status fits that case: dismissed means
+# dropped, not done; promoted means a plan stub was seeded, which never
+# happened here. No status guard (unlike promote): resolving has no
+# destructive side effect to guard against -- it only flips the status field,
+# matching dismiss's existing unconditional behavior. Mirrors mb.sh's
+# invoke_backlog_resolve.
+function Invoke-BacklogResolve {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog resolve <slug>"
+    Set-BacklogStatus -Path $File -Status "resolved"
+    Write-Host "Resolved: $Slug" -ForegroundColor Green
+}
+
 function Invoke-PlanArchive {
     param([string]$Plan)
     if (-not $Plan) {
@@ -3280,9 +3296,10 @@ switch ($Command) {
             'show'    { Show-BacklogItem -Slug $Arg2 }
             'promote' { Invoke-BacklogPromote -Slug $Arg2 }
             'dismiss' { Invoke-BacklogDismiss -Slug $Arg2 }
+            'resolve' { Invoke-BacklogResolve -Slug $Arg2 }
             default {
                 Write-Host "Unknown backlog subcommand: $SubCmd" -ForegroundColor Red
-                Write-Host "Usage: mb backlog <add|list|show|promote|dismiss>" -ForegroundColor Yellow
+                Write-Host "Usage: mb backlog <add|list|show|promote|dismiss|resolve>" -ForegroundColor Yellow
                 exit 1
             }
         }
