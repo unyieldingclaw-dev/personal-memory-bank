@@ -3,6 +3,28 @@
 ## [Unreleased]
 
 ### Fixed
+- **`mb commit`'s subworktree check was wrong three ways, in both runtimes.** It compared
+  `--git-common-dir` against `$PWD/.git`.
+  - Inside an absorbed git submodule, whose `.git` is a gitlink *file*, it said "You are in a git
+    subworktree" and refused.
+  - It said the same from any subdirectory of a healthy main worktree.
+  - In `mb.sh`, with `realpath` missing, both sides came back empty and compared equal, so a real
+    subworktree went through to the commit prompt.
+
+  It now compares `--git-dir` with `--git-common-dir`, which differ only in a linked worktree. An
+  unresolvable side refuses. Run from a subdirectory, it now says "mb commit must be run from the
+  repository root". Fixing only the comparison would have let a subdirectory run check
+  `<subdir>/memory-bank` and report "No changes" over a dirty memory bank. All three were measured
+  before the fix.
+- **`mb commit` swept unrelated staged files into its commit.** It ran `git add memory-bank`
+  followed by a bare `git commit`, which commits the whole index. Anything already staged for
+  other work went into "chore: Update Memory Bank context". It now commits `-- memory-bank`
+  only and leaves everything else staged.
+- **`mb.ps1`'s `mb commit` reported "Committed!" when the commit failed.** A hook rejection
+  still printed success. Both runtimes now check `git commit`'s exit status and exit 1. `mb.sh`
+  had been saved only by `set -e`.
+- **`mb commit` no longer quietly commits a whole merge.** During an in-progress merge, git
+  refuses a partial commit, and `mb commit` now fails loudly instead of committing the merge.
 - **`mb commit` never worked on Windows, and now does.** `mb.ps1` compared two `Resolve-Path`
   results with `-ne`. `Resolve-Path` returns a `PathInfo`, which has no value equality, so that
   compared **references** and was unconditionally true — it returned `True` even where both sides
@@ -130,6 +152,21 @@
   does **not** deliver them — you receive this when your PMB clone updates, with no diff shown.
 
 ### Added
+- **`.githooks/pre-commit` refuses `memory-bank/` commits from a linked git worktree.**
+  "Never commit memory-bank/ from a subworktree" was enforced only inside `mb commit`, so a plain
+  `git commit` bypassed it.
+  - **What it catches:** `commit -a`, `commit -- <path>`, a rename out of `memory-bank/`, any
+    casing of the name, and names git would quote (non-ASCII). It compares
+    `--git-dir` with `--git-common-dir`, so a submodule counts as its own main worktree.
+  - **Merges:** finishing a conflicted merge of main passes when `memory-bank/` matches the
+    merged branch. Anything edited or combined is refused, with `git checkout MERGE_HEAD -- <path>`
+    as the way out.
+  - **Failures:** any error in the check refuses rather than passes.
+  - **Adopter-visible:** the hook is `TEMPLATE_OWNED`, so `mb upgrade` delivers it and enforces the
+    rule in every project, whether or not that project's `CLAUDE.md` states it.
+  - **Known gaps** (`rebase`/`cherry-pick --continue`, `--no-verify`/`-n`, per-branch hook copies):
+    `docs/HOOKS-GUIDE.md`.
+  - **Tests:** `tests/test-pre-commit-hook.sh`.
 - **`tests/test-mirror-parity.sh` now cross-checks the two runtimes' `TEMPLATE_OWNED` sets against
   each other, and compares hooks structurally.** The previous sweep derived its guarded set from
   `scripts/mb.sh` alone and guarded it with `count > 0` — a floor that cannot detect erosion:

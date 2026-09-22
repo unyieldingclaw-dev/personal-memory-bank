@@ -6,6 +6,69 @@ if git diff --cached --name-only | grep -q "^handoff\.md$"; then
   exit 1
 fi
 
+# memory-bank/ is edited and committed only in the MAIN worktree, so every branch shares one
+# authoritative copy. `mb commit` refuses in a linked worktree, but a plain `git commit` never
+# reaches `mb commit` -- this hook is what every ordinary commit path does reach. Known gaps
+# (commands git runs without pre-commit) are listed in docs/HOOKS-GUIDE.md.
+#
+# Every failure below REFUSES. An empty result from a git command that errored reads exactly like
+# "nothing staged" or "nothing differs", so treating it as a pass would wave the commit through.
+mb_unstage_advice="memory-bank/ is edited and committed only in the main worktree. Unstage it here
+(git restore --staged memory-bank/), make the change in the main worktree, and commit it there."
+# mb_refuse MESSAGE [PATHS] [ADVICE]
+mb_refuse() {
+  echo "ERROR: $1"
+  [ -n "${2:-}" ] && printf '%s\n' "$2" | sed 's/^/    /'
+  printf '%s\n' "${3:-$mb_unstage_advice}"
+  exit 1
+}
+
+# -z because git C-quotes unusual names by default ("memory-bank/caf\303\251.md", leading quote
+# included), which a ^memory-bank/ match never sees. --no-renames so a file moved OUT of
+# memory-bank/ still lists its old path. pipefail so a failed diff is not read as an empty one.
+if ! staged=$(set -o pipefail; git diff --cached --name-only --no-renames -z | tr '\0' '\n'); then
+  mb_refuse "could not list staged files, so the linked-worktree memory-bank/ check could not run."
+fi
+mb_staged=$(printf '%s\n' "$staged" | grep -i '^memory-bank/')
+
+if [ -n "$mb_staged" ]; then
+  # A linked worktree is exactly the case where --git-dir and --git-common-dir differ. Compared
+  # after `cd && pwd -P` rather than `realpath`, which is missing on some systems and whose empty
+  # output then compared equal on both sides. Checked non-empty BEFORE `cd`: some shells treat
+  # `cd ""` as "stay here", which would make both sides equal.
+  git_dir=$(git rev-parse --git-dir 2>/dev/null)
+  common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
+  [ -n "$git_dir" ] && git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P)
+  [ -n "$common_dir" ] && common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P)
+  if [ -z "$git_dir" ] || [ -z "$common_dir" ]; then
+    mb_refuse "memory-bank/ changes are staged, but this hook could not tell whether this is a linked worktree." "$mb_staged"
+  fi
+
+  if [ "$git_dir" != "$common_dir" ]; then
+    if [ -f "$git_dir/MERGE_HEAD" ]; then
+      # Finishing a conflicted merge of main stages main's memory-bank/ changes here. A file whose
+      # staged content matches the merged branch was not edited in this worktree, so it passes;
+      # anything that differs from BOTH sides -- a hand edit, or git combining the two -- does not.
+      if ! merged_diff=$(set -o pipefail; git diff --cached --name-only --no-renames -z MERGE_HEAD | tr '\0' '\n'); then
+        mb_refuse "a merge is in progress but MERGE_HEAD could not be compared, so memory-bank/ changes are refused." "$mb_staged"
+      fi
+      mb_staged=$(printf '%s\n' "$mb_staged" | while IFS= read -r p; do
+        printf '%s\n' "$merged_diff" | grep -qxF -- "$p" && printf '%s\n' "$p"
+      done)
+      # Unstaging here would drop the merged branch's memory-bank/ changes from the merge result,
+      # so the advice is to take that branch's version instead.
+      if [ -n "$mb_staged" ]; then
+        mb_refuse "in this linked worktree's merge, these memory-bank/ files differ from the branch being merged (edited here, or combined by git from both sides):" \
+          "$mb_staged" \
+          "Take the merged branch's version of each: git checkout MERGE_HEAD -- <path>
+Any memory-bank/ change of your own belongs in the main worktree."
+      fi
+    else
+      mb_refuse "memory-bank/ changes cannot be committed from a linked worktree (main worktree: ${common_dir%/*})." "$mb_staged"
+    fi
+  fi
+fi
+
 if [ -f ".claude/settings.json" ] && ! grep -q "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" .claude/settings.json; then
   echo "WARNING: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE not found in .claude/settings.json."
   echo "Token budget auto-compaction may not be configured. Add it to avoid mid-task context loss."

@@ -348,4 +348,212 @@ else
     fi
 fi
 
+# ── Helpers for the worktree-detection cases below ───────────────────────────
+# A path git.exe can read on Windows, unchanged elsewhere.
+native_path() {
+    if command -v cygpath > /dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi
+}
+# Like ps_commit, but feeds $2 to mb.ps1's confirmation prompt. Only called when PWSH_USABLE=1.
+ps_commit_in() { # $1 = dir, $2 = stdin; sets ps_out / ps_rc
+    ps_out=$(cd "$1" && printf '%s\n' "$2" | MB_HOME="$MB_HOME_WIN" MB_SCRIPT="$MBPS1" pwsh -NoProfile -Command \
+        '$PSStyle.OutputRendering="PlainText"; & $env:MB_SCRIPT commit; exit $LASTEXITCODE' 2>&1)
+    ps_rc=$?
+}
+
+# ── Subdirectory of the MAIN worktree: refuse, and say why ───────────────────
+# WHY: the old comparison put $PWD/.git beside --git-common-dir, so a subdirectory of a perfectly
+# healthy main worktree was reported as "a git subworktree". Fixing only the comparison would be
+# worse: memory-bank/ is resolved relative to $PWD, so a subdirectory run would look at
+# <subdir>/memory-bank, find nothing, and report "No changes" with exit 0 over a dirty memory-bank.
+echo ""
+echo "--- subdirectory of the main worktree: refused with the real reason ---"
+TMPDIR_SUBDIR="$(mktemp -d 2>/dev/null || mktemp -d -t mb-commit-subdir)"; ALL_TMPDIRS+=("$TMPDIR_SUBDIR")
+setup_test_project "$TMPDIR_SUBDIR"
+echo "# uncommitted entry" >> "$TMPDIR_SUBDIR/memory-bank/progress.md"
+output=$(cd "$TMPDIR_SUBDIR/docs" && echo n | MB_HOME="$REPO_ROOT" bash "$MB" commit 2>&1)
+rc=$?
+assert_equals "$rc" "1" "subdirectory: mb commit refuses (exit 1)"
+assert_contains "$output" "repository root" "subdirectory: names the real condition"
+assert_not_contains "$output" "subworktree" "subdirectory: not misreported as a subworktree"
+assert_not_contains "$output" "No changes" "subdirectory: does not claim memory-bank/ is clean"
+if [ "$PWSH_USABLE" = "1" ]; then
+    ps_commit_in "$TMPDIR_SUBDIR/docs" n
+    assert_equals "$ps_rc" "1" "pwsh subdirectory: refuses (exit 1) — matches mb.sh"
+    assert_contains "$ps_out" "repository root" "pwsh subdirectory: names the real condition"
+    assert_not_contains "$ps_out" "subworktree" "pwsh subdirectory: not misreported as a subworktree"
+fi
+
+# ── Absorbed submodule: its own main worktree, not a subworktree ─────────────
+# Its .git is a gitlink FILE, so $PWD/.git never equalled --git-common-dir (.git/modules/<name>).
+echo ""
+echo "--- absorbed submodule: treated as its own main worktree ---"
+TMPDIR_SUBMOD="$(mktemp -d 2>/dev/null || mktemp -d -t mb-commit-submod)"; ALL_TMPDIRS+=("$TMPDIR_SUBMOD")
+setup_test_project "$TMPDIR_SUBMOD/src"
+setup_test_project "$TMPDIR_SUBMOD/super"
+git -C "$TMPDIR_SUBMOD/super" -c protocol.file.allow=always submodule add -q \
+    "$(native_path "$TMPDIR_SUBMOD/src")" mod > /dev/null 2>&1
+# A broken fixture FAILS rather than skips: a skipped case reads as coverage that never ran.
+assert_file_exists "$TMPDIR_SUBMOD/super/mod/memory-bank/progress.md" "submodule fixture: submodule checked out"
+if [ -f "$TMPDIR_SUBMOD/super/mod/memory-bank/progress.md" ]; then
+    echo "# uncommitted entry" >> "$TMPDIR_SUBMOD/super/mod/memory-bank/progress.md"
+    output=$(cd "$TMPDIR_SUBMOD/super/mod" && echo n | MB_HOME="$REPO_ROOT" bash "$MB" commit 2>&1)
+    rc=$?
+    assert_equals "$rc" "0" "submodule: mb commit proceeds (exit 0)"
+    assert_contains "$output" "Changes to commit" "submodule: reaches the commit prompt"
+    assert_not_contains "$output" "subworktree" "submodule: not misreported as a subworktree"
+    if [ "$PWSH_USABLE" = "1" ]; then
+        ps_commit_in "$TMPDIR_SUBMOD/super/mod" n
+        assert_equals "$ps_rc" "0" "pwsh submodule: proceeds (exit 0) — matches mb.sh"
+        assert_not_contains "$ps_out" "subworktree" "pwsh submodule: not misreported as a subworktree"
+    fi
+fi
+
+# ── No `realpath` on PATH: the subworktree guard must still fire ─────────────
+# WHY: mb.sh compared `realpath` outputs. With realpath missing both came back empty, compared
+# equal, and a linked worktree sailed through to the commit prompt. Measured before the fix with a
+# stub that exits 127: "Changes to commit", exit 0, from inside a subworktree.
+echo ""
+echo "--- subworktree with no realpath available: still refused ---"
+if [ -d "$TMPDIR_WT/child" ]; then
+    NOREALPATH="$(mktemp -d 2>/dev/null || mktemp -d -t mb-commit-norealpath)"; ALL_TMPDIRS+=("$NOREALPATH")
+    printf '#!/bin/sh\nexit 127\n' > "$NOREALPATH/realpath"; chmod +x "$NOREALPATH/realpath"
+    echo "# uncommitted entry" >> "$TMPDIR_WT/child/memory-bank/progress.md"
+    output=$(cd "$TMPDIR_WT/child" && echo n | PATH="$NOREALPATH:$PATH" MB_HOME="$REPO_ROOT" bash "$MB" commit 2>&1)
+    rc=$?
+    assert_equals "$rc" "1" "no realpath: subworktree still refused (exit 1)"
+    assert_contains "$output" "git subworktree" "no realpath: names the condition"
+else
+    assert_file_exists "$TMPDIR_WT/child" "subworktree fixture exists for the no-realpath case"
+fi
+
+# ── Unresolvable git dirs on BOTH sides: refuse, never compare "" to "" ──────
+# WHY a stubbed git: two empty values compare equal, which is exactly how the realpath hole above
+# let a subworktree through (mb.ps1 has the same shape: `$null -ne $null` is False). A real git
+# never returns a directory that does not exist, so the only way to reach that branch is a stub
+# that reports one for --git-dir and --git-common-dir and passes every other call through.
+echo ""
+echo "--- git dirs that cannot be resolved: refused ---"
+GITSTUB="$(mktemp -d 2>/dev/null || mktemp -d -t mb-commit-gitstub)"; ALL_TMPDIRS+=("$GITSTUB")
+REAL_GIT="$(command -v git)"
+mkdir -p "$GITSTUB/sh"
+cat > "$GITSTUB/sh/git" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "rev-parse" ] && { [ "\${2:-}" = "--git-dir" ] || [ "\${2:-}" = "--git-common-dir" ]; }; then
+    echo "$GITSTUB/does-not-exist/.git"; exit 0
+fi
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$GITSTUB/sh/git"
+echo "# uncommitted entry" >> "$TMPDIR_COMMIT/memory-bank/progress.md"
+output=$(cd "$TMPDIR_COMMIT" && echo n | PATH="$GITSTUB/sh:$PATH" MB_HOME="$REPO_ROOT" bash "$MB" commit 2>&1)
+rc=$?
+assert_equals "$rc" "1" "unresolvable git dirs: mb commit refuses (exit 1)"
+assert_not_contains "$output" "Changes to commit" "unresolvable git dirs: never reaches the commit prompt"
+if [ "$PWSH_USABLE" = "1" ]; then
+    # PowerShell on Windows only runs PATHEXT files, so it needs a .cmd twin of the stub; on other
+    # platforms it runs the bash stub above.
+    if command -v cygpath > /dev/null 2>&1; then
+        mkdir -p "$GITSTUB/cmd"
+        printf '@echo off\r\nif "%%~1"=="rev-parse" if "%%~2"=="--git-dir" goto bogus\r\nif "%%~1"=="rev-parse" if "%%~2"=="--git-common-dir" goto bogus\r\n"%s" %%*\r\nexit /b %%ERRORLEVEL%%\r\n:bogus\r\necho %s\r\nexit /b 0\r\n' \
+            "$(cygpath -w "$REAL_GIT")" "$(cygpath -w "$GITSTUB")\\does-not-exist\\.git" > "$GITSTUB/cmd/git.cmd"
+        PS_STUB_DIR="$GITSTUB/cmd"
+    else
+        PS_STUB_DIR="$GITSTUB/sh"
+    fi
+    ps_out=$(cd "$TMPDIR_COMMIT" && echo n | PATH="$PS_STUB_DIR:$PATH" MB_HOME="$MB_HOME_WIN" MB_SCRIPT="$MBPS1" pwsh -NoProfile -Command \
+        '$PSStyle.OutputRendering="PlainText"; & $env:MB_SCRIPT commit; exit $LASTEXITCODE' 2>&1)
+    ps_rc=$?
+    assert_equals "$ps_rc" "1" "pwsh unresolvable git dirs: refuses (exit 1) — matches mb.sh"
+    assert_not_contains "$ps_out" "Changes to commit" "pwsh unresolvable git dirs: never reaches the commit prompt"
+fi
+git -C "$TMPDIR_COMMIT" checkout -q -- memory-bank
+
+# ── mb commit commits memory-bank/ ONLY ──────────────────────────────────────
+# WHY: it ran `git add memory-bank` then a bare `git commit`, which commits the WHOLE index -- so
+# anything already staged for other work rode along inside "chore: Update Memory Bank context".
+echo ""
+echo "--- a file already staged for other work is not swept into the commit ---"
+check_only_mb() { # $1 = fixture, $2 = label prefix
+    local committed still
+    committed=$(git -C "$1" show --name-only --format= HEAD)
+    still=$(git -C "$1" diff --cached --name-only)
+    assert_contains "$committed" "memory-bank/progress.md" "$2: the memory-bank/ change is committed"
+    assert_not_contains "$committed" "other.txt" "$2: the other staged file is NOT committed"
+    assert_contains "$still" "other.txt" "$2: the other staged file is still staged"
+}
+TMPDIR_ONLY="$(mktemp -d 2>/dev/null || mktemp -d -t mb-commit-only)"; ALL_TMPDIRS+=("$TMPDIR_ONLY")
+setup_test_project "$TMPDIR_ONLY/sh"
+echo other > "$TMPDIR_ONLY/sh/other.txt"; git -C "$TMPDIR_ONLY/sh" add other.txt
+echo "# uncommitted entry" >> "$TMPDIR_ONLY/sh/memory-bank/progress.md"
+output=$(cd "$TMPDIR_ONLY/sh" && echo y | MB_HOME="$REPO_ROOT" bash "$MB" commit 2>&1)
+assert_exit_zero $? "only memory-bank/: mb commit succeeds"
+check_only_mb "$TMPDIR_ONLY/sh" "bash"
+if [ "$PWSH_USABLE" = "1" ]; then
+    setup_test_project "$TMPDIR_ONLY/ps"
+    echo other > "$TMPDIR_ONLY/ps/other.txt"; git -C "$TMPDIR_ONLY/ps" add other.txt
+    echo "# uncommitted entry" >> "$TMPDIR_ONLY/ps/memory-bank/progress.md"
+    ps_commit_in "$TMPDIR_ONLY/ps" y
+    assert_equals "$ps_rc" "0" "pwsh only memory-bank/: mb commit succeeds"
+    check_only_mb "$TMPDIR_ONLY/ps" "pwsh"
+fi
+
+# ── A commit git refuses is not reported as "Committed!" ─────────────────────
+# WHY: mb.ps1 printed "Committed!" and exited 0 whatever `git commit` returned, so a pre-commit
+# hook rejection read as success. mb.sh was saved only by `set -e`; it is asserted too so the two
+# stay in step if that ever changes.
+echo ""
+echo "--- git commit rejected by a hook: reported as a failure ---"
+TMPDIR_REJ="$(mktemp -d 2>/dev/null || mktemp -d -t mb-commit-rej)"; ALL_TMPDIRS+=("$TMPDIR_REJ")
+setup_test_project "$TMPDIR_REJ"
+mkdir -p "$TMPDIR_REJ/.rejecting-hooks"
+printf '#!/bin/sh\necho HOOK-REJECTED\nexit 1\n' > "$TMPDIR_REJ/.rejecting-hooks/pre-commit"
+chmod +x "$TMPDIR_REJ/.rejecting-hooks/pre-commit"
+git -C "$TMPDIR_REJ" config core.hooksPath .rejecting-hooks
+echo "# uncommitted entry" >> "$TMPDIR_REJ/memory-bank/progress.md"
+output=$(cd "$TMPDIR_REJ" && echo y | MB_HOME="$REPO_ROOT" bash "$MB" commit 2>&1)
+rc=$?
+assert_exit_nonzero "$rc" "rejected commit: mb commit exits non-zero"
+assert_contains "$output" "HOOK-REJECTED" "rejected commit: the hook really ran (not a vacuous pass)"
+assert_not_contains "$output" "Committed!" "rejected commit: does not claim success"
+if [ "$PWSH_USABLE" = "1" ]; then
+    ps_commit_in "$TMPDIR_REJ" y
+    assert_exit_nonzero "$ps_rc" "pwsh rejected commit: exits non-zero — matches mb.sh"
+    assert_contains "$ps_out" "HOOK-REJECTED" "pwsh rejected commit: the hook really ran"
+    assert_not_contains "$ps_out" "Committed!" "pwsh rejected commit: does not claim success"
+fi
+
+# ── Mid-merge: git refuses a partial commit, and mb commit says so ───────────
+# WHY: with the bare `git commit` this used to be, running mb commit mid-merge committed the WHOLE
+# merge as "chore: Update Memory Bank context". With the pathspec, git refuses ("cannot do a
+# partial commit during a merge") and the merge must be left in progress, not concluded.
+echo ""
+echo "--- mid-merge: refused loudly, merge left in progress ---"
+merge_fixture() { # $1 = dir: a repo stopped in a resolved-but-uncommitted merge, memory-bank dirty
+    setup_test_project "$1"
+    (
+        cd "$1" || exit 1
+        base=$(git symbolic-ref --short HEAD)
+        git checkout -q -b side && echo side > code.txt && git add code.txt && git commit -q -m side
+        git checkout -q "$base" && echo main > code.txt && git add code.txt && git commit -q -m main
+        git merge -q --no-edit side > /dev/null 2>&1
+        echo resolved > code.txt && git add code.txt
+        echo "# uncommitted entry" >> memory-bank/progress.md
+    )
+}
+TMPDIR_MERGE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-commit-merge)"; ALL_TMPDIRS+=("$TMPDIR_MERGE")
+merge_fixture "$TMPDIR_MERGE/sh"
+assert_file_exists "$TMPDIR_MERGE/sh/.git/MERGE_HEAD" "mid-merge fixture: merge in progress"
+output=$(cd "$TMPDIR_MERGE/sh" && echo y | MB_HOME="$REPO_ROOT" bash "$MB" commit 2>&1)
+rc=$?
+assert_equals "$rc" "1" "mid-merge: mb commit exits 1"
+assert_contains "$output" "NOT committed" "mid-merge: says nothing was committed"
+assert_file_exists "$TMPDIR_MERGE/sh/.git/MERGE_HEAD" "mid-merge: the merge is still in progress, not concluded"
+if [ "$PWSH_USABLE" = "1" ]; then
+    merge_fixture "$TMPDIR_MERGE/ps"
+    ps_commit_in "$TMPDIR_MERGE/ps" y
+    assert_equals "$ps_rc" "1" "pwsh mid-merge: exits 1 — matches mb.sh"
+    assert_contains "$ps_out" "NOT committed" "pwsh mid-merge: says nothing was committed"
+    assert_file_exists "$TMPDIR_MERGE/ps/.git/MERGE_HEAD" "pwsh mid-merge: the merge is still in progress"
+fi
+
 print_summary

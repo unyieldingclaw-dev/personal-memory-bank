@@ -266,9 +266,17 @@ Relatedly, deprecated redirect shims exit **2** ("command moved") rather than 0,
 only an exit code can tell that nothing ran. Aliases that still perform real work keep exit 0 —
 check the implementation before assuming a deprecated name is inert.
 
-**`.githooks/pre-commit`** — lightweight two-check gate before every commit:
+**`.githooks/pre-commit`** — three-check gate before every commit:
 - **Blocks** if `handoff.md` is staged (`handoff.md` is ephemeral and must not be committed)
+- **Blocks** `memory-bank/` changes committed from a linked git worktree. `memory-bank/` is edited and committed only in the main worktree; `mb commit` refuses in a linked worktree, and this is the check a plain `git commit` reaches. It covers `git commit`, `commit -a`, `commit -- <path>`, renames out of `memory-bank/`, and any casing of the directory name. When finishing a conflicted merge, files whose staged content matches the merged branch (`MERGE_HEAD`) pass, since they were not edited here; anything else in `memory-bank/` is refused, with `git checkout MERGE_HEAD -- <path>` as the way to take the merged version. A git submodule is its own main worktree and is not affected. Any error inside the check refuses rather than passes. It applies whether or not a project's `CLAUDE.md` states the rule.
 - **Warns** if `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is missing from `.claude/settings.json` (token budget auto-compaction may not be configured)
+
+**Known gaps in the worktree check.** It is a tripwire on the ordinary commit path, not a complete boundary: git does not record which worktree an edit was made in, so no hook can be one.
+- Git commits without running `pre-commit` at all in `git rebase --continue` and `git cherry-pick --continue`. `git revert --continue` and `git am` are expected to behave the same way.
+- `git commit --no-verify`, its short form `-n`, and `git -c core.hooksPath=<elsewhere> commit` skip the hook. The dangerous-command hook asks for confirmation only on the literal `--no-verify`.
+- With the default relative `core.hooksPath = .githooks`, each linked worktree runs the hook from its own branch, so a worktree on a branch older than this check is unprotected until that branch picks it up. An absolute `core.hooksPath` makes every worktree run the main checkout's copy instead.
+- A merge trusts `MERGE_HEAD`: content inherited from any merged branch passes, including branches whose `memory-bank/` commits skipped this check. An octopus merge is compared against its first head only, which refuses rather than passes.
+- It checks commits, not edits. Editing `memory-bank/` in a linked worktree is still against the rule, but is only caught when committed.
 
 ### Migration from `.git/hooks/`
 

@@ -331,6 +331,9 @@ Create `CLAUDE.md` in project root with Memory Bank instructions (see template).
 - Never update or commit memory-bank/ files from within a subworktree. Update the
   main worktree instead, then pull the changes into your branch if needed.
 - `mb commit` detects subworktrees and refuses with a redirect message.
+- `.githooks/pre-commit` refuses a plain `git commit` of memory-bank/ from a subworktree too.
+  Merging main in is allowed when memory-bank/ matches the merged branch; see
+  `docs/HOOKS-GUIDE.md` for what the hook cannot catch.
 
 This keeps a single authoritative copy. Subworktrees are ephemeral execution branches;
 the memory-bank is shared state.
