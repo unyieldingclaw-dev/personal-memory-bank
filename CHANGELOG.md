@@ -166,10 +166,10 @@
     rule in every project, whether or not that project's `CLAUDE.md` states it. A project that
     uses a bare repository with worktrees has no main worktree, so it can no longer commit
     `memory-bank/` without skipping the hook.
-  - **Known gaps:** git runs pre-commit only for `git commit`, so a clean merge or pull,
-    cherry-pick, revert, rebase, `am` and plumbing never reach it; `git revert` of a main commit
-    can author `memory-bank/` changes unchecked. Also `--no-verify`/`-n` and per-branch hook
-    copies. Details: `docs/HOOKS-GUIDE.md`.
+  - **Known gaps:** a clean merge or pull, a clean cherry-pick or revert, `rebase --continue`,
+    `am` and plumbing create commits without running pre-commit, so a clean `git revert` of a main
+    commit or a `git am` can author `memory-bank/` changes unchecked. Also `--no-verify`/`-n` and
+    per-branch hook copies. Details: `docs/HOOKS-GUIDE.md`.
   - **Tests:** `tests/test-pre-commit-hook.sh`.
 - **`tests/test-mirror-parity.sh` now cross-checks the two runtimes' `TEMPLATE_OWNED` sets against
   each other, and compares hooks structurally.** The previous sweep derived its guarded set from

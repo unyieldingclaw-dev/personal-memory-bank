@@ -8,9 +8,10 @@ fi
 
 # memory-bank/ is edited and committed only in the MAIN worktree, so every branch shares one
 # authoritative copy. `mb commit` refuses in a linked worktree, but a plain `git commit` never
-# reaches `mb commit`. Git runs pre-commit only for `git commit` itself, including one that
-# concludes a conflicted merge; every other command that creates commits (a clean merge or pull,
-# cherry-pick, revert, rebase, am, plumbing) skips it. docs/HOOKS-GUIDE.md lists what that leaves.
+# reaches `mb commit`. Git runs pre-commit for `git commit` (including one that concludes a
+# conflicted merge) and for `cherry-pick --continue` / `revert --continue` after a conflict. A clean
+# merge or pull, a clean cherry-pick or revert, `rebase --continue`, `am` and plumbing commit
+# without it. docs/HOOKS-GUIDE.md lists what that leaves.
 #
 # Every failure below REFUSES. An empty result from a git command that errored reads exactly like
 # "nothing staged" or "nothing differs", so treating it as a pass would wave the commit through.
