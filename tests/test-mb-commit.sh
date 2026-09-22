@@ -409,9 +409,11 @@ if [ -f "$TMPDIR_SUBMOD/super/mod/memory-bank/progress.md" ]; then
 fi
 
 # ── No `realpath` on PATH: the subworktree guard must still fire ─────────────
-# WHY: mb.sh compared `realpath` outputs. With realpath missing both came back empty, compared
-# equal, and a linked worktree sailed through to the commit prompt. Measured before the fix with a
-# stub that exits 127: "Changes to commit", exit 0, from inside a subworktree.
+# WHY: mb.sh used to compare `realpath` outputs. With realpath missing both came back empty,
+# compared equal, and a linked worktree sailed through to the commit prompt. Measured before the
+# fix with a stub that exits 127: "Changes to commit", exit 0, from inside a subworktree. The
+# current code does not call realpath at all, so this case is a regression guard: if a
+# realpath-based comparison ever comes back, the stub makes it fail open again and this goes red.
 echo ""
 echo "--- subworktree with no realpath available: still refused ---"
 if [ -d "$TMPDIR_WT/child" ]; then

@@ -3,10 +3,10 @@
 # throwaway fixture repos (never this repository).
 #
 # WHY this suite exists: "never commit memory-bank/ from a linked worktree" was enforced only by
-# `mb commit`, so a plain `git commit` walked straight past it. The hook is the enforcement point
-# that every commit path reaches -- except the ones listed in docs/HOOKS-GUIDE.md's known gaps
-# (`--no-verify`/`-n`, `rebase --continue`, `cherry-pick --continue`, ...), which git runs without
-# pre-commit at all and which no test here can reach.
+# `mb commit`, so a plain `git commit` walked straight past it. The hook catches `git commit`
+# itself, which is the only command git runs pre-commit for. Everything in docs/HOOKS-GUIDE.md's
+# known gaps (a clean merge, cherry-pick, revert, rebase, `--no-verify`/`-n`, ...) never runs the
+# hook, so no test here can reach it.
 #
 # WHY the hook's own "git failed" branches have no test: git prepends its exec-path to PATH before
 # running a hook (measured 2026-09-21 on Git for Windows: the hook saw /mingw64/libexec/git-core

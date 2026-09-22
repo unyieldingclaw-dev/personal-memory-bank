@@ -163,9 +163,13 @@
     as the way out.
   - **Failures:** any error in the check refuses rather than passes.
   - **Adopter-visible:** the hook is `TEMPLATE_OWNED`, so `mb upgrade` delivers it and enforces the
-    rule in every project, whether or not that project's `CLAUDE.md` states it.
-  - **Known gaps** (`rebase`/`cherry-pick --continue`, `--no-verify`/`-n`, per-branch hook copies):
-    `docs/HOOKS-GUIDE.md`.
+    rule in every project, whether or not that project's `CLAUDE.md` states it. A project that
+    uses a bare repository with worktrees has no main worktree, so it can no longer commit
+    `memory-bank/` without skipping the hook.
+  - **Known gaps:** git runs pre-commit only for `git commit`, so a clean merge or pull,
+    cherry-pick, revert, rebase, `am` and plumbing never reach it; `git revert` of a main commit
+    can author `memory-bank/` changes unchecked. Also `--no-verify`/`-n` and per-branch hook
+    copies. Details: `docs/HOOKS-GUIDE.md`.
   - **Tests:** `tests/test-pre-commit-hook.sh`.
 - **`tests/test-mirror-parity.sh` now cross-checks the two runtimes' `TEMPLATE_OWNED` sets against
   each other, and compares hooks structurally.** The previous sweep derived its guarded set from

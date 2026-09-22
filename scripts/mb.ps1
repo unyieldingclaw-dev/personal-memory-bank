@@ -819,9 +819,10 @@ function Invoke-Commit {
         # WHY: "chore:" prefix follows conventional commits, making it clear this
         # is maintenance, not a feature/fix. Helps with changelog generation.
         # WHY the pathspec: a bare `git commit` commits the WHOLE index, so anything already staged
-        # for other work rode along inside this chore commit. `--` reaches git intact under both
-        # PowerShell 5.1 and 7.x (measured). The exit status is checked because this printed
-        # "Committed!" and returned normally even when a hook rejected the commit.
+        # for other work rode along inside this chore commit. git treats a trailing path as a
+        # pathspec with or without `--`, so this does not depend on how PowerShell passes `--`.
+        # The exit status is checked because this printed "Committed!" and returned normally even
+        # when a hook rejected the commit.
         git commit -m "chore: Update Memory Bank context" -- $MemoryBankPath
         if ($LASTEXITCODE -ne 0) {
             Write-Host "[ERROR] git commit failed — memory-bank/ was NOT committed." -ForegroundColor Red

@@ -153,7 +153,7 @@ git commit -m "chore: update memory bank context"
 
 If the edit only exists in the linked worktree, copy the file across before restoring it there (`git restore memory-bank/`), so the linked branch keeps main's copy.
 
-**During a merge** the message instead lists the `memory-bank/` files that differ from the branch being merged. Take that branch's version with `git checkout MERGE_HEAD -- <path>`, then finish the merge. Files that already match the merged branch are allowed through.
+**During a merge** the message instead lists the `memory-bank/` files that differ from the branch being merged. Take that branch's version with `git checkout MERGE_HEAD -- <path>`, then finish the merge. Files that already match the merged branch are allowed through. Taking the merged version discards your own branch's side of that file, so if your branch carries `memory-bank/` commits of its own, check what you would lose first (`git diff MERGE_HEAD HEAD -- <path>`).
 
 **`[ERROR] mb commit must be run from the repository root.`** — `mb commit` looks for `memory-bank/` in the current directory, so it refuses from a subdirectory rather than reporting "No changes" over a dirty memory bank. `cd` to the repository root and run it again.
 
