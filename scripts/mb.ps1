@@ -697,10 +697,9 @@ function Invoke-Commit {
     Write-Host ""
     
     # WHY: Detect subworktrees so we refuse memory-bank/ mutations from the wrong root.
-    # git rev-parse --git-common-dir returns the shared .git dir; in the main worktree
-    # that resolves to .git/ inside $PWD. In a subworktree it's a different path.
+    # --git-dir and --git-common-dir name the same directory everywhere EXCEPT a linked
+    # worktree, whose --git-dir is .git/worktrees/<name> under the shared common dir.
     $commonGitDir = git rev-parse --git-common-dir 2>$null
-    $localGitDir  = Join-Path $PWD ".git"
     # An empty $commonGitDir is the definitive not-in-a-repo signal, answered here rather than
     # inferred from the `git status` call below, which can also fail on an unreadable index.
     # Checked BEFORE the subworktree comparison because it is the more fundamental case.
@@ -713,6 +712,27 @@ function Invoke-Commit {
         Write-Host ""
         exit 1
     }
+    # Refused from a subdirectory BEFORE the worktree comparison, matching mb.sh. memory-bank/ is
+    # resolved relative to $PWD, so a subdirectory run would inspect <subdir>/memory-bank, find
+    # nothing, and report "No changes" with exit 0 over a dirty memory-bank. Failing to read the
+    # prefix refuses too, for the same reason.
+    $prefix = git rev-parse --show-prefix 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] Could not determine where you are in this repository." -ForegroundColor Red
+        Write-Host ""
+        exit 1
+    }
+    if ($prefix) {
+        Write-Host "[ERROR] mb commit must be run from the repository root." -ForegroundColor Red
+        Write-Host "You are in $($prefix.TrimEnd('/')) -- cd to the repository root and run it again." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+    $gitDir = git rev-parse --git-dir 2>$null
+    # The comparison is --git-dir against --git-common-dir. It replaced --git-common-dir against
+    # Join-Path $PWD .git, which reported a subworktree inside an absorbed submodule (whose .git is
+    # a gitlink FILE) and from any subdirectory -- both measured in both runtimes.
+    #
     # .Path on BOTH sides is load-bearing, and this line is the whole reason `mb commit` never
     # worked on Windows. Resolve-Path returns a PathInfo, which has no value equality, so
     # `$a -ne $b` compares REFERENCES and is unconditionally true -- it returned true even when
@@ -721,7 +741,7 @@ function Invoke-Commit {
     # via mb.bat -> pwsh -> here, which is the documented Windows entry point (install.bat).
     # Measured before and after: current form true/true (main worktree, subworktree); .Path form
     # false/true, which is the discrimination the comparison was always supposed to make.
-    # Comparing .Path strings matches the bash twin, which compares realpath output.
+    # Comparing .Path strings matches the bash twin, which compares `cd && pwd -P` output.
     # Recorded as C5 in docs/superpowers/specs/2026-06-18-mb-commands-audit.md, whose stated root
     # cause ("symlinks or UNC paths ... in some cases") is wrong -- incidence is 100%.
     #
@@ -742,8 +762,17 @@ function Invoke-Commit {
     # "No changes" from inside a genuine subworktree. That is a false NEGATIVE, the more dangerous
     # direction: a refusal that should have fired, silently didn't. A bracket on only one side
     # leaves one real string and still fires correctly, which is why the false-positive framing
-    # surfaced first and the worse case hid behind it.
-    if ($commonGitDir -and (Resolve-Path -LiteralPath $commonGitDir -ErrorAction SilentlyContinue).Path -ne (Resolve-Path -LiteralPath $localGitDir -ErrorAction SilentlyContinue).Path) {
+    # surfaced first and the worse case hid behind it. That both-null case is now refused
+    # explicitly below rather than compared, since $null -ne $null can never fire.
+    $gitDirPath = if ($gitDir) { (Resolve-Path -LiteralPath $gitDir -ErrorAction SilentlyContinue).Path }
+    $commonPath = (Resolve-Path -LiteralPath $commonGitDir -ErrorAction SilentlyContinue).Path
+    if (-not $gitDirPath -or -not $commonPath) {
+        Write-Host "[ERROR] Could not resolve this repository's git directories." -ForegroundColor Red
+        Write-Host "Refusing rather than guessing whether this is a git subworktree." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+    if ($gitDirPath -ne $commonPath) {
         Write-Host "[ERROR] You are in a git subworktree." -ForegroundColor Red
         Write-Host "Commit memory-bank/ from the main worktree root instead." -ForegroundColor Yellow
         Write-Host ""
@@ -789,7 +818,17 @@ function Invoke-Commit {
         git add $MemoryBankPath
         # WHY: "chore:" prefix follows conventional commits, making it clear this
         # is maintenance, not a feature/fix. Helps with changelog generation.
-        git commit -m "chore: Update Memory Bank context"
+        # WHY the pathspec: a bare `git commit` commits the WHOLE index, so anything already staged
+        # for other work rode along inside this chore commit. git treats a trailing path as a
+        # pathspec with or without `--`, so this does not depend on how PowerShell passes `--`.
+        # The exit status is checked because this printed "Committed!" and returned normally even
+        # when a hook rejected the commit.
+        git commit -m "chore: Update Memory Bank context" -- $MemoryBankPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERROR] git commit failed — memory-bank/ was NOT committed." -ForegroundColor Red
+            Write-Host ""
+            exit 1
+        }
         Write-Host ""
         Write-Host "Committed!" -ForegroundColor Green
     } else {

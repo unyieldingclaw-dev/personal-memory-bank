@@ -463,7 +463,6 @@ invoke_commit() {
 
     # WHY: Detect subworktrees so we refuse memory-bank/ mutations from the wrong root.
     COMMON_GIT=$(git rev-parse --git-common-dir 2>/dev/null || true)
-    LOCAL_GIT="$PWD/.git"
     # An empty COMMON_GIT is the definitive not-in-a-repo signal, and it is answered here rather
     # than inferred from the `git status` call below, which can also fail on an unreadable index
     # -- a different condition that deserves a different message. Checked BEFORE the subworktree
@@ -477,7 +476,41 @@ invoke_commit() {
         echo ""
         exit 1
     fi
-    if [ -n "$COMMON_GIT" ] && [ "$(realpath "$COMMON_GIT" 2>/dev/null)" != "$(realpath "$LOCAL_GIT" 2>/dev/null)" ]; then
+    # Refused from a subdirectory BEFORE the worktree comparison. memory-bank/ is resolved relative
+    # to $PWD, so a subdirectory run would inspect <subdir>/memory-bank, find nothing, and report
+    # "No changes" with exit 0 over a dirty memory-bank. Failing to read the prefix refuses too, for
+    # the same reason.
+    if ! PREFIX=$(git rev-parse --show-prefix 2>/dev/null); then
+        echo -e "${RED}[ERROR] Could not determine where you are in this repository.${NC}"
+        echo ""
+        exit 1
+    fi
+    if [ -n "$PREFIX" ]; then
+        echo -e "${RED}[ERROR] mb commit must be run from the repository root.${NC}"
+        echo -e "${YELLOW}You are in ${PREFIX%/} -- cd to the repository root and run it again.${NC}"
+        echo ""
+        exit 1
+    fi
+    # A linked worktree is exactly the case where --git-dir and --git-common-dir differ. This
+    # replaced a comparison of realpath(common-dir) against realpath($PWD/.git), which was wrong
+    # three ways, all measured: inside an absorbed submodule $PWD/.git is a gitlink FILE, so it
+    # reported a subworktree; from a subdirectory, likewise; and with `realpath` missing both sides
+    # came back empty, compared equal, and a real subworktree went through to the commit prompt.
+    # `cd && pwd -P` needs no extra tool. The `-n` tests come first because some shells treat
+    # `cd ""` as "stay here"; the `|| true` keeps a failed `cd` from tripping `set -e`.
+    GIT_DIR_ABS=$(git rev-parse --git-dir 2>/dev/null || true)
+    COMMON_ABS="$COMMON_GIT"
+    [ -n "$GIT_DIR_ABS" ] && GIT_DIR_ABS=$(cd "$GIT_DIR_ABS" 2>/dev/null && pwd -P || true)
+    [ -n "$COMMON_ABS" ] && COMMON_ABS=$(cd "$COMMON_ABS" 2>/dev/null && pwd -P || true)
+    # Two empty values compare EQUAL -- that is how the realpath hole let a subworktree through --
+    # so an unresolved side refuses rather than being compared.
+    if [ -z "$GIT_DIR_ABS" ] || [ -z "$COMMON_ABS" ]; then
+        echo -e "${RED}[ERROR] Could not resolve this repository's git directories.${NC}"
+        echo -e "${YELLOW}Refusing rather than guessing whether this is a git subworktree.${NC}"
+        echo ""
+        exit 1
+    fi
+    if [ "$GIT_DIR_ABS" != "$COMMON_ABS" ]; then
         echo -e "${RED}[ERROR] You are in a git subworktree.${NC}"
         echo -e "${YELLOW}Commit memory-bank/ from the main worktree root instead.${NC}"
         echo ""
@@ -522,7 +555,15 @@ invoke_commit() {
         git add "$MEMORY_BANK_PATH"
         # WHY: "chore:" prefix follows conventional commits — makes it clear this
         # is maintenance, not a feature/fix. Helps with changelog generation.
-        git commit -m "chore: Update Memory Bank context"
+        # WHY the pathspec: a bare `git commit` commits the WHOLE index, so anything already staged
+        # for other work rode along inside this chore commit. The exit status is checked rather
+        # than left to `set -e`, so a rejected commit (a hook, or git refusing a partial commit
+        # mid-merge) says so instead of relying on the abort to keep "Committed!" from printing.
+        if ! git commit -m "chore: Update Memory Bank context" -- "$MEMORY_BANK_PATH"; then
+            echo -e "${RED}[ERROR] git commit failed — memory-bank/ was NOT committed.${NC}"
+            echo ""
+            exit 1
+        fi
         echo ""
         echo -e "${GREEN}Committed!${NC}"
     else

@@ -226,7 +226,7 @@ Files use hierarchical tags (`auth/session`, `infra/postgres`) in their frontmat
 <details>
 <summary>Worktree support</summary>
 
-Memory bank lives in the main worktree only. `mb commit` detects and refuses mutations from git subworktrees, preventing split-brain memory.
+Memory bank lives in the main worktree only. `mb commit` detects and refuses mutations from git subworktrees, and `.githooks/pre-commit` refuses a plain `git commit` of `memory-bank/` from one, preventing split-brain memory.
 
 </details>
 
