@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-09-21
+last-reviewed: 2026-09-22
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,30 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-09-21 — Next-Steps audit; NPM_TOKEN resolved; false "unmerged" claims found
+
+Set out to verify all 50 active `[NS-N]` entries against live state, not their own text (8 batches +
+a 9th fixing a self-caught gap). **Blind spot, found by a 2nd opposition round: grepping for
+"unmerged"-style phrasing missed 2 entries stale in different words** — `[NS-8]` (`mb.sh` no longer
+hardcodes; deleted) and `[NS-29]` (both agents have had `model:` since 2026-08-26; corrected to keep
+only the real `effort:` gap). `[NS-11]` resolved — ACR's OIDC migration removed `NPM_TOKEN`
+(ACR `cd57cf5`, `CHANGELOG.md` v1.12.1). `[NS-41]`/`[NS-45]`/`[NS-43]`(b) falsely claimed "unmerged"
+work already live on `main`, found by
+grep, deleted/trimmed. Other corrections: `[NS-4]` branches both live, pure cleanup; `[NS-42]` write
+rate dropped ~92%, gap still open; `[NS-25]` reproduced live twice, raised; `[NS-17]` NOT actually
+resolved; `[NS-16]` dropped sub-item restored.
+
+**`[NS-13]` corrected twice.** Deleted on a shallow check, restored by 3 domain reviewers as
+"unmerged work" via `git merge-base --is-ancestor` — opposition proved that test false-negatives in
+this shallow, squash-merged repo. Content-diffed instead: **zero** novel files (vs. `[NS-3]`'s 7,
+`[NS-18]`'s 6), 26,347 deletions *behind* main. Real state: hook never implemented anywhere, only
+artifact an uncommitted plan edit. Root cause: `code-review.md` missing `--no-fetch` (`[NS-55]`, 3rd
+hit) — fixed, but the first attempt missed its `templates/claude-commands/` mirror; `tests/test-mirror-parity.sh`
+caught the drift before merge (would've shipped red CI, self-reverting via `mb upgrade`). Both copies
+now identical. `[NS-33]`'s stash cite hardened too — a prior `stash@{0}` cite is already a different
+stash today; now keyed off message. **Cross-session:** `mb upgrade` force-overwrite confirmed for the
+ACR peer, deferred; "Token waste audit" peer answered, their hardcoded-caps finding logged `[NS-57]`.
 
 ## 2026-09-21 — `ai-review.config.json` test guard ships (PR #40); mid-session data-loss recovery
 
