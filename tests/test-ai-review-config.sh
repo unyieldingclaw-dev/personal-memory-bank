@@ -294,7 +294,48 @@ fi
 #    Discovered, not hard-coded (see header comment); this is what would have caught round 2's bug
 #    (templates/memory-bank existed, unmirrored) automatically before it shipped.
 # ---------------------------------------------------------------------------
-mapfile -t DISCOVERED_DIRS < <(cd "$REPO_ROOT" && find . -type d \( -name memory-bank -o -name docs -o -name standards \) -not -path "./node_modules/*" | sort)
+# Regression fixture for the two -not -path clauses below — Testing domain review 2026-09-21
+# (Medium), corrected 2026-09-21 (opposition review F1): the fake MUST be planted before the single
+# find call that populates DISCOVERED_DIRS, and the assertion below MUST read DISCOVERED_DIRS
+# itself. An earlier version of this fixture ran a second, independent find into its own array here
+# and asserted against that instead — mutating the production find at the line below then left this
+# fixture green, since it never actually executed that line. That is exactly the "redundant match
+# paths mask mutations" trap in standards/CODE-REVIEW.md: two code paths can produce the same
+# verdict, so mutating one leaves the other still answering.
+#
+# SCOPE, corrected 2026-09-21 (opposition re-review F6): this fixture's only discriminator is the
+# literal substring "regression-test-fake-worktree" (below), which lives under
+# .claude/worktrees/ — so mutation-testing confirms it discriminates the -not -path
+# "./.claude/worktrees/*" clause ONLY. Stripping -not -path "./.git/*" does NOT turn this assertion
+# red: verified directly, twice (a faithful linked-worktree copy, and a copy with .git emulated as a
+# real directory containing memory-bank/docs/standards). The .git clause is also a true no-op in any
+# linked worktree specifically — .git there is a FILE, not a directory (see `ls -la .git`), so find
+# never has anything to exclude regardless of this clause. Losing it is instead caught downstream, in
+# the MAIN checkout only, by the per-directory REVIEWED/SKIPPED assertions in section 2's loop below:
+# a leaked .git/... path gets reviewed instead of skipped, and that loop's own assert_equals catches
+# the mismatch. Plant a fake nested worktree checkout under this test's own REPO_ROOT (never the real
+# main checkout — REPO_ROOT resolves to wherever this script itself lives, so under a linked worktree
+# this stays fully inside it).
+FAKE_WORKTREE_DIR="$REPO_ROOT/.claude/worktrees/regression-test-fake-worktree/memory-bank"
+mkdir -p "$FAKE_WORKTREE_DIR"
+SANDBOXES+=("$REPO_ROOT/.claude/worktrees/regression-test-fake-worktree")
+assert_file_exists "$FAKE_WORKTREE_DIR" "setup: planted fake worktree memory-bank directory actually exists (else the exclusion check below verifies nothing)"
+
+# WHY -not -path "./.git/*" AND "./.claude/worktrees/*": without these, this walk also matches
+# `.git/refs/heads/docs` (a branch literally named `docs/...` creates that path) and every linked
+# worktree's own nested `memory-bank`/`docs`/`standards` checkout under `.claude/worktrees/<name>/`.
+# Neither is a real ACR review target, but both used to be treated as one — non-deterministic
+# failures (78, then 85) that scaled with how many worktrees happened to exist on the machine at
+# test time. Reproduced and root-caused 2026-09-21.
+mapfile -t DISCOVERED_DIRS < <(cd "$REPO_ROOT" && find . -type d \( -name memory-bank -o -name docs -o -name standards \) -not -path "./node_modules/*" -not -path "./.git/*" -not -path "./.claude/worktrees/*" | sort)
+
+FAKE_FOUND=NO
+for d in "${DISCOVERED_DIRS[@]}"; do
+  case "$d" in *regression-test-fake-worktree*) FAKE_FOUND=YES ;; esac
+done
+assert_equals "$FAKE_FOUND" "NO" "planted .claude/worktrees/regression-test-fake-worktree/memory-bank: excluded from discovery (comment out the -not -path \"./.claude/worktrees/*\" clause above and this must go red — this fixture does NOT discriminate the -not -path \"./.git/*\" clause, see the SCOPE note above)"
+rm -rf "$REPO_ROOT/.claude/worktrees/regression-test-fake-worktree"
+
 # Anti-vacuity — Correctness domain review 2026-09-19 (Medium): with no floor on how many directories
 # the find above discovers, a broken -name/-path clause (or these directories being renamed away)
 # would make the loop below execute zero times and report zero failures — the same "check that
