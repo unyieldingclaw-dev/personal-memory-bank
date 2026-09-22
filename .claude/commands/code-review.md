@@ -85,7 +85,7 @@ Step 5's single opposition pass; the models differ and the comparison has not be
 Run it:
 
 ```
-bash scripts/baseline-health.sh
+bash scripts/baseline-health.sh --no-fetch
 ```
 
 **Do not reimplement these checks by hand, and do not copy thresholds into your report as if you had
@@ -106,12 +106,21 @@ needs a 20-line `awk` function with a fence-parity and a per-line backtick-parit
 | `2` | the workflow is **absent** | Every row **Skipped**. Nothing was verified. Do **not** substitute remembered thresholds and do **not** report a pass — this command ships to repositories that do not receive `pmb-health.yml`. |
 | `3` | a step could not be **extracted** | The workflow was renamed or re-indented, so nothing ran. **This is not a passing tree.** Report it as a finding against the tooling. |
 
-It is **not** fully offline by default: the File Size job's startup-context ratchet runs one shallow
-`git fetch --depth=1 origin main`, which fails soft. Pass `--no-fetch` to neutralize that (and any
-other `git fetch` an extracted body happens to contain) when this runs as a subagent that must not
-perform a repository write — see Step 5 instruction 1, which requires it. Semgrep, PSScriptAnalyzer
-and gitleaks are deliberately absent from the script — each needs a registry fetch, module install or
-network action, and per this repo's layering rule they are correctly CI-only.
+**`--no-fetch` is mandatory here, not just for the Step 5 subagent re-run.** Without it, the File
+Size job's startup-context ratchet makes one shallow `git fetch --depth=1 origin main`, which
+re-shallows an already-shallow clone. **`--no-fetch` prevents that re-shallowing, but does not
+repair a clone that is already shallow** — `git merge-base`/ancestry checks (`git merge-base
+--is-ancestor`, three-dot `git diff A...B`) can still falsely report "not an ancestor" for content
+genuinely on `main`, reproduced directly in this repo even with `--no-fetch` already in force
+(`[NS-13]`/`[NS-55]` in `Personal-Memory-Bank`'s own memory bank track this failure mode). If an
+ancestry check's result must be trusted, run `git fetch --unshallow` first; otherwise prefer
+content-diffing (two-dot `git diff <ref> <ref>`) over ancestry as the default check in a shallow
+clone — it does not depend on shallow history at all. Pass `--no-fetch` on every invocation of this
+script in this workflow, orchestrator and subagent alike, to stop the ratchet's own fetch from
+making the clone shallower than it already is — never rely on it to make an ancestry check
+trustworthy mid-review. Semgrep, PSScriptAnalyzer and gitleaks are deliberately absent from the
+script — each needs a registry fetch, module install or network action, and per this repo's
+layering rule they are correctly CI-only.
 
 **Report the results; do not act on them.** List each check as a one-line pass/fail in the Step 6
 report, marking each failure diff-caused or pre-existing. If a cap fails on a file this diff
@@ -190,7 +199,7 @@ Instruct it to, in order:
 
 1. Re-run Step 3.5's deterministic checks yourself: `bash scripts/baseline-health.sh --no-fetch`.
    Pass `--no-fetch` — you must not perform a repository write, and the flag neutralizes the one
-   `git fetch` an extracted body would otherwise run (see Step 3.5's NETWORK note) without disabling
+   `git fetch` an extracted body would otherwise run (see Step 3.5's `--no-fetch` paragraph) without disabling
    the check that fetch feeds. Do not decline the run or fall back to hand-deriving the checks from
    `.github/workflows/pmb-health.yml` instead — that is exactly the unreliable reimplementation Step
    3.5 exists to avoid. The orchestrator reporting PASS is a claim like any other, and this command's
