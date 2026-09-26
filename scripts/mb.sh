@@ -2898,8 +2898,17 @@ invoke_plan_promote() {
 
     mkdir -p "docs/plans"
 
-    # Check/add frontmatter
-    HAS_FM=$(head -1 "$DRAFT" | grep -c '^---' || true)
+    # Check/add frontmatter. WHY a closing fence is required: a draft that merely starts with a
+    # `---` horizontal rule is not frontmatter, and editing "inside" it would corrupt the body.
+    HAS_FM=0
+    FM_CLOSE=""
+    FIRST_LINE=$(head -1 "$DRAFT" | tr -d '\r' | sed 's/[[:blank:]]*$//')
+    if [ "$FIRST_LINE" = "---" ]; then
+        # WHY BINMODE=3: Windows gawk (Git Bash) otherwise strips every CR on read, so a CRLF draft
+        # came out LF-only; other awks ignore the variable.
+        FM_CLOSE=$(awk -v BINMODE=3 'NR == 1 {next} {sub(/\r$/, "")} /^---[ \t]*$/ {print NR; exit}' "$DRAFT")
+        [ -n "$FM_CLOSE" ] && HAS_FM=1
+    fi
     if [ "$HAS_FM" -eq 0 ]; then
         TODAY=$(date +%Y-%m-%d)
         FM="---\nstatus: planned\ncreated: $TODAY\napproved: $TODAY\nrelated_spec: null\nscope: local\nrisk: medium\nsource: ai-draft\n---\n\n"
@@ -2907,14 +2916,33 @@ invoke_plan_promote() {
         cat "$DRAFT" >> "$DEST"
         echo -e "${GREEN}Added frontmatter and promoted to $DEST${NC}"
     else
-        cp "$DRAFT" "$DEST"
-        # Ensure status is at least 'planned'
-        CURRENT_STATUS=$(grep -m1 '^status:' "$DEST" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
-        if [ "$CURRENT_STATUS" = "draft" ] || [ -z "$CURRENT_STATUS" ]; then
-            sed -i.bak 's/^status: draft/status: planned/' "$DEST" && rm -f "${DEST}.bak"
-            echo -e "${GREEN}Promoted to $DEST (status: draft → planned)${NC}"
-        else
+        # Ensure status is at least 'planned', looking ONLY inside the frontmatter: the old
+        # whole-file grep/sed also rewrote a body line starting `status: draft`, and left a
+        # frontmatter with no status key (or an empty one) without any status at all.
+        STATUS_LINE=$(awk -v BINMODE=3 -v c="$FM_CLOSE" 'NR > 1 && NR < c && /^status:/ {print NR; exit}' "$DRAFT")
+        CURRENT_STATUS=""
+        if [ -n "$STATUS_LINE" ]; then
+            CURRENT_STATUS=$(sed -n "${STATUS_LINE}p" "$DRAFT" | sed 's/^status:[[:space:]]*//' | tr -d ' \r"'"'")
+        fi
+        # The key is matched case-sensitively (YAML keys are); the draft value is not, matching
+        # mb.ps1's -ne. Must match mb.ps1's Invoke-PlanPromote.
+        if [ -n "$CURRENT_STATUS" ] && [ "$(printf '%s' "$CURRENT_STATUS" | tr '[:upper:]' '[:lower:]')" != "draft" ]; then
+            cp "$DRAFT" "$DEST"
             echo -e "${GREEN}Promoted to $DEST (status: $CURRENT_STATUS preserved)${NC}"
+        else
+            # The new line copies the line ending of the line it replaces or precedes, so a
+            # CRLF draft stays CRLF throughout.
+            awk -v BINMODE=3 -v c="$FM_CLOSE" -v s="$STATUS_LINE" '
+                function eol(l) { return (l ~ /\r$/) ? "\r" : "" }
+                s != "" && NR == s { print "status: planned" eol($0); next }
+                s == "" && NR == c { print "status: planned" eol($0) }
+                { print }
+            ' "$DRAFT" > "$DEST"
+            if [ -z "$STATUS_LINE" ]; then
+                echo -e "${GREEN}Promoted to $DEST (status: planned added)${NC}"
+            else
+                echo -e "${GREEN}Promoted to $DEST (status: ${CURRENT_STATUS:-empty} → planned)${NC}"
+            fi
         fi
     fi
 

@@ -61,8 +61,8 @@ After user approval, promote the plan with:
 mb plan promote .claude/plans/YYYY-MM-DD-slug.md
 ```
 
-This copies the plan to `docs/plans/YYYY-MM-DD-slug.md`, setting `status: planned` if the draft is still
-`draft` or has no frontmatter (a later status is kept). The draft stays in `.claude/plans/`.
+This copies the plan to `docs/plans/YYYY-MM-DD-slug.md` and sets `status: planned`, unless the draft's
+frontmatter already carries a later status, which is kept. The draft stays in `.claude/plans/`.
 
 **Output:** the promoted `docs/plans/YYYY-MM-DD-slug.md`, committed to git.
 
@@ -77,7 +77,7 @@ This copies the plan to `docs/plans/YYYY-MM-DD-slug.md`, setting `status: planne
 
 ### Phase 3.5 — Independent Plan Review (advisory — not one of the 7 counted phases)
 
-Not a gate. This project's `memory-bank/projectbrief.md` fixes the workflow at 7 phases as a non-negotiable requirement, so this step is deliberately scoped as a recommended practice inserted between Plan and Implement, not an 8th phase — matching the precedent `.claude/commands/change-review.md`'s own "Step 3.5: Baseline Repo Health" already sets for a non-counted, informational step.
+Not a gate: advisory, not one of the 7 phases. This step is deliberately scoped as a recommended practice inserted between Plan and Implement, not an 8th phase — matching the precedent `.claude/commands/change-review.md`'s own "Step 3.5: Baseline Repo Health" already sets for a non-counted, informational step.
 
 **Why:** self-review, however adversarial, shares the blind spots of whoever wrote the plan. A 14-task plan for this repo's own review-gate mechanism passed its author's self-review (which found 3 real gaps) — a separately-dispatched agent with no context from writing it then found 8 more real, file:line-verified defects, including a Blocking-severity bug the self-review missed. See `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md`'s "independent review discipline" (mechanism 3) for the full mechanism.
 

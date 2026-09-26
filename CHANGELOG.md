@@ -20,12 +20,23 @@
   drafting in `.claude/plans/` and promoting with `mb plan promote`. Phase 3 now describes the
   draft-and-promote flow, and keeps the task-shape guidance ("What happens") the live PMB copy had
   lost; both copies of Phase 3 are identical again. The template's Phase 3.5 "Why" no longer cites
-  a PMB design spec that adopters do not receive.
-  - **Adopters on bash:** `mb upgrade` shows the `standards/WORKFLOW.md` difference rather than
-    overwriting it; review and accept it to pick up the new Phase 3.
+  a PMB design spec that adopters do not receive, and its opening no longer claims the adopter's
+  `projectbrief.md` fixes the workflow at 7 phases.
+  - **Adopters on bash:** `mb upgrade` does not overwrite `standards/WORKFLOW.md`; it prints a
+    diff cut off after 20 lines, template first, so the new Phase 3 appears as `-` lines. Compare
+    `templates/standards/WORKFLOW.md` in full, or copy it over if you never edited the file.
   - **Adopters on PowerShell:** `mb upgrade` still force-overwrites `standards/`, so it installs
     the corrected file directly, replacing any local edits. That overwrite policy is unchanged
     here and tracked separately.
+- **`mb plan promote` left some plans with no status, and rewrote plan bodies.** A frontmatter
+  block with no `status:` key, or an empty one, was promoted with no status at all while `mb.sh`
+  printed "draft → planned", so `mb plan status` flagged the plan promote had just made. Both
+  runtimes rewrote every line starting `status: draft`, including in the plan body, and a draft
+  opening with a `---` rule but no closing fence was treated as frontmatter. Status is now read
+  and written inside the frontmatter only (a closing fence is required), a missing or empty
+  status becomes `planned`, a later status is kept, CRLF drafts stay CRLF (Git Bash's awk had
+  been writing them LF-only), and both runtimes report the outcome. The runtimes now agree that
+  `status:` is case-sensitive and a `DRAFT` value is still a draft.
 - **`.claude/plans/` was never gitignored in adopter projects.** `WORKFLOW.md` and `/feature-dev`
   both call plan drafts gitignored scratch files, and `mb doctor` reports a tracked one as an
   ERROR, but the entry existed only in PMB's own `.gitignore`. `mb init` and `mb upgrade` now add
