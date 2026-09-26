@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-09-22
-last-reviewed: 2026-09-22
+last-reviewed: 2026-09-25
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -36,9 +36,11 @@ related_plan: null
   the source of truth for how they match and which forms they miss** — it is not restated here, so
   that only one file needs correcting when the code changes.
 - **Several merge forms are not classified as MERGE and get no decision from any wired hook**
-  (measured; see that item): a flag-shaped token before the subcommand, the GraphQL merge route, and
-  PowerShell string or process wrappers. A mixed-case subcommand is a bash-only classifier-parity
-  case: gh rejects it as an unknown command, so it is not an executable merge route.
+  (measured; see that item): a flag-shaped token before the subcommand, the GraphQL merge route,
+  PowerShell string or process wrappers, and a quoted environment assignment before `gh`. A leading
+  wrapper spelled with a path or `.exe` escapes the bash path only; `.ps1` denies it. A mixed-case
+  subcommand is a bash-only classifier-parity case: gh rejects it as an unknown command, so it is
+  not an executable merge route.
 - **Both entry points are wired.** In `.claude/settings.json`, `PreToolUse` runs `review-reminders`
   for the `Bash` matcher and for the `PowerShell` matcher. The `PowerShell` matcher has no bash
   fallback.
@@ -46,9 +48,11 @@ related_plan: null
   actually stands in the way today". It is not restated here: it is a single-day observation that
   will be re-measured, and it should change in one place.
 - **"Platform-enforced" is recorded but cannot be separated from the repo hook.**
-  - `memory-bank/activeContext.md:56` says the agent never runs `gh pr merge`, and calls it
-    "platform-enforced, not just repo convention". Its source,
+  - `memory-bank/activeContext.md`'s Architecture Constraints said the agent never runs
+    `gh pr merge`, and called it "platform-enforced, not just repo convention". Its source,
     `docs/archive/progress-2026-08-19-to-21-escalation-and-bundle-1.md:47-50`, says the same.
+    Corrected 2026-09-25: that line now says the merge refusal is not established as
+    platform-enforced, for the reason below. It still says the agent never runs `gh pr merge`.
   - But the repo hook's unconditional deny was already live in both twins at `5d573fd`, the commit
     that entry records, so a refusal observed that day is equally explained by the hook.
   - Whether a platform refusal exists independently is therefore unknown, and if it does, it would
@@ -175,7 +179,8 @@ Reading the docs does not count. Each item has a pass condition.
     - `standards/SECURITY-GUARDRAILS.md:86` and its `templates/` twin say "What Counts as Approval"
       cannot be hook-enforced and is "advisory by necessity";
     - the worked examples at `docs/HOOKS-GUIDE.md:35` and `:37`;
-    - `memory-bank/activeContext.md:56`;
+    - `memory-bank/activeContext.md`'s Architecture Constraints line saying the agent never runs
+      `gh pr merge`;
     - `CLAUDE.md`'s layering line, which says hooks "cannot be talked around", **and its
       `templates/` twin** (`templates/CLAUDE.md:40`, byte-identical sentence, shipped to every new
       adopter by `mb init`). A prompt a person approves is a different property from that.
