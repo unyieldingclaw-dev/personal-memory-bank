@@ -48,6 +48,12 @@ A 7-phase workflow that front-loads understanding and defers code until the desi
 
 ### Phase 3 — Plan
 
+**What happens:**
+- Map out every file to be created or modified
+- Break implementation into bite-sized tasks (2–5 minutes each)
+- Each task includes: exact file paths, complete code, exact test commands, expected output
+- No placeholders — if a step changes code, show the code
+
 Create the implementation plan as a draft in `.claude/plans/YYYY-MM-DD-slug.md`.
 
 After user approval, promote the plan with:
@@ -55,7 +61,10 @@ After user approval, promote the plan with:
 mb plan promote .claude/plans/YYYY-MM-DD-slug.md
 ```
 
-This moves the plan to `docs/plans/YYYY-MM-DD-slug.md` and sets `status: planned`.
+This copies the plan to `docs/plans/YYYY-MM-DD-slug.md`, setting `status: planned` if the draft is still
+`draft` or has no frontmatter (a later status is kept). The draft stays in `.claude/plans/`.
+
+**Output:** the promoted `docs/plans/YYYY-MM-DD-slug.md`, committed to git.
 
 **Rules:**
 - Do NOT treat `.claude/plans/` as durable memory. These are scratch files — gitignored.

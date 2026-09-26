@@ -54,7 +54,22 @@ A 7-phase workflow that front-loads understanding and defers code until the desi
 - Each task includes: exact file paths, complete code, exact test commands, expected output
 - No placeholders — if a step changes code, show the code
 
-**Output:** `docs/plans/YYYY-MM-DD-<feature>.md` committed to git.
+Create the implementation plan as a draft in `.claude/plans/YYYY-MM-DD-slug.md`.
+
+After user approval, promote the plan with:
+```bash
+mb plan promote .claude/plans/YYYY-MM-DD-slug.md
+```
+
+This copies the plan to `docs/plans/YYYY-MM-DD-slug.md`, setting `status: planned` if the draft is still
+`draft` or has no frontmatter (a later status is kept). The draft stays in `.claude/plans/`.
+
+**Output:** the promoted `docs/plans/YYYY-MM-DD-slug.md`, committed to git.
+
+**Rules:**
+- Do NOT treat `.claude/plans/` as durable memory. These are scratch files — gitignored.
+- Do NOT load all plans at session start. Summarize only active next steps in `memory-bank/activeContext.md`.
+- `progress.md` remains a summary file. Full implementation detail belongs in the plan file.
 
 **Skip when:** No spec was needed.
 
@@ -64,7 +79,7 @@ A 7-phase workflow that front-loads understanding and defers code until the desi
 
 Not a gate. This project's `memory-bank/projectbrief.md` fixes the workflow at 7 phases as a non-negotiable requirement, so this step is deliberately scoped as a recommended practice inserted between Plan and Implement, not an 8th phase — matching the precedent `.claude/commands/change-review.md`'s own "Step 3.5: Baseline Repo Health" already sets for a non-counted, informational step.
 
-**Why:** self-review, however adversarial, shares the blind spots of whoever wrote the plan. See `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md`'s "independent review discipline" (mechanism 3) for the full mechanism and the motivating incident.
+**Why:** self-review, however adversarial, shares the blind spots of whoever wrote the plan. A reviewer with no context from writing it checks the plan against its spec and the current repo state, and catches the gaps its author cannot see.
 
 **What happens:**
 - Dispatch a fresh Agent, no context from writing the plan, on a capable model — never a cost-optimized/cheap model (this project's subagent default may be cost-optimized; override it)

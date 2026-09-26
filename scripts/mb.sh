@@ -602,6 +602,9 @@ PMB_GITIGNORE_ENTRIES=(
     ".claude/.pending-commit-presha"
     ".claude/.pending-push-presha"
     ".claude/contracts/*.json"
+    # Scratch plan drafts: standards/WORKFLOW.md Phase 3 and /feature-dev call them gitignored,
+    # and `mb doctor` reports a tracked one as an ERROR ([NS-19]).
+    ".claude/plans/"
 )
 
 # Appends any missing canonical entries to $1/.gitignore. Sets GITIGNORE_ADDS to what was
@@ -621,7 +624,7 @@ sync_gitignore() {
     # WHY the sed: a bare `grep -qxF` against a CRLF-terminated .gitignore MISSES every
     # entry under real GNU grep -- the trailing \r is part of the line. Git Bash's grep runs
     # in text mode and strips it, which hides the bug on Windows; this repo's own .gitignore
-    # is CRLF, so an `mb upgrade` from WSL or Linux CI would re-append all 11 entries on
+    # is CRLF, so an `mb upgrade` from WSL or Linux CI would re-append every entry on
     # every run, unbounded. Trailing whitespace is stripped for the same reason, and only
     # TRAILING: a .gitignore line's LEADING whitespace is significant to git, so `  foo` does
     # not ignore `foo` and must not be treated as already present. Must match Sync-Gitignore.
@@ -2157,17 +2160,18 @@ invoke_upgrade() {
         # WHY standards/*.md are NOT here, despite scripts/mb.ps1 listing them: moving them into
         # this array was attempted on 2026-09-03 (completing the port a453a5a began in mb.ps1) and
         # REVERTED the same day on a Critical review finding. TEMPLATE_OWNED force-overwrites via
-        # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md is STALE, not
-        # genericized: the live file describes the current `.claude/plans` -> `mb plan promote`
-        # flow while the template still describes the superseded one ([NS-19], first sentence,
-        # still open). Force-overwriting would therefore replace a correct governance file with a
-        # known-wrong one. Three of the fifteen are also on test-mirror-parity.sh's STD_DIVERGE_OK
+        # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md was then STALE,
+        # not genericized: its Phase 3 described a superseded plan flow, so force-overwriting would
+        # have replaced a correct governance file with a known-wrong one. [NS-19] fixed that
+        # template, and test-mirror-parity.sh now pins WORKFLOW.md's remaining divergence to one
+        # generic paragraph. The overwrite would still discard an adopter's own edits to
+        # standards/, and three of the fifteen stay on test-mirror-parity.sh's STD_DIVERGE_OK
         # allowlist, which asserts they must KEEP diverging.
         #
         # The two runtimes therefore disagree, deliberately and visibly: mb.ps1 force-overwrites
         # standards, mb.sh does not. That disagreement is now pinned by an assertion in
         # tests/test-mirror-parity.sh rather than left as an undocumented fact. Reconciling it is a
-        # real decision -- it needs templates/standards/WORKFLOW.md fixed first -- not a drift to
+        # real decision -- whether upgrade may discard local edits to standards/ -- not a drift to
         # be silently closed.
     )
 

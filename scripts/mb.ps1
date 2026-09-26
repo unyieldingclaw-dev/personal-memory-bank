@@ -910,6 +910,9 @@ $PmbGitignoreEntries = @(
     ".claude/.pending-commit-presha"
     ".claude/.pending-push-presha"
     ".claude/contracts/*.json"
+    # Scratch plan drafts: standards/WORKFLOW.md Phase 3 and /feature-dev call them gitignored,
+    # and `mb doctor` reports a tracked one as an ERROR ([NS-19]).
+    ".claude/plans/"
 )
 
 # Appends any missing canonical entries to <dir>/.gitignore. Returns the list of entries that

@@ -15,6 +15,21 @@
 
   Plain `mb doctor` and `mb verify-integrity` are unchanged. Also corrected Check 7's comment,
   which said doctor "exits 0 regardless": it exits 1 for a fatal finding.
+- **The shipped `standards/WORKFLOW.md` described a superseded plan flow ([NS-19]).** Its Phase 3
+  told adopters to write plans straight into `docs/plans/`, while `/feature-dev` already described
+  drafting in `.claude/plans/` and promoting with `mb plan promote`. Phase 3 now describes the
+  draft-and-promote flow, and keeps the task-shape guidance ("What happens") the live PMB copy had
+  lost; both copies of Phase 3 are identical again. The template's Phase 3.5 "Why" no longer cites
+  a PMB design spec that adopters do not receive.
+  - **Adopters on bash:** `mb upgrade` shows the `standards/WORKFLOW.md` difference rather than
+    overwriting it; review and accept it to pick up the new Phase 3.
+  - **Adopters on PowerShell:** `mb upgrade` still force-overwrites `standards/`, so it installs
+    the corrected file directly, replacing any local edits. That overwrite policy is unchanged
+    here and tracked separately.
+- **`.claude/plans/` was never gitignored in adopter projects.** `WORKFLOW.md` and `/feature-dev`
+  both call plan drafts gitignored scratch files, and `mb doctor` reports a tracked one as an
+  ERROR, but the entry existed only in PMB's own `.gitignore`. `mb init` and `mb upgrade` now add
+  it in both runtimes, and a test asserts the bash and PowerShell entry lists stay identical.
 - **`mb commit`'s subworktree check was wrong three ways, in both runtimes.** It compared
   `--git-common-dir` against `$PWD/.git`.
   - Inside an absorbed git submodule, whose `.git` is a gitlink *file*, it said "You are in a git

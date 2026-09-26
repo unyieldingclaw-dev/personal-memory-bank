@@ -209,6 +209,19 @@ for name in $STD_DIVERGE_OK; do
     fi
 done
 
+# WHY a narrower check for WORKFLOW.md: the anti-rot loop above only proves the pair differs
+# SOMEWHERE, and the one intended difference (the Phase 3.5 "Why" paragraph, generic in the
+# template) keeps that green forever. [NS-19] was Phase 3 drifting apart behind exactly that cover,
+# so pin the divergence to that single paragraph: any other changed line fails here.
+echo ""
+echo "--- WORKFLOW.md differs only in the Phase 3.5 \"Why\" paragraph ---"
+WF_WHY='^[<>] \*\*Why:\*\* self-review, however adversarial'
+WF_DIFF="$(diff "$STD_LIVE/WORKFLOW.md" "$STD_TMPL/WORKFLOW.md" | grep -E '^[<>] ')"
+assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE "$WF_WHY")" "2" \
+    "WORKFLOW.md: the Phase 3.5 \"Why\" line is the allowed divergence (one line each side)"
+assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -vcE "$WF_WHY")" "0" \
+    "WORKFLOW.md: no other line differs between live and template (Phase 3 stays in sync)"
+
 # ── AGENTS.md delivery surfaces: PMB-specific live file + generic portable template ─────
 echo ""
 echo "--- AGENTS.md live/template recovery contract ---"
