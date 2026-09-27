@@ -8,9 +8,11 @@ related_plan: null
 
 # Commit-signing gate guards a setting never enabled here
 
-**The CONFIRM-tier gate against skipping commit signing has nothing to protect in this repo,
-because signing has never been turned on.** Found 2026-09-25 when `a171ae5` came out unsigned
-(`git log -1 --format=%G? a171ae5` → `N`). Nothing was bypassed; there was no signing to bypass.
+**The CONFIRM-tier gate against skipping commit signing has nothing to protect on this machine,
+because signing is not configured on it.** Found 2026-09-25 when `a171ae5` came out unsigned
+(`git cat-file commit a171ae5` has no `gpgsig` header; `%G?` cannot show this here, since it also
+prints `N` for an SSH-signed commit while `gpg.ssh.allowedSignersFile` is unset, e.g. `d8d364f`).
+Nothing was bypassed; there was no signing to bypass.
 
 ## What was measured (2026-09-25, git 2.55.0.windows.3, one machine)
 
@@ -22,6 +24,11 @@ because signing has never been turned on.** Found 2026-09-25 when `a171ae5` came
 - **What reaches `main` is already signed, by GitHub.** `git log -1 --format='%h committer=%cn sig=%G?' 739f0eb`
   → `committer=GitHub sig=E`. `E` means this machine cannot check the signature (it lacks
   GitHub's key), not that the signature is bad. Branch commits are squashed away on merge.
+- **Another environment does sign (2026-09-26).** This clone's refs hold 4 SSH-signed commits, all
+  committed as `Claude <noreply@anthropic.com>` (e.g. `d8d364f`, on
+  `origin/claude/repo-docs-review-nlf6ed`); this machine commits as `UnyieldingClaw` with no
+  signing config. The gate may guard real signing there; whether that environment runs this
+  repo's hooks was not checked.
 
 ## Why it matters
 

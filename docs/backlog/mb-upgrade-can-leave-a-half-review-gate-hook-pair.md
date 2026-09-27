@@ -22,8 +22,8 @@ could not establish the check's absence. The detection section below is the corr
 **What decays here, and what to re-verify before relying on it:**
 - **Line numbers** were read from `origin/main:scripts/mb.sh`, `:scripts/mb.ps1` and the other
   cited files at `739f0eb`. Read the blob, not a working tree, when re-checking.
-- **Not measured:** no partial upgrade was actually executed. Every claim about how the half state
-  arises is read from the code paths, not from a reproduction. See "Not established".
+- **Measured vs read:** paths 1 and 3 were reproduced in a scratch copy (2026-09-26); path 2
+  and `mb.ps1`'s upgrade path are read from the code only. See "Not established".
 
 ## The dependency that is not declared
 
@@ -80,7 +80,7 @@ incomplete-source paths.
 - **CI and tests** run the checker too: `.github/workflows/pmb-health.yml:628` against
   `templates/scripts`, and `tests/run.sh:31` runs `tests/test-review-gate-lib-presence.sh`.
 
-The real residual gaps, all smaller than the draft claimed:
+The real residual gaps:
 
 - **`mb upgrade` never runs the checker.** The only call site is `scripts/mb.sh:954`, in
   `mb doctor`. A half state from path 1 or 2 surfaces only if someone runs `mb doctor` afterwards.
@@ -90,10 +90,14 @@ The real residual gaps, all smaller than the draft claimed:
 - **`mb.ps1` duplicates the checker's logic inline** instead of calling it, which is the drift the
   checker's own header ("WHY one shared script") exists to prevent. The strings match today.
 - **The checker is blind to the reverse split** — a `review-reminders*` script absent while
-  `settings.json` wires it. That state is fail-OPEN (`… || true`; `docs/HOOKS-GUIDE.md:134`);
-  `mb doctor` reports it only as `[WARN] Hook script missing` (`mb.sh:951`); path 1 can produce it for
-  an adopter with no earlier copy. Item 1 does not detect it; items 3-4 do if the declared set
-  includes the hook scripts and `settings.json`.
+  `settings.json` wires it — and so is `mb doctor` when only one twin is gone: its hook-script
+  check passes a name if any `<name>.*` exists (`mb.sh:940`, `mb.ps1:1235`), so it prints
+  `[OK] Hook scripts present` (reproduced 2026-09-26, scratch copy, `review-reminders.ps1`
+  absent) and warns (`mb.sh:951`) only when both twins are absent. A missing
+  `review-reminders.ps1` leaves the PowerShell tool ungated (`templates/.claude/settings.json:62`,
+  `… || true`). Path 1 produces exactly this one-file gap for an adopter with no earlier copy.
+  Item 1 does not detect it; items 3-4 do if the declared set includes the hook scripts and
+  `settings.json`.
 
 ## What actually degrades, per file — the severity is not uniform
 
