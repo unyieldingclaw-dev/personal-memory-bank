@@ -1,12 +1,12 @@
 ---
 status: open
 created: 2026-09-25
-last-reviewed: 2026-09-25
+last-reviewed: 2026-09-27
 staleness-threshold: 90d
 related_plan: null
 ---
 
-# Commit-signing gate guards a setting never enabled here
+# Commit-signing gate guards a setting never enabled on this machine
 
 **The CONFIRM-tier gate against skipping commit signing has nothing to protect on this machine,
 because signing is not configured on it.** Found 2026-09-25 when `a171ae5` came out unsigned
@@ -32,13 +32,13 @@ Nothing was bypassed; there was no signing to bypass.
 
 ## Why it matters
 
-- **The gate has nothing to protect here.** PR #21 (`030662c`) made `--no-gpg-sign` and a falsey
+- **The gate has nothing to protect on this machine.** PR #21 (`030662c`) made `--no-gpg-sign` and a falsey
   `commit.gpgsign` CONFIRM-tier (`standards/SECURITY-GUARDRAILS.md`, "Skip commit signing" row;
   matchers in `scripts/dangerous-commands.{sh,ps1}`). Those patterns only matter when signing is
   on. With it off they guard nothing, and nothing in the repo says so. This is the shape
   `standards/CODE-REVIEW.md` "A check that cannot fail does not count as a check" describes.
 - **`[NS-35]` decision (4), "Land commit-signing first — DONE, `030662c`", means this gate landed,
-  not that signing was switched on.** Read in isolation it suggests signing is active here; it is not.
+  not that signing was switched on.**
 - **The gate still has value for adopters who do sign**, so it should not simply be removed.
 - **Not established:** whether any adopter repo has signing enabled. Not checked.
 

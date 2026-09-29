@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-09-26
-last-reviewed: 2026-09-26
+last-reviewed: 2026-09-27
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -92,7 +92,7 @@ The real residual gaps:
 - **The checker is blind to the reverse split** — a `review-reminders*` script absent while
   `settings.json` wires it — and so is `mb doctor` when only one twin is gone: its hook-script
   check passes a name if any `<name>.*` exists (`mb.sh:940`, `mb.ps1:1235`), so it prints
-  `[OK] Hook scripts present` (reproduced 2026-09-26, scratch copy, `review-reminders.ps1`
+  `[OK] Hook scripts present` (reproduced 2026-09-26 with `mb.sh`, scratch copy, `review-reminders.ps1`
   absent) and warns (`mb.sh:951`) only when both twins are absent. A missing
   `review-reminders.ps1` leaves the PowerShell tool ungated (`templates/.claude/settings.json:62`,
   `… || true`). Path 1 produces exactly this one-file gap for an adopter with no earlier copy.
