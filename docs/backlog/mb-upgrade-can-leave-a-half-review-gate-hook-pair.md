@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-09-26
-last-reviewed: 2026-09-27
+last-reviewed: 2026-09-29
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -179,4 +179,6 @@ a full `/code-review` and `/change-review`.
 `docs/backlog/merge-gate-misses-gh-global-flags-graphql-and-powe.md` owns which merge forms escape
 the classifier when it *is* installed; this item is about the classifier being absent. `[NS-19]`
 (template drift) is a different failure — the adopter's report conflated the two. `[NS-50]`(a) is the
-precedent for per-file ownership classes.
+precedent for per-file ownership classes. `docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md`
+owns the hook wiring that leaves a missing `.ps1` ungated; this item owns detecting and preventing
+the missing file.
