@@ -237,8 +237,10 @@ contract, and a full `/code-review` and `/change-review`.
    `gh` invocation carrying pre-subcommand flags as unanalyzable and deny it. Either way, **strip
    quotes before testing a token's shape**, or `"-R"` passes as a subcommand-shaped word.
    - In `leading_executable`, compare `basename(t)` against `WRAPPERS`, as `.ps1` already does, and
-     test an assignment on the quote-stripped token in **both** twins. The wrapper change is a
-     parity fix; the assignment change closes a hole both share.
+     test an assignment on the quote-stripped token in **both** twins. Both are real, but neither
+     closes a larger escape both twins share: a wrapper's own options (for example `nice -n 5` or
+     `env -i` ahead of the guarded command) make both classifiers return NONE for a commit, a push
+     or a merge.
 2. Match the subcommand case-insensitively on the Python side for classifier parity. The measured
    gh CLI rejects mixed-case subcommands, so this is hardening, not an executable merge bypass.
 3. Classify a `gh api graphql` call carrying a merge mutation as MERGE.
