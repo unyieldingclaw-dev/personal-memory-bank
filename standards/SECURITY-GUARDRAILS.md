@@ -125,12 +125,6 @@ the config. These reach the same outcome and are deliberately not matched:
 - Appending `[commit]` / `gpgsign=false` directly into `.git/config`, which never invokes git.
 - `tag.gpgsign` and `push.gpgSign` — a different config namespace, out of scope for a
   commit-signing gate.
-- **(added 2026-09-27, unverified)** Upper-case spellings on the sh hook under a Turkish locale.
-  `grep -i` follows the locale, and under `tr_TR` an upper-case `I` may not fold to `i`. The
-  PowerShell hook had this defect, and `CultureInvariant` fixed it, measured. The sh side could not
-  be tested because no `tr_TR` locale was available. Pinning its grep to `LC_ALL=C` would fix it,
-  but was measured to break long multibyte paths: the byte locale counts the `.{0,300}` gaps below
-  in bytes, not characters.
 - A **computed value** — `git config commit.gpgsign $(echo false)`. The literal `(false|no|off|0)`
   alternation cannot see through command substitution.
 - An **indirected key** — `K=commit.gpgsign; git config "$K" false`. Resolving it requires

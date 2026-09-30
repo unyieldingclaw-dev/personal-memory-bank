@@ -360,9 +360,15 @@ block() {
 }
 
 dc_grep() {
-    # dc_grep <ERE> <subject> [locale] -- 0 on a match, 1 on no match. Shared by the two regex
-    # matchers. With a third argument, grep runs under LC_ALL=<locale>; without one, it runs
-    # under the caller's locale.
+    # dc_grep <ERE> <locale> <subject>... -- 0 on a match, 1 on no match. Shared by the two regex
+    # matchers. A non-empty <locale> runs grep under LC_ALL=<locale>; an empty one runs it under
+    # the caller's locale. Grep exiting 2 or higher denies and exits the script instead.
+    #
+    # WHY the subjects are joined by NUL into ONE grep: under -z a NUL ends a record, so each view
+    # is still matched on its own -- no pattern can span from one view into the other, and `^`
+    # and `$` anchor per view. It halves the grep calls. Each is a subprocess (~40ms measured on
+    # Windows, against a ~1s hook that runs on every Bash tool call), and confirm_regex() below
+    # can run two passes per row.
     #
     # WHY any other status denies instead of returning: grep exits 2 when it cannot evaluate
     # the pattern at all -- an option it does not support, a malformed expression. Inside an
@@ -378,20 +384,27 @@ dc_grep() {
     # through the raw-stdin fallback, since a parsed JSON string cannot carry that byte. Under the
     # byte locale, each class in the pipe row means one fixed set of bytes.
     #
-    # WHY confirm_regex() does NOT: pinning is not free for every ASCII row. The signing rows bound
-    # their gaps with `.{0,300}`, and the byte locale counts that bound in BYTES while a UTF-8
-    # locale and the .ps1 twin count CHARACTERS. Measured: `git config --file /tmp/<120 CJK
-    # chars>/cfg` plus the key and a falsey value (408 bytes) matches under C.UTF-8 and en_US.UTF-8
-    # and under .NET, and does not match under LC_ALL=C -- so pinning these rows makes the sh
-    # signing CONFIRM go silent on UTF-8 hosts while ps1 still prompts. The test suite pins this.
-    # The pin was also meant to stop -i's Turkish-locale fold of `I`, the sh twin of the .NET
-    # defect CultureInvariant fixes in the .ps1. That was never reproducible here (no tr_TR
-    # locale on the test machine), so it stays an unverified known gap, recorded in
-    # standards/SECURITY-GUARDRAILS.md, rather than being traded for a measured regression.
-    if [ -n "${3:-}" ]; then
-        printf '%s' "$2" | LC_ALL="$3" grep -qziE -e "$1"
+    # WHY confirm_regex() runs the caller's locale AND C, not either one alone -- each alone
+    # misses a signing bypass the other catches (all measured):
+    #   - C alone: the rows bound their gaps with `.{0,300}`, and C counts that bound in BYTES
+    #     while a UTF-8 locale and the .ps1 twin count CHARACTERS. `git config --file /tmp/<120
+    #     CJK chars>/cfg` plus the key and a falsey value (408 bytes) matches under C.UTF-8 and
+    #     .NET and not under C, so the sh CONFIRM went silent while ps1 prompted.
+    #   - The caller's locale alone: under tr_TR.UTF-8, -i does not fold `I` to `i`, so an
+    #     upper-case key -- `git config COMMIT.GPGSIGN false`, which git accepts -- got no
+    #     verdict; and under any UTF-8 locale `.` does not match an invalid sequence, so a lone
+    #     surrogate escape in a gap (the extraction writes it as bytes ED B3 BF) got none either
+    #     on GNU grep 3.7. Both pass under C. Both are the sh twin of defects the .ps1 closes
+    #     with CultureInvariant and .NET's `.`.
+    # The union can only add matches. Its cost is a second grep per row, paid only when the
+    # first misses -- that is, on almost every command -- and the NUL join above pays for it.
+    _dc_re=$1
+    _dc_lc=$2
+    shift 2
+    if [ -n "$_dc_lc" ]; then
+        printf '%s\0' "$@" | LC_ALL="$_dc_lc" grep -qziE -e "$_dc_re"
     else
-        printf '%s' "$2" | grep -qziE -e "$1"
+        printf '%s\0' "$@" | grep -qziE -e "$_dc_re"
     fi
     _dc_rc=$?
     if [ "$_dc_rc" -gt 1 ]; then
@@ -413,15 +426,11 @@ block_regex() {
     # it. A case glob cannot say "zero or more whitespace", so this tier needs a regex, and
     # grep -z lets the whitespace class reach across newlines.
     #
-    # WHY one grep call per view is worth its cost: each is a subprocess, measured at ~40ms
-    # on Windows against a ~1s hook, on every Bash tool call. So the pipe rows are merged into
-    # one alternation rather than one row per interpreter, and this costs two calls, not four.
-    if dc_grep "$1" "$cmd" C; then
-        deny "BLOCK: $2. Refusing this command."
-        exit 0
-    fi
+    # WHY the pipe rows are merged into one alternation rather than one row per interpreter:
+    # each row costs a grep subprocess on every Bash tool call (see dc_grep), so one row is one
+    # call, not two. Runs under LC_ALL=C -- see dc_grep for why.
     # Checks the de-escaped view too -- see the cmd_loose note above.
-    if dc_grep "$1" "$cmd_loose" C; then
+    if dc_grep "$1" C "$cmd" "$cmd_loose"; then
         deny "BLOCK: $2. Refusing this command."
         exit 0
     fi
@@ -484,13 +493,9 @@ confirm_regex() {
     # over, via grep. Recorded here so a third instance is harder to write.
     #
     # Checks the de-escaped view too -- see the cmd_loose note above. Matched through dc_grep,
-    # which refuses to read a grep failure as "no match". Deliberately NOT locale-pinned: see
-    # dc_grep for the byte-counted `.{0,300}` regression pinning caused here.
-    if dc_grep "$1" "$cmd"; then
-        deny "CONFIRM REQUIRED: $2. Run manually if intentional."
-        exit 0
-    fi
-    if dc_grep "$1" "$cmd_loose"; then
+    # which refuses to read a grep failure as "no match": first under the caller's locale, then
+    # under C -- see dc_grep for the three bypasses that need both passes.
+    if dc_grep "$1" "" "$cmd" "$cmd_loose" || dc_grep "$1" C "$cmd" "$cmd_loose"; then
         deny "CONFIRM REQUIRED: $2. Run manually if intentional."
         exit 0
     fi

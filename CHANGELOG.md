@@ -18,14 +18,19 @@
 - **The WARN tier ignored the de-escaped view in both shells ([NS-40]).** `cat ~/.ssh/id\_rsa` and
   `cat ~/.ssh/"id"_rsa` warned on neither shell. `warn()` and the ps1 warn loop now also check the
   de-escaped view, and warn once when both views match.
-- **Case-insensitive matching failed under a Turkish locale.** .NET's `IgnoreCase` follows the
-  current culture, and under tr-TR `I` does not fold to `i`. So `git commit --NO-GPG-SIGN` and
-  `GIT CONFIG COMMIT.GPGSIGN FALSE` got no CONFIRM there (measured). The ps1 regexes now use
-  `CultureInvariant`. The new sh pipe row runs `grep` under `LC_ALL=C`, so it matches the same bytes
-  in every locale; without the pin, UTF-8 locales changed what it matched. The sh signing rows are
-  deliberately not pinned. The byte locale counts their `.{0,300}` gaps in bytes, so pinning them
-  would stop a long multibyte path from prompting on sh while ps1 still prompts (measured). The sh Turkish-locale case is
-  therefore still open and unverified, and is listed in `standards/SECURITY-GUARDRAILS.md`.
+- **The signing CONFIRM could be skipped by locale, in both shells.** Case-insensitive matching
+  follows the locale, and under a Turkish one `I` does not fold to `i`. So an upper-case config key,
+  such as `git config COMMIT.GPGSIGN false` (git accepts it), got no CONFIRM there. The ps1 regexes
+  now use `CultureInvariant`. On sh, the signing rows run twice, first under the caller's locale
+  and then under `LC_ALL=C`, and prompt if either run matches. Neither locale alone is enough
+  (measured):
+  - `C` counts the rows' `.{0,300}` gaps in bytes, so a long multibyte path stopped prompting on sh.
+  - A UTF-8 locale misses the Turkish case, and also misses a lone-surrogate escape in a gap on GNU
+    grep 3.7.
+
+  Both sh views now go through one `grep` per pass, joined by NUL, so the second pass adds no net
+  grep calls. The new pipe row runs under `LC_ALL=C` only, so it matches the same bytes in every
+  locale.
 - **CI now fails when the sh/ps1 parity checks cannot run.** The `mb-command-tests` job sets
   `PMB_REQUIRE_PARITY=1`, so if pwsh ever disappears from the runner, the cross-shell checks fail
   instead of silently skipping.

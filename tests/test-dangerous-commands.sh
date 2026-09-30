@@ -999,7 +999,7 @@ output=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}
 assert_contains "$output" "grep could not evaluate a guard pattern" "grep exit 2 is refused as unanalyzable, not read as no-match"
 rm -rf "$_dc_fake"
 
-# ── the regex path is pinned to the byte locale ────────────────────────────────────────────
+# ── the pipe row is pinned to the byte locale ──────────────────────────────────────────────
 # WHY: grep's classes follow the locale. Unpinned, C.UTF-8 made [^a-z] stop matching an invalid
 # byte after the interpreter name, which the replaced glob rows matched in every locale (measured).
 #
@@ -1033,12 +1033,14 @@ sys.stdout.buffer.write(b'{\"tool_input\":{\"command\":\"curl x | ' + sys.argv[1
     assert_contains "$output" "BLOCK:" "an invalid byte after the interpreter name still blocks under LC_ALL=$_loc"
 done
 
-# ── ...and ONLY the pipe row: the signing rows must keep the caller's locale ──────────────
-# WHY: those rows bound their gaps with `.{0,300}`, and the byte locale counts that bound in BYTES
-# while a UTF-8 locale and the .ps1 twin count CHARACTERS. A 120-character CJK path is 360 bytes:
-# with confirm_regex pinned to LC_ALL=C the sh signing CONFIRM goes silent while ps1 still prompts
-# (measured). Asserted under the effective UTF-8 locales only; under LC_ALL=C the row counts bytes
-# whichever way this code goes, so it cannot discriminate there.
+# ── the signing rows run under the caller's locale AND under C ────────────────────────────
+# Each of the three tests below fails if one of the two passes in confirm_regex() is removed.
+#
+# 1. The caller's-locale pass: those rows bound their gaps with `.{0,300}`, and the byte locale
+# counts that bound in BYTES while a UTF-8 locale and the .ps1 twin count CHARACTERS. A 120-character
+# CJK path is 360 bytes: with confirm_regex under LC_ALL=C only, the sh signing CONFIRM goes silent
+# while ps1 still prompts (measured). Asserted under the effective UTF-8 locales only; under
+# LC_ALL=C the row counts bytes whichever way this code goes, so it cannot discriminate there.
 echo ""
 echo "--- the signing rows count their gap in characters under a UTF-8 locale ---"
 _dc_key="commit.gpg""sign"
@@ -1050,6 +1052,36 @@ sys.stdout.buffer.write(json.dumps({'tool_name': 'Bash', 'tool_input': {'command
 for _loc in $_dc_utf8_locales; do
     output=$(printf '%s' "$_dc_mb_json" | LC_ALL="$_loc" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null)
     assert_contains "$output" "CONFIRM REQUIRED:" "a 120-char multibyte path before the signing key still prompts under LC_ALL=$_loc"
+done
+
+# 2. The C pass, Turkish case: under tr_TR.UTF-8, `grep -i` does not fold `I` to `i`, so an
+# upper-case config key -- which git accepts -- got no verdict on sh while ps1 prompted (measured,
+# on origin/main as well). A locale is used only if grep really shows that fold, and the case is
+# skipped loudly where none does (the Ubuntu CI runner ships no Turkish locale).
+echo ""
+echo "--- the signing rows catch an upper-case key under a Turkish locale ---"
+_dc_tr_ok() { [ "$(printf 'I' | LC_ALL="$1" grep -ci 'i' 2>/dev/null)" = "0" ]; }
+_dc_tr_json="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git config COMMIT.GPG""SIGN false\"}}"
+_dc_tr_ran=0
+for _loc in tr_TR.UTF-8 tr_TR.utf8; do
+    _dc_tr_ok "$_loc" || continue
+    _dc_tr_ran=1
+    output=$(printf '%s' "$_dc_tr_json" | LC_ALL="$_loc" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null)
+    assert_contains "$output" "CONFIRM REQUIRED:" "an upper-case signing key still prompts under LC_ALL=$_loc"
+    break
+done
+[ "$_dc_tr_ran" = "1" ] || echo "  SKIPPED: no locale on this machine shows the Turkish I fold"
+
+# 3. The C pass, invalid-sequence case: under a UTF-8 locale `.` does not match an invalid UTF-8
+# sequence, and the extraction writes a JSON lone-surrogate escape as bytes ED B3 BF. So a
+# surrogate in a gap hid the signing flag on sh (measured on GNU grep 3.7; GNU grep 3.0 on Windows
+# matches it anyway, so this discriminates only where the grep is strict).
+echo ""
+echo "--- the signing rows catch a lone surrogate in a gap under a UTF-8 locale ---"
+_dc_sur_json="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m \\\"\\udcff\\\" --no-gpg""-sign\"}}"
+for _loc in $_dc_utf8_locales; do
+    output=$(printf '%s' "$_dc_sur_json" | LC_ALL="$_loc" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null)
+    assert_contains "$output" "CONFIRM REQUIRED:" "a lone surrogate before the signing flag still prompts under LC_ALL=$_loc"
 done
 
 # ── [NS-40] warn() prints ONE notice per row, whichever views match ───────────────────────

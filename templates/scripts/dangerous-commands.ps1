@@ -191,12 +191,12 @@ $cmdLoose = ($cmd -replace '[\\"'']', '') -replace ' +', ' '
 #
 # WHY CultureInvariant: IgnoreCase alone folds case by the CURRENT culture's rules, and under
 # tr-TR (and az) upper-case `I` does not fold to `i`. Measured on pwsh 7 with the thread culture
-# set to tr-TR: `git commit --NO-GPG-SIGN` and `GIT CONFIG COMMIT.GPGSIGN FALSE` got no CONFIRM,
-# and `| IEX` / `| INVOKE-EXPRESSION` would not have matched the [NS-38] iex regexes below -- a
-# BLOCK regression against the OrdinalIgnoreCase literals they replace. Invariant folding can
-# only ADD matches for these ASCII patterns. Found by the opposition pass on the [NS-38] design,
-# 2026-09-27. The sh twin pins only its pipe row to LC_ALL=C; its signing rows keep the caller's
-# locale, because the byte locale counts their `.{0,300}` bounds in bytes -- see dc_grep there.
+# set to tr-TR, on a copy of this file without CultureInvariant: an upper-case config key --
+# `git config COMMIT.GPGSIGN false`, `git -c COMMIT.GPGSIGN=false commit`, which git accepts --
+# got no CONFIRM, and `| IEX` did not match the [NS-38] iex regexes below, a BLOCK regression
+# against the OrdinalIgnoreCase literals they replace. Invariant folding can only ADD matches for
+# these ASCII patterns. The sh twin closes the same gap by running its signing rows under both the
+# caller's locale and C -- see dc_grep there.
 $DcRegexOpts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline, CultureInvariant'
 
 function Deny {

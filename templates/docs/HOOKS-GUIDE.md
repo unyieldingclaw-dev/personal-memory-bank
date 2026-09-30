@@ -85,10 +85,11 @@ there is unconstrained.
 
 **Regex rows and locale.** Case-insensitive regex matching follows the locale unless it is pinned.
 The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase` alone does not
-fold `I` to `i`, and the signing and `iex` rows returned no verdict (measured). On the sh side only
-`block_regex` pins `LC_ALL=C`. `confirm_regex` deliberately does not, because the byte locale counts
-its `.{0,300}` gaps in bytes, and a long multibyte path then stops matching. So a new sh regex row
-inherits its matcher's locale rule, which can change what it matches.
+fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
+verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
+the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The byte locale
+counts the `.{0,300}` gaps in bytes, and a UTF-8 locale misses the Turkish case. So a new sh regex
+row inherits its matcher's locale rule, which can change what it matches.
 
 **Why `$1` is not simply folded per call:** that costs a `printf | tr` subshell per matcher *call*,
 roughly 25 per invocation, on a hook that runs on every single Bash tool call — measured at
