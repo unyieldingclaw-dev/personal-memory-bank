@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-09-22
+last-reviewed: 2026-09-25
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,7 +16,7 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-09-21 (verify branch and SHA from Git, not this file)
+## Last Updated: 2026-09-25 (verify branch and SHA from Git, not this file)
 
 ## Trim History
 
@@ -37,7 +37,9 @@ the detail those entries were condensed from. Older: `docs/archive/context-2026-
 
 ## Current Focus
 
-**Codex PreCompact recovery-only policy: merged.** PR #28 (policy fix — Codex no longer registers a `PreCompact` gate, retains `SessionStart(source=compact)` recovery; opposition-approved across both `/code-review` and `/change-review`) and PR #29 (`CURSOR-VS-CLAUDE.md` three-way rewrite, same dual-review pattern, required to merge after #28) both merged 2026-09-18, in that required order. Full narrative: `docs/archive/progress-2026-09-16-to-17-codex-precompact-reproduction-and-review.md` (09-16→17) plus `progress.md`'s 2026-09-18 entry.
+**Pre-Approval Protocol (`[NS-59]`):** the plan is final and awaits the user's approval to execute.
+
+**Codex PreCompact recovery-only policy: merged.** PR #28 (policy fix — Codex no longer registers a `PreCompact` gate, retains `SessionStart(source=compact)` recovery; opposition-approved across both `/code-review` and `/change-review`) and PR #29 (`CURSOR-VS-CLAUDE.md` three-way rewrite, same dual-review pattern, required to merge after #28) both merged 2026-09-18, in that required order. Full narrative: `docs/archive/progress-2026-09-16-to-17-codex-precompact-reproduction-and-review.md` (09-16→17) plus `docs/archive/progress-2026-09-15-to-19-review-gate-pr28-29-and-marker-writes.md` (09-18).
 
 **Whole-repo review 2026-09-11:** eleven findings remain the source record in `progress.md`; PR #28 addressed only the two approved enforcement-layer findings and their paired-path consequences. The external artifact directory remains the provenance source, not a second checkout.
 
@@ -53,7 +55,7 @@ the detail those entries were condensed from. Older: `docs/archive/context-2026-
 - `fixtures/` and `docs/` are excluded from pre-push secret scanning (intentionally bad code + docs quoting it)
 - `mb status` = state ("can I work?"); `mb doctor`/`/health-check` = validation ("is it correct?")
 - Doctor test renames use single subdirectory + conditional restore (not whole-dir rename) to prevent data loss
-- This agent never runs `gh pr merge`, and push-gate marker writes get classifier-denied from a non-authoring subagent — both platform-enforced, not just repo convention (incident: `progress.md` 2026-08-19)
+- This agent never runs `gh pr merge`, and push-gate marker writes get classifier-denied from a non-authoring subagent (incident: `progress.md` 2026-08-19). **The merge refusal is not established as platform-enforced** — the repo hook's `gh pr merge` deny was already live at `5d573fd`, so it equally explains that refusal (`docs/backlog/replace-the-gh-pr-merge-deny-with-a-forced-permiss.md`). The marker-write denial points platform-side: no hook denied marker writes then, and an auto-mode classifier denial is recorded (`progress.md` 2026-09-19).
 - Branches forked before 2026-08-18 are main-forward-port-only on shared hook/lib files — merging regresses the review gate, however clean the merge looks (`[NS-26]`)
 - A merge SHA recorded in this file is a point-in-time landing point, never the current tip — `git log origin/main -1` is the only reliable answer
 - **Full `/code-review`, every time — no lite path.** A size- or risk-based exemption was designed and explicitly withdrawn on user objection (same failure class as user-as-bypass); do not reintroduce one
@@ -119,6 +121,11 @@ the detail those entries were condensed from. Older: `docs/archive/context-2026-
 56. [NS-56] **Regression-guard test suite for `ai-review.config.json` ships (PR #40, merged 2026-09-21), closing the loop `[NS-48]` opened.** `tests/test-ai-review-config.sh`: 20 assertions on ACR's deterministic `policy`/`filteredFiles` fields only, never finding content. **The one CI-enforced check (array-symmetry) would NOT have caught either historical NS-48 incident** — both were symmetric across both arrays; real protection is local-only. Detail, incl. a mid-session `git add -N` + `git checkout --` data-loss recovery: `progress.md` 2026-09-21.
 57. [NS-57] **`mb doctor`'s `check_size()` caps are hardcoded literals (`mb.sh:1043-1047`), no per-project override.** Reported by the ACR peer 2026-09-21: ACR raised its own memory-bank caps (documented + CI-enforced), now gets spurious WARNs against PMB's lower defaults — same shape as the `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` duplication already fixed once. Needs a design pass; not started.
 58. [NS-58] **`.githooks/pre-commit` ships no format-check dispatch, and adding one locally is a dead end — it's `TEMPLATE_OWNED` (`docs/HOOKS-GUIDE.md:256`), silently overwritten by `mb upgrade`.** Reported by the ACR peer 2026-09-21, who ran a full `/code-review` on a local prettier-dispatch fix and got Request Changes: 3 verified correctness bugs worth avoiding upstream — (a) unquoted `xargs` word-splits filenames with spaces, false "not formatted"; (b) `npx --no-install prettier` fails pre-`npm install` with an error indistinguishable from a real formatting failure; (c) `git diff --cached --name-only --diff-filter=ACM` excludes renamed+modified (status `R`) files, silently skipping them; plus a minor `--` separator hardening gap for filenames starting with `-`. Needs the same `.githooks/pre-push`→`scripts/pre-push-check.*` dispatch pattern, NUL-delimited (`-z`/`-0`), with a missing-`node_modules` guard. Peer offered their draft reference implementation. Not started.
+59. [NS-59] **Pre-Approval Protocol ("poke holes" gate): spec approved 2026-09-21 and amended 2026-09-22 (option A+, self-closing popup); plan final after six review rounds, NOT yet approved for execution.** Spec and plan are on `origin/main` (PR #46, 2026-09-25), satisfying the plan's own precondition. Execute from a fresh session in `.claude/worktrees/pre-approval-protocol` (`feat/pre-approval-protocol`, created by plan Task 1, which also writes an approved task contract before editing); follow the plan's current sequencing, not an old step number. Separate open decision: the template's modal Stop popup contradicts `HOOKS-GUIDE.md` (spec §5). Narrative: `progress.md` 2026-09-22.
+60. [NS-60] **Compact-nudge hook: spec revised to a token metric from the transcript's `message.usage`, NOT re-approved; old plan SUPERSEDED.** Blocked on two user calls: does the nudge arm the Handoff Protocol or only remind, and is ~0.45–0.73 s per prompt acceptable (bash before pwsh)? Its poke-holes findings are not folded in yet.
+61. [NS-61] **CLAUDE.md's "significant `[NS-N]` completing" handoff trigger is PARKED, not live.** Patch (out of repo): `C:/Users/Mizzo/Claude/pmb-session-artifacts/2026-09-21/claude-md-ns-completion-handoff-trigger.patch`. It needs ~880 B of ratchet offset to land.
+62. [NS-62] **`worktree-review-command-tidy-ups` is committed as `3edef15`, PR #47 OPEN, task contract `complete` (verified 2026-09-25).** Its review and PR are done — do not redo them. PR #47 is BEHIND `main` (parent `ac63ccb`), so it needs a branch update, then a user-run merge. History: `docs/backlog/review-command-tidy-ups-orphaned-uncommitted-work.md`.
+63. [NS-63] **Two more merge-gate escapes (path/`.exe` wrapper: `.sh` only; quoted `NAME=value`: both twins), folded 2026-09-25 into `docs/backlog/merge-gate-misses-gh-global-flags-graphql-and-powe.md`** — the source of truth. Unfixed.
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 
