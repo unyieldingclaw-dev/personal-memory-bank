@@ -10,7 +10,7 @@ Committed `3ea5eae` after a full `/code-review` (five domains plus opposition: A
   repository at
   `C:/Users/Mizzo/Claude/pmb-session-artifacts/2026-09-26/multi-session-design/rev5-full-design.md`.
 
-**If approved, this spec:**
+**This spec:** (amended 2026-09-30, Plan A review)
 - supersedes triage chip P's approach (having the gate read the main worktree's `memory-bank/`);
 - supersedes the `[NS-18]` session-claims port (M1);
 - folds in `docs/backlog/handoff-md-is-a-single-unscoped-file-shared-across.md`,
@@ -103,7 +103,7 @@ Everything else goes to Appendix A, together with the incident that would bring 
 | F11 | Recorded loss on 2026-09-21: a ~411-line draft destroyed by `git checkout --` (`progress.md:46-47`). | author |
 | F12 | The git common dir is writable from the Bash tool. | author (probe) |
 | F13 | `git add -f` on a path under `.git/` (or `.GIT/`) exits 0 and stages **nothing**, so git will not index its own directory. | author (probe) |
-| F14 | `CLAUDE_CODE_SESSION_ID` is present in the Bash and PowerShell tools (undocumented), and subagents carry the parent's value. The variable can be overridden from the command line. | author; reviewers |
+| F14 | `CLAUDE_CODE_SESSION_ID` is present in the Bash and PowerShell tools (documented: https://code.claude.com/docs/en/env-vars, read 2026-09-29; amended 2026-09-30, Plan A review), and subagents carry the parent's value. The variable can be overridden from the command line. | author; reviewers |
 | F15 | Git Bash mangles `origin/main:.pmb-features` (rc 128). The SHA form works. | author |
 | F16 | For a short name, git resolves `refs/tags/` and `refs/heads/` before `refs/remotes/`, so a local `origin/main` shadows the remote-tracking ref. | author (git docs) |
 | F17 | An empty revision (`git show ":path"`) reads the **index**, so a missing ref would read a staged file. | author |
@@ -174,7 +174,7 @@ sha=$(git rev-parse --verify -q refs/remotes/origin/main) || sha=
 
 **Repo-local commands.** Nothing calls a bare `mb` (F18). Everything names
 `bash "$(git rev-parse --show-toplevel)/scripts/mb.sh" …`, or the PowerShell equivalent. `mb.sh` and
-`mb.ps1` change as follows:
+`mb.ps1` change as follows (superseded by the Plan A amendment directly below; amended 2026-09-30, Plan A review):
 - they resolve their data files (such as `scripts/secret-patterns.txt`) from their own directory, not
   `MB_HOME`;
 - they skip the update notice for `journal`, `sessions` and `snapshots`;
@@ -188,10 +188,10 @@ pwsh's start-up cost — instead of patching each one. Everywhere this spec says
 Plans B and D should follow the same pattern for `sessions` and `snapshots` (user-approved
 2026-09-29).
 
-**Inert without this code.** A branch, or an adopter, that lacks `scripts/mb.sh` with `journal` support
+**Inert without this code.** A branch, or an adopter, that lacks `scripts/pmb-journal.sh`
 runs today's behaviour:
-- the gate enters journal mode only when the flag is on **and** `scripts/mb.sh` exists and supports
-  `journal`;
+- the gate enters journal mode only when the flag is on **and** `scripts/pmb-journal.sh` exists and its
+  `mode` reports on (amended 2026-09-30, Plan A review);
 - the hooks check the same two things;
 - the Cursor convention lives in a **new, non-template-owned** `.cursor/rules/pmb-journal.mdc`;
 - the TEMPLATE_OWNED `memory-bank.mdc` is untouched.
@@ -219,7 +219,8 @@ runs today's behaviour:
   - `start`, written by the session's first write;
   - `compact`, written by the gate;
   - `end`, written by SessionEnd on a best-effort basis.
-- **The NS id** is validated as `^NS-[0-9]{1,5}$`.
+- **The NS id** is validated as `^NS-(0|[1-9][0-9]{0,4})$`, so `NS-5` is canonical and `NS-05` is
+  refused (amended 2026-09-30, Plan A review).
 - **`--file`** is the only form that keeps the text out of the command line the guards read. Its file
   lives in the session's scratchpad. A pipe or heredoc is still part of the command.
 
@@ -233,6 +234,10 @@ runs today's behaviour:
     exclusive creation of `sessions/<sid>/started`.
   - Kind and NS id sit in the name, so the summary needs no file opens beyond one `meta` file per
     session (worktree, branch).
+- **Session files** (amended 2026-09-30, Plan A review).
+  `sessions/<sid>/` also holds `meta`, `heartbeat`, `started` (the empty sentinel that the first write
+  creates exclusively, so only one `start` marker is published) and `gate-blocked` (the marker `<seq>`
+  of the gate's last no-record block, for the once-only rule; a pass clears it).
 - **Write path.** Each record is written to `tmp/`, then published without overwriting: `ln` then `rm`
   in bash, `[IO.File]::Move` in PowerShell. It retries on collision.
 - **Body limits:**
@@ -332,17 +337,20 @@ call. Nothing is injected.
   checkout as of 2026-09-29).
 - **Pass condition (manual).** A valid record newer, by `<seq>`, than the session's latest `start`
   or `compact` marker, of kind `done`, `learned`, `decision`, `blocked`, `note` or `handoff`, with
-  a body of at least 40 B. Records above the highest allocated number in `seq/` are ignored.
+  a body of at least 40 B. Records above the highest allocated number in `seq/` are ignored, so an accidental or
+  stale record is not counted; a same-user process can still forge records (S3) (amended 2026-09-30, Plan A review).
 - **Once only (manual).** Without such a record the gate blocks once. A repeated manual `/compact`
-  with nothing new since that block passes, with a warning. A session at full context can never be
-  deadlocked.
-- **Markers:** every pass writes `compact`.
+  with no qualifying record newer than the marker passes, with a warning. Automatic compaction is
+  never blocked; a manual no-record block passes on repeat; the two environment blocks below repeat
+  until the environment is fixed (amended 2026-09-30, Plan A review).
+- **Markers:** every pass writes `compact` when the session has a journal (amended 2026-09-30, Plan A review).
 - **Block output:** exit 2, with `{"decision":"block","reason":…}` on stdout and the same text on
   stderr. The reason names the session it checked and the repo-local command. The JSON matters
   because the hook wiring discards stderr, and Claude Code shows a JSON reason when there is one.
 - **What it no longer reads:** any canonical file, or `handoff.md`. The midnight expiry of `[NS-34]`
   goes with it.
-- **Blocks on exactly two named conditions**, reporting the path and OS error:
+- **On a manual trigger only, blocks on exactly two named environment conditions** (besides the
+  once-only no-record block above), reporting the path and OS error (amended 2026-09-30, Plan A review):
   - `pmb` is not a directory;
   - a probe write into `pmb/tmp/` still fails after 3 retries.
 - **Any other error**, including a timeout or a script fault, **fails open with a warning**, as today.
@@ -448,7 +456,13 @@ Execute `[NS-44]` as merged, under its own plan:
 - `.cursor/rules/pmb-journal.mdc`;
 - `memory-bank/systemPatterns.md` (its "Memory Bank (5 files)" and "Handoff Protocol … write
   handoff.md" lines) and `standards/MEMORY-BANK.md` (its handoff and shared-state sections), plus
-  the `templates/` mirror of the standard.
+  the `templates/` mirror of the standard;
+- `docs/HOOKS-GUIDE.md` §5 and `docs/CURSOR-VS-CLAUDE.md`, which still describe the gate as blocking
+  (amended 2026-09-30, Plan A review).
+
+The `CLAUDE.md` edits must say that the journal-mode gate is a once-only manual prompt and that
+automatic compaction is unguarded. The `templates/CLAUDE.md` and `templates/docs/HOOKS-GUIDE.md`
+copies are intentionally unchanged (M6) (amended 2026-09-30, Plan A review).
 
 F4 refuses `memory-bank/` commits from a linked worktree, so the flag PR is authored **in the main
 checkout**, on a fresh branch from `origin/main`, at a time when no worktree sessions are running
@@ -461,9 +475,9 @@ carries these byte additions too, and offsets them.
 
 | Failure | Behaviour |
 |---|---|
-| A branch or adopter lacks the journal code | Today's behaviour, because journal mode requires the flag and `mb.sh journal` (§4.1) |
+| A branch or adopter lacks the journal code | Today's behaviour, because journal mode requires the flag and `pmb-journal.sh` (§4.1) (amended 2026-09-30, Plan A review) |
 | The ref is missing, rewritten, or shadowed | An empty SHA means off; a fetch rewrite is guarded (§4.4a); short names are never used |
-| `pmb/` is broken | The gate blocks on the two named conditions; the other hooks warn |
+| `pmb/` is broken | A manual-trigger gate blocks on the two named conditions and the once-only no-record block; the other hooks warn (amended 2026-09-30, Plan A review) |
 | A record is corrupt or oversized | Readers skip it and count it; `mb doctor` reports it |
 | A worktree is removed | Its session becomes Ended; `snapshots list` finds its snapshots |
 | The repository is re-cloned, or `.git` is deleted | Journal and snapshots are lost; canonical memory is unaffected |
@@ -477,8 +491,8 @@ carries these byte additions too, and offsets them.
   The Stop hook's budget is 1.0 s on this machine, measured as in the SessionStart budget.
 
 **Phase 1 — journal, gate and awareness.** This is triage chip P, re-scoped.
-- `mb.sh`/`mb.ps1` gain `journal` and `sessions`, with the §4.1 changes, a shared UTF-8 helper and
-  `secret-patterns.txt`.
+- New standalone `scripts/pmb-journal.{sh,ps1}` (not `mb.sh`/`mb.ps1`) provide `journal` and
+  `sessions`, with a shared UTF-8 helper and `secret-patterns.txt` (amended 2026-09-30, Plan A review).
 - The gate gains journal mode.
 - New hooks: the SessionStart summary script, a Stop heartbeat and co-tenancy check, and a SessionEnd
   `end` writer.
@@ -524,7 +538,7 @@ Tests use scratch repositories and assert that the real common dir's `pmb/` is u
 - A local `origin/main` branch or tag changes nothing.
 
 **Inertness**
-- Without `mb.sh journal`, the gate and hooks behave exactly as today.
+- Without `scripts/pmb-journal.sh`, the gate and hooks behave exactly as today.
 
 **Journal**
 - Collisions are **injected**, not raced:
@@ -534,7 +548,7 @@ Tests use scratch repositories and assert that the real common dir's `pmb/` is u
 
   Removing the `ln`/`CreateNew` guard must turn these tests red.
 - Same-second writes survive.
-- `<seq>` stays unique under concurrency.
+- `<seq>` stays unique under injected collisions (§7 Journal) (amended 2026-09-30, Plan A review).
 - Non-ASCII bytes, the 1,024 B limit and case-variant secrets agree across twins.
 - A malformed NS id is refused.
 
@@ -542,7 +556,8 @@ Tests use scratch repositories and assert that the real common dir's `pmb/` is u
 - It passes only on its six kinds, with bodies of at least 40 B.
 - It ignores other sessions' records.
 - It writes `compact`.
-- It blocks on exactly its two named conditions and fails open on everything else.
+- On a manual trigger it blocks on exactly its two named environment conditions and the once-only
+  no-record block, and fails open on everything else (amended 2026-09-30, Plan A review).
 - A `handoff.md` dated today in the worktree root does **not** pass the journal-mode gate — the
   `[NS-22]` class, kept closed.
 - A record written before the latest `compact` marker does not pass. A 39-byte `note` does not

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendments (2026-09-30, Plan A review).** The code blocks in Tasks 3-6 are amended at execution, per the SDD ledger (`.superpowers/sdd/2026-09-29-multi-session-journal-core/followups.md`). Where a code block here differs from the committed code, the committed code is authoritative.
+
 **Goal:** Give every session its own append-only journal in the git common dir, and switch the PreCompact gate to check that journal once the repository opts in. This fixes the 2026-09-21 `handoff.md` clobber and the gate's stale `memory-bank/` read.
 
 **Architecture:**
@@ -22,7 +24,7 @@ So blocking automatic compaction can only defer it to a failure, which is what h
 
 **Tech Stack:** bash (Git Bash on Windows; GNU/BSD on Linux/macOS), PowerShell 7, git. No python3, no new dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-09-26-multi-session-memory-design.md` (committed `3ea5eae`). Read §4.1–§4.3 and §7 before any task.
+**Spec:** `docs/superpowers/specs/2026-09-26-multi-session-memory-design.md` (committed `3ea5eae`; this plan's amendments landed in `9f12a23`). Read §4.1–§4.3 and §7 before any task.
 
 **This is Plan A of four.** The spec's rollout (§5) is split so each plan produces working, testable software:
 
@@ -117,6 +119,8 @@ These are inputs the spec implies but never names — each is the most likely to
 
 ### Task 1: Phase 0 spike: settle U1, U7, U11 and U12
 
+**DONE — 9f12a23 (verdicts and amendments recorded); kept as a record.**
+
 This task records facts; it writes no code. It is a **go/no-go gate** for the identity rule every later task depends on.
 
 **Files:**
@@ -209,6 +213,8 @@ Run: `git status --short .claude/`
 ---
 
 ### Task 2: Spec follow-ups and Phase 0 results
+
+**DONE — 9f12a23 (verdicts and amendments recorded); kept as a record.**
 
 The `/code-review` that approved the spec (`3ea5eae`) asked for five non-blocking follow-ups in a separate commit. This task makes them, records Task 1's verdicts, and records the plan-level deviations below. It is a text-only change to one file.
 
@@ -618,7 +624,7 @@ run_suite "pmb-journal"          "$REPO_ROOT/tests/test-pmb-journal.sh"
 Run: `bash tests/test-pmb-journal.sh`
 Expected: FAIL. The script does not exist yet, so every `mode` assertion reports `Expected exactly: '0'` or `'1'` against exit code 127.
 
-- [ ] **Step 3: Create `scripts/secret-patterns.txt`.** The first six patterns come from `scripts/pre-push-check.sh:122-126`, rewritten into the ERE subset that both `grep -iE` and .NET regex accept: `[ \t]` instead of `[[:space:]]`. The last six add the credential shapes the adversarial review found passing: `sk-ant-`, `sk-proj-`, `github_pat_`, `gh[opsu]_`, Slack `xox*-`, Google `AIza`, and unquoted `password:` assignments.
+- [ ] **Step 3: Create `scripts/secret-patterns.txt`.** The first five patterns come from `scripts/pre-push-check.sh:122-126`; the private-key pattern is added here. All six are rewritten into the ERE subset that both `grep -iE` and .NET regex accept: `[ \t]` instead of `[[:space:]]`. The last six add the credential shapes the adversarial review found passing: `sk-ant-`, `sk-proj-`, `github_pat_`, `gh[opsu]_`, Slack `xox*-`, Google `AIza`, and unquoted `password:` assignments.
 
 ```text
 # Secret patterns for scripts/pmb-journal.{sh,ps1}. One extended regex per line; '#' starts a comment.
@@ -644,7 +650,7 @@ AIza[0-9A-Za-z_-]{35}
 The whitespace inside the brackets is a space followed by a literal TAB character. Check that it is present:
 
 Run: `grep -c "$(printf '\t')" scripts/secret-patterns.txt`
-Expected: `3`
+Expected: `5`
 
 - [ ] **Step 4: Write `scripts/pmb-journal.sh`.**
 
@@ -1333,12 +1339,12 @@ git commit -m "feat: journal claim report, show, pickup and handoff import (bash
 
 **Files:**
 - Modify: `scripts/pmb-journal.sh` (add `pmb_json_str`, `pmb_gate_block`, `pmb_gate_marker`, `pmb_gate` and a dispatcher case)
-- Modify: `scripts/pre-compact-check.sh:8` (insert the journal-mode branch before `today=`)
+- Modify: `scripts/pre-compact-check.sh` (insert the journal-mode branch before the `today=` line, currently line 9)
 - Modify: `templates/scripts/pre-compact-check.sh` (byte-identical to the above)
 - Modify: `tests/test-pmb-journal.sh` (gate section)
 - Modify: `tests/test-pre-compact-check.sh`:
   - line 15, overridable `HOOK`;
-  - line 160, overridable `HOOK_PS1`;
+  - the `HOOK_PS1="$REPO_ROOT/scripts/pre-compact-check.ps1"` line, made overridable;
   - the journal-mode integration cases, inserted before the parity block.
 
 **Interfaces:**
@@ -1758,7 +1764,7 @@ git commit -m "feat: journal-mode PreCompact gate, inert until opted in (bash) [
   - Dot-sourceable functions: `Get-PmbDir`, `Test-PmbFlagOn` (never throws), `Get-PmbSid`, `Test-PmbTextOk`, `Read-PmbRecord`, `Invoke-PmbGate -Payload <string>` (returns an int, 0 or 2), and `Invoke-PmbMain <string[]>` (returns an int exit code).
   - `Invoke-PmbMain`'s return value must be the exit code **alone**. All CLI text goes through `Write-PmbOut`, which writes to `[Console]::Out` with an explicit LF and never to the output stream.
   - The CLI `pwsh -NoProfile -File scripts/pmb-journal.ps1 <command> …`, with the same commands as the bash twin.
-  - The file is **ASCII only** and passes CI's PSScriptAnalyzer. Hence `Get-PmbNextSeq` (not `New-`), `Test-PmbNsId` and `Write-PmbClaimant` (singular nouns), and regex escapes such as `​` rather than the characters themselves.
+  - The file is **ASCII only** and passes CI's PSScriptAnalyzer. Hence `Get-PmbNextSeq` (not `New-`), `Test-PmbNsId` and `Write-PmbClaimant` (singular nouns), and regex escapes such as `\u200B` rather than the characters themselves.
 
 - [ ] **Step 1: Write the failing parity tests.** Insert before the isolation section of `tests/test-pmb-journal.sh`:
 
@@ -1900,7 +1906,7 @@ No fixture needs the ps1 copied in by hand. Every run builds its fixtures fresh,
 Run: `bash tests/test-pmb-journal.sh </dev/null; bash tests/test-pre-compact-check.sh </dev/null`
 Expected: on this machine, where pwsh is present, the parity cases FAIL, because `scripts/pmb-journal.ps1` does not exist. Without pwsh they print the loud SKIP.
 
-- [ ] **Step 3: Write `scripts/pmb-journal.ps1`.** Save it with LF line endings. It is ASCII only, so it needs no BOM. Check with `LC_ALL=C grep -c '[^[:print:][:space:]]' scripts/pmb-journal.ps1`, which must print `0`. An editor that turns `​`-style escapes into the characters themselves breaks this. That happened once while this plan was written.
+- [ ] **Step 3: Write `scripts/pmb-journal.ps1`.** Save it with LF line endings. It is ASCII only, so it needs no BOM. Check with `LC_ALL=C grep -c '[^[:print:][:space:]]' scripts/pmb-journal.ps1`, which must print `0`. An editor that turns `\u200B`-style escapes into the characters themselves breaks this. That happened once while this plan was written.
 
 ```powershell
 # pmb-journal.ps1 -- PowerShell twin of scripts/pmb-journal.sh. Same commands, same on-disk
