@@ -88,7 +88,7 @@ The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase
 fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
 verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
 the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The byte locale
-counts the `.{0,300}` gaps in bytes, and a UTF-8 locale misses the Turkish case. So a new sh regex
+counts the `.{0,300}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
 row inherits its matcher's locale rule, which can change what it matches.
 
 **Why `$1` is not simply folded per call:** that costs a `printf | tr` subshell per matcher *call*,

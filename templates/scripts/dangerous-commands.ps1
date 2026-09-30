@@ -195,8 +195,9 @@ $cmdLoose = ($cmd -replace '[\\"'']', '') -replace ' +', ' '
 # `git config COMMIT.GPGSIGN false`, `git -c COMMIT.GPGSIGN=false commit`, which git accepts --
 # got no CONFIRM, and `| IEX` did not match the [NS-38] iex regexes below, a BLOCK regression
 # against the OrdinalIgnoreCase literals they replace. Invariant folding can only ADD matches for
-# these ASCII patterns. The sh twin closes the same gap by running its signing rows under both the
-# caller's locale and C -- see dc_grep there.
+# these ASCII patterns. The sh twin narrows the same gap by running its signing rows under both the
+# caller's locale and C, but can still miss when the command also carries a long non-ASCII gap --
+# see dc_grep there and standards/SECURITY-GUARDRAILS.md.
 $DcRegexOpts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline, CultureInvariant'
 
 function Deny {

@@ -398,6 +398,10 @@ dc_grep() {
     #     with CultureInvariant and .NET's `.`.
     # The union can only add matches. Its cost is a second grep per row, paid only when the
     # first misses -- that is, on almost every command -- and the NUL join above pays for it.
+    # It does not close every combination: when the caller's pass misses for one of the reasons
+    # above AND the gap holds more than 300 bytes of non-ASCII text, the C pass misses too, so a
+    # Turkish locale plus an upper-case key plus a long CJK path gets no verdict here while the .ps1
+    # twin prompts. Recorded in standards/SECURITY-GUARDRAILS.md.
     _dc_re=$1
     _dc_lc=$2
     shift 2

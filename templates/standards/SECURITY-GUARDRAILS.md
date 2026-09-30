@@ -143,6 +143,17 @@ the config. These reach the same outcome and are deliberately not matched:
   lower the floor — anyone able to pad the command text already has the two unclosable cases above,
   which are strictly easier.
 
+  **(added 2026-09-30)** On the sh hook the bound can count **bytes**, not characters. GNU grep
+  counts `.{0,300}` in bytes under the byte locale (`C`), and the sh signing rows fall back to that
+  locale when a match under the caller's locale fails. So the limit is 300 bytes, about 100 CJK
+  characters, in three cases:
+  - the caller's locale is `C`;
+  - a Turkish locale with an upper-case key;
+  - a lone-surrogate escape in the gap, on a strict GNU grep (3.7 measured).
+
+  The PowerShell hook counts characters in all three. This is the same padding class as above, not a
+  new floor.
+
   **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
   costs about **17.5 seconds** in the PowerShell hook, which blocks the tool call for that whole
   time. It is quadratic now, so halving the 50,000-byte limit would quarter it; that trade has not

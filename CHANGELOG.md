@@ -25,8 +25,10 @@
   and then under `LC_ALL=C`, and prompt if either run matches. Neither locale alone is enough
   (measured):
   - `C` counts the rows' `.{0,300}` gaps in bytes, so a long multibyte path stopped prompting on sh.
-  - A UTF-8 locale misses the Turkish case, and also misses a lone-surrogate escape in a gap on GNU
-    grep 3.7.
+  - A UTF-8 locale misses a lone-surrogate escape in a gap on GNU grep 3.7, and a Turkish UTF-8
+    locale also misses the upper-case key.
+  - Both passes still miss when either of those causes combines with a gap of more than 300 bytes of
+    non-ASCII text. This is recorded in `standards/SECURITY-GUARDRAILS.md`.
 
   Both sh views now go through one `grep` per pass, joined by NUL, so the second pass adds no net
   grep calls. The new pipe row runs under `LC_ALL=C` only, so it matches the same bytes in every
