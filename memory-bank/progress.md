@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-09-25
+last-reviewed: 2026-09-30
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,12 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-09-30 — PR #49 merged (`584a8e4`); two review-gate escapes open
+
+- **Unfixed:** an apostrophe in a heredoc body before a commit in one command makes both
+  classifiers return NONE (chip 08). A wrapper's own options do the same; fix `0e04fa0` is
+  unpushed on `docs/wrapper-option-classifier-escape`.
 
 ## 2026-09-24 → 25 — PR #46 merged; local `main` reconciled; two more merge-gate escapes
 
