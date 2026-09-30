@@ -1,6 +1,7 @@
 # Design: Multi-Session Memory — minimum-first
 
-**Status: DRAFT revision 7 (minimum-first) — not approved.**
+**Status: APPROVED 2026-09-29 (revision 7, minimum-first); decisions M1–M6 approved by the user.**
+Committed `3ea5eae` after a full `/code-review` (five domains plus opposition: Approve).
 
 - **History.** Written 2026-09-26 for triage chip C1, and rewritten minimum-first on 2026-09-27 at the
   user's choice. Revision 7 applies the full adversarial review of revision 6, which was run by two fresh
@@ -18,7 +19,13 @@
 - executes `[NS-44]` as already merged (M4).
 
 **Scope: this repository only.** `scripts/mb.sh`/`.ps1` are not shipped to adopters (F23), so this
-version cannot reach them either. Every shared file it touches stays inert for an adopter (§4.1).
+version cannot reach them either.
+The journal code stays inert for an adopter, because it is gated on this repository's flag and
+on `scripts/pmb-journal.sh` being present (§4.1). The command guards in §4.4a are not gated:
+`dangerous-commands.{sh,ps1}` are TEMPLATE_OWNED, so as written they would reach adopters on their
+next `mb upgrade` after a tagged release. That conflicts with M6 ("this repository only"). It is an
+**open question for Plan D**, to be settled with the user. One option keeps M6: put the new guard
+rules in a file that is not template-owned, as `scripts/pmb-journal.*` is.
 Adopter delivery is deferred as Appendix A12.
 
 ## 1. Goal, decisions taken, scope rule
@@ -83,7 +90,7 @@ Everything else goes to Appendix A, together with the incident that would bring 
 
 | # | Fact | Source |
 |---|---|---|
-| F1 | The main checkout is on `fix/ns19-plan-workflow-template`, and its `memory-bank/` differs from `origin/main`'s. | author |
+| F1 | The main checkout was on `fix/ns19-plan-workflow-template` on 2026-09-26 and on `main` by 2026-09-29. Either way, its `memory-bank/` can differ from `origin/main`'s. | author |
 | F2 | The start-of-session payload on `origin/main` is 101,472 B. | author |
 | F3 | The startup ratchet measures both sides from files (`pmb-health.yml:131-247`, `mb.sh:1315-1344`) and holds no constants. `tests/test-threshold-parity.sh` keeps the workflow, `mb.sh` and `mb.ps1` in step. | author; reviewer |
 | F4 | `.githooks/pre-commit` refuses commits that touch `memory-bank/` from a linked worktree. It is unchanged here. | author |
@@ -113,6 +120,26 @@ Everything else goes to Appendix A, together with the incident that would bring 
 - **U7** — whether a Bash write under the common dir triggers a permission prompt in other modes.
 - **U11** — whether the desktop app shows a Stop hook's `systemMessage`.
 - **U12** — which output stream Claude Code shows when PreCompact exits 2.
+
+**Phase 0 results (2026-09-29):**
+- **U1 — PASS.** `CLAUDE_CODE_SESSION_ID` in the Bash tool equals the hook's environment id and the
+  payload `session_id` after every event tried: startup, blocked and allowed manual compact,
+  `/clear` (new id; Bash and hooks move together), `--resume <id>` (same id) and a fork (new id;
+  Bash and hooks move together). The fork was exercised with `claude --resume <id> --fork-session`,
+  not `/branch`. Measured on the interactive CLI, and cross-checked headless (`claude -p`).
+- **U7 — no prompt** in `default` mode for a Bash write under the git common dir. Caveat: no Bash
+  command in that session prompted, so this shows no special protection for `.git` writes, not a
+  `.git`-specific allowance. `acceptEdits` was not measured.
+- **U11 — CLI: yes**, `Stop says: <systemMessage>` appears after every reply. The desktop app was
+  **NOT measured and is OPEN**, carried to Plan B.
+- **U12 — PASS on the CLI and headless.** With exit 2 and a JSON `reason` on stdout, wired with
+  stderr discarded, the user sees `Compaction blocked by PreCompact hook: … <JSON reason>`. The
+  stderr text is not shown. The desktop app was **NOT measured and is OPEN**, carried to Plan B.
+
+**Resolved from documentation:** PreCompact exit 2 blocks compaction; its reason reaches the user
+only, never the model; the payload carries `trigger`; and `CLAUDE_CODE_SESSION_ID` is documented
+(https://code.claude.com/docs/en/hooks and https://code.claude.com/docs/en/env-vars, read
+2026-09-29).
 
 ## 3. What was cut
 
@@ -153,6 +180,14 @@ sha=$(git rev-parse --verify -q refs/remotes/origin/main) || sha=
 - they skip the update notice for `journal`, `sessions` and `snapshots`;
 - `mb.ps1` declares the new parameters.
 
+**Amended 2026-09-29 (Plan A):** the journal commands live in a standalone twin,
+`scripts/pmb-journal.{sh,ps1}`, not in `mb.sh`/`mb.ps1`. A standalone script avoids all four `mb`
+problems in F18/F19 — the `MB_HOME` data path, the update notice, `mb.ps1`'s parameter binding and
+pwsh's start-up cost — instead of patching each one. Everywhere this spec says
+`mb.sh journal …`, read `pmb-journal.sh …`; `sessions --show <sid>` is `pmb-journal.sh show <sid>`.
+Plans B and D should follow the same pattern for `sessions` and `snapshots` (user-approved
+2026-09-29).
+
 **Inert without this code.** A branch, or an adopter, that lacks `scripts/mb.sh` with `journal` support
 runs today's behaviour:
 - the gate enters journal mode only when the flag is on **and** `scripts/mb.sh` exists and supports
@@ -190,8 +225,12 @@ runs today's behaviour:
 
 **Storage.**
 - **File name.** `sessions/<sid>/r/<UTC-ts>-<seq>-<kind>[-<NS-id>]-<rand>.md`.
-  - `<seq>` is allocated by an exclusive `mkdir sessions/<sid>/seq/<n>`, so it is atomic across
-    concurrent writers in one session.
+  - `<seq>` is allocated by exclusively creating the empty file `sessions/<sid>/seq/<n>`:
+    `noclobber` (`O_EXCL`) in bash, `FileMode.CreateNew` in PowerShell. Both are atomic. PowerShell
+    has no exclusive `mkdir`: `New-Item` checks and then creates. Allocation starts above the highest
+    seq in both `seq/` and the record names in `r/`, stops at 999999, and fails at once on any error
+    other than an existing number. The first write of a session publishes `start` only if it wins the
+    exclusive creation of `sessions/<sid>/started`.
   - Kind and NS id sit in the name, so the summary needs no file opens beyond one `meta` file per
     session (worktree, branch).
 - **Write path.** Each record is written to `tmp/`, then published without overwriting: `ln` then `rm`
@@ -205,6 +244,11 @@ runs today's behaviour:
     (F20).
 - **Readers** re-validate the name grammar, the kind, the size and the character set. They skip and
   count invalid records, and never write another session's directory.
+  Readers accept only regular files (never a link, FIFO or directory), read at most 1,025 bytes,
+  and refuse C1 controls, zero-width and bidi characters, word joiners and Unicode tag characters,
+  as writers do. `show` prefixes every body line with `| `, and prints the last 100 records unless
+  `--all` is given. NS ids are canonical (`NS-5`, never `NS-05`). (Amended 2026-09-29, after the
+  adversarial review of Plan A.)
 
 **Liveness.**
 
@@ -272,13 +316,30 @@ call. Nothing is injected.
 - `pre-commit` keeps refusing `handoff.md`.
 - `mb.sh journal import-handoff` converts today's stale handoff files. Deleting the originals is the
   user's call.
+  A line that is `---` (optionally followed by whitespace) is imported as `***`. Both are Markdown
+  horizontal rules, but such a line is refused in any record body (§4.2), and refusing the whole
+  file over a rule would defeat the conversion. Import converts only a file inside the current
+  worktree, of at most 64 KB. (Amended 2026-09-29, Plan A.)
 
 **Gate (Claude Code, journal mode per §4.1).**
-- **Pass condition:** exit 0 only if this session has a valid record newer, by `<seq>`, than its latest
-  `start` or `compact` marker. The record must be `done`, `learned`, `decision`, `blocked`, `note` or
-  `handoff`, with a body of at least 40 B.
-- **Markers:** on exit 0, the gate writes `compact`.
-- **Block message:** it names the repo-local command.
+- **Trigger (amended 2026-09-29, user-approved).** A `trigger` other than `manual` (auto, or
+  missing) is always allowed, and the gate writes `compact` when the session has a journal. WHY:
+  Claude Code shows a PreCompact block reason to the user only, never the model, and a blocked
+  automatic compaction is either skipped or, at the context limit, fails the request
+  (https://code.claude.com/docs/en/hooks, read 2026-09-29). Blocking it can only defer it to a
+  failure, which is what happened on 2026-09-27
+  (`docs/backlog/precompact-gate-can-deadlock-a-session-that-can-no.md`, uncommitted in the main
+  checkout as of 2026-09-29).
+- **Pass condition (manual).** A valid record newer, by `<seq>`, than the session's latest `start`
+  or `compact` marker, of kind `done`, `learned`, `decision`, `blocked`, `note` or `handoff`, with
+  a body of at least 40 B. Records above the highest allocated number in `seq/` are ignored.
+- **Once only (manual).** Without such a record the gate blocks once. A repeated manual `/compact`
+  with nothing new since that block passes, with a warning. A session at full context can never be
+  deadlocked.
+- **Markers:** every pass writes `compact`.
+- **Block output:** exit 2, with `{"decision":"block","reason":…}` on stdout and the same text on
+  stderr. The reason names the session it checked and the repo-local command. The JSON matters
+  because the hook wiring discards stderr, and Claude Code shows a JSON reason when there is one.
 - **What it no longer reads:** any canonical file, or `handoff.md`. The midnight expiry of `[NS-34]`
   goes with it.
 - **Blocks on exactly two named conditions**, reporting the path and OS error:
@@ -384,7 +445,14 @@ Execute `[NS-44]` as merged, under its own plan:
 - the Handoff Protocol;
 - the governance-exception paragraph;
 - `AGENTS.md`;
-- `.cursor/rules/pmb-journal.mdc`.
+- `.cursor/rules/pmb-journal.mdc`;
+- `memory-bank/systemPatterns.md` (its "Memory Bank (5 files)" and "Handoff Protocol … write
+  handoff.md" lines) and `standards/MEMORY-BANK.md` (its handoff and shared-state sections), plus
+  the `templates/` mirror of the standard.
+
+F4 refuses `memory-bank/` commits from a linked worktree, so the flag PR is authored **in the main
+checkout**, on a fresh branch from `origin/main`, at a time when no worktree sessions are running
+(triage rule d).
 
 Until the flag PR merges, the instructions describe the behaviour that is actually live. The flag PR
 carries these byte additions too, and offsets them.
@@ -406,6 +474,7 @@ carries these byte additions too, and offsets them.
 **Phase 0 — spike, no repository change.**
 - Settle U1, U7, U11 and U12.
 - Time the SessionStart script and the Stop hook against their budgets.
+  The Stop hook's budget is 1.0 s on this machine, measured as in the SessionStart budget.
 
 **Phase 1 — journal, gate and awareness.** This is triage chip P, re-scoped.
 - `mb.sh`/`mb.ps1` gain `journal` and `sessions`, with the §4.1 changes, a shared UTF-8 helper and
@@ -432,7 +501,7 @@ snapshots, `list` and `restore`.
 **Size.** Reviewer estimates range from about 5–8k to 6.5–10k lines for Phases 1–2, counting both twins,
 template mirrors and tests at this repository's roughly 1:1 test ratio. `[NS-44]` has its own plan.
 
-## 6. Decisions remaining for approval
+## 6. Decisions (approved 2026-09-29)
 
 | # | Decision | Recommendation |
 |---|---|---|
@@ -458,7 +527,12 @@ Tests use scratch repositories and assert that the real common dir's `pmb/` is u
 - Without `mb.sh journal`, the gate and hooks behave exactly as today.
 
 **Journal**
-- Concurrent writers in both shells produce complete records.
+- Collisions are **injected**, not raced:
+  - a pre-existing file at the exact target name must survive unchanged while a new record is
+    written beside it;
+  - a pre-existing `seq/<n>` must be skipped.
+
+  Removing the `ln`/`CreateNew` guard must turn these tests red.
 - Same-second writes survive.
 - `<seq>` stays unique under concurrency.
 - Non-ASCII bytes, the 1,024 B limit and case-variant secrets agree across twins.
@@ -469,6 +543,12 @@ Tests use scratch repositories and assert that the real common dir's `pmb/` is u
 - It ignores other sessions' records.
 - It writes `compact`.
 - It blocks on exactly its two named conditions and fails open on everything else.
+- A `handoff.md` dated today in the worktree root does **not** pass the journal-mode gate — the
+  `[NS-22]` class, kept closed.
+- A record written before the latest `compact` marker does not pass. A 39-byte `note` does not
+  pass; a 40-byte one does.
+- `trigger=auto` never blocks. A repeated manual `/compact` with nothing new passes once. A
+  planted marker or note above the allocated seq changes nothing.
 - The command in its block message runs verbatim while `MB_HOME` points at an older tree.
 
 **Awareness**
