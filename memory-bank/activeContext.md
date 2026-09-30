@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-09-25
+last-reviewed: 2026-09-30
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -117,7 +117,7 @@ the detail those entries were condensed from. Older: `docs/archive/context-2026-
 
 
 52. [NS-52] **Re-do the disposition pass against `unyieldingclaw-dev/harness-engineering` PR #12's two real artifacts.** Recorded here 2026-09-11 because its only prior record was `handoff.md` — gitignored, invisible to every review round, and which `pre-compact-check.sh` instructs the operator to delete once spent. Verified absent from the memory bank before this entry: `grep -rn 'disposition' memory-bank/*.md` returned nothing, and `harness-engineering` appeared zero times in `progress.md`. The item is `[NS-42]`'s write-rate problem biting directly — pending work with nowhere to go lands in a file the tooling is designed to destroy.
-55. [NS-55] **RESOLVED 2026-09-21.** Shared clone re-shallowed mid-session from an unflagged `baseline-health.sh` fetch (Step 3.5 lacked `--no-fetch`, unlike its siblings), breaking merge/ancestry checks silently — hit twice 2026-09-19, a 3rd time this session (`[NS-13]`'s first, wrong correction). `--no-fetch` added to both `.claude/commands/code-review.md:88` and its `templates/` mirror — the first attempt missed the mirror, caught by `tests/test-mirror-parity.sh` before merge.
+55. [NS-55] **RESOLVED 2026-09-21** — `--no-fetch` added to `code-review.md` and its `templates/` mirror. Detail: `progress.md` 2026-09-21.
 56. [NS-56] **Regression-guard test suite for `ai-review.config.json` ships (PR #40, merged 2026-09-21), closing the loop `[NS-48]` opened.** `tests/test-ai-review-config.sh`: 20 assertions on ACR's deterministic `policy`/`filteredFiles` fields only, never finding content. **The one CI-enforced check (array-symmetry) would NOT have caught either historical NS-48 incident** — both were symmetric across both arrays; real protection is local-only. Detail, incl. a mid-session `git add -N` + `git checkout --` data-loss recovery: `progress.md` 2026-09-21.
 57. [NS-57] **`mb doctor`'s `check_size()` caps are hardcoded literals (`mb.sh:1043-1047`), no per-project override.** Reported by the ACR peer 2026-09-21: ACR raised its own memory-bank caps (documented + CI-enforced), now gets spurious WARNs against PMB's lower defaults — same shape as the `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` duplication already fixed once. Needs a design pass; not started.
 58. [NS-58] **`.githooks/pre-commit` ships no format-check dispatch, and adding one locally is a dead end — it's `TEMPLATE_OWNED` (`docs/HOOKS-GUIDE.md:256`), silently overwritten by `mb upgrade`.** Reported by the ACR peer 2026-09-21, who ran a full `/code-review` on a local prettier-dispatch fix and got Request Changes: 3 verified correctness bugs worth avoiding upstream — (a) unquoted `xargs` word-splits filenames with spaces, false "not formatted"; (b) `npx --no-install prettier` fails pre-`npm install` with an error indistinguishable from a real formatting failure; (c) `git diff --cached --name-only --diff-filter=ACM` excludes renamed+modified (status `R`) files, silently skipping them; plus a minor `--` separator hardening gap for filenames starting with `-`. Needs the same `.githooks/pre-push`→`scripts/pre-push-check.*` dispatch pattern, NUL-delimited (`-z`/`-0`), with a missing-`node_modules` guard. Peer offered their draft reference implementation. Not started.
@@ -137,4 +137,4 @@ main branch is protected as of 2026-07-08 (PR + passing checks required, enforce
 Direct `git push origin main` no longer works on this repo — create a branch, commit, push the
 branch, then open a PR and merge once required checks pass.
 
-**Three files are permanently untracked by design — never `git add -A`:** `.claude/session-claims.json`, `tests/helpers/stub-pwsh.sh`, `tests/test-hook-wiring.sh`. The last is *parked*, not merely unlanded — its fixture strips all of `/usr/bin` on Linux (`[NS-33]`), so wiring it into `tests/run.sh` as-is breaks CI. Recorded 2026-08-26 from `handoff.md`, which is gitignored and was never a durable home for it.
+**Never `git add -A` here:** other sessions' untracked files share this checkout. `tests/test-hook-wiring.sh` and `tests/helpers/stub-pwsh.sh` are *parked* in no tree — only in stash "On main: pre-pr27-codex-hook-activation-2026-09-16" (copy: `pmb-session-artifacts/2026-09-29/parked-hook-wiring/`); the fixture strips all of `/usr/bin` on Linux (`[NS-33]`), so wiring it into `tests/run.sh` as-is breaks CI.
