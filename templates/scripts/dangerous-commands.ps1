@@ -188,7 +188,16 @@ $cmdLoose = ($cmd -replace '[\\"'']', '') -replace ' +', ' '
 # vs .NET `-replace` in round 4, `grep` vs `-imatch` in round 6 (fixed with -z), and now `.`
 # vs `.`. confirm_regex()'s comment in the sh twin asked that a third instance be made harder
 # to write; this is that instance, handled at the same time as the change that would cause it.
-$DcRegexOpts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline'
+#
+# WHY CultureInvariant: IgnoreCase alone folds case by the CURRENT culture's rules, and under
+# tr-TR (and az) upper-case `I` does not fold to `i`. Measured on pwsh 7 with the thread culture
+# set to tr-TR: `git commit --NO-GPG-SIGN` and `GIT CONFIG COMMIT.GPGSIGN FALSE` got no CONFIRM,
+# and `| IEX` / `| INVOKE-EXPRESSION` would not have matched the [NS-38] iex regexes below -- a
+# BLOCK regression against the OrdinalIgnoreCase literals they replace. Invariant folding can
+# only ADD matches for these ASCII patterns. Found by the opposition pass on the [NS-38] design,
+# 2026-09-27. The sh twin pins only its pipe row to LC_ALL=C; its signing rows keep the caller's
+# locale, because the byte locale counts their `.{0,300}` bounds in bytes -- see dc_grep there.
+$DcRegexOpts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline, CultureInvariant'
 
 function Deny {
     param([string]$Reason)
@@ -244,16 +253,26 @@ $blockPatterns = @(
     @{ pattern = "git push -f";      reason = "force push (short form)" }                   # WHY: same as --force, short flag form
     @{ pattern = "DROP TABLE";       reason = "SQL table drop" }                            # WHY: irreversible schema destruction
     @{ pattern = "DROP DATABASE";    reason = "SQL database drop" }                         # WHY: destroys entire database
-    @{ pattern = '\|\s*bash\b'; regex = $true; reason = "command piped to bash (curl|bash, wget|bash, etc.)" } # WHY: remote code execution vector. Regex with \b (not a plain substring): matches both spaced ("| bash") and unspaced ("|bash") forms in one pattern.
-    @{ pattern = '\|\s*sh\b';   regex = $true; reason = "command piped to sh" }              # WHY: remote code execution via sh. WHY regex, not substring: a plain "| sh" substring check false-positives on any command containing "| sha256sum", "| shasum", etc. -- tools this repo's own review-gate hash verification depends on (found when fixing the field-path bug that had made this pattern a no-op made this collision real). \b requires "sh" to end at a word boundary, so "sha256sum" (sh immediately followed by "a", no boundary) doesn't match, but a literal pipe-to-sh interpreter does.
+    # Each `regex = $true` row needs one example in tests/test-dangerous-commands.sh's `_dc_ex`
+    # table, keyed by row order within its tier array; renumber after an inserted row.
+    #
+    # WHY `\|&?`, [NS-38]: bash's `|&` pipes stdout AND stderr into the interpreter, and this hook
+    # also guards the Bash tool whenever pwsh is present, so `curl x |& bash` must block here too.
+    # `\s*` already spans a newline after the pipe -- the continuation form the sh twin missed.
+    @{ pattern = '\|&?\s*bash\b'; regex = $true; reason = "command piped to bash (curl|bash, wget|bash, etc.)" } # WHY: remote code execution vector. Regex with \b (not a plain substring): matches both spaced ("| bash") and unspaced ("|bash") forms in one pattern.
+    @{ pattern = '\|&?\s*sh\b';   regex = $true; reason = "command piped to sh" }              # WHY: remote code execution via sh. WHY regex, not substring: a plain "| sh" substring check false-positives on any command containing "| sha256sum", "| shasum", etc. -- tools this repo's own review-gate hash verification depends on (found when fixing the field-path bug that had made this pattern a no-op made this collision real). \b requires "sh" to end at a word boundary, so "sha256sum" (sh immediately followed by "a", no boundary) doesn't match, but a literal pipe-to-sh interpreter does.
     # PowerShell-native equivalents (triggered by the PowerShell tool)
     @{ pattern = "Remove-Item -Recurse -Force"; reason = "recursive force deletion (PowerShell rm -rf equivalent)" }         # WHY: Remove-Item -Recurse -Force is the PS equivalent of rm -rf
     @{ pattern = "Remove-Item -Force -Recurse"; reason = "recursive force deletion (PowerShell rm -rf, flags reversed)" }   # WHY: same as above — flag order varies in real commands
     @{ pattern = "Format-Volume";               reason = "disk volume format (PowerShell)" }                                # WHY: destroys all data on a volume
-    @{ pattern = "| Invoke-Expression";         reason = "command piped to Invoke-Expression (PS code execution)" }         # WHY: pipe-to-iex is the PS equivalent of pipe-to-bash
-    @{ pattern = "|Invoke-Expression";          reason = "command piped to Invoke-Expression (no-space form)" }             # WHY: no-space form evades space-prefixed pattern
-    @{ pattern = "| iex";                       reason = "command piped to iex (PS eval shorthand)" }                      # WHY: iex is the common alias for Invoke-Expression
-    @{ pattern = "|iex";                        reason = "command piped to iex (no-space form)" }                          # WHY: no-space form evades space-prefixed pattern
+    # WHY regexes and not the four literals they replace ("| Invoke-Expression", "|Invoke-Expression",
+    # "| iex", "|iex"), [NS-38]: PowerShell continues a pipeline after a trailing `|` onto the next
+    # line, including across blank lines (verified live), so `iwr x |` + newline + `iex` executes
+    # the download -- and no literal can span that newline. `\s*` covers the no-space, one-space and
+    # newline forms in one row. NO trailing boundary, deliberately: the literals had none, so the
+    # regexes are a strict superset of them. Adding `\b` would have narrowed the tier.
+    @{ pattern = '\|\s*Invoke-Expression'; regex = $true; reason = "command piped to Invoke-Expression (PS code execution)" }   # WHY: pipe-to-iex is the PS equivalent of pipe-to-bash
+    @{ pattern = '\|\s*iex';               regex = $true; reason = "command piped to iex (PS eval shorthand)" }                # WHY: iex is the common alias for Invoke-Expression
 )
 
 foreach ($entry in $blockPatterns) {
@@ -334,7 +353,11 @@ $warnPatterns = @(
 )
 
 foreach ($entry in $warnPatterns) {
-    if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
+    # Checks the de-escaped view too, [NS-40]: this loop tested $cmd alone, exactly like the sh
+    # twin's warn(), so `id\_rsa` and `"id"_rsa` warned on neither shell. The -or keeps one if
+    # body, so a command matching both views warns once -- this tier does not exit.
+    if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
         Write-Host ($WARN_MSG -f $entry.reason)
     }
 }

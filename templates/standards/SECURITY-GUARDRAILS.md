@@ -125,6 +125,12 @@ the config. These reach the same outcome and are deliberately not matched:
 - Appending `[commit]` / `gpgsign=false` directly into `.git/config`, which never invokes git.
 - `tag.gpgsign` and `push.gpgSign` — a different config namespace, out of scope for a
   commit-signing gate.
+- **(added 2026-09-27, unverified)** Upper-case spellings on the sh hook under a Turkish locale.
+  `grep -i` follows the locale, and under `tr_TR` an upper-case `I` may not fold to `i`. The
+  PowerShell hook had this defect, and `CultureInvariant` fixed it, measured. The sh side could not
+  be tested because no `tr_TR` locale was available. Pinning its grep to `LC_ALL=C` would fix it,
+  but was measured to break long multibyte paths: the byte locale counts the `.{0,300}` gaps below
+  in bytes, not characters.
 - A **computed value** — `git config commit.gpgsign $(echo false)`. The literal `(false|no|off|0)`
   alternation cannot see through command substitution.
 - An **indirected key** — `K=commit.gpgsign; git config "$K" false`. Resolving it requires
@@ -206,6 +212,27 @@ before git sees the command, so a wrapped invocation runs exactly as its one-lin
 round 4 the hook matched the raw two-line text and no pattern's glue matched a backslash or a
 newline — `git config commit.gpgsign \`⏎`false` disabled signing with no prompt. The join applies to
 every tier, because the same evasion defeated literal BLOCK substrings such as `git push --force`.
+
+**A trailing pipe also continues the command (added 2026-09-27, [NS-38]).** `curl x |`⏎`bash` runs
+exactly as `curl x | bash`, blank lines included, in both bash and PowerShell (verified live). The
+pipe-to-interpreter BLOCK rows are regexes that allow any whitespace, newlines included, between the
+pipe and the interpreter, and they also match bash's `|&`. Before this, the sh hook's literal rows
+could not span the newline, and the PowerShell `iex` literals could not either.
+
+- **Accepted false positive:** a heredoc body is data to the shell but text to this matcher. So
+  writing a YAML block scalar (`run: |`) whose next line starts with `bash` or `sh` is refused.
+  Telling a heredoc body apart from a real split pipe requires tokenizing the shell. The PowerShell
+  hook refused this shape before the change too. The refusal errs toward blocking.
+- **Not covered, in either shell:**
+  - a comment line between the pipe and the interpreter, which a real shell skips;
+  - an interpreter reached through another word: `| sudo sh`, `| env bash`, `| /bin/bash`;
+  - any interpreter other than bash and sh: `| zsh`, `| dash`, `| python`, and so on;
+  - a PowerShell inline block comment (`|<#…#>iex`) or backtick escape (``i`ex``);
+  - the raw-payload fallback used when the JSON cannot be parsed, where a newline is the two
+    characters `\n`.
+- **Not covered by the PowerShell hook only:** a digit or `_` straight after the interpreter name.
+  Its `\b` boundary counts those as part of the word, so `| bash5` and `| bash_x` are refused by the
+  sh hook but not the PowerShell one. This predates the change.
 
 ### Database Operations
 

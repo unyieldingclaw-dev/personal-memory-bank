@@ -3,6 +3,40 @@
 ## [Unreleased]
 
 ### Fixed
+- **A pipe to a shell split across a newline got past the BLOCK tier on sh ([NS-38]).** A trailing
+  `|` continues the command onto the next line, so `curl x |`, a newline, then `bash` runs as
+  `curl x | bash`. `dangerous-commands.sh` matched pipe-to-interpreter with four literal rows,
+  which could not span the newline. They are now one regex row (`block_regex`, `grep -z`) that
+  allows any whitespace after the pipe and also matches bash's `|&`. It matches every input the
+  four rows did: checked over 4,900 fuzzed inputs with no losses. `dangerous-commands.ps1`'s
+  bash/sh rows already spanned the newline and now also match `|&`. Its four `iex` /
+  `Invoke-Expression` literals had the same newline gap in PowerShell. They are now two regexes,
+  a strict superset of the literals. A heredoc that writes a YAML `run: |` block followed by a
+  `bash` line is now refused on sh, as it already was on ps1. This is recorded as an accepted
+  false positive in `standards/SECURITY-GUARDRAILS.md`, together with the pipe forms still not
+  covered.
+- **The WARN tier ignored the de-escaped view in both shells ([NS-40]).** `cat ~/.ssh/id\_rsa` and
+  `cat ~/.ssh/"id"_rsa` warned on neither shell. `warn()` and the ps1 warn loop now also check the
+  de-escaped view, and warn once when both views match.
+- **Case-insensitive matching failed under a Turkish locale.** .NET's `IgnoreCase` follows the
+  current culture, and under tr-TR `I` does not fold to `i`. So `git commit --NO-GPG-SIGN` and
+  `GIT CONFIG COMMIT.GPGSIGN FALSE` got no CONFIRM there (measured). The ps1 regexes now use
+  `CultureInvariant`. The new sh pipe row runs `grep` under `LC_ALL=C`, so it matches the same bytes
+  in every locale; without the pin, UTF-8 locales changed what it matched. The sh signing rows are
+  deliberately not pinned. The byte locale counts their `.{0,300}` gaps in bytes, so pinning them
+  would stop a long multibyte path from prompting on sh while ps1 still prompts (measured). The sh Turkish-locale case is
+  therefore still open and unverified, and is listed in `standards/SECURITY-GUARDRAILS.md`.
+- **CI now fails when the sh/ps1 parity checks cannot run.** The `mb-command-tests` job sets
+  `PMB_REQUIRE_PARITY=1`, so if pwsh ever disappears from the runner, the cross-shell checks fail
+  instead of silently skipping.
+- **The sh regex rows now prompt when `grep` fails.** `grep` exits 2 when it cannot evaluate a
+  pattern, and inside an `if` that read as "no match", which would have silently disabled every
+  regex row. It now prompts, like the hook's other "cannot analyze" cases.
+- **A new test covers every guard row in both shells.** Every registered row is run through the
+  real hook with and without a backslash, and must get the same verdict from its own row. Rows,
+  examples, and matchers are counted exactly, so a skipped or unpaired row fails the test. Checked
+  by mutation: pointing any one matcher's de-escaped branch back at the plain view turns the test
+  red on that matcher's rows.
 - **`mb commit`'s subworktree check was wrong three ways, in both runtimes.** It compared
   `--git-common-dir` against `$PWD/.git`.
   - Inside an absorbed git submodule, whose `.git` is a gitlink *file*, it said "You are in a git

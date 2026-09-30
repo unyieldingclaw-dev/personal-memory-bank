@@ -74,15 +74,22 @@ to lower case **once** — `cmd_lc` and `cmd_loose_lc`, built beside `cmd_loose`
 `case` against those folded views.
 
 **The rule when adding a pattern to `dangerous-commands.sh`: write it in lower case.** `block`,
-`block_boundary`, `confirm`, `confirm_boundary` and `warn` compare `$1` against an already-folded
+`confirm`, `confirm_boundary` and `warn` compare `$1` against an already-folded
 subject and do **not** fold `$1` themselves. An upper-case pattern therefore matches nothing, ever —
 silently, and **fail-open**. Nothing at the call site looks wrong; the guard simply stops guarding.
 This is why `chmod -R 777` is spelled `chmod -r 777` in **the script's** pattern list, while the
 tier lists above show the command as an operator would actually type it. The real `chmod -R 777` is
 still caught, because the *subject* is folded before comparison.
 
-`confirm_regex` is the exception — its patterns go to `grep -qziE`, which folds via `-i`, so case
+`confirm_regex` and `block_regex` are the exception — their patterns go to `grep -qziE`, which folds via `-i`, so case
 there is unconstrained.
+
+**Regex rows and locale.** Case-insensitive regex matching follows the locale unless it is pinned.
+The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase` alone does not
+fold `I` to `i`, and the signing and `iex` rows returned no verdict (measured). On the sh side only
+`block_regex` pins `LC_ALL=C`. `confirm_regex` deliberately does not, because the byte locale counts
+its `.{0,300}` gaps in bytes, and a long multibyte path then stops matching. So a new sh regex row
+inherits its matcher's locale rule, which can change what it matches.
 
 **Why the patterns aren't just folded per call** (the obvious alternative, which was built and then
 reverted): folding `$1` inside each matcher costs a `printf | tr` subshell per matcher *call* —

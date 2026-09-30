@@ -650,8 +650,14 @@ jobs:
         shell: bash
         run: git fetch --depth=1 origin main >/dev/null || true
 
+      # WHY PMB_REQUIRE_PARITY: the sh/ps1 parity blocks in test-dangerous-commands.sh and
+      # test-pre-compact-check.sh SKIP when pwsh is missing, loudly but without failing. The runner
+      # ships pwsh today, so this changes nothing now; it turns a runner that stopped shipping it
+      # into a red build instead of a green one that no longer checks the shell Windows runs first.
       - name: Run mb command tests
         shell: bash
+        env:
+          PMB_REQUIRE_PARITY: "1"
         run: bash tests/run.sh
 
   powershell-lint:
