@@ -24,11 +24,11 @@
   now use `CultureInvariant`. On sh, the signing rows run twice, first under the caller's locale
   and then under `LC_ALL=C`, and prompt if either run matches. Neither locale alone is enough
   (measured):
-  - `C` counts the rows' `.{0,300}` gaps in bytes, so a long multibyte path stopped prompting on sh.
+  - `C` counts the rows' `.{0,255}` gaps in bytes, so a long multibyte path would not prompt on sh.
   - A UTF-8 locale misses a lone-surrogate escape in a gap on GNU grep 3.7, and a Turkish UTF-8
     locale also misses the upper-case key.
-  - Both passes still miss when either of those causes combines with a gap of more than 300 bytes of
-    non-ASCII text. This is recorded in `standards/SECURITY-GUARDRAILS.md`.
+  - Both passes still miss when either of those causes combines with a gap longer than 255 bytes.
+    This is recorded in `standards/SECURITY-GUARDRAILS.md`.
 
   Both sh views now go through one `grep` per pass, joined by NUL, so the second pass adds no net
   grep calls. The new pipe row runs under `LC_ALL=C` only, so it matches the same bytes in every
@@ -38,7 +38,15 @@
   instead of silently skipping.
 - **The sh regex rows now prompt when `grep` fails.** `grep` exits 2 when it cannot evaluate a
   pattern, and inside an `if` that read as "no match", which would have silently disabled every
-  regex row. It now prompts, like the hook's other "cannot analyze" cases.
+  regex row. It now prompts, like the hook's other "cannot analyze" cases. That makes a grep with
+  `-z`, such as GNU grep, a requirement of the sh hook. BusyBox grep rejects `-z` (measured), so on
+  Alpine without pwsh every Bash command prompts. The deny message says to install GNU grep or
+  PowerShell.
+- **The signing rows' gap bound is 255, not 300, in both shells.** POSIX guarantees repetition
+  bounds only up to 255. BusyBox grep rejects `.{0,256}` (measured), and with the fail-closed rule
+  above that denied every command. On `origin/main` the same failure silently disabled the signing
+  CONFIRM on such greps instead. The longest `-C` path the bound admits is now 250 characters
+  (measured, both hooks). A new test fails if any regex row carries a bound above 255.
 - **A new test covers every guard row in both shells.** Every registered row is run through the
   real hook with and without a backslash, and must get the same verdict from its own row. Rows,
   examples, and matchers are counted exactly, so a skipped or unpaired row fails the test. Checked

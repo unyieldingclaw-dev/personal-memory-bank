@@ -745,6 +745,25 @@ for _dc_script in "$REPO_ROOT/scripts/dangerous-commands.sh" "$REPO_ROOT/scripts
     fi
 done
 
+# ── no regex row may carry a repetition bound above 255 ────────────────────────────────────
+# WHY: POSIX guarantees `{m,n}` only up to RE_DUP_MAX, whose minimum is 255. GNU grep, the only grep
+# CI runs, accepts far more, so CI never sees the failure; BusyBox grep rejects `.{0,256}` (measured),
+# and because dc_grep denies when grep cannot evaluate a row, a bound of 300 denied EVERY command on
+# such a host. The .ps1 twin carries the same bound so the two shells keep one regex text.
+# The positive control -- at least two bounded rows found in each file -- stops a broken extraction
+# from passing vacuously.
+echo ""
+echo "--- no regex row carries a repetition bound above 255 (the POSIX guarantee) ---"
+for _dc_script in "$REPO_ROOT/scripts/dangerous-commands.sh" "$REPO_ROOT/scripts/dangerous-commands.ps1"; do
+    _dc_rows=$(grep -E '_regex "|@\{ pattern =' "$_dc_script" | grep -E '\{[0-9]+(,[0-9]*)?\}')
+    _dc_nrows=$(printf '%s\n' "$_dc_rows" | grep -c .)
+    _dc_maxb=$(printf '%s\n' "$_dc_rows" | grep -oE '\{[0-9]+(,[0-9]*)?\}' | grep -oE '[0-9]+' | sort -n | tail -1)
+    [ "$_dc_nrows" -ge 2 ]
+    assert_exit_zero "$?" "$(basename "$_dc_script"): the bound extraction found the bounded rows ($_dc_nrows)"
+    [ "${_dc_maxb:-999}" -le 255 ]
+    assert_exit_zero "$?" "$(basename "$_dc_script"): largest regex repetition bound is ${_dc_maxb:-none} (must be <= 255)"
+done
+
 # The two nested-gap patterns stay bounded -- confirm the bound still admits a long real path.
 echo ""
 echo "--- the bounded config gaps still match a realistic long-path invocation ---"
@@ -1036,7 +1055,7 @@ done
 # ── the signing rows run under the caller's locale AND under C ────────────────────────────
 # Each of the three tests below fails if one of the two passes in confirm_regex() is removed.
 #
-# 1. The caller's-locale pass: those rows bound their gaps with `.{0,300}`, and the byte locale
+# 1. The caller's-locale pass: those rows bound their gaps with `.{0,255}`, and the byte locale
 # counts that bound in BYTES while a UTF-8 locale and the .ps1 twin count CHARACTERS. A 120-character
 # CJK path is 360 bytes: with confirm_regex under LC_ALL=C only, the sh signing CONFIRM goes silent
 # while ps1 still prompts (measured). Asserted under the effective UTF-8 locales only; under

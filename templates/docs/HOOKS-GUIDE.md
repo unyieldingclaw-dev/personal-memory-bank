@@ -88,8 +88,14 @@ The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase
 fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
 verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
 the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The byte locale
-counts the `.{0,300}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
+counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
 row inherits its matcher's locale rule, which can change what it matches.
+
+**Platform requirement (sh hook): a grep with `-z`, such as GNU grep.** The regex rows run on every
+command, and a grep that cannot evaluate them makes the hook refuse rather than pass. BusyBox grep
+rejects `-z` (measured), so on Alpine without pwsh every Bash command prompts. Install GNU grep or
+PowerShell there. Keep regex repetition bounds at 255 or below, the POSIX guarantee: BusyBox grep
+rejects `.{0,256}`, and the test suite fails on any row above 255.
 
 **Why `$1` is not simply folded per call:** that costs a `printf | tr` subshell per matcher *call*,
 roughly 25 per invocation, on a hook that runs on every single Bash tool call — measured at

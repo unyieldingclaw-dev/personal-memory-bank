@@ -214,8 +214,15 @@ fi
 # single-gap ones; measuring both on the shape that is worst for each gives:
 #     one unbounded gap  (`-c ...`, `--no-gpg-sign`)  4.3s   on dense `git ` text
 #     two nested gaps    (`config (gap)...(gap)`)     >30s   times out; ~47 min extrapolated
-# Only the NESTED pair blows up superlinearly, so only those four groups are bounded, at {0,300}
-# (0.74s at 50000 chars). The two single-gap patterns are left UNBOUNDED on purpose.
+# Only the NESTED pair blows up superlinearly, so only those four groups are bounded, now at
+# {0,255} (at the earlier {0,300} this measured 0.74s at 50000 chars; a lower bound does strictly
+# less work). The two single-gap patterns are left UNBOUNDED on purpose.
+#
+# WHY 255 and not 300: POSIX guarantees a repetition bound only up to RE_DUP_MAX, whose minimum is
+# 255, and this file targets POSIX tools. Measured on BusyBox grep (musl, Alpine): `.{0,255}`
+# compiles and `.{0,256}` fails with "Invalid contents of {}" -- exit 2, which dc_grep turns into a
+# denial of EVERY command, because the signing rows run on every call. GNU grep accepts both. The
+# .ps1 twin uses the same 255 so the two shells keep one regex text and one bound.
 #
 # WHOLE-HOOK worst case at the 50000-byte bound, measured end to end, .ps1 side:
 #     dense `git `        17.55s      <- the real number to reason about
@@ -233,7 +240,7 @@ fi
 # exceed that. It is exactly the shape the round-6 note below cites as canonical. The reasoning
 # that justified the uniform bound ("real gaps are tiny: `--global` is 9 characters") is true of
 # the `config` gaps and false of the message gap; one bound was applied to two different things.
-# KNOWN COST of the {0,300} bound that remains: 300+ characters between `git` and `config`, or
+# KNOWN COST of the {0,255} bound that remains: 256+ characters between `git` and `config`, or
 # between `config` and the key, no longer matches. That is flag-and-path territory, where gaps
 # really are short, and it does not lower the bar for an adversary -- anyone able to pad the
 # command text already has the strictly easier S4/S5 bypasses documented as unfixable by any
@@ -376,6 +383,10 @@ dc_grep() {
     # silently disabled every regex row, including the single-line `curl | bash` BLOCK that the
     # glob matcher this replaced handled with no external tool. Same honest direction as the
     # length bound above: a command the guard cannot analyze prompts, it does not pass.
+    # That makes a grep with -z a hard requirement of the sh hook. Measured: BusyBox grep rejects
+    # -z ("unrecognized option: z") for every row, so where the sh hook runs on BusyBox (Alpine, no
+    # pwsh) every Bash command prompts. The deny message names the fix. The requirement is recorded
+    # in docs/HOOKS-GUIDE.md and standards/SECURITY-GUARDRAILS.md.
     #
     # WHY block_regex() passes C: grep's character classes follow the locale. Measured under GNU
     # grep 3.0, C.UTF-8 made [[:space:]] match NBSP and em-space (which this file keeps
@@ -386,7 +397,7 @@ dc_grep() {
     #
     # WHY confirm_regex() runs the caller's locale AND C, not either one alone -- each alone
     # misses a signing bypass the other catches (all measured):
-    #   - C alone: the rows bound their gaps with `.{0,300}`, and C counts that bound in BYTES
+    #   - C alone: the rows bound their gaps with `.{0,255}`, and C counts that bound in BYTES
     #     while a UTF-8 locale and the .ps1 twin count CHARACTERS. `git config --file /tmp/<120
     #     CJK chars>/cfg` plus the key and a falsey value (408 bytes) matches under C.UTF-8 and
     #     .NET and not under C, so the sh CONFIRM went silent while ps1 prompted.
@@ -399,7 +410,7 @@ dc_grep() {
     # The union can only add matches. Its cost is a second grep per row, paid only when the
     # first misses -- that is, on almost every command -- and the NUL join above pays for it.
     # It does not close every combination: when the caller's pass misses for one of the reasons
-    # above AND the gap holds more than 300 bytes of non-ASCII text, the C pass misses too, so a
+    # above AND the gap is longer than 255 bytes, the C pass misses too, so a
     # Turkish locale plus an upper-case key plus a long CJK path gets no verdict here while the .ps1
     # twin prompts. Recorded in standards/SECURITY-GUARDRAILS.md.
     _dc_re=$1
@@ -412,7 +423,7 @@ dc_grep() {
     fi
     _dc_rc=$?
     if [ "$_dc_rc" -gt 1 ]; then
-        deny "CONFIRM REQUIRED: grep could not evaluate a guard pattern (exit ${_dc_rc}), so this command cannot be checked reliably. Run manually if intentional."
+        deny "CONFIRM REQUIRED: grep could not evaluate a guard pattern (exit ${_dc_rc}), so this command cannot be checked reliably. The sh hook needs a grep that supports -z, such as GNU grep; BusyBox grep does not. Install GNU grep or PowerShell (pwsh). Run manually if intentional."
         exit 0
     fi
     return "$_dc_rc"
@@ -720,7 +731,7 @@ confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WH
 # The class also did not achieve what it cost: NEWLINE was never in the excluded set, so the gap
 # already spanned commands freely. It blocked ordinary messages and not the thing it was for.
 #
-# The two nested-gap `config` patterns keep a BOUND (`.{0,300}`) because they are the cubic pair
+# The two nested-gap `config` patterns keep a BOUND (`.{0,255}`) because they are the cubic pair
 # and need one -- but they no longer exclude separators either. That exclusion was left in place
 # for one round on the argument that a separator there means a different command; it was then
 # measured to be a live hole of its own:
@@ -737,8 +748,8 @@ confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WH
 # silent miss is not. Both are recorded in the accepted-false-positive list in
 # standards/SECURITY-GUARDRAILS.md rather than left for the next reviewer to rediscover.
 confirm_regex "(^|[^a-z])git (.*)-c *[\"']?commit\.gpgsign[\"']? *= *[\"']?(false|no|off|0)([^a-z0-9]|$)" "bypasses commit signing (local governance)"
-confirm_regex "(^|[^a-z])git (.{0,300})config (.{0,300})[\"']?commit\.gpgsign[\"']? *[= ] *[\"']?(false|no|off|0)([^a-z0-9]|$)" "bypasses commit signing (local governance)"
-confirm_regex "(^|[^a-z])git (.{0,300})config (.{0,300})--unset(-all)? +[\"']?commit\.gpgsign" "bypasses commit signing (local governance)"
+confirm_regex "(^|[^a-z])git (.{0,255})config (.{0,255})[\"']?commit\.gpgsign[\"']? *[= ] *[\"']?(false|no|off|0)([^a-z0-9]|$)" "bypasses commit signing (local governance)"
+confirm_regex "(^|[^a-z])git (.{0,255})config (.{0,255})--unset(-all)? +[\"']?commit\.gpgsign" "bypasses commit signing (local governance)"
 confirm_regex "(^|[^a-z])git (.*)--no-gpg-sign" "bypasses commit signing (local governance)"
 confirm_boundary "git merge" "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier"  # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
 

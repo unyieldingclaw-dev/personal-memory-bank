@@ -220,7 +220,9 @@ function Deny {
 #
 # ROUND 8: growth was measured to be CUBIC, not quadratic (~8x per doubling), making the real
 # worst case at this bound ~47 minutes rather than the "roughly 8 seconds" previously claimed.
-# Only the two NESTED-gap `config` patterns blow up; they are bounded to {0,300}. The two
+# Only the two NESTED-gap `config` patterns blow up; they are bounded to {0,255} -- not 300,
+# because POSIX guarantees repetition bounds only up to 255 and the sh twin's grep must compile
+# the same regex (measured: BusyBox grep rejects `.{0,256}`); see dangerous-commands.sh. The two
 # single-gap patterns are deliberately left unbounded -- bounding them broke the --no-gpg-sign
 # CONFIRM for any ordinary commit message, because that gap holds the message rather than flags.
 # See dangerous-commands.sh for the per-pattern measurements and why test assertions were
@@ -309,8 +311,8 @@ $confirmPatterns = @(
     # need \" and PowerShell single-quotes need '' for the same two characters. The
     # engine-visible pattern is identical; the parity test asserts behaviour, not text.
     @{ pattern = '(^|[^a-z])git (.*)-c *["'']?commit\.gpgsign["'']? *= *["'']?(false|no|off|0)([^a-z0-9]|$)'; regex = $true; reason = "bypasses commit signing (local governance)" }
-    @{ pattern = '(^|[^a-z])git (.{0,300})config (.{0,300})["'']?commit\.gpgsign["'']? *[= ] *["'']?(false|no|off|0)([^a-z0-9]|$)'; regex = $true; reason = "bypasses commit signing (local governance)" }
-    @{ pattern = '(^|[^a-z])git (.{0,300})config (.{0,300})--unset(-all)? +["'']?commit\.gpgsign'; regex = $true; reason = "bypasses commit signing (local governance)" }
+    @{ pattern = '(^|[^a-z])git (.{0,255})config (.{0,255})["'']?commit\.gpgsign["'']? *[= ] *["'']?(false|no|off|0)([^a-z0-9]|$)'; regex = $true; reason = "bypasses commit signing (local governance)" }
+    @{ pattern = '(^|[^a-z])git (.{0,255})config (.{0,255})--unset(-all)? +["'']?commit\.gpgsign'; regex = $true; reason = "bypasses commit signing (local governance)" }
     @{ pattern = '(^|[^a-z])git (.*)--no-gpg-sign'; regex = $true; reason = "bypasses commit signing (local governance)" }
     # WHY regex, not a plain substring: "git merge" as a bare substring also matches
     # "git merge-base", a common, harmless read-only command — the character after
