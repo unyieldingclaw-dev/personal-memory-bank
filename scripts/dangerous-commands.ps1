@@ -222,7 +222,7 @@ function Deny {
 # worst case at this bound ~47 minutes rather than the "roughly 8 seconds" previously claimed.
 # Only the two NESTED-gap `config` patterns blow up; they are bounded to {0,255} -- not 300,
 # because POSIX guarantees repetition bounds only up to 255 and the sh twin's grep must compile
-# the same regex (measured: BusyBox grep rejects `.{0,256}`); see dangerous-commands.sh. The two
+# the same regex; see the WHY-255 note in dangerous-commands.sh. The two
 # single-gap patterns are deliberately left unbounded -- bounding them broke the --no-gpg-sign
 # CONFIRM for any ordinary commit message, because that gap holds the message rather than flags.
 # See dangerous-commands.sh for the per-pattern measurements and why test assertions were

@@ -40,13 +40,19 @@
   pattern, and inside an `if` that read as "no match", which would have silently disabled every
   regex row. It now prompts, like the hook's other "cannot analyze" cases. That makes a grep with
   `-z`, such as GNU grep, a requirement of the sh hook. BusyBox grep rejects `-z` (measured), so on
-  Alpine without pwsh every Bash command prompts. The deny message says to install GNU grep or
-  PowerShell.
+  Alpine with bash but without pwsh every Bash command prompts. Without bash as well, the hook
+  wiring's `|| true` fallback runs no guard at all (measured). The deny message says to install GNU
+  grep or PowerShell.
 - **The signing rows' gap bound is 255, not 300, in both shells.** POSIX guarantees repetition
-  bounds only up to 255. BusyBox grep rejects `.{0,256}` (measured), and with the fail-closed rule
-  above that denied every command. On `origin/main` the same failure silently disabled the signing
-  CONFIRM on such greps instead. The longest `-C` path the bound admits is now 250 characters
-  (measured, both hooks). A new test fails if any regex row carries a bound above 255.
+  bounds only up to 255 (`RE_DUP_MAX`), so a grep that supports `-z` but caps bounds there would
+  reject `{0,300}` and, with the fail-closed rule above, deny every command. No such grep has been
+  measured; macOS/BSD grep is the plausible case. BusyBox is not one: it rejects `-z` before
+  compiling any pattern, so the sh hook denies every command there at 255 and at 300 alike
+  (measured). The longest `-C` path the bound admits is now 250 characters (measured, both hooks).
+  A new test fails if any regex row carries a bound above 255.
+- **On `origin/main`, BusyBox grep silently disabled the sh regex rows.** A grep failure read as "no
+  match" there, so BusyBox's `-z` rejection let `git -c commit.gpgsign=false commit` through with no
+  prompt, while the literal rows still fired (measured). The fail-closed rule above closes this.
 - **A new test covers every guard row in both shells.** Every registered row is run through the
   real hook with and without a backslash, and must get the same verdict from its own row. Rows,
   examples, and matchers are counted exactly, so a skipped or unpaired row fails the test. Checked
@@ -512,13 +518,14 @@
   It was the one function the retrofit missed, so `git m\erge main` and `git "merge" main` were
   silent in `.sh` while `.ps1` confirmed both. The mutation proof had verified the mechanism where it
   was wired, which says nothing about whether every matcher is wired to it.
-- **The two nested-gap CONFIRM regexes are bounded (`[^|;&]*` → `.{0,300}`), removing a hang.**
+- **The two nested-gap CONFIRM regexes are bounded (`[^|;&]*` → `.{0,300}`, later `.{0,255}`; see
+  the gap-bound entry above), removing a hang.**
   Backtracking on the `git (gap)config (gap)` shape is cubic (~8x per doubling, measured), so the
   50,000-character length bound permitted roughly **47 minutes** of matching per pattern — and a
   `PreToolUse` hook blocks the tool call, so this was a hang rather than a slow path, reachable by an
   ordinary large heredoc writing prose about `git config`. Now ~0.75s at 50,000 characters, still
-  matching a 296-character `-C` path. `{0,300}` is valid in GNU ERE and .NET alike, so one regex still
-  serves both shells.
+  matching a long `-C` path (250 characters at the final bound). One regex text still serves both
+  shells.
 - **Only the nested pair is bounded.** The `-c` and `--no-gpg-sign` patterns nest a single gap group,
   measure ~4.3s at 50,000 characters on the payload shape that is worst for them, and are left
   unbounded on purpose: in `git <gap> --no-gpg-sign`
@@ -547,8 +554,9 @@
 - **The same hole in the two `config` patterns is now closed too.** A separator between `git` and
   `config` defeated them the same way — `git -c core.pager='less | head' config --global
   commit.gpgsign false` permanently unsigns every commit in every repo, and `core.pager` with a pipe
-  is an ordinary configuration. Those gaps are now `.{0,300}`: still length-bounded, because these
-  two are the quadratic pair and bounding is what contains that, but no longer excluding separators.
+  is an ordinary configuration. Those gaps are now `.{0,300}` (later `.{0,255}`): still
+  length-bounded, because these two are the cubic pair and bounding is what contains that, but no
+  longer excluding separators.
   Measured at 50,000 characters the bounded-dot form is **0.795s, slightly faster** than the class it
   replaced (0.942s). **Accepted cost, now asserted in both suites so the trade stays visible:**
   `git config user.name x | grep commit.gpgsign false` prompts. Telling that apart from the real

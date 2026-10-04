@@ -443,7 +443,7 @@ Describe "dangerous-commands.ps1 (round-8 regression guards)" {
     # a legitimate documentation command is still blocked, merely sooner -- and it would be
     # .NET-only, reintroducing the per-platform divergence this file has already shipped twice.
     # Bounding the two NESTED gaps fixes it at the source (0.789s at 50000 chars, measured at the
-    # earlier {0,300}; the bound is now {0,255}, which does strictly less work); this
+    # earlier {0,300}; the bound is now {0,255}); this
     # assertion is what stops a future edit from unbounding them again.
     #
     # The 10s threshold is deliberately loose against a measured ~0.3s: it is meant to catch an

@@ -215,14 +215,16 @@ fi
 #     one unbounded gap  (`-c ...`, `--no-gpg-sign`)  4.3s   on dense `git ` text
 #     two nested gaps    (`config (gap)...(gap)`)     >30s   times out; ~47 min extrapolated
 # Only the NESTED pair blows up superlinearly, so only those four groups are bounded, now at
-# {0,255} (at the earlier {0,300} this measured 0.74s at 50000 chars; a lower bound does strictly
-# less work). The two single-gap patterns are left UNBOUNDED on purpose.
+# {0,255} (0.74s at 50000 chars, measured at the earlier {0,300}). The two single-gap patterns
+# are left UNBOUNDED on purpose.
 #
 # WHY 255 and not 300: POSIX guarantees a repetition bound only up to RE_DUP_MAX, whose minimum is
-# 255, and this file targets POSIX tools. Measured on BusyBox grep (musl, Alpine): `.{0,255}`
-# compiles and `.{0,256}` fails with "Invalid contents of {}" -- exit 2, which dc_grep turns into a
-# denial of EVERY command, because the signing rows run on every call. GNU grep accepts both. The
-# .ps1 twin uses the same 255 so the two shells keep one regex text and one bound.
+# 255. A grep that supports -z but caps bounds there would reject `.{0,300}` with exit 2, which
+# dc_grep turns into a denial of EVERY command, because the signing rows run on every call. No such
+# grep has been measured; macOS/BSD grep is the plausible case and is untested. BusyBox is NOT that
+# case: it rejects -z before compiling any pattern, so this hook denies every command there at 255
+# and at 300 alike (measured end to end, BusyBox 1.37.0 on Alpine with bash). GNU grep accepts both
+# bounds. The .ps1 twin uses the same 255 so the two shells keep one regex text and one bound.
 #
 # WHOLE-HOOK worst case at the 50000-byte bound, measured end to end, .ps1 side:
 #     dense `git `        17.55s      <- the real number to reason about
@@ -383,9 +385,10 @@ dc_grep() {
     # silently disabled every regex row, including the single-line `curl | bash` BLOCK that the
     # glob matcher this replaced handled with no external tool. Same honest direction as the
     # length bound above: a command the guard cannot analyze prompts, it does not pass.
-    # That makes a grep with -z a hard requirement of the sh hook. Measured: BusyBox grep rejects
-    # -z ("unrecognized option: z") for every row, so where the sh hook runs on BusyBox (Alpine, no
-    # pwsh) every Bash command prompts. The deny message names the fix. The requirement is recorded
+    # That makes a grep with -z a hard requirement of the sh hook. Measured on Alpine: BusyBox grep
+    # rejects -z ("unrecognized option: z"), so with bash but no pwsh every Bash command prompts.
+    # Without bash as well, the settings.json wiring `pwsh ... || bash ... || true` runs no guard at
+    # all and every command is allowed. The deny message names the fix. The requirement is recorded
     # in docs/HOOKS-GUIDE.md and standards/SECURITY-GUARDRAILS.md.
     #
     # WHY block_regex() passes C: grep's character classes follow the locale. Measured under GNU

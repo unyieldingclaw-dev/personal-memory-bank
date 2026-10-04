@@ -747,9 +747,10 @@ done
 
 # ── no regex row may carry a repetition bound above 255 ────────────────────────────────────
 # WHY: POSIX guarantees `{m,n}` only up to RE_DUP_MAX, whose minimum is 255. GNU grep, the only grep
-# CI runs, accepts far more, so CI never sees the failure; BusyBox grep rejects `.{0,256}` (measured),
-# and because dc_grep denies when grep cannot evaluate a row, a bound of 300 denied EVERY command on
-# such a host. The .ps1 twin carries the same bound so the two shells keep one regex text.
+# CI runs, accepts far more, so CI never sees the failure. On a grep that supports -z but caps bounds
+# at 255 (macOS/BSD grep is the plausible case; not measured), a bound of 300 would make dc_grep deny
+# EVERY command. BusyBox is not such a grep: it rejects -z first, at any bound. The .ps1 twin carries
+# the same bound so the two shells keep one regex text.
 # The positive control -- at least two bounded rows found in each file -- stops a broken extraction
 # from passing vacuously.
 echo ""

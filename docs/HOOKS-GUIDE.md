@@ -94,9 +94,11 @@ row inherits its matcher's locale rule, which can change what it matches.
 
 **Platform requirement (sh hook): a grep with `-z`, such as GNU grep.** The regex rows run on every
 command, and a grep that cannot evaluate them makes the hook refuse rather than pass. BusyBox grep
-rejects `-z` (measured), so on Alpine without pwsh every Bash command prompts. Install GNU grep or
-PowerShell there. Keep regex repetition bounds at 255 or below, the POSIX guarantee: BusyBox grep
-rejects `.{0,256}`, and the test suite fails on any row above 255.
+rejects `-z` (measured), so on Alpine with bash but without pwsh every Bash command prompts. Without
+bash as well, the hook wiring's `|| true` fallback runs no guard at all. Install GNU grep or
+PowerShell there. Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
+a grep that supports `-z` but caps bounds there can still compile every row. The test suite fails on
+any row above 255.
 
 **Why the patterns aren't just folded per call** (the obvious alternative, which was built and then
 reverted): folding `$1` inside each matcher costs a `printf | tr` subshell per matcher *call* —

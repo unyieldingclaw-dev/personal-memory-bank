@@ -137,7 +137,10 @@ the config. These reach the same outcome and are deliberately not matched:
   without an attacker: a large heredoc writing prose *about* `git config`, containing no `|`, `;` or
   `&`, has exactly that shape. Those four gap groups are now bounded to `{0,255}`. The bound was
   `{0,300}` until 2026-09-30. It was lowered because POSIX guarantees repetition bounds only up to
-  255: BusyBox grep rejects `.{0,256}`, and on such a host the sh hook then denied every command.
+  255: a grep that supports `-z` but caps bounds there would reject `{0,300}`, and under the
+  fail-closed rule the sh hook would then deny every command. No such grep has been measured
+  (macOS/BSD grep is the plausible case). BusyBox is not one: it rejects `-z` first, so the sh hook
+  denies every command there at either bound.
   **The longest `-C` path that still matches is 250 characters**, measured in both hooks. It follows
   from the arithmetic: the gap must also hold `-C `, the leading `/` and the space before `config`,
   so path + 5 <= 255. At `{0,300}` the same measurement gives 295; this paragraph had said 296, and
@@ -198,7 +201,7 @@ clear. Three cases do still trip, and are accepted rather than chased:
   configuration. Distinguishing "separator inside a quoted argument" from "separator that ends the
   command" requires tokenizing the shell, which this matcher deliberately does not do. So the
   choice is which way to be wrong; a spurious prompt was taken over a silent miss. The gaps stay
-  length-bounded (`.{0,255}`) because those two patterns are the ones with the quadratic blowup —
+  length-bounded (`.{0,255}`) because those two patterns are the ones with the cubic blowup —
   bounding is what contains that, not the character class, and the bounded form measured slightly
   faster than the class it replaced.
 - **(added 2026-08-24)** a command whose meaning changes when backslashes and quotes are stripped.
@@ -242,9 +245,11 @@ could not span the newline, and the PowerShell `iex` literals could not either.
   Its `\b` boundary counts those as part of the word, so `| bash5` and `| bash_x` are refused by the
   sh hook but not the PowerShell one. This predates the change.
 - **Platform requirement (sh hook):** a grep that supports `-z`, such as GNU grep. The regex rows run
-  on every command, and a grep that cannot evaluate them is refused rather than trusted. So where the
-  sh hook runs on BusyBox grep (for example Alpine without pwsh), every Bash command prompts.
-  Measured: BusyBox grep rejects `-z`. Install GNU grep or PowerShell there. The deny message says so.
+  on every command, and a grep that cannot evaluate them is refused rather than trusted. Measured on
+  Alpine, which ships BusyBox grep and no pwsh: with bash installed, every Bash command prompts,
+  because BusyBox grep rejects `-z`. Without bash, the shipped hook wiring
+  (`pwsh ... || bash ... || true`) runs no guard at all, and every command is allowed. Install GNU
+  grep or PowerShell there. The deny message says so.
 
 ### Database Operations
 
