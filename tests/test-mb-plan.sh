@@ -73,6 +73,69 @@ EOF
 output=$(cd "$TMPDIR_PLAN" && MB_HOME="$REPO_ROOT" bash "$MB" plan promote ".claude/plans/2099-01-01-test.md" 2>&1)
 assert_exit_nonzero $? "mb plan promote refuses to overwrite existing plan"
 
+# ── mb plan promote: status handling is scoped to the frontmatter ([NS-19]) ─────
+# WHY: standards/WORKFLOW.md Phase 3 tells adopters promote COPIES the draft and sets
+# `status: planned` unless a later status is set. Before [NS-19] a frontmatter block with no
+# `status:` key (or an empty one) was promoted with no status at all while printing
+# "draft -> planned", and the rewrite ran over the whole file, so a body line starting
+# `status: draft` was rewritten too. `mb plan status` then flagged the plan it had just made.
+echo ""
+echo "--- mb plan promote: status handling (frontmatter only) ---"
+
+_promote() { (cd "$TMPDIR_PLAN" && MB_HOME="$REPO_ROOT" bash "$MB" plan promote ".claude/plans/$1" 2>&1); }
+# Frontmatter lines only: between the opening fence and the first closing fence, CR stripped.
+_fm() { awk 'NR==1 {next} {sub(/\r$/, "")} /^---[ \t]*$/ {exit} {print}' "$TMPDIR_PLAN/docs/plans/$1"; }
+
+printf -- '---\nstatus: draft\n---\n\n# Body\nstatus: draft is how this line starts\n' \
+    > "$TMPDIR_PLAN/.claude/plans/2099-02-01-draft.md"
+output=$(_promote 2099-02-01-draft.md)
+assert_equals "$(_fm 2099-02-01-draft.md | grep -c '^status: planned$')" "1" "draft status becomes planned in the frontmatter"
+assert_equals "$(grep -c '^status: draft is how this line starts$' "$TMPDIR_PLAN/docs/plans/2099-02-01-draft.md")" "1" \
+    "a body line starting 'status: draft' is left alone"
+assert_file_exists "$TMPDIR_PLAN/.claude/plans/2099-02-01-draft.md" "promote copies: the draft stays in .claude/plans/"
+
+printf -- '---\ncreated: 2099-01-01\n---\n\n# No status key\n' > "$TMPDIR_PLAN/.claude/plans/2099-02-02-nokey.md"
+output=$(_promote 2099-02-02-nokey.md)
+assert_equals "$(_fm 2099-02-02-nokey.md | grep -c '^status: planned$')" "1" "frontmatter without a status key gains status: planned"
+assert_not_contains "$output" "draft → planned" "no status key: the message does not claim a draft was rewritten"
+
+printf -- '---\nstatus:\n---\n\n# Empty status\n' > "$TMPDIR_PLAN/.claude/plans/2099-02-03-empty.md"
+_promote 2099-02-03-empty.md > /dev/null
+assert_equals "$(_fm 2099-02-03-empty.md | grep -c '^status: planned$')" "1" "an empty status: becomes planned"
+
+printf -- '---\nstatus: "draft"\n---\n\n# Quoted\n' > "$TMPDIR_PLAN/.claude/plans/2099-02-04-quoted.md"
+_promote 2099-02-04-quoted.md > /dev/null
+assert_equals "$(_fm 2099-02-04-quoted.md | grep -c '^status: planned$')" "1" "a quoted \"draft\" status becomes planned"
+
+printf -- '---\nstatus: active\n---\n\n# Later\n' > "$TMPDIR_PLAN/.claude/plans/2099-02-05-later.md"
+output=$(_promote 2099-02-05-later.md)
+assert_equals "$(_fm 2099-02-05-later.md | grep -c '^status: active$')" "1" "a later status is kept"
+assert_contains "$output" "preserved" "a kept status is reported as preserved"
+
+# A leading horizontal rule with no closing fence is not frontmatter: inserting a status line
+# after it would corrupt the body, so the draft is treated as having no frontmatter.
+printf -- '---\n\n# Starts with a rule, no closing fence\n' > "$TMPDIR_PLAN/.claude/plans/2099-02-06-rule.md"
+_promote 2099-02-06-rule.md > /dev/null
+assert_equals "$(_fm 2099-02-06-rule.md | grep -c '^status: planned$')" "1" "an unclosed leading --- gets new frontmatter"
+assert_equals "$(grep -c '^# Starts with a rule, no closing fence$' "$TMPDIR_PLAN/docs/plans/2099-02-06-rule.md")" "1" \
+    "an unclosed leading --- keeps its original content"
+
+printf -- '---\r\ncreated: 2099-01-01\r\n---\r\n\r\n# CRLF\r\n' > "$TMPDIR_PLAN/.claude/plans/2099-02-07-crlf.md"
+_promote 2099-02-07-crlf.md > /dev/null
+assert_equals "$(_fm 2099-02-07-crlf.md | grep -c '^status: planned$')" "1" "a CRLF draft gains status: planned"
+# WHY awk with BINMODE=3, not grep: Git Bash's grep strips CR before matching, so the earlier
+# `grep -vc $'\r$'` counted 0 for ANY file and could not fail. Other awks ignore BINMODE.
+assert_equals "$(awk -v BINMODE=3 '!/\r$/ {n++} END {print n+0}' "$TMPDIR_PLAN/docs/plans/2099-02-07-crlf.md")" "0" \
+  "a CRLF draft stays CRLF on every line"
+
+# Both runtimes: the key is case-sensitive (YAML), the draft value is not.
+printf -- '---\nstatus: DRAFT\n---\n\n# Upper\n' > "$TMPDIR_PLAN/.claude/plans/2099-02-08-upper.md"
+_promote 2099-02-08-upper.md > /dev/null
+assert_equals "$(_fm 2099-02-08-upper.md | grep -c '^status: planned$')" "1" "an uppercase DRAFT value becomes planned"
+printf -- '---\nStatus: active\n---\n\n# Key case\n' > "$TMPDIR_PLAN/.claude/plans/2099-02-09-keycase.md"
+_promote 2099-02-09-keycase.md > /dev/null
+assert_equals "$(_fm 2099-02-09-keycase.md | grep -c '^status: planned$')" "1" "a capitalised Status: key is not the status key"
+
 # ── mb plan list (with plan) ─────────────────────────────────────────────────
 echo ""
 echo "--- mb plan list (with plan) ---"

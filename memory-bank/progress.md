@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-09-30
+last-reviewed: 2026-10-04
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -13,11 +13,25 @@ lineage: []
 
 # Progress
 
+## 2026-10-04 — PR #47 merged (`19931dc`); `fix/ns19` rebased onto it
+
+- `fix/ns19-plan-workflow-template` was rebased onto `437d3c1`, then onto `19931dc`. Its one
+  `progress.md` conflict was resolved by date order. Its hash citations now name the branch,
+  because a rebase and a squash merge both rewrite hashes.
+- The stale root `handoff.md` (2026-09-25) is fully landed except its Codex-sandbox ACR note,
+  which PR #48 carries. Delete it once #48 is decided.
+
 ## 2026-09-30 — PR #49 merged (`584a8e4`); two review-gate escapes open
 
 - **Unfixed:** an apostrophe in a heredoc body before a commit in one command makes both
   classifiers return NONE (chip 08). A wrapper's own options do the same; fix `0e04fa0` is
   unpushed on `docs/wrapper-option-classifier-escape`.
+
+## 2026-09-26 — [NS-19] plan workflow fixed; diff-only standards reversed by fleet data
+
+- Pre-approval adversarial review of "make `mb.ps1` diff-only for `standards/`": 7 of 8 adopter repos hold the
+  same OLD shipped blobs (e.g. `CODE-REVIEW.md` `8b9d06c1` in 3 repos, spot-checked), so the harm is stale
+  standards, not lost edits. Diff-only deferred to a design (overwrite only on a known shipped version).
 
 ## 2026-09-24 → 25 — PR #46 merged; local `main` reconciled; two more merge-gate escapes
 

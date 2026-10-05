@@ -910,6 +910,9 @@ $PmbGitignoreEntries = @(
     ".claude/.pending-commit-presha"
     ".claude/.pending-push-presha"
     ".claude/contracts/*.json"
+    # Scratch plan drafts: standards/WORKFLOW.md Phase 3 and /feature-dev call them gitignored,
+    # and `mb doctor` reports a tracked one as an ERROR ([NS-19]).
+    ".claude/plans/"
 )
 
 # Appends any missing canonical entries to <dir>/.gitignore. Returns the list of entries that
@@ -3000,7 +3003,14 @@ function Invoke-PlanPromote {
 
     New-Item -ItemType Directory -Force -Path "docs/plans" | Out-Null
     $Content = Get-Content $Draft -Raw
-    $HasFM = $Content -match '^---'
+    # WHY a closing fence is required: a draft that merely starts with a `---` horizontal rule is
+    # not frontmatter, and editing "inside" it would corrupt the body. Must match mb.sh.
+    $Lines = $Content -split "`r?`n"
+    $FmClose = $null
+    if ($Lines.Count -gt 1 -and $Lines[0].TrimEnd() -eq '---') {
+        $FmClose = 1..($Lines.Count - 1) | Where-Object { $Lines[$_].TrimEnd() -eq '---' } | Select-Object -First 1
+    }
+    $HasFM = $null -ne $FmClose
 
     if (-not $HasFM) {
         $Today = Get-Date -Format 'yyyy-MM-dd'
@@ -3008,11 +3018,35 @@ function Invoke-PlanPromote {
         Set-Content -Path $Dest -Value ($FM + $Content) -NoNewline
         Write-Host "Added frontmatter and promoted to $Dest" -ForegroundColor Green
     } else {
-        Copy-Item $Draft $Dest
-        $Lines = Get-Content $Dest
-        $Updated = $Lines -replace '^status: draft', 'status: planned'
-        Set-Content -Path $Dest -Value $Updated
-        Write-Host "Promoted to $Dest" -ForegroundColor Green
+        # Ensure status is at least 'planned', looking ONLY inside the frontmatter: the old
+        # whole-file -replace also rewrote a body line starting `status: draft`, and left a
+        # frontmatter with no status key (or an empty one) without any status at all.
+        # -cmatch: YAML keys are case-sensitive, and mb.sh's awk matches `status:` exactly.
+        $StatusIdx = 1..($FmClose - 1) | Where-Object { $Lines[$_] -cmatch '^status:' } | Select-Object -First 1
+        $CurrentStatus = ''
+        if ($null -ne $StatusIdx) {
+            $CurrentStatus = ($Lines[$StatusIdx] -replace '^status:', '') -replace '[\s"'']', ''
+        }
+        if ($CurrentStatus -and $CurrentStatus -ne 'draft') {
+            Copy-Item $Draft $Dest
+            Write-Host "Promoted to $Dest (status: $CurrentStatus preserved)" -ForegroundColor Green
+        } else {
+            # Keep the draft's line ending, so a CRLF draft stays CRLF throughout.
+            $Eol = if ($Content -match "`r`n") { "`r`n" } else { "`n" }
+            $Out = [System.Collections.Generic.List[string]]::new()
+            for ($i = 0; $i -lt $Lines.Count; $i++) {
+                if ($null -ne $StatusIdx -and $i -eq $StatusIdx) { $Out.Add('status: planned'); continue }
+                if ($null -eq $StatusIdx -and $i -eq $FmClose) { $Out.Add('status: planned') }
+                $Out.Add($Lines[$i])
+            }
+            Set-Content -Path $Dest -Value ($Out -join $Eol) -NoNewline
+            if ($null -eq $StatusIdx) {
+                Write-Host "Promoted to $Dest (status: planned added)" -ForegroundColor Green
+            } else {
+                $Was = if ($CurrentStatus) { $CurrentStatus } else { 'empty' }
+                Write-Host "Promoted to $Dest (status: $Was → planned)" -ForegroundColor Green
+            }
+        }
     }
 
     # Reconcile the originating backlog item (if any) -- see

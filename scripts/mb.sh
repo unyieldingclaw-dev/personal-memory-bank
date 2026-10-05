@@ -602,6 +602,9 @@ PMB_GITIGNORE_ENTRIES=(
     ".claude/.pending-commit-presha"
     ".claude/.pending-push-presha"
     ".claude/contracts/*.json"
+    # Scratch plan drafts: standards/WORKFLOW.md Phase 3 and /feature-dev call them gitignored,
+    # and `mb doctor` reports a tracked one as an ERROR ([NS-19]).
+    ".claude/plans/"
 )
 
 # Appends any missing canonical entries to $1/.gitignore. Sets GITIGNORE_ADDS to what was
@@ -621,7 +624,7 @@ sync_gitignore() {
     # WHY the sed: a bare `grep -qxF` against a CRLF-terminated .gitignore MISSES every
     # entry under real GNU grep -- the trailing \r is part of the line. Git Bash's grep runs
     # in text mode and strips it, which hides the bug on Windows; this repo's own .gitignore
-    # is CRLF, so an `mb upgrade` from WSL or Linux CI would re-append all 11 entries on
+    # is CRLF, so an `mb upgrade` from WSL or Linux CI would re-append every entry on
     # every run, unbounded. Trailing whitespace is stripped for the same reason, and only
     # TRAILING: a .gitignore line's LEADING whitespace is significant to git, so `  foo` does
     # not ignore `foo` and must not be treated as already present. Must match Sync-Gitignore.
@@ -2157,17 +2160,18 @@ invoke_upgrade() {
         # WHY standards/*.md are NOT here, despite scripts/mb.ps1 listing them: moving them into
         # this array was attempted on 2026-09-03 (completing the port a453a5a began in mb.ps1) and
         # REVERTED the same day on a Critical review finding. TEMPLATE_OWNED force-overwrites via
-        # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md is STALE, not
-        # genericized: the live file describes the current `.claude/plans` -> `mb plan promote`
-        # flow while the template still describes the superseded one ([NS-19], first sentence,
-        # still open). Force-overwriting would therefore replace a correct governance file with a
-        # known-wrong one. Three of the fifteen are also on test-mirror-parity.sh's STD_DIVERGE_OK
+        # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md was then STALE,
+        # not genericized: its Phase 3 described a superseded plan flow, so force-overwriting would
+        # have replaced a correct governance file with a known-wrong one. [NS-19] fixed that
+        # template, and test-mirror-parity.sh now pins WORKFLOW.md's remaining divergence to one
+        # generic paragraph. The overwrite would still discard an adopter's own edits to
+        # standards/, and three of the fifteen stay on test-mirror-parity.sh's STD_DIVERGE_OK
         # allowlist, which asserts they must KEEP diverging.
         #
         # The two runtimes therefore disagree, deliberately and visibly: mb.ps1 force-overwrites
         # standards, mb.sh does not. That disagreement is now pinned by an assertion in
         # tests/test-mirror-parity.sh rather than left as an undocumented fact. Reconciling it is a
-        # real decision -- it needs templates/standards/WORKFLOW.md fixed first -- not a drift to
+        # real decision -- whether upgrade may discard local edits to standards/ -- not a drift to
         # be silently closed.
     )
 
@@ -2894,8 +2898,17 @@ invoke_plan_promote() {
 
     mkdir -p "docs/plans"
 
-    # Check/add frontmatter
-    HAS_FM=$(head -1 "$DRAFT" | grep -c '^---' || true)
+    # Check/add frontmatter. WHY a closing fence is required: a draft that merely starts with a
+    # `---` horizontal rule is not frontmatter, and editing "inside" it would corrupt the body.
+    HAS_FM=0
+    FM_CLOSE=""
+    FIRST_LINE=$(head -1 "$DRAFT" | tr -d '\r' | sed 's/[[:blank:]]*$//')
+    if [ "$FIRST_LINE" = "---" ]; then
+        # WHY BINMODE=3: Windows gawk (Git Bash) otherwise strips every CR on read, so a CRLF draft
+        # came out LF-only; other awks ignore the variable.
+        FM_CLOSE=$(awk -v BINMODE=3 'NR == 1 {next} {sub(/\r$/, "")} /^---[ \t]*$/ {print NR; exit}' "$DRAFT")
+        [ -n "$FM_CLOSE" ] && HAS_FM=1
+    fi
     if [ "$HAS_FM" -eq 0 ]; then
         TODAY=$(date +%Y-%m-%d)
         FM="---\nstatus: planned\ncreated: $TODAY\napproved: $TODAY\nrelated_spec: null\nscope: local\nrisk: medium\nsource: ai-draft\n---\n\n"
@@ -2903,14 +2916,33 @@ invoke_plan_promote() {
         cat "$DRAFT" >> "$DEST"
         echo -e "${GREEN}Added frontmatter and promoted to $DEST${NC}"
     else
-        cp "$DRAFT" "$DEST"
-        # Ensure status is at least 'planned'
-        CURRENT_STATUS=$(grep -m1 '^status:' "$DEST" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
-        if [ "$CURRENT_STATUS" = "draft" ] || [ -z "$CURRENT_STATUS" ]; then
-            sed -i.bak 's/^status: draft/status: planned/' "$DEST" && rm -f "${DEST}.bak"
-            echo -e "${GREEN}Promoted to $DEST (status: draft → planned)${NC}"
-        else
+        # Ensure status is at least 'planned', looking ONLY inside the frontmatter: the old
+        # whole-file grep/sed also rewrote a body line starting `status: draft`, and left a
+        # frontmatter with no status key (or an empty one) without any status at all.
+        STATUS_LINE=$(awk -v BINMODE=3 -v c="$FM_CLOSE" 'NR > 1 && NR < c && /^status:/ {print NR; exit}' "$DRAFT")
+        CURRENT_STATUS=""
+        if [ -n "$STATUS_LINE" ]; then
+            CURRENT_STATUS=$(sed -n "${STATUS_LINE}p" "$DRAFT" | sed 's/^status:[[:space:]]*//' | tr -d ' \r"'"'")
+        fi
+        # The key is matched case-sensitively (YAML keys are); the draft value is not, matching
+        # mb.ps1's -ne. Must match mb.ps1's Invoke-PlanPromote.
+        if [ -n "$CURRENT_STATUS" ] && [ "$(printf '%s' "$CURRENT_STATUS" | tr '[:upper:]' '[:lower:]')" != "draft" ]; then
+            cp "$DRAFT" "$DEST"
             echo -e "${GREEN}Promoted to $DEST (status: $CURRENT_STATUS preserved)${NC}"
+        else
+            # The new line copies the line ending of the line it replaces or precedes, so a
+            # CRLF draft stays CRLF throughout.
+            awk -v BINMODE=3 -v c="$FM_CLOSE" -v s="$STATUS_LINE" '
+                function eol(l) { return (l ~ /\r$/) ? "\r" : "" }
+                s != "" && NR == s { print "status: planned" eol($0); next }
+                s == "" && NR == c { print "status: planned" eol($0) }
+                { print }
+            ' "$DRAFT" > "$DEST"
+            if [ -z "$STATUS_LINE" ]; then
+                echo -e "${GREEN}Promoted to $DEST (status: planned added)${NC}"
+            else
+                echo -e "${GREEN}Promoted to $DEST (status: ${CURRENT_STATUS:-empty} → planned)${NC}"
+            fi
         fi
     fi
 

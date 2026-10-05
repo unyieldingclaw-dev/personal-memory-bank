@@ -40,6 +40,12 @@ for f in CONTRACTS-GUIDE.md HOOKS-GUIDE.md; do
   assert_file_exists "$TMPDIR_INIT/docs/$f" "mb init creates docs/$f"
 done
 
+# WHY: a fresh adopter runs `init`, never `upgrade`, so the upgrade back-fill test in
+# tests/test-mb-upgrade.sh does not prove this path. WORKFLOW.md Phase 3 calls .claude/plans/
+# drafts gitignored, and `mb doctor` reports a tracked one as an ERROR ([NS-19]).
+assert_equals "$(grep -c '^\.claude/plans/$' "$TMPDIR_INIT/.gitignore" 2>/dev/null)" "1" \
+  "mb init gitignores .claude/plans/ (scratch plan drafts)"
+
 # review-reminders.sh/.ps1/-post.sh/-post.ps1 are invoked directly by templates/.claude/settings.json
 # but were missing from the init copy loop's script allowlist -- mb init shipped a settings.json
 # referencing hook scripts that were never actually copied into scripts/.
