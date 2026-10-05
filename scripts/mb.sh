@@ -157,6 +157,7 @@ show_help() {
     echo "  init     Initialize Memory Bank in current project (or: mb init <path>)"
     echo "  status   Quick state check — initialized, memory, context, standards, tasks"
     echo "  doctor   Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
+    echo "             --check: same checks, never rewrites .pmb-checksums (used by the pre-push hook)"
     echo "  query    Search memory-bank by tag or section header"
     echo "  clean    Memory bank maintenance: slim check + unified cleanup prompt"
     echo "  commit            Stage and commit Memory Bank changes"
@@ -872,6 +873,9 @@ show_doctor() {
     # ceiling breach is tracked separately as NS-44). Found 2026-09-19: doctor's exit code was
     # always 0 regardless of what it printed, so CI's "MB Doctor Self-Check" job could never fail.
     FATAL_FOUND=false
+    # `mb doctor --check`: compare integrity checksums without rewriting them (check 20).
+    CHECK_MODE=false
+    [ "$ARG" = "--check" ] && CHECK_MODE=true
 
     # 0. Version
     VERSION_FILE="$REPO_ROOT/VERSION"
@@ -1481,16 +1485,29 @@ show_doctor() {
             for iss in "${CHECKSUM_ISSUES[@]}"; do
                 echo -e "${RED}[ERROR] $iss${NC}"
             done
-            echo "       External edits are permitted — run 'mb doctor' again to refresh checksums after review."
+            if [ "$CHECK_MODE" = true ]; then
+                echo "       Not refreshed (--check). After review, accept with: mb verify-integrity"
+            else
+                echo "       External edits are permitted — run 'mb doctor' again to refresh checksums after review."
+            fi
         fi
+    elif [ "$CHECK_MODE" = true ]; then
+        echo -e "${YELLOW}[WARN] Integrity checksums: no baseline (.pmb-checksums absent); --check does not create one. Run: mb verify-integrity${NC}"
     else
         echo -e "${GREEN}[OK]   Integrity checksums — baseline established on this run${NC}"
     fi
-    # Always refresh checksums at end of doctor
-    {
-        echo "# PMB Checksums — last verified by mb doctor $(date '+%Y-%m-%d %H:%M:%S')"
-        echo -e "$CURRENT_HASHES" | grep -v '^$'
-    } > "$CHECKSUM_FILE" 2>/dev/null || true
+    # WHY --check skips the refresh: plain doctor re-baselines here, so a hook that runs it on
+    # every push reports a mismatch exactly once — in the run that then erases it. Check mode
+    # compares only. The marker line is ASCII and stable because pre-push Check 7 requires it
+    # as proof the read-only path ran (an older mb ignores --check and rewrites silently).
+    if [ "$CHECK_MODE" = true ]; then
+        echo -e "${GREEN}[OK]   Integrity check mode: .pmb-checksums not modified${NC}"
+    else
+        {
+            echo "# PMB Checksums — last verified by mb doctor $(date '+%Y-%m-%d %H:%M:%S')"
+            echo -e "$CURRENT_HASHES" | grep -v '^$'
+        } > "$CHECKSUM_FILE" 2>/dev/null || true
+    fi
 
     # 21. Git-vs-reviewed lag — last-reviewed frontmatter date vs. last git commit date
     GIT_LAG_FOUND=false

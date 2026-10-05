@@ -40,7 +40,15 @@ param(
     # named-parameter bind ("-all") before the script body runs at all, regardless
     # of quoting. Reproduced directly: without this, `mb backlog list --all` throws
     # "A parameter cannot be found that matches parameter name 'all'."
-    [switch]$All
+    [switch]$All,
+    # WHY: `mb doctor --check` (compare integrity checksums without rewriting them). Under
+    # `pwsh -File` -- the mb.bat launcher -- the binder takes `--check` as this switch and would
+    # throw without it. Under the call operator (`& mb.ps1 doctor --check`) the same token lands
+    # in positional $Arg instead (measured), so the dispatch below accepts both. That in-process
+    # form serves interactive use only: the pre-push hook cannot use it, because this script
+    # writes with Write-Host, which the hook's `2>&1 | Out-String` capture does not collect
+    # (measured: zero result lines, so UNKNOWN). The hook reaches this file through mb.bat.
+    [switch]$Check
 )
 
 # WHY: $PSScriptRoot is the directory containing mb.ps1 (scripts/).
@@ -405,6 +413,7 @@ function Show-Help {
     Write-Host "Commands:"
     Write-Host "  init          Initialize Memory Bank in current project (or: mb init <path>)"
     Write-Host "  doctor        Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
+    Write-Host "                  --check: same checks, never rewrites .pmb-checksums (used by the pre-push hook)"
     Write-Host "  status        Quick state check — initialized, memory, context, standards, tasks"
     Write-Host "  query         Search memory-bank by tag or section header"
     Write-Host "  clean         Memory bank maintenance: slim check + unified cleanup prompt"
@@ -1148,6 +1157,8 @@ function Show-Validate {
 # not semantic correctness or workflow compliance.
 # Keep checks deterministic, explainable, and low-noise.
 function Show-Doctor {
+    # -CheckMode: `mb doctor --check` -- compare integrity checksums without rewriting them (check 20).
+    param([switch]$CheckMode)
     Write-Host ""
     Write-Host "Doctor" -ForegroundColor Cyan
     Write-Host "======" -ForegroundColor Cyan
@@ -1792,17 +1803,30 @@ function Show-Doctor {
             Write-Host "[OK]   Integrity checksums verified — no external modifications detected" -ForegroundColor Green
         } else {
             foreach ($iss in $checksumIssues) { Write-Host "[ERROR] $iss" -ForegroundColor Red }
-            Write-Host "       External edits are permitted — run 'mb doctor' again to refresh checksums after review." -ForegroundColor DarkGray
+            if ($CheckMode) {
+                Write-Host "       Not refreshed (--check). After review, accept with: mb verify-integrity" -ForegroundColor DarkGray
+            } else {
+                Write-Host "       External edits are permitted — run 'mb doctor' again to refresh checksums after review." -ForegroundColor DarkGray
+            }
         }
+    } elseif ($CheckMode) {
+        Write-Host "[WARN] Integrity checksums: no baseline (.pmb-checksums absent); --check does not create one. Run: mb verify-integrity" -ForegroundColor Yellow
     } else {
         Write-Host "[OK]   Integrity checksums — baseline established on this run" -ForegroundColor Green
     }
-    # Always refresh checksums at end of doctor
-    try {
-        $csLines = @("# PMB Checksums — last verified by mb doctor $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
-        foreach ($fname in $currentHashes.Keys | Sort-Object) { $csLines += "$fname=$($currentHashes[$fname])" }
-        Set-Content -Path $checksumFile -Value $csLines -ErrorAction Stop
-    } catch { Write-Host "[WARN] Could not write .pmb-checksums: $_" -ForegroundColor Yellow }
+    # WHY -CheckMode skips the refresh: plain doctor re-baselines here, so a hook that runs it on
+    # every push reports a mismatch exactly once -- in the run that then erases it. Check mode
+    # compares only. The marker line is ASCII and stable because pre-push Check 7 requires it as
+    # proof the read-only path ran (an older mb.sh ignores --check and rewrites silently).
+    if ($CheckMode) {
+        Write-Host "[OK]   Integrity check mode: .pmb-checksums not modified" -ForegroundColor Green
+    } else {
+        try {
+            $csLines = @("# PMB Checksums — last verified by mb doctor $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+            foreach ($fname in $currentHashes.Keys | Sort-Object) { $csLines += "$fname=$($currentHashes[$fname])" }
+            Set-Content -Path $checksumFile -Value $csLines -ErrorAction Stop
+        } catch { Write-Host "[WARN] Could not write .pmb-checksums: $_" -ForegroundColor Yellow }
+    }
 
     # 21. Git-vs-reviewed lag — last-reviewed frontmatter date vs. last git commit date
     $gitLagFindings = @()
@@ -3302,7 +3326,7 @@ function Invoke-PlanArchive {
 # Run command
 switch ($Command) {
     "init"             { Invoke-Init }
-    "doctor"           { Show-Doctor }
+    "doctor"           { Show-Doctor -CheckMode:($Check.IsPresent -or $Arg -eq '--check') }
     "status"           { Show-Status }
     "query"            { Show-Query -Keyword $Arg }
     "clean"            { Show-Clean }

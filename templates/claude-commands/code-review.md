@@ -104,7 +104,7 @@ needs a 20-line `awk` function with a fence-parity and a per-line backtick-parit
 | `0` | every check passed | Pass, per check |
 | `1` | a check **failed** | A real CI failure, on the same bodies the workflow runs. Name the check and the offending file. |
 | `2` | the workflow is **absent** | Every row **Skipped**. Nothing was verified. Do **not** substitute remembered thresholds and do **not** report a pass — this command ships to repositories that do not receive `pmb-health.yml`. |
-| `3` | a step could not be **extracted** | The workflow was renamed or re-indented, so nothing ran. **This is not a passing tree.** Report it as a finding against the tooling. |
+| `3` | step extraction is **unsafe or incomplete** | The workflow was renamed or re-indented, a step name was ambiguous/duplicate, or flow-style steps could not be verified. Nothing ran. **This is not a passing tree.** Report it as a finding against the tooling. |
 
 **`--no-fetch` is mandatory here, not just for the Step 5 subagent re-run.** Without it, the File
 Size job's startup-context ratchet makes one shallow `git fetch --depth=1 origin main`, which

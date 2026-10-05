@@ -22,7 +22,7 @@ One-page cheatsheet for daily use.
 |---------|--------------|
 | `mb init` | Scaffold memory-bank/ in the current project |
 | `mb status` | Quick state check — initialized, memory, context, standards, tasks |
-| `mb doctor` | Full 24-check diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, drift flags, integrity, plan hygiene |
+| `mb doctor` | Full diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, drift flags, integrity, plan hygiene. `--check`: same checks, never rewrites `.pmb-checksums` (what the pre-push hook runs) |
 | `mb query TAG` | Find all memory tagged with TAG |
 | `mb preflight` | Check tool availability for /change-review (git, gh, ai-review-agent, semgrep) |
 | `mb change-check` | Post-change summary — diff stats, file types, /change-review job preview |
