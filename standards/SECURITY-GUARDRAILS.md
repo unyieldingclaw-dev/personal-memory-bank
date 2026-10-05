@@ -152,7 +152,7 @@ the config. These reach the same outcome and are deliberately not matched:
   **(added 2026-09-30)** On the sh hook the bound can count **bytes**, not characters. GNU grep
   counts `.{0,255}` in bytes under the byte locale (`C`), and the sh signing rows fall back to that
   locale when a match under the caller's locale fails. So the limit is 255 bytes, about 85 CJK
-  characters, in three cases:
+  characters, in at least these cases:
   - the caller's locale is `C`;
   - a Turkish locale with an upper-case key;
   - a lone-surrogate escape in the gap, on a strict GNU grep (3.7 measured).
@@ -248,8 +248,8 @@ could not span the newline, and the PowerShell `iex` literals could not either.
   on every command, and a grep that cannot evaluate them is refused rather than trusted. Measured on
   Alpine, which ships BusyBox grep and no pwsh: with bash installed, every Bash command prompts,
   because BusyBox grep rejects `-z`. Without bash, the shipped hook wiring
-  (`pwsh ... || bash ... || true`) runs no guard at all, and every command is allowed. Install GNU
-  grep or PowerShell there. The deny message says so.
+  (`pwsh ... || bash ... || true`) runs no guard at all, and every command is allowed. Install
+  PowerShell, or bash with GNU grep, there. With bash installed, the deny message names the same fix.
 
 ### Database Operations
 
