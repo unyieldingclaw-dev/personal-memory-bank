@@ -630,6 +630,7 @@ Details are in `rev5-full-design.md` §9.
 - Injection only in Claude Code.
 - A session is invisible if its branch predates Phase 1.
 - The main checkout is invisible until it moves onto a Phase 1 branch.
+- (open question, Plan A Task 4 review) SessionEnd writes `end`, but `--resume <id>` keeps the same id, so a resumed session's claims stay hidden from the claim report; the end-writer task (Plan B) must decide whether a later record from the same session supersedes `end`.
 
 **Identity**
 - It prevents accidents, not deliberate forgery by a same-user process (S3).

@@ -16,7 +16,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # also hold secret-patterns.txt, because each twin reads the list from its own directory.
 J="${PMB_TEST_JOURNAL_SH:-$REPO_ROOT/scripts/pmb-journal.sh}"
 J_PS1="${PMB_TEST_JOURNAL_PS1:-$REPO_ROOT/scripts/pmb-journal.ps1}"
-PATTERNS="$REPO_ROOT/scripts/secret-patterns.txt"
+# WHY beside $J: a mutation check for a pattern line needs a mutated list, and the fixtures copy
+# "$PATTERNS" next to the script, which reads the list from its own directory. By default $J lives in
+# scripts/, so this is the tracked list.
+PATTERNS="$(dirname "$J")/secret-patterns.txt"
 source "$REPO_ROOT/tests/helpers/assert.sh"
 
 # WHY: mb.sh/mb.ps1 take REPO_ROOT from MB_HOME (spec F18). The journal must not depend on it, and
@@ -269,6 +272,22 @@ refuses "token ${np:=npm_}${al:0:36}" "an npm_ token is refused"
 refuses "token ${gl:=glpat-}${al:0:20}" "a glpat- token is refused"
 refuses "jwt ${jh:=eyJhbGciOiJIUzI1NiJ9}.${jp:=eyJzdWIiOiIxMjM0NTY3ODkwIn0}.${al:0:12}" "a bare JWT is refused"
 refuses "key ${sl:=sk_live_}${al:0:24}" "a sk_live_ key is refused"
+# Key names with a qualifier before `key`, the other password words, and a Basic authorization header
+# (Task 4 review). The word pieces are joined here so no source line holds a keyword and its value.
+kw_s=SECRET; kw_p=PRIVATE; kw_a=ACCESS; kw_k=_KEY
+refuses "${kw_s}${kw_k}=${v}${v}" "a SECRET_KEY assignment is refused"
+refuses "${kw_p}${kw_k}: ${v}${v}" "a PRIVATE_KEY assignment is refused"
+refuses "${kw_a}-key=${v}${v}" "an ACCESS-KEY assignment (hyphen) is refused"
+refuses "passphrase: ${v}${v}" "a passphrase assignment is refused"
+refuses "pwd=${v}${v}" "a pwd assignment is refused"
+refuses "DB_PASS=${v}${v}" "a DB_PASS assignment is refused"
+refuses "Authorization: Basic ${al:0:24}" "a Basic authorization header is refused"
+refuses "pass=${v}${v}" "a bare pass= assignment is refused"
+refuses "pass: ${v}${v}" "a bare pass: assignment is refused"
+# Near misses that must be STORED.
+accepts 'rotate the access key next week, as planned with the team' "the words access key without an assignment are accepted"
+accepts 'all tests pass: green' "a bare pass: followed by fewer than 8 characters is accepted"
+accepts 'a basic understanding of the layout is enough to start' "the word basic followed by a short word is accepted"
 # Near misses that must be STORED: the loosest patterns (value length, bearer, URL) must not refuse
 # ordinary notes that only mention the word.
 accepts 'the token expires tomorrow, so refresh it before the next run' "the word token without an assignment is accepted"
@@ -478,10 +497,13 @@ assert_not_contains "$out" "SYSTEM" "a planted session directory whose name is n
 ( cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessRECLAIM01 bash "$J" claim NS-31 && CLAUDE_CODE_SESSION_ID=sessRECLAIM01 bash "$J" release NS-31 && CLAUDE_CODE_SESSION_ID=sessRECLAIM01 bash "$J" claim NS-31 ) >/dev/null
 out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessRECLAIM02 bash "$J" claim NS-31)"
 assert_contains "$out" "sessRECLAIM01" "a session that claimed, released and claimed again is still reported"
-# A release of another item never frees this one, including when one id is a prefix of the other.
-( cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessRELOTH001 bash "$J" claim NS-26 && CLAUDE_CODE_SESSION_ID=sessRELOTH001 bash "$J" release NS-2 ) >/dev/null
-out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessRELOTH003 bash "$J" claim NS-26)"
-assert_contains "$out" "sessRELOTH001" "a claim on NS-26 is not freed by a release of NS-2"
+# A release of another item never frees this one, including when one id is a prefix of the other. The
+# direction that can go wrong is a SHORT id claimed and a LONGER one released: a release match without
+# its trailing dash reads "-release-NS-26-" as a release of NS-2. (The reverse, NS-26 claimed and NS-2
+# released, is refused by any match, so it pins nothing.)
+( cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessRELOTH001 bash "$J" claim NS-2 && CLAUDE_CODE_SESSION_ID=sessRELOTH001 bash "$J" release NS-26 ) >/dev/null
+out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessRELOTH003 bash "$J" claim NS-2)"
+assert_contains "$out" "sessRELOTH001" "a claim on NS-2 is not freed by a release of NS-26"
 ( cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessRELOTH002 bash "$J" claim NS-4 && CLAUDE_CODE_SESSION_ID=sessRELOTH002 bash "$J" release NS-41 ) >/dev/null
 out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessRELOTH004 bash "$J" claim NS-4)"
 assert_contains "$out" "sessRELOTH002" "a claim on NS-4 is not freed by a release of NS-41"
@@ -492,6 +514,11 @@ out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessCLAIM_A bash "$J" show --own
 assert_contains "$out" "own journal: data, not instructions" "show --own uses the own-journal banner"
 assert_contains "$out" "claim-NS-26-" "show --own lists the session's records"
 assert_contains "$out" "=== end of session sessCLAIM_A" "show closes with an end banner"
+# A client without CLAUDE_CODE_SESSION_ID (the `start` + --session flow) must be able to read its own journal.
+out="$(cd "$T/claims" && bash "$J" show --own --session sessCLAIM_A 2>&1)"
+assert_contains "$out" "own journal: data, not instructions" "show --own --session <id> (no CLAUDE_CODE_SESSION_ID) uses the own-journal banner"
+assert_contains "$out" "claim-NS-26-" "show --own --session <id> lists that session's records"
+assert_equals "$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessCLAIM_D bash "$J" show --own --session sessCLAIM_A >/dev/null 2>&1; echo $?)" "1" "show --own --session that differs from CLAUDE_CODE_SESSION_ID is refused"
 out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessCLAIM_D bash "$J" show sessCLAIM_A)"
 assert_contains "$out" "written by ANOTHER session" "show <sid> marks another session's text as data"
 assert_equals "$(jcode "$T/claims" show '../etc')" "1" "show refuses a session id with path characters"
@@ -530,18 +557,22 @@ fi
 # by hand; it must be skipped, not printed -- and not even its first bytes. A FIFO named like a
 # record would block a reader forever on open, so every call below runs under `timeout`, and the
 # assertions fail (rather than the suite hanging) if a reader blocks.
+# WHY a helper: stock macOS has no `timeout`, and an unguarded call there fails every assertion that
+# uses it with "command not found" instead of running the reader. Without `timeout` the calls run
+# unguarded, and the FIFO cases below skip themselves (they are the only ones that could hang).
+tmo() { if command -v timeout >/dev/null 2>&1; then timeout 20 "$@"; else "$@"; fi; }
 ( cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessOVER001 bash "$J" claim NS-88 ) >/dev/null
 PO="$(pmbdir "$T/claims")/sessions/sessOVER001/r"
 { printf 'OVERSIZED-MARKER '; head -c 1983 /dev/zero | tr '\0' 'o'; printf '\n'; } > "$PO/20260101T000000Z-000800-note-abcdef.md"
 assert_equals "$(wc -c < "$PO/20260101T000000Z-000800-note-abcdef.md" | tr -d ' ')" "2001" "the planted oversized record is larger than the 1,024-byte body limit"
-out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessCLAIM_D timeout 20 bash "$J" show sessOVER001)"
+out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessCLAIM_D tmo bash "$J" show sessOVER001)"
 assert_not_contains "$out" "OVERSIZED-MARKER" "a 2,000-byte record is not printed by show"
 assert_contains "$out" "1 skipped as invalid" "a 2,000-byte record is counted as skipped"
 if command -v timeout >/dev/null 2>&1 && mkfifo "$PO/20260101T000000Z-000801-note-abcdef.md" 2>/dev/null && [ -p "$PO/20260101T000000Z-000801-note-abcdef.md" ]; then
-    out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessCLAIM_D timeout 20 bash "$J" show sessOVER001; echo "rc=$?")"
+    out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessCLAIM_D tmo bash "$J" show sessOVER001; echo "rc=$?")"
     assert_contains "$out" "rc=0" "show does not block on a FIFO named like a record"
     assert_contains "$out" "2 skipped as invalid" "a FIFO named like a record is counted as skipped"
-    out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessOVER002 timeout 20 bash "$J" claim NS-88; echo "rc=$?")"
+    out="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessOVER002 tmo bash "$J" claim NS-88; echo "rc=$?")"
     assert_contains "$out" "rc=0" "the claim report does not block on a FIFO named like a record"
     assert_contains "$out" "NS-88 is also claimed by live/idle session(s): sessOVER001" "the claim report still lists a session whose r/ holds a planted oversized record and FIFO"
 else
@@ -559,8 +590,11 @@ PF="$(pmbdir "$T/claims")/sessions/sessFLOOD01"
 mkdir -p "$PF/r" "$PF/seq"
 for i in $(seq 1 105); do printf 'flood record %03d, planted directly\n' "$i" > "$PF/r/20260101T000000Z-$(printf '%06d' "$i")-note-abcdef.md"; done
 out="$(jr "$T/claims" show sessFLOOD01)"
-assert_contains "$out" "5 earlier records omitted" "show prints the last 100 records and says how many it omitted"
+# WHY "(5 earlier": assert_contains is an unanchored grep, so a bare "5 earlier" also matched "55 earlier"
+# (a tail constant of 50), and record 006 pins the boundary from the other side.
+assert_contains "$out" "(5 earlier records omitted" "show prints the last 100 records and says how many it omitted"
 assert_not_contains "$out" "flood record 005" "the omitted records are the oldest"
+assert_contains "$out" "flood record 006" "the oldest record inside the last 100 is printed"
 assert_contains "$(jr "$T/claims" show --all sessFLOOD01)" "flood record 001" "show --all prints every record"
 # Order follows the sequence number, not the file name: a planted record whose timestamp is later but
 # whose sequence number is lower must still print first.
@@ -582,6 +616,21 @@ assert_contains "$out" "2 shown, 0 skipped" "a record at the 1,024-byte body lim
 { head -c 1025 /dev/zero | tr '\0' 'c'; printf '\n'; } > "$(pmbdir "$T/claims")/sessions/sessBOUND01/r/20260101T000000Z-000500-note-abcdef.md"
 out="$(jr "$T/claims" show sessBOUND01)"
 assert_contains "$out" "2 shown, 1 skipped" "a record of 1,026 bytes is skipped, one byte over the reader's bound"
+# A NUL byte, an empty file and an oversized file are all refused, whatever `read` returned for them.
+# WHY each shape: with `-d ''` the read stops at the first NUL, so the text before it looks short and
+# clean -- a length check alone printed the first, and counted an empty record from the second as shown.
+# The gate reuses this reader, so a planted NUL-led record of 40+ bytes would otherwise qualify.
+( cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessNUL00001 bash "$J" note 'the one valid record that must still be printed, forty+ bytes' ) >/dev/null
+PN="$(pmbdir "$T/claims")/sessions/sessNUL00001/r"
+{ printf 'VISIBLE-PREFIX-BEFORE-NUL\0'; head -c 3000 /dev/zero | tr '\0' 'z'; printf '\n'; } > "$PN/20260101T000000Z-000600-note-abcdef.md"
+{ printf '\0AFTER-NUL-MARKER\n'; } > "$PN/20260101T000000Z-000601-note-abcdef.md"
+: > "$PN/20260101T000000Z-000602-note-abcdef.md"
+{ printf 'PREFIX-AT-LIMIT\0'; head -c 1100 /dev/zero | tr '\0' 'y'; } > "$PN/20260101T000000Z-000603-note-abcdef.md"
+out="$(jr "$T/claims" show sessNUL00001)"
+assert_not_contains "$out" "VISIBLE-PREFIX-BEFORE-NUL" "a record with text, a NUL and 3,000 more bytes is not printed (nothing of it)"
+assert_not_contains "$out" "AFTER-NUL-MARKER" "a record that starts with a NUL is not printed"
+assert_not_contains "$out" "PREFIX-AT-LIMIT" "a record with a NUL and more than the bound after it is not printed"
+assert_contains "$out" "2 shown, 4 skipped" "NUL-bearing and empty records are counted as skipped, and the valid records still print"
 
 # ── pickup and import-handoff ─────────────────────────────────────────────────────────────────
 echo ""; echo "--- pickup and import-handoff ---"
@@ -597,13 +646,13 @@ assert_equals "$(cksum < "$T/claims/handoff.md")" "$before" "import-handoff leav
 assert_equals "$(ls -1 "$LS/r" | grep -c -- '-handoff-' | awk '$1>=2{print "multi"}')" "multi" "a long handoff is split across several records"
 assert_equals "$(cat $(ls -1d "$LS"/r/*-handoff-* | sort -t- -k2,2n) | grep -c '^line ')" "40" "every line of the handoff survives the split"
 assert_contains "$(cat "$LS/meta")" "worktree=$(git -C "$T/claims" rev-parse --show-toplevel)" "the legacy session's meta names the handoff's worktree"
-long="$(head -c 950 /dev/zero | tr '\0' 'b')"; printf '%s\n' "$long" > "$T/claims/long.md"
-assert_equals "$(jr "$T/claims" import-handoff "$T/claims/long.md" 2>&1 | grep -c 'over 900 bytes')" "1" "a single line over 900 bytes is refused, not truncated"
+long="$(head -c 950 /dev/zero | tr '\0' 'b')"; printf '%s\n' "$long" > "$T/claims/handoff-long.md"
+assert_equals "$(jr "$T/claims" import-handoff "$T/claims/handoff-long.md" 2>&1 | grep -c 'over 900 bytes')" "1" "a single line over 900 bytes is refused, not truncated"
 # Import converts only this worktree's files, and at most 64 KB of them.
 printf 'a handoff that belongs to another repository entirely\n' > "$T/on/handoff.md"
 assert_equals "$(jr "$T/claims" import-handoff "$T/on/handoff.md" 2>&1 | grep -c 'not in this worktree')" "1" "import-handoff refuses a file from another worktree"
-head -c 70000 /dev/zero | tr '\0' 'c' | fold -w 80 > "$T/claims/huge.md"
-assert_equals "$(jr "$T/claims" import-handoff "$T/claims/huge.md" 2>&1 | grep -c 'over 64 KB')" "1" "import-handoff refuses a file over 64 KB"
+head -c 70000 /dev/zero | tr '\0' 'c' | fold -w 80 > "$T/claims/handoff-huge.md"
+assert_equals "$(jr "$T/claims" import-handoff "$T/claims/handoff-huge.md" 2>&1 | grep -c 'over 64 KB')" "1" "import-handoff refuses a file over 64 KB"
 # A Markdown horizontal rule is common in a handoff.md, and a bare '---' line is refused in a
 # record body. Import rewrites it to '***' (also a horizontal rule) instead of refusing the file.
 mkdir -p "$T/claims/hr" && printf 'before the rule\n---  \nafter the rule\n' > "$T/claims/hr/handoff.md"
@@ -648,14 +697,272 @@ assert_equals "$(cat "$(pmbdir "$T/impcrlf")"/sessions/legacy-*/r/*-handoff-* | 
 assert_equals "$(cat "$(pmbdir "$T/impcrlf")"/sessions/legacy-*/r/*-handoff-* | grep -c '^line ')" "3" "every line of the CRLF handoff is stored"
 # An empty file, and the exact 900-byte line boundary (next to the 950-byte refusal above).
 make_repo "$T/impedge" on
-: > "$T/impedge/empty.md"
-out="$(cd "$T/impedge" && bash "$J" import-handoff "$T/impedge/empty.md" 2>&1; echo "rc=$?")"
+: > "$T/impedge/handoff-empty.md"
+out="$(cd "$T/impedge" && bash "$J" import-handoff "$T/impedge/handoff-empty.md" 2>&1; echo "rc=$?")"
 assert_contains "$out" "is empty" "an empty handoff is refused as empty"
 assert_contains "$out" "rc=1" "an empty handoff exits 1"
-head -c 900 /dev/zero | tr '\0' 'b' > "$T/impedge/line900.md"; printf '\n' >> "$T/impedge/line900.md"
-assert_equals "$(jcode "$T/impedge" import-handoff "$T/impedge/line900.md")" "0" "a single line of exactly 900 bytes is accepted"
-head -c 901 /dev/zero | tr '\0' 'b' > "$T/impedge/line901.md"; printf '\n' >> "$T/impedge/line901.md"
-assert_equals "$(jcode "$T/impedge" import-handoff "$T/impedge/line901.md")" "1" "a single line of 901 bytes is refused"
+head -c 900 /dev/zero | tr '\0' 'b' > "$T/impedge/handoff-line900.md"; printf '\n' >> "$T/impedge/handoff-line900.md"
+assert_equals "$(jcode "$T/impedge" import-handoff "$T/impedge/handoff-line900.md")" "0" "a single line of exactly 900 bytes is accepted"
+head -c 901 /dev/zero | tr '\0' 'b' > "$T/impedge/handoff-line901.md"; printf '\n' >> "$T/impedge/handoff-line901.md"
+assert_equals "$(jcode "$T/impedge" import-handoff "$T/impedge/handoff-line901.md")" "1" "a single line of 901 bytes is refused"
+# Import converts only a file named handoff*.md: a credential file in the worktree must not become
+# records. The content is harmless on purpose, so only the NAME can cause the refusal.
+make_repo "$T/impname" on
+printf 'DB_HOST=db.example.invalid\nnothing sensitive in this file at all\n' > "$T/impname/.env"
+printf 'an ordinary notes file that happens to sit in the worktree\n' > "$T/impname/notes.md"
+printf 'a file that merely ends in handoff.md but does not start with it\n' > "$T/impname/my-handoff.md"
+for f in .env notes.md my-handoff.md; do
+    out="$(cd "$T/impname" && bash "$J" import-handoff "$T/impname/$f" 2>&1; echo "rc=$?")"
+    assert_contains "$out" "converts only a file named handoff" "import-handoff refuses $f by name"
+    assert_contains "$out" "rc=1" "import-handoff of $f exits 1"
+done
+assert_equals "$(ls -1 "$(pmbdir "$T/impname")/sessions" 2>/dev/null | grep -c '^legacy-')" "0" "a refused file name creates no legacy session"
+printf 'a handoff whose name carries a suffix, from an older session\n' > "$T/impname/handoff-2026-09-29.md"
+assert_equals "$(jcode "$T/impname" import-handoff "$T/impname/handoff-2026-09-29.md")" "0" "a file named handoff-<suffix>.md imports"
+# The trailing blank line of a chunk is dropped (the PowerShell twin's TrimEnd). A 450-byte line, a
+# blank line and an 800-byte line: the first chunk ends at the blank line, the second line does not fit.
+make_repo "$T/imptrim" on
+{ head -c 450 /dev/zero | tr '\0' 'a'; printf '\n\n'; head -c 800 /dev/zero | tr '\0' 'b'; printf '\n'; } > "$T/imptrim/handoff.md"
+assert_equals "$(jcode "$T/imptrim" import-handoff "$T/imptrim/handoff.md")" "0" "a handoff with a blank line at a chunk boundary imports"
+TR="$(ls -1d "$(pmbdir "$T/imptrim")"/sessions/legacy-*/r | head -1)"
+assert_equals "$(ls -1 "$TR" | grep -c -- '-handoff-')" "2" "the blank-line handoff is split into two records"
+TF="$TR/$(ls -1 "$TR" | grep -- '-handoff-' | sort -t- -k2,2n | head -1)"
+assert_equals "$(tail -c 2 "$TF" | od -An -tx1 | tr -d ' \n')" "610a" "a chunk that ended in a blank line is stored without it"
+
+# ── gate (spec §4.3 as amended 2026-09-29/30) ────────────────────────────────────────────────
+echo ""; echo "--- gate ---"
+# payload SID [TRIGGER] — a PreCompact hook payload; TRIGGER defaults to manual.
+payload() { printf '{"session_id":"%s","hook_event_name":"PreCompact","trigger":"%s"}' "$1" "${2:-manual}"; }
+gcode() { local d="$1" sid="$2"; ( cd "$d" && payload "$sid" "${3:-manual}" | CLAUDE_CODE_SESSION_ID="$sid" bash "$J" gate >/dev/null 2>&1; echo $? ); }
+# gout DIR SID [TRIGGER] — the gate's stdout; its stderr is left in $T/gate.err.
+gout() { ( cd "$1" && payload "$2" "${3:-manual}" | CLAUDE_CODE_SESSION_ID="$2" bash "$J" gate 2>"$T/gate.err" ); }
+# WHY unblock: a manual /compact blocks only ONCE per compact marker; the next identical /compact
+# passes (the escape hatch). Cases that assert a block on an unchanged journal reset that memory
+# first, so each one tests the qualifying-record rule rather than the escape hatch.
+unblock() { rm -f "$(pmbdir "$1")/sessions/$2/gate-blocked"; }
+markers() { ls -1 "$(pmbdir "$1")/sessions/$2/r" 2>/dev/null | grep -c -- '-compact-'; }
+# jreason JSON-LINE — the reason of a block decision, decoded from the escapes the gate writes (\\,
+# \" and \u00XX), so that it can be compared with the stderr text byte for byte.
+jreason() {
+    local pre='{"decision":"block","reason":"' post='"}' s out="" c i=0
+    s="${1#"$pre"}"; s="${s%"$post"}"
+    while [ "$i" -lt "${#s}" ]; do
+        c="${s:i:1}"
+        if [ "$c" = '\' ]; then
+            c="${s:i+1:1}"
+            if [ "$c" = u ]; then printf -v c "\\x${s:i+4:2}"; i=$((i + 6)); else i=$((i + 2)); fi
+        else
+            i=$((i + 1))
+        fi
+        out+="$c"
+    done
+    printf '%s' "$out"
+}
+make_repo "$T/gate" on
+G="$(pmbdir "$T/gate")"
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "2" "manual, no journal at all: block"
+# The block reason reaches the user as JSON on stdout (stderr is discarded by the hook wiring).
+unblock "$T/gate" sessGATE_01
+out="$(gout "$T/gate" sessGATE_01)"; err="$(cat "$T/gate.err")"
+assert_equals "$(printf '%s\n' "$out" | grep -c '^{"decision":"block","reason":".*"}$')" "1" "the block is a one-line JSON decision on stdout"
+assert_contains "$out" 'Checked session: sessGATE_01' "the block reason names the session it checked"
+assert_contains "$err" 'scripts/pmb-journal.sh" note' "the same reason, with the repo-local command, goes to stderr"
+assert_equals "$(jreason "$out")" "$err" "the stderr text is the JSON reason, byte for byte"
+# The escape hatch: a repeated manual /compact with nothing new passes and writes a marker.
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "0" "a repeated manual /compact with no new record passes (escape hatch)"
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "2" "after the escape hatch's compaction, the next manual /compact blocks again"
+# The escape hatch with a real marker. WHY a second case: above, the session has no journal, so its
+# marker is 0 -- the same value a gate-blocked file holding a constant 0 would have. Here the start
+# marker is seq 1, so the block must record THAT marker for the immediate repeat to pass.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessHATCH_01 bash "$J" claim NS-9 ) >/dev/null
+assert_equals "$(gcode "$T/gate" sessHATCH_01)" "2" "a session with a start marker and only a claim: the first manual /compact blocks"
+out="$(gout "$T/gate" sessHATCH_01; echo "rc=$?")"
+assert_contains "$out" "rc=0" "the immediate repeat passes (escape hatch, after a real start marker)"
+assert_contains "$(cat "$T/gate.err")" "repeated /compact with no new journal record" "the escape hatch warns that it allowed a compaction without a record"
+assert_equals "$(markers "$T/gate" sessHATCH_01)" "1" "the escape hatch writes a compact marker"
+assert_equals "$([ -e "$G/sessions/sessHATCH_01/gate-blocked" ] && echo present || echo gone)" "gone" "the escape hatch clears gate-blocked"
+assert_equals "$(gcode "$T/gate" sessHATCH_01)" "2" "the next manual /compact, after that compact marker, blocks again"
+# [NS-22] class: a handoff.md dated today must NOT pass the journal-mode gate.
+printf '# Handoff\n\nfresh today\n' > "$T/gate/handoff.md"
+unblock "$T/gate" sessGATE_01
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "2" "[NS-22] a handoff.md dated today does not pass the journal gate"
+# WHY a claim body over 40 bytes: with the default 'claim NS-7' body (10 bytes) the length rule alone
+# would refuse it, and adding claim to the gate kinds would leave this case green.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessGATE_01 bash "$J" claim NS-7 'a claim whose body is long enough for the forty-byte minimum' ) >/dev/null
+assert_equals "$(ls -1 "$G/sessions/sessGATE_01/r" | grep -c -- '-claim-NS-7-')" "1" "the 40+ byte claim was recorded"
+unblock "$T/gate" sessGATE_01
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "2" "a claim alone does not pass, even with a 40+ byte body"
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessGATE_01 bash "$J" note "$(head -c 39 /dev/zero | tr '\0' 'n')" ) >/dev/null
+unblock "$T/gate" sessGATE_01
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "2" "a 39-byte note does not pass"
+before_c="$(markers "$T/gate" sessGATE_01)"
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessGATE_01 bash "$J" note "$(head -c 40 /dev/zero | tr '\0' 'n')" ) >/dev/null
+unblock "$T/gate" sessGATE_01
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "0" "a 40-byte note passes"
+assert_equals "$(markers "$T/gate" sessGATE_01)" "$((before_c + 1))" "passing writes a compact marker"
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "2" "a record older than the latest compact marker does not pass again"
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessGATE_02 bash "$J" note 'another session wrote a long enough note here, not mine' ) >/dev/null
+unblock "$T/gate" sessGATE_01
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "2" "another session's record does not satisfy this session's gate"
+# A stray file with a gate-kind-looking name that fails the grammar never passes.
+# WHY its seq is ALLOCATED (seq/<n> exists): otherwise the allocated-seq ceiling would reject it
+# too, and removing the grammar check would leave this case green.
+sn=$(( $(ls -1 "$G/sessions/sessGATE_01/seq" | sort -n | tail -1) + 1 )); : > "$G/sessions/sessGATE_01/seq/$sn"
+printf '%s\n' "$(head -c 60 /dev/zero | tr '\0' 's')" > "$G/sessions/sessGATE_01/r/20260101T000000Z-$(printf '%06d' "$sn")-note-zzzzzz.md"
+unblock "$T/gate" sessGATE_01
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "2" "a stray file that fails the name grammar does not pass"
+# Planted records: a seq no writer allocated is ignored, in both directions.
+printf 'forged note long enough to pass the forty-byte minimum\n' > "$G/sessions/sessGATE_01/r/20260101T000000Z-999990-note-aaaaaa.md"
+unblock "$T/gate" sessGATE_01
+assert_equals "$(gcode "$T/gate" sessGATE_01)" "2" "a planted note above the allocated seq does not force a pass"
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessGATE_07 bash "$J" note 'a legitimate note written before anything is planted here' ) >/dev/null
+printf 'x\n' > "$G/sessions/sessGATE_07/r/20260101T000000Z-999991-compact-aaaaaa.md"
+assert_equals "$(gcode "$T/gate" sessGATE_07)" "0" "a planted compact marker above the allocated seq does not block for good"
+# A record the reader refuses (spec §4.2 Readers) never counts: not as a qualifying record, and not
+# as a marker. WHY both: the reader refuses a NUL-bearing record whose text before the NUL is 40+
+# bytes, and an empty file named like a compact marker would otherwise hide a newer note.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessREFUSE01 bash "$J" claim NS-11 ) >/dev/null
+RF="$G/sessions/sessREFUSE01"
+: > "$RF/seq/3"; { printf 'a planted note whose forty-plus bytes come before a NUL\0'; printf 'tail\n'; } > "$RF/r/20260101T000000Z-000003-note-abcdef.md"
+assert_equals "$(gcode "$T/gate" sessREFUSE01)" "2" "a NUL-bearing note with 40+ bytes before the NUL does not pass"
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessREFUSE01 bash "$J" note 'a valid note, written before the refused marker below' ) >/dev/null
+: > "$RF/seq/5"; : > "$RF/r/20260101T000000Z-000005-compact-abcdef.md"
+unblock "$T/gate" sessREFUSE01
+assert_equals "$(gcode "$T/gate" sessREFUSE01)" "0" "an empty file named like a newer compact marker is not a marker: the note still passes"
+# A record written in the same second as the compact marker still orders by seq.
+( cd "$T/gate" && PMB_TEST_TS=20260101T000002Z CLAUDE_CODE_SESSION_ID=sessGATE_03 bash "$J" note 'same second as the marker, seq decides the order here' ) >/dev/null
+assert_equals "$( cd "$T/gate" && payload sessGATE_03 | PMB_TEST_TS=20260101T000002Z CLAUDE_CODE_SESSION_ID=sessGATE_03 bash "$J" gate >/dev/null 2>&1; echo $? )" "0" "same-second fixture: the first note passes"
+assert_equals "$(ls -1 "$G/sessions/sessGATE_03/r" | grep -c '^20260101T000002Z-[0-9]*-compact-')" "1" "same-second fixture: the compact marker carries the same timestamp as the note"
+assert_equals "$(gcode "$T/gate" sessGATE_03)" "2" "same-second fixture: with no new note after the marker, a manual /compact blocks"
+( cd "$T/gate" && PMB_TEST_TS=20260101T000002Z CLAUDE_CODE_SESSION_ID=sessGATE_03 bash "$J" note 'written after the marker within the same second, passes' ) >/dev/null
+assert_equals "$(gcode "$T/gate" sessGATE_03)" "0" "same-second compact marker: a later-seq record passes"
+# Every gate kind passes; the other kinds do not.
+for k in done learned decision blocked handoff; do
+    ( cd "$T/gate" && CLAUDE_CODE_SESSION_ID="sessKIND_$k" bash "$J" "$k" "a $k record, long enough to satisfy the gate minimum" ) >/dev/null
+    assert_equals "$(gcode "$T/gate" "sessKIND_$k")" "0" "a $k record passes the gate"
+done
+for k in pickup release promoted; do
+    case "$k" in
+        pickup)  a=(sessGATE_02) ;;
+        release) a=(NS-7 "a release record, long enough to satisfy the gate minimum") ;;
+        *)       a=("a $k record, long enough to satisfy the gate minimum") ;;
+    esac
+    ( cd "$T/gate" && CLAUDE_CODE_SESSION_ID="sessKIND_$k" bash "$J" "$k" "${a[@]}" ) >/dev/null
+    assert_equals "$(gcode "$T/gate" "sessKIND_$k")" "2" "a $k record does not pass the gate"
+done
+# trigger=auto never blocks, not even with no journal and pmb/ unusable; it writes a marker.
+assert_equals "$(gcode "$T/gate" sessAUTO_001 auto)" "0" "trigger=auto with no journal: allow"
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessAUTO_002 bash "$J" claim NS-8 ) >/dev/null
+c_before="$(markers "$T/gate" sessAUTO_002)"
+assert_equals "$(gcode "$T/gate" sessAUTO_002 auto)" "0" "trigger=auto with no qualifying record: allow"
+assert_equals "$(markers "$T/gate" sessAUTO_002)" "$((c_before + 1))" "trigger=auto writes a compact marker"
+assert_equals "$(cd "$T/gate" && printf '{"session_id":"sessAUTO_003"}' | CLAUDE_CODE_SESSION_ID=sessAUTO_003 bash "$J" gate >/dev/null 2>&1; echo $?)" "0" "a payload without a trigger is treated as automatic: allow"
+# An automatic compaction ends the once-only window even for a session with no journal (so no marker
+# to move): the next manual /compact blocks again instead of riding on the earlier block.
+assert_equals "$(gcode "$T/gate" sessAUTO_004)" "2" "no journal: a manual /compact blocks"
+assert_equals "$(gcode "$T/gate" sessAUTO_004 auto)" "0" "no journal: the automatic compaction that follows is allowed"
+assert_equals "$(gcode "$T/gate" sessAUTO_004)" "2" "no journal: after an automatic compaction, the next manual /compact blocks again"
+# Identity. CLAUDE_CODE_SESSION_ID wins over the payload's session_id, with a warning that names the
+# session checked. WHY the payload's session has no journal: checking the wrong one would block.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessIDENT_01 bash "$J" note 'session one has a qualifying note, forty bytes and more' ) >/dev/null
+out="$(cd "$T/gate" && payload sessIDENT_99 | CLAUDE_CODE_SESSION_ID=sessIDENT_01 bash "$J" gate 2>&1; echo "rc=$?")"
+assert_contains "$out" "differs from CLAUDE_CODE_SESSION_ID; checking sessIDENT_01" "an id mismatch is warned about, naming the session checked"
+assert_contains "$out" "rc=0" "on an id mismatch the env id's session is checked (it has a note; the payload's has none)"
+assert_equals "$(markers "$T/gate" sessIDENT_01)" "1" "on an id mismatch the env id's session gets the compact marker"
+assert_equals "$([ -e "$G/sessions/sessIDENT_99" ] && echo touched || echo untouched)" "untouched" "on an id mismatch the payload's session is not touched"
+# An invalid env id falls back to the payload's session_id. WHY that session has no record: a
+# fallback that is missing fails open (exit 0), so only a block tells the two apart.
+out="$(cd "$T/gate" && payload sessIDENT_02 | CLAUDE_CODE_SESSION_ID='bad id!' bash "$J" gate 2>/dev/null; echo "rc=$?")"
+assert_contains "$out" "rc=2" "an invalid env id falls back to the payload's session_id (no record there: block)"
+assert_contains "$out" "Checked session: sessIDENT_02" "the fallback block names the payload's session"
+# The FIRST session_id in the payload is the one checked: the first has no record, the nested one does.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessIDENT_01 bash "$J" note 'a fresh note, so the nested session would pass if it were read' ) >/dev/null
+out="$(cd "$T/gate" && printf '{"session_id":"sessIDENT_03","x":{"session_id":"sessIDENT_01"},"trigger":"manual"}' | env -u CLAUDE_CODE_SESSION_ID bash "$J" gate 2>/dev/null; echo "rc=$?")"
+assert_contains "$out" "rc=2" "the first session_id in the payload is the one checked (it has no record: block)"
+assert_contains "$out" "Checked session: sessIDENT_03" "the block names the payload's first session_id"
+# Named block conditions (manual only), and fail-open on an unusable session directory.
+make_repo "$T/gatefile" on
+PF="$(pmbdir "$T/gatefile")"; printf 'not a dir\n' > "$PF"
+out="$(cd "$T/gatefile" && payload sessGATE_04 | CLAUDE_CODE_SESSION_ID=sessGATE_04 bash "$J" gate 2>/dev/null)"; code=$?
+assert_equals "$code" "2" "pmb that is a file: block"
+assert_contains "$out" "is not a directory" "the block names the not-a-directory condition"
+assert_contains "$out" "Fix: " "the not-a-directory block says how to fix it"
+assert_not_contains "$out" "run /compact again" "the not-a-directory block does not offer the escape hatch, which cannot pass it"
+assert_equals "$(gcode "$T/gatefile" sessGATE_04)" "2" "pmb that is a file: a repeated manual /compact still blocks"
+assert_equals "$(gcode "$T/gatefile" sessGATE_04 auto)" "0" "pmb that is a file, trigger=auto: allow"
+make_repo "$T/gatetmp" on
+PT="$(pmbdir "$T/gatetmp")"; mkdir -p "$PT" && printf 'not a dir\n' > "$PT/tmp"
+out="$(cd "$T/gatetmp" && payload sessGATE_05 | CLAUDE_CODE_SESSION_ID=sessGATE_05 bash "$J" gate 2>/dev/null)"; code=$?
+assert_equals "$code" "2" "pmb/tmp not writable after 3 probes: block"
+assert_contains "$out" "cannot write to" "the block names the unwritable-tmp condition"
+assert_contains "$out" "tried 3 times: [^)]" "the unwritable-tmp block reports the OS error"
+assert_not_contains "$out" "run /compact again" "the unwritable-tmp block does not offer the escape hatch"
+# WHY fail open when the block cannot be recorded: gate-blocked is what lets the next /compact pass,
+# so a block that cannot write it would repeat forever.
+rm -f "$PT/tmp"; printf 'not a dir\n' > "$PT/sessions"
+assert_equals "$(gcode "$T/gatetmp" sessGATE_05)" "0" "pmb/sessions that is a file (the block cannot be recorded): fail open"
+mkdir -p "$G/sessions/sessGBDIR_01/gate-blocked"
+assert_equals "$(gcode "$T/gate" sessGBDIR_01)" "0" "gate-blocked that is a directory (the block cannot be recorded): fail open"
+mkdir -p "$G/sessions" && printf 'x\n' > "$G/sessions/sessFILE_001"
+assert_equals "$(gcode "$T/gate" sessFILE_001)" "0" "a session path that is a file: fail open"
+# Fail-open: no identifiable session.
+assert_equals "$(cd "$T/gate" && printf '{}' | env -u CLAUDE_CODE_SESSION_ID bash "$J" gate >/dev/null 2>&1; echo $?)" "0" "no identifiable session: fail open"
+# Symbolic links: mkdir, the probe write and the marker publish all follow one, so a planted link
+# would move the gate's writes outside .git/pmb. The gate checks the writer's list before any write,
+# on both triggers, and fails open without writing. WHY -newer and not a listing: the probe in tmp/
+# creates and removes its file, so only the directory's mtime shows that it wrote there. WHY the
+# sleep: a filesystem with 1-second timestamps would otherwise date a write the same as the reference.
+printf 'x\n' > "$T/gl-probe-target"
+if ln -s "$T/gl-probe-target" "$T/gl-probe-link" 2>/dev/null && [ -L "$T/gl-probe-link" ]; then
+    for part in pmb sessions session r seq tmp; do
+        make_repo "$T/gl-$part" on
+        ( cd "$T/gl-$part" && CLAUDE_CODE_SESSION_ID=sessLINK_001 bash "$J" note 'a note so that this session has a full journal, 40+ bytes' ) >/dev/null
+        L="$(pmbdir "$T/gl-$part")"
+        case "$part" in
+            pmb) p="$L" ;;
+            sessions) p="$L/sessions" ;;
+            session) p="$L/sessions/sessLINK_001" ;;
+            *) p="$L/sessions/sessLINK_001/$part"; [ "$part" = tmp ] && p="$L/tmp" ;;
+        esac
+        mv "$p" "$T/gl-$part.target" && ln -s "$T/gl-$part.target" "$p"
+        touch "$T/gl-$part.ref"; sleep 1
+        assert_equals "$(gcode "$T/gl-$part" sessLINK_001 auto)" "0" "$part is a symbolic link, trigger=auto: allow"
+        assert_equals "$(gcode "$T/gl-$part" sessLINK_001)" "0" "$part is a symbolic link, manual: fail open"
+        assert_equals "$(find "$T/gl-$part.target" -newer "$T/gl-$part.ref" | wc -l | tr -d ' ')" "0" "$part is a symbolic link: the gate writes nothing through it"
+    done
+else
+    rm -f "$T/gl-probe-link"
+    echo "  SKIP: symbolic links cannot be created here (Windows without Developer Mode); the gate's link checks are not exercised"
+fi
+# Control characters never reach the reason. The path is stripped of them, and pmb_json_str escapes
+# any byte below 0x20 that is left. WHY the pmb-is-a-file block: its reason quotes the pmb path.
+# WHY `git init .` from inside the directory first: Git for Windows refuses such a name as an
+# argument (Invalid argument) but works in it as the current directory; make_repo's own `git init`
+# then only re-initialises.
+CTL="$T/gate"$'\x1b'"esc"$'\t'"tab"
+if mkdir "$CTL" 2>/dev/null && ( cd "$CTL" && git init -q . ) 2>/dev/null; then
+    make_repo "$CTL" on 2>/dev/null
+    printf 'not a dir\n' > "$(pmbdir "$CTL")"
+    out="$(gout "$CTL" sessCTRL_001)"; err="$(cat "$T/gate.err")"
+    assert_contains "$err" "gateesctab" "a path with control characters is reported with them stripped"
+    assert_equals "$(printf '%s%s' "$out" "$err" | tr -d '\n' | LC_ALL=C grep -c '[[:cntrl:]]')" "0" "no control character other than the line breaks reaches stdout or stderr"
+    assert_equals "$(printf '%s\n' "$out" | grep -c '^{"decision":"block","reason":".*"}$')" "1" "a path with control characters still yields a one-line JSON decision"
+else
+    echo "  SKIP: a directory name with control characters cannot be created here"
+fi
+# pmb_json_str on its own. WHY a direct call: once paths are stripped no reason holds a control byte
+# other than LF, so only a direct call shows that any other one would still be escaped. Loaded from
+# $J, so a mutation of the script reaches this case too.
+eval "$(sed -n '/^pmb_json_str() {$/,/^}$/p' "$J")"
+jin='"q\b'; jwant='\"q\\b'
+for i in $(seq 1 31); do printf -v h '%02x' "$i"; printf -v c "\\x$h"; jin+="$c"; jwant+="\\u00$h"; done
+assert_equals "$( export LC_ALL=C; pmb_json_str "$jin" )" "$jwant" "pmb_json_str escapes a quote, a backslash and every byte below 0x20 as \\u00XX"
+# Spec §7: the command in the block message runs VERBATIM (MB_HOME already points nowhere, above).
+err="$(cd "$T/gate" && payload sessGATE_06 | CLAUDE_CODE_SESSION_ID=sessGATE_06 bash "$J" gate 2>&1 >/dev/null)"
+cmdline="$(printf '%s\n' "$err" | grep -F 'note "<text>"' | sed 's/^ *//; s/<text>/what I did and what is next, run verbatim from the message/')"
+( cd "$T/gate" && export CLAUDE_CODE_SESSION_ID=sessGATE_06 && eval "$cmdline" ) >/dev/null 2>&1
+unblock "$T/gate" sessGATE_06
+assert_equals "$(gcode "$T/gate" sessGATE_06)" "0" "the block message's own command, run verbatim, satisfies the gate"
 
 # ── the real repository is untouched ──────────────────────────────────────────────────────────
 echo ""; echo "--- isolation ---"

@@ -12,7 +12,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HOOK="$REPO_ROOT/scripts/pre-compact-check.sh"
+HOOK="${PMB_TEST_HOOK:-$REPO_ROOT/scripts/pre-compact-check.sh}"   # overridable for mutation checks
 source "$REPO_ROOT/tests/helpers/assert.sh"
 
 echo "=== pre-compact-check tests ==="
@@ -148,6 +148,65 @@ printf '# Handoff\n\nin-flight state\n' > "$D/handoff.md"
 assert_contains "code=$(stub_code "$D")" "code=0" "with a BSD-style \`stat\`, a handoff dated today bypasses the gate on a machine with no \`date -r\`"
 rm -f "$STUBS/stat" "$STUBS/date"
 
+# ── journal mode (docs/superpowers/specs/2026-09-26-multi-session-memory-design.md §4.3) ─────
+# WHY: the delegation branch is the only new code in this hook. These cases pin both directions --
+# it takes over when the repository has opted in AND the script exists, and it changes nothing
+# otherwise (every case above runs with neither). Each "legacy unchanged" fixture is one the legacy
+# gate PASSES and the journal gate BLOCKS (a fresh bank, today's handoff.md, no journal record), so a
+# delegation that fires where it must not turns the expected 0 into 2. The thin fixture is the
+# opposite check: its legacy gate BLOCKS, so a branch that swallowed the legacy gate shows as 0.
+echo ""
+echo "--- journal mode: delegates only when opted in and the script exists ---"
+# Global constraints: no inherited MB_HOME, and no session of this suite in the real pmb/.
+export MB_HOME="/nonexistent/pmb-test-mb-home"
+# WHY --path-format=absolute and a hard stop: in a main checkout --git-common-dir prints a RELATIVE
+# `.git`, and a failed resolution would make the isolation check below pass without checking.
+JM_REAL_GIT="$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+if [ -z "$JM_REAL_GIT" ] || [ ! -d "$JM_REAL_GIT" ]; then
+    echo "FAIL: cannot locate the real repository's git directory from $REPO_ROOT; the isolation check would pass vacuously"
+    exit 1
+fi
+JM_REAL_PMB="$(cd "$JM_REAL_GIT" && pwd -P)/pmb"
+jm_real_state() { ls -1 "$JM_REAL_PMB/sessions" 2>/dev/null | grep -c '^sessJM_'; }
+JM_REAL_BEFORE="$(jm_real_state)"
+# Overridable for mutation checks, like HOOK and HOOK_PS1 (see tests/test-pmb-journal.sh).
+JM_SH="${PMB_TEST_JOURNAL_SH:-$REPO_ROOT/scripts/pmb-journal.sh}"
+JM_PS1="${PMB_TEST_JOURNAL_PS1:-$REPO_ROOT/scripts/pmb-journal.ps1}"
+# jm_repo DIR FLAG SCRIPT BANK — FLAG on|off|none (none: the ref exists, the flag file does not --
+# this repository's own state from Plan A's merge until Plan C); SCRIPT yes|no copies both journal
+# twins; BANK fresh (plus today's handoff.md) or thin.
+jm_repo() {
+    local dir="$1" flag="$2" with_script="$3" bank="$4"
+    git init -q "$dir"
+    ( cd "$dir" && git config user.email t@example.invalid && git config user.name pmb-test && git config core.autocrlf false
+      mkdir -p scripts
+      if [ "$with_script" = yes ]; then
+          cp "$JM_SH" "$REPO_ROOT/scripts/secret-patterns.txt" scripts/
+          [ -f "$JM_PS1" ] && cp "$JM_PS1" scripts/
+      fi
+      [ "$flag" = none ] || printf 'journal=%s\n' "$flag" > .pmb-features
+      git add -A && git commit -qm init --allow-empty && git update-ref refs/remotes/origin/main HEAD )
+    make_bank "$dir" "$bank"
+    [ "$bank" = fresh ] && printf '# Handoff\n\ntoday\n' > "$dir/handoff.md"
+    return 0
+}
+# jm_payload TRIGGER SID. WHY a SID parameter: a manual block arms the once-only escape hatch for
+# that session, so a second twin run against the same fixture needs an id of its own.
+jm_payload() { printf '{"session_id":"%s","trigger":"%s"}' "${2:-sessJM_0001}" "${1:-manual}"; }
+jm_code() { ( cd "$1" && jm_payload "${2:-manual}" sessJM_0001 | CLAUDE_CODE_SESSION_ID=sessJM_0001 bash "$HOOK" >/dev/null 2>&1; echo $? ); }
+jm_repo "$TMPDIR_PC/jm-on" on yes fresh
+assert_contains "code=$(jm_code "$TMPDIR_PC/jm-on")" "code=2" "[NS-22] opted in with the script: a fresh bank and today's handoff.md do NOT pass a manual /compact (the journal gate decides)"
+assert_contains "code=$(jm_code "$TMPDIR_PC/jm-on" auto)" "code=0" "opted in, trigger=auto: allowed"
+jm_repo "$TMPDIR_PC/jm-off" off yes fresh
+assert_contains "code=$(jm_code "$TMPDIR_PC/jm-off")" "code=0" "flag off: legacy gate unchanged (fresh bank passes)"
+jm_repo "$TMPDIR_PC/jm-noscript" on no fresh
+assert_contains "code=$(jm_code "$TMPDIR_PC/jm-noscript")" "code=0" "flag on but no script (adopter / old branch): legacy gate unchanged"
+jm_repo "$TMPDIR_PC/jm-noflag" none yes fresh
+assert_contains "code=$(jm_code "$TMPDIR_PC/jm-noflag")" "code=0" "script present, no flag file: legacy gate unchanged (fresh bank and today's handoff.md pass)"
+jm_repo "$TMPDIR_PC/jm-noflag-thin" none yes thin
+assert_contains "code=$(jm_code "$TMPDIR_PC/jm-noflag-thin")" "code=2" "script present, no flag file, thin bank: the legacy gate still blocks"
+assert_equals "$(jm_real_state)" "$JM_REAL_BEFORE" "no journal-mode case writes a session into the real pmb/"
+
 # ── sh/ps1 parity ──────────────────────────────────────────────────────────────────────────
 # WHY: every assertion above runs the .sh hook only, but Claude Code invokes the .ps1 twin first
 # on any machine where pwsh is present -- so the bypass could be correct in the shell under test
@@ -157,7 +216,7 @@ rm -f "$STUBS/stat" "$STUBS/date"
 #
 # WHY skipped rather than failed when pwsh is missing: CI runs on Linux where pwsh is not
 # guaranteed. The skip is loud so it is not mistaken for a pass; PMB_REQUIRE_PARITY=1 makes it fatal.
-HOOK_PS1="$REPO_ROOT/scripts/pre-compact-check.ps1"
+HOOK_PS1="${PMB_TEST_HOOK_PS1:-$REPO_ROOT/scripts/pre-compact-check.ps1}"   # overridable for mutation checks
 if command -v pwsh >/dev/null 2>&1; then
     echo ""
     echo "--- sh/ps1 parity: the .ps1 twin must agree on all five cases ---"
