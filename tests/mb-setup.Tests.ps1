@@ -369,3 +369,121 @@ Describe "Show-Doctor exit code (subprocess)" {
         $result.ExitCode | Should -Be 0
     }
 }
+
+# WHY this exists: plain doctor rewrites .pmb-checksums at the end of every run, so the
+# pre-push hook (Check 7) re-baselined on every push and erased the mismatch it had just
+# reported. `doctor --check` must leave the working tree untouched so the mismatch is still
+# reported on the NEXT run -- persistence is the property, not merely "file unchanged", which
+# a build skipping the comparison would also satisfy. Mirrors tests/test-mb-doctor.sh check 27.
+#
+# Both binding forms are exercised because both reach mb.ps1: `-File` (the mb.bat launcher from
+# install.bat, which is how the pre-push hook gets here) binds `--check` to the [switch], while
+# the call operator (`& mb.ps1 doctor --check`, interactive use) leaves the literal "--check" in
+# positional $Arg. The call form runs in a child pwsh here so its host output reaches stdout; the
+# hook could not use that form in-process, since Write-Host escapes its `2>&1` capture.
+Describe "Show-Doctor --check is read-only (subprocess)" -ForEach @(
+    @{ Form = 'file' }
+    @{ Form = 'call' }
+) {
+    BeforeAll {
+        $script:RepoRootChk = $RepoRoot
+
+        function Invoke-ChkDoctor {
+            param([string]$ProjectPath, [string[]]$DoctorArgs = @())
+            Push-Location $ProjectPath
+            try {
+                $env:MB_HOME = $script:RepoRootChk
+                $env:MB_VERSION_CACHE_DIR = Join-Path $TestDrive 'mb-cache'
+                $env:MB_VERSION_CHECK_URL = 'http://127.0.0.1:1/VERSION'
+                $mbPs1 = Join-Path $script:RepoRootChk 'scripts/mb.ps1'
+                if ($Form -eq 'file') {
+                    $out = & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $mbPs1 doctor @DoctorArgs 2>&1 | Out-String
+                } else {
+                    # Script path and args via the ENVIRONMENT with a single-quoted -Command body,
+                    # so a path containing quote characters cannot become executable text.
+                    $env:MB_SCRIPT = $mbPs1
+                    $env:MB_DOCTOR_ARGS = ($DoctorArgs -join ' ')
+                    $out = & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command `
+                        '$a = @($env:MB_DOCTOR_ARGS -split " " | Where-Object { $_ }); & $env:MB_SCRIPT doctor @a; exit $LASTEXITCODE' 2>&1 | Out-String
+                }
+                [PSCustomObject]@{ Output = $out; ExitCode = $LASTEXITCODE }
+            } finally {
+                Pop-Location
+                foreach ($v in 'MB_HOME', 'MB_VERSION_CACHE_DIR', 'MB_VERSION_CHECK_URL', 'MB_SCRIPT', 'MB_DOCTOR_ARGS') {
+                    Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        function Get-TreeSnapshot {
+            param([string]$ProjectPath)
+            Get-ChildItem -LiteralPath $ProjectPath -Recurse -File -Force |
+                Where-Object { $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
+                Sort-Object FullName |
+                ForEach-Object { "$($_.FullName.Substring($ProjectPath.Length))=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" } |
+                Out-String
+        }
+
+        function New-ChkProject {
+            param([string]$Name)
+            $p = New-TestProject -Base $TestDrive -Name $Name
+            $mb = Join-Path $p 'memory-bank'
+            New-Item -ItemType Directory -Force -Path $mb | Out-Null
+            foreach ($f in @("projectbrief.md", "systemPatterns.md", "techContext.md", "activeContext.md", "progress.md")) {
+                Set-Content -Path (Join-Path $mb $f) "---`nauthority: stable`nlast-reviewed: 2026-01-01`n---`n# $f`nContent."
+            }
+            Set-Content -Path (Join-Path $p 'CLAUDE.md') "# Project`nCLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40"
+            return $p
+        }
+    }
+
+    It "reports a mismatch without writing, and still reports it on the next run (<Form>)" {
+        $p = New-ChkProject -Name "chk-persist-$Form"
+        Invoke-ChkDoctor -ProjectPath $p | Out-Null   # plain doctor establishes the baseline
+        Add-Content -Path (Join-Path $p 'memory-bank/progress.md') 'External modification.'
+
+        $before = Get-TreeSnapshot -ProjectPath $p
+        $first = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        $after = Get-TreeSnapshot -ProjectPath $p
+
+        # Exit 0 is only observable under -File. Via the call operator a script that ends
+        # without `exit` leaves $LASTEXITCODE at whatever native command it ran last (measured:
+        # git's 128 in this non-repo fixture), so the host's exit code says nothing about doctor.
+        # The fatal case below IS observable in both forms, because mb.ps1 calls `exit 1`.
+        if ($Form -eq 'file') { $first.ExitCode | Should -Be 0 }
+        $first.Output | Should -Match '\[ERROR\] memory-bank/progress\.md \(hash mismatch'
+        $first.Output | Should -Match 'Integrity check mode: \.pmb-checksums not modified'
+        $first.Output | Should -Match 'mb verify-integrity'
+        $after | Should -BeExactly $before
+
+        $second = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        $second.Output | Should -Match '\[ERROR\] memory-bank/progress\.md \(hash mismatch'
+    }
+
+    It "leaves plain doctor's re-baseline and output unchanged (<Form>)" {
+        $p = New-ChkProject -Name "chk-plain-$Form"
+        Invoke-ChkDoctor -ProjectPath $p | Out-Null
+        Add-Content -Path (Join-Path $p 'memory-bank/progress.md') 'External modification.'
+
+        $plain = Invoke-ChkDoctor -ProjectPath $p
+        $plain.Output | Should -Not -Match 'Integrity check mode:'
+        $after = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        $after.Output | Should -Not -Match 'hash mismatch'
+        $after.Output | Should -Match '\[OK\]   Integrity checksums verified'
+    }
+
+    It "does not create a missing baseline, and says so as WARN (<Form>)" {
+        $p = New-ChkProject -Name "chk-nobase-$Form"
+        $result = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        Test-Path -LiteralPath (Join-Path $p '.pmb-checksums') | Should -BeFalse
+        $result.Output | Should -Match '\[WARN\] Integrity checksums: no baseline'
+        $result.Output | Should -Match 'Integrity check mode: \.pmb-checksums not modified'
+    }
+
+    It "keeps doctor's exit code: a fatal condition exits 1 (<Form>)" {
+        $p = New-TestProject -Base $TestDrive -Name "chk-fatal-$Form"
+        $result = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        $result.Output | Should -Match 'CLAUDE\.md missing'
+        $result.ExitCode | Should -Be 1
+    }
+}

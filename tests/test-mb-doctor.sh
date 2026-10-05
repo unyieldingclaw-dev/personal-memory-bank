@@ -1132,4 +1132,64 @@ rc=$?
 assert_not_contains "$output" "\[ERROR\]" "check 26: clean baseline has no [ERROR]"
 assert_equals "$rc" "0" "check 26: clean baseline — doctor exits 0"
 
+# ── Check 27: `doctor --check` compares but never writes ─────────────────────
+# Added 2026-10-02: plain doctor rewrites .pmb-checksums at the end of every run, so the
+# pre-push hook (Check 7) re-baselined on every push and a mismatch was reported exactly
+# once, by the run that then erased it. `--check` must leave the working tree untouched,
+# so the same mismatch is still reported on the NEXT run. Persistence is the property
+# under test; "file unchanged" alone would also pass against a build that skipped the
+# comparison entirely, which is why every run below also asserts what was reported.
+#
+# Own fixture rather than TMPDIR_DOC, and outside the VERSION move-aside window above
+# (tests/run.sh's concurrency hazard): this section never touches $REPO_ROOT. The notifier
+# is pointed at a scratch cache and an unreachable URL so the run is hermetic — its HOME
+# cache write is out of scope for the claim, which is about the project working tree.
+echo ""
+echo "--- check 27: doctor --check is read-only and the mismatch persists ---"
+
+TMPDIR_CHK="$(mktemp -d 2>/dev/null || mktemp -d -t mb-check-mode)"
+setup_doctor_project "$TMPDIR_CHK/proj" >/dev/null 2>&1
+CHK="$TMPDIR_CHK/proj"
+run_chk() {
+    (cd "$CHK" && MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_CHK/cache" \
+        MB_VERSION_CHECK_URL="http://127.0.0.1:1/VERSION" bash "$MB" doctor "$@" 2>&1)
+}
+tree_snapshot() {
+    (cd "$CHK" && find . -path ./.git -prune -o -type f -print0 | sort -z | xargs -0 sha256sum)
+}
+
+run_chk > /dev/null   # plain doctor establishes the baseline
+echo "External modification." >> "$CHK/memory-bank/progress.md"
+
+before=$(tree_snapshot)
+output=$(run_chk --check); rc=$?
+after=$(tree_snapshot)
+assert_equals "$rc" "0" "check 27: --check with only an advisory mismatch exits 0"
+assert_contains "$output" "\[ERROR\] memory-bank/progress.md (hash mismatch" "check 27: --check reports the mismatch"
+assert_contains "$output" "Integrity check mode: .pmb-checksums not modified" "check 27: --check emits the check-mode marker"
+assert_contains "$output" "mb verify-integrity" "check 27: --check points at the explicit accept step"
+assert_equals "$after" "$before" "check 27: --check leaves the working tree byte-identical"
+
+output=$(run_chk --check)
+assert_contains "$output" "\[ERROR\] memory-bank/progress.md (hash mismatch" "check 27: mismatch still reported on the next --check run (not erased)"
+
+output=$(run_chk)
+assert_not_contains "$output" "Integrity check mode:" "check 27: plain doctor does NOT emit the check-mode marker"
+output=$(run_chk --check)
+assert_not_contains "$output" "hash mismatch" "check 27: plain doctor still re-baselines (unchanged default)"
+assert_contains "$output" "\[OK\]   Integrity checksums verified" "check 27: --check reports a clean compare after re-baseline"
+
+rm -f "$CHK/.pmb-checksums"
+output=$(run_chk --check)
+assert_file_not_exists "$CHK/.pmb-checksums" "check 27: --check does not create a missing baseline"
+assert_contains "$output" "\[WARN\] Integrity checksums: no baseline" "check 27: --check reports the missing baseline as WARN"
+assert_contains "$output" "Integrity check mode: .pmb-checksums not modified" "check 27: marker also emitted when no baseline exists"
+
+mv "$CHK/CLAUDE.md" "$CHK/CLAUDE.md.aside"
+run_chk --check > /dev/null; rc=$?
+mv "$CHK/CLAUDE.md.aside" "$CHK/CLAUDE.md"
+assert_equals "$rc" "1" "check 27: --check keeps doctor's exit code — fatal condition exits 1"
+
+rm -rf "$TMPDIR_CHK"
+
 print_summary

@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### Fixed
+- **The pre-push hook silently accepted every memory-bank edit.** Check 7 ran `mb doctor`, which
+  rewrites `.pmb-checksums` at the end of every run, so an edit made outside mb tools was reported
+  once, by the run that then erased it. New `mb doctor --check` (both runtimes) runs the same
+  checks without writing and prints `Integrity check mode: .pmb-checksums not modified`. Check 7
+  now runs it and:
+  - reports UNKNOWN when that line is missing (an older `mb` ignores the flag and rewrites);
+  - gives a checksum mismatch its own warning, repeated on every push until accepted with
+    `mb verify-integrity` — `ENFORCE=true` blocks until then;
+  - reports a missing baseline as `[INFO]`, not a warning.
+
+  Plain `mb doctor` and `mb verify-integrity` are unchanged. Also corrected Check 7's comment,
+  which said doctor "exits 0 regardless": it exits 1 for a fatal finding.
 - **`mb commit`'s subworktree check was wrong three ways, in both runtimes.** It compared
   `--git-common-dir` against `$PWD/.git`.
   - Inside an absorbed git submodule, whose `.git` is a gitlink *file*, it said "You are in a git

@@ -264,7 +264,7 @@ PMB distributes two git hooks through the `.githooks/` directory, which is versi
 - Uncommitted working tree changes *(warn)*
 - Missing `.gitattributes` *(warn)*
 - Files over 500 KB *(warn)*
-- Memory-bank integrity via `mb doctor` *(warn, or UNKNOWN if `mb` is unavailable)*
+- Memory-bank integrity via `mb doctor --check` *(warn, or UNKNOWN if `mb` is unavailable or predates `--check`)*
 - Scans first pushes via `git log HEAD --not --remotes` when no upstream tracking ref exists
 
 Dispatches to `scripts/pre-push-check.ps1` (Windows/pwsh) or `scripts/pre-push-check.sh` (POSIX/bash). Fails open — if the script errors unexpectedly, the push is allowed through.
@@ -294,8 +294,19 @@ that was wrong in the same way the code was, and `scripts/pre-push-check.sh` was
 same change without this file being updated alongside it. Check 7 now runs `mb doctor` and derives its
 verdict from that command's structured output: counting `[OK]`/`[WARN]`/`[ERROR]` lines yields both
 the result *and* positive evidence the command actually ran. Zero result lines means UNKNOWN, never
-success. (`mb doctor` also exits 0 regardless of findings, so switching commands alone would not
-have fixed this.)
+success. (`mb doctor`'s exit code would not have fixed this either: it is 1 only for a fatal
+finding, and its advisory `[ERROR]` lines — checksum mismatch, startup-context ceiling — leave it
+at 0.)
+
+**Why `--check`.** Plain `mb doctor` rewrites `.pmb-checksums` at the end of every run, so a hook
+that ran it re-baselined on every push: a memory-bank edit was reported once, by the run that then
+erased it. Check 7 runs `mb doctor --check`, which compares without writing, and requires the
+`Integrity check mode:` line it prints — an `mb.sh` older than the hook ignores the flag and
+rewrites silently, so a run without that line is UNKNOWN. A checksum mismatch gets its own
+`[WARN] memory-bank changed since the last accepted integrity baseline` line and keeps appearing on
+every push until the edits are reviewed and accepted with `mb verify-integrity`. It counts as a
+warning, so `ENFORCE=true` blocks until then. A missing baseline (fresh clone or worktree —
+`.pmb-checksums` is gitignored) is reported as `[INFO]` and does not count.
 
 Relatedly, deprecated redirect shims now exit **2** ("command moved") rather than 0, so a script
 reading only an exit code can tell that nothing ran. `mb update` is deliberately excluded — it is a
