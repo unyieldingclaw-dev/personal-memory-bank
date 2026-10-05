@@ -52,6 +52,11 @@ make_clean_repo() {
 # the presence and behaviour of `mb`.
 GIT_DIR_PATH="$(dirname "$(command -v git)")"
 
+# The line `mb doctor --check` prints to confirm it ran read-only. Check 7 requires it: a run
+# without it came from an mb that predates --check and may have re-baselined .pmb-checksums.
+# Healthy stubs must therefore emit it, exactly as the real command does.
+CHECK_MARKER='[OK]   Integrity check mode: .pmb-checksums not modified'
+
 # Run the hook with `mb` guaranteed ABSENT.
 # WHY the precondition is asserted rather than assumed: this fixture proves "an unrunnable
 # check reports UNKNOWN", which is only meaningful if mb is genuinely unreachable. If mb were
@@ -190,7 +195,7 @@ echo ""
 echo "--- structured output with no errors reports OK ---"
 
 output=$(run_hook_with_stub_mb "$REPO_A" \
-    'echo "[OK]   Memory Bank v1.2.1"; echo "[OK]   Git repository detected"; exit 0' || true)
+    "echo \"[OK]   Memory Bank v1.2.1\"; echo \"$CHECK_MARKER\"; exit 0" || true)
 assert_contains "$output" "\[OK\]   mb doctor: 2 result lines, no errors" "counts result lines and reports OK"
 assert_not_contains "$output" "\[UNKNOWN\]" "a real run is not reported as UNKNOWN"
 # Positive assertion of the green summary. Everywhere else this string is asserted ABSENT;
@@ -199,13 +204,14 @@ assert_contains "$output" "All pre-push checks passed" \
     "clean repo with a healthy mb DOES report the green summary"
 
 # ── Errors in doctor output surface as a warning ────────────────────────────
-# WHY parsed from output rather than exit code: mb doctor exits 0 regardless of what it
-# finds, so an exit-code-based check would report success here.
+# WHY parsed from output rather than exit code: doctor's exit code is 1 only for a FATAL
+# finding; advisory [ERROR] lines (checksum mismatch, startup-context ceiling) leave it at 0,
+# so an exit-code-based check would report success here.
 echo ""
 echo "--- errors in output surface even though the command exits 0 ---"
 
 output=$(run_hook_with_stub_mb "$REPO_A" \
-    'echo "[OK]   Memory Bank v1.2.1"; echo "[ERROR] Startup context too large"; exit 0' || true)
+    "echo \"[OK]   Memory Bank v1.2.1\"; echo \"$CHECK_MARKER\"; echo \"[ERROR] Startup context too large\"; exit 0" || true)
 assert_contains "$output" "reported 1 error(s)" "surfaces errors despite exit 0"
 assert_contains "$output" "Startup context too large" "echoes the offending line"
 assert_not_contains "$output" "All pre-push checks passed" \
@@ -221,7 +227,7 @@ REPO_D="$TMPDIR_PP/warn-only"
 make_clean_repo "$REPO_D"
 printf 'uncommitted\n' > "$REPO_D/dirty.txt"
 
-HEALTHY_STUB='echo "[OK]   Memory Bank v1.2.1"; exit 0'
+HEALTHY_STUB="echo \"[OK]   Memory Bank v1.2.1\"; echo \"$CHECK_MARKER\"; exit 0"
 output=$(run_hook_with_stub_mb "$REPO_D" "$HEALTHY_STUB" || true)
 assert_contains "$output" "PASS with 1 warning" "dirty tree + healthy mb reports PASS with warnings"
 assert_not_contains "$output" "\[DEGRADED\]" "a warning is not misreported as DEGRADED"
@@ -234,6 +240,61 @@ warn_enforce_exit=$?
 set -e
 assert_exit_zero $warn_default_exit "warnings alone do not block by default"
 assert_exit_nonzero $warn_enforce_exit "ENFORCE=true blocks on warnings"
+
+# ── Check 7 calls the read-only form and verifies it ran ───────────────────
+# Plain `mb doctor` rewrites .pmb-checksums, so a hook that calls it erases the mismatch it
+# reports. These assert the hook passes --check, and that it refuses to trust a run that did
+# not confirm check mode (an older mb.sh ignores the flag and re-baselines silently).
+echo ""
+echo "--- Check 7 calls doctor --check and requires the check-mode marker ---"
+
+ARGS_FILE="$TMPDIR_PP/stub-args"
+run_hook_with_stub_mb "$REPO_A" \
+    "printf '%s\n' \"\$*\" > '$ARGS_FILE'; echo \"[OK]   Memory Bank v1.2.1\"; echo \"$CHECK_MARKER\"; exit 0" >/dev/null 2>&1 || true
+assert_equals "$(cat "$ARGS_FILE" 2>/dev/null)" "doctor --check" "Check 7 invokes exactly 'mb doctor --check'"
+
+output=$(run_hook_with_stub_mb "$REPO_A" \
+    'echo "[OK]   Memory Bank v1.2.1"; echo "[OK]   Git repository detected"; exit 0' || true)
+assert_contains "$output" "\[UNKNOWN\] mb doctor did not confirm check mode" "results without the marker report UNKNOWN"
+# The remedy must name the clone: `mb upgrade` alone, run from an outdated clone, reinstalls the old hook.
+assert_contains "$output" "update the PMB clone that MB_HOME points at" "UNKNOWN remedy points at the PMB clone, not mb upgrade alone"
+assert_not_contains "$output" "\[OK\]   mb doctor:" "an unconfirmed run is not reported OK"
+assert_not_contains "$output" "All pre-push checks passed" "an unconfirmed run does not produce a green summary"
+
+# ── Checksum mismatch: its own line, and counted (so ENFORCE blocks) ────────
+echo ""
+echo "--- a checksum mismatch gets a dedicated warning, separate from other errors ---"
+
+MISMATCH_STUB="echo \"[OK]   Memory Bank v1.2.1\"; echo \"[ERROR] memory-bank/progress.md (hash mismatch - modified outside mb tools)\"; echo \"[ERROR] Startup context too large\"; echo \"$CHECK_MARKER\"; exit 0"
+output=$(run_hook_with_stub_mb "$REPO_A" "$MISMATCH_STUB" || true)
+assert_contains "$output" "\[WARN\] memory-bank changed since the last accepted integrity baseline: 1 file(s)" "mismatch gets its own warning line"
+assert_contains "$output" "memory-bank/progress.md" "mismatching file is named"
+assert_contains "$output" "mb verify-integrity" "warning names the explicit accept step"
+assert_contains "$output" "reported 1 error(s)" "generic error count excludes the checksum line"
+assert_contains "$output" "Startup context too large" "other errors still surface"
+
+# WHY a mismatch-ONLY stub, on the clean repo: MISMATCH_STUB above also emits an unrelated
+# [ERROR], which counts a warning through the generic branch on its own — so an ENFORCE test
+# built on it stays green with the mismatch branch's counter deleted (measured in review: both
+# twins fully green under that mutant). Here the mismatch line is the ONLY possible warning
+# source, so "PASS with 1 warning" and the non-zero exit can come from nowhere else.
+MISMATCH_ONLY_STUB="echo \"[OK]   Memory Bank v1.2.1\"; echo \"[ERROR] memory-bank/progress.md (hash mismatch - modified outside mb tools)\"; echo \"$CHECK_MARKER\"; exit 0"
+set +e
+output=$(ENFORCE=true run_hook_with_stub_mb "$REPO_A" "$MISMATCH_ONLY_STUB" 2>&1)
+mismatch_enforce_exit=$?
+set -e
+assert_exit_nonzero $mismatch_enforce_exit "ENFORCE=true blocks on a checksum mismatch alone (counted as a warning)"
+assert_contains "$output" "PASS with 1 warning" "a mismatch alone is exactly one counted warning"
+assert_contains "$output" "treating warnings as blocking" "ENFORCE names the warning as the reason it blocks"
+
+# ── No baseline: visible, but not a warning ─────────────────────────────────
+echo ""
+echo "--- a missing baseline is reported as INFO and does not count ---"
+
+output=$(run_hook_with_stub_mb "$REPO_A" \
+    "echo \"[OK]   Memory Bank v1.2.1\"; echo \"[WARN] Integrity checksums: no baseline (.pmb-checksums absent); --check does not create one. Run: mb verify-integrity\"; echo \"$CHECK_MARKER\"; exit 0" || true)
+assert_contains "$output" "\[INFO\] No memory-bank integrity baseline yet" "missing baseline surfaces as INFO"
+assert_contains "$output" "All pre-push checks passed" "missing baseline alone does not downgrade the summary"
 
 # ── The dead-shim class ─────────────────────────────────────────────────────
 # The root defect: a deprecated alias that prints a notice and exits 0 is

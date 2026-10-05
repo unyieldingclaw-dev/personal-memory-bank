@@ -237,7 +237,7 @@ PMB distributes two git hooks through the `.githooks/` directory, which is versi
 - Uncommitted working tree changes *(warn)*
 - Missing `.gitattributes` *(warn)*
 - Files over 500 KB *(warn)*
-- Memory-bank integrity via `mb doctor` *(warn, or UNKNOWN if `mb` is unavailable)*
+- Memory-bank integrity via `mb doctor --check` *(warn, or UNKNOWN if `mb` is unavailable or predates `--check`)*
 - Scans first pushes via `git log HEAD --not --remotes` when no upstream tracking ref exists
 
 Dispatches to `scripts/pre-push-check.ps1` (Windows/pwsh) or `scripts/pre-push-check.sh` (POSIX/bash). Fails open — if the script errors unexpectedly, the push is allowed through.
@@ -262,6 +262,14 @@ exit code cannot distinguish the first from the last: a command that does nothin
 looks exactly like success. Check 7 therefore derives its verdict from `mb doctor`'s structured
 output rather than its exit code, counting `[OK]`/`[WARN]`/`[ERROR]` lines to get both the result
 *and* positive evidence the command actually ran. Zero result lines means UNKNOWN, never success.
+
+**Why `--check`.** Plain `mb doctor` rewrites `.pmb-checksums` at the end of every run, so a hook
+that ran it re-baselined on every push: a memory-bank edit was reported once, by the run that then
+erased it. Check 7 runs `mb doctor --check`, which compares without writing, and requires the
+`Integrity check mode:` line it prints — an older `mb` that ignores the flag is UNKNOWN. A checksum
+mismatch gets its own warning and keeps appearing on every push until the edits are reviewed and
+accepted with `mb verify-integrity`; `ENFORCE=true` blocks until then. A missing baseline (fresh
+clone — `.pmb-checksums` is gitignored) is reported as `[INFO]` and does not count.
 
 Relatedly, deprecated redirect shims exit **2** ("command moved") rather than 0, so a script reading
 only an exit code can tell that nothing ran. Aliases that still perform real work keep exit 0 —
