@@ -214,8 +214,17 @@ fi
 # single-gap ones; measuring both on the shape that is worst for each gives:
 #     one unbounded gap  (`-c ...`, `--no-gpg-sign`)  4.3s   on dense `git ` text
 #     two nested gaps    (`config (gap)...(gap)`)     >30s   times out; ~47 min extrapolated
-# Only the NESTED pair blows up superlinearly, so only those four groups are bounded, at {0,300}
-# (0.74s at 50000 chars). The two single-gap patterns are left UNBOUNDED on purpose.
+# Only the NESTED pair blows up superlinearly, so only those four groups are bounded, now at
+# {0,255} (0.74s at 50000 chars, measured at the earlier {0,300}). The two single-gap patterns
+# are left UNBOUNDED on purpose.
+#
+# WHY 255 and not 300: POSIX guarantees a repetition bound only up to RE_DUP_MAX, whose minimum is
+# 255. A grep that supports -z but caps bounds there would reject `.{0,300}` with exit 2, which
+# dc_grep turns into a denial of EVERY command, because the signing rows run on every call. No such
+# grep has been measured; macOS/BSD grep is the plausible case and is untested. BusyBox is NOT that
+# case: it rejects -z before compiling any pattern, so this hook denies every command there at 255
+# and at 300 alike (measured end to end, BusyBox 1.37.0 on Alpine with bash). GNU grep accepts both
+# bounds. The .ps1 twin uses the same 255 so the two shells keep one regex text and one bound.
 #
 # WHOLE-HOOK worst case at the 50000-byte bound, measured end to end, .ps1 side:
 #     dense `git `        17.55s      <- the real number to reason about
@@ -233,7 +242,7 @@ fi
 # exceed that. It is exactly the shape the round-6 note below cites as canonical. The reasoning
 # that justified the uniform bound ("real gaps are tiny: `--global` is 9 characters") is true of
 # the `config` gaps and false of the message gap; one bound was applied to two different things.
-# KNOWN COST of the {0,300} bound that remains: 300+ characters between `git` and `config`, or
+# KNOWN COST of the {0,255} bound that remains: 256+ characters between `git` and `config`, or
 # between `config` and the key, no longer matches. That is flag-and-path territory, where gaps
 # really are short, and it does not lower the bar for an adversary -- anyone able to pad the
 # command text already has the strictly easier S4/S5 bypasses documented as unfixable by any
@@ -293,8 +302,9 @@ fi
 # WHY a lowered view of each of the two views above, hoisted here rather than folded per
 # matcher: POSIX `case` is case-SENSITIVE, and every corresponding site in the .ps1 twin uses
 # OrdinalIgnoreCase (literals) or RegexOptions.IgnoreCase (regexes). Four of the six matchers
-# below -- block(), block_boundary(), confirm(), warn() -- used a bare `case` and so returned NO
-# VERDICT AT ALL on a mixed-case payload the .ps1 twin caught. Only confirm_regex() (grep -i) and
+# below -- block(), block_boundary() (since replaced by block_regex() for [NS-38]), confirm(),
+# warn() -- used a bare `case` and so returned NO VERDICT AT ALL on a mixed-case payload the
+# .ps1 twin caught. Only confirm_regex() (grep -i) and
 # confirm_boundary() (which folded per call) already agreed. That is a live divergence across
 # three tiers, not a cosmetic one: SQL keywords are case-insensitive to the engine, so a
 # mixed-case drop executes exactly as the upper-case one does, and on the default
@@ -358,31 +368,90 @@ block() {
     esac
 }
 
-block_boundary() {
-    # Like block(), but requires $1 to end at a word boundary (not immediately followed
-    # by a letter) -- for short patterns prone to colliding with longer words, e.g. a
-    # plain "| sh" substring check false-positives on "| sha256sum"/"| shasum", tools
-    # this repo's own review-gate hash verification depends on (found when fixing the
-    # field-path bug that had made this pattern a no-op made the collision real). POSIX
-    # case globs have no \b, so this approximates it: match $1 followed by a non-letter,
-    # or match $1 as the literal end of the string.
+dc_grep() {
+    # dc_grep <ERE> <locale> <subject>... -- 0 on a match, 1 on no match. Shared by the two regex
+    # matchers. A non-empty <locale> runs grep under LC_ALL=<locale>; an empty one runs it under
+    # the caller's locale. Grep exiting 2 or higher denies and exits the script instead.
     #
-    # WHY the boundary class stays [!a-zA-Z] on an already-lowered string: [!a-z] would be
-    # equivalent here, and writing it that way would encode an assumption -- "the subject is
-    # always folded" -- that a future edit could quietly falsify. Keeping the class case-blind
-    # costs nothing and cannot be wrong either way. $1 MUST be written lower case.
-    case "$cmd_lc" in
-        *"$1"[!a-zA-Z]*|*"$1")
-            deny "BLOCK: $2. Refusing this command."
-            exit 0
-            ;;
-    esac
-    case "$cmd_loose_lc" in
-        *"$1"[!a-zA-Z]*|*"$1")
-            deny "BLOCK: $2. Refusing this command."
-            exit 0
-            ;;
-    esac
+    # WHY the subjects are joined by NUL into ONE grep: under -z a NUL ends a record, so each view
+    # is still matched on its own -- no pattern can span from one view into the other, and `^`
+    # and `$` anchor per view. It halves the grep calls. Each is a subprocess (~40ms measured on
+    # Windows, against a ~1s hook that runs on every Bash tool call), and confirm_regex() below
+    # can run two passes per row.
+    #
+    # WHY any other status denies instead of returning: grep exits 2 when it cannot evaluate
+    # the pattern at all -- an option it does not support, a malformed expression. Inside an
+    # `if`, that status reads exactly like "no match", so a grep that rejected -z would have
+    # silently disabled every regex row, including the single-line `curl | bash` BLOCK that the
+    # glob matcher this replaced handled with no external tool. Same honest direction as the
+    # length bound above: a command the guard cannot analyze prompts, it does not pass.
+    # That makes a grep with -z a hard requirement of the sh hook. Measured on Alpine: BusyBox grep
+    # rejects -z ("unrecognized option: z"), so with bash but no pwsh every Bash command prompts.
+    # Without bash as well, the settings.json wiring `pwsh ... || bash ... || true` runs no guard at
+    # all and every command is allowed. The deny message names the fix. The requirement is recorded
+    # in docs/HOOKS-GUIDE.md and standards/SECURITY-GUARDRAILS.md.
+    #
+    # WHY block_regex() passes C: grep's character classes follow the locale. Measured under GNU
+    # grep 3.0, C.UTF-8 made [[:space:]] match NBSP and em-space (which this file keeps
+    # non-boundaries everywhere, see the whitespace note above) and made [^a-z] stop matching an
+    # invalid byte such as 0xFF, which the replaced glob matched in every locale -- reachable
+    # through the raw-stdin fallback, since a parsed JSON string cannot carry that byte. Under the
+    # byte locale, each class in the pipe row means one fixed set of bytes.
+    #
+    # WHY confirm_regex() runs the caller's locale AND C, not either one alone -- each alone
+    # misses a signing bypass the other catches (all measured):
+    #   - C alone: the rows bound their gaps with `.{0,255}`, and C counts that bound in BYTES
+    #     while a UTF-8 locale and the .ps1 twin count CHARACTERS. `git config --file /tmp/<120
+    #     CJK chars>/cfg` plus the key and a falsey value (408 bytes) matches under C.UTF-8 and
+    #     .NET and not under C, so the sh CONFIRM went silent while ps1 prompted.
+    #   - The caller's locale alone: under tr_TR.UTF-8, -i does not fold `I` to `i`, so an
+    #     upper-case key -- `git config COMMIT.GPGSIGN false`, which git accepts -- got no
+    #     verdict; and under any UTF-8 locale `.` does not match an invalid sequence, so a lone
+    #     surrogate escape in a gap (the extraction writes it as bytes ED B3 BF) got none either
+    #     on GNU grep 3.7. Both pass under C. Both are the sh twin of defects the .ps1 closes
+    #     with CultureInvariant and .NET's `.`.
+    # The union can only add matches. Its cost is a second grep per row, paid only when the
+    # first misses -- that is, on almost every command -- and the NUL join above pays for it.
+    # It does not close every combination: when the caller's pass misses for one of the reasons
+    # above AND the gap is longer than 255 bytes, the C pass misses too, so a
+    # Turkish locale plus an upper-case key plus a long CJK path gets no verdict here while the .ps1
+    # twin prompts. Recorded in standards/SECURITY-GUARDRAILS.md.
+    _dc_re=$1
+    _dc_lc=$2
+    shift 2
+    if [ -n "$_dc_lc" ]; then
+        printf '%s\0' "$@" | LC_ALL="$_dc_lc" grep -qziE -e "$_dc_re"
+    else
+        printf '%s\0' "$@" | grep -qziE -e "$_dc_re"
+    fi
+    _dc_rc=$?
+    if [ "$_dc_rc" -gt 1 ]; then
+        deny "CONFIRM REQUIRED: grep could not evaluate a guard pattern (exit ${_dc_rc}), so this command cannot be checked reliably. The sh hook needs a grep that supports -z, such as GNU grep; BusyBox grep does not. Install GNU grep or PowerShell (pwsh). Run manually if intentional."
+        exit 0
+    fi
+    return "$_dc_rc"
+}
+
+block_regex() {
+    # Like block(), but matches an extended regex, case-insensitively, via dc_grep -- the
+    # BLOCK-tier counterpart of confirm_regex() below, which documents the -z/-e rationale.
+    #
+    # WHY it exists, [NS-38]: a trailing pipe is a real shell line continuation. `curl x |`
+    # followed by a newline and then `bash` runs exactly as `curl x | bash`. So do blank lines
+    # between the two (verified live in bash). The literal-substring rows this replaced could
+    # not span that newline, so a piped-to-interpreter command split across lines passed the
+    # BLOCK tier with no verdict at all on the sh side. The .ps1 twin's `\s*` already spanned
+    # it. A case glob cannot say "zero or more whitespace", so this tier needs a regex, and
+    # grep -z lets the whitespace class reach across newlines.
+    #
+    # WHY the pipe rows are merged into one alternation rather than one row per interpreter:
+    # each row costs a grep subprocess on every Bash tool call (see dc_grep), so one row is one
+    # call, not two. Runs under LC_ALL=C -- see dc_grep for why.
+    # Checks the de-escaped view too -- see the cmd_loose note above.
+    if dc_grep "$1" C "$cmd" "$cmd_loose"; then
+        deny "BLOCK: $2. Refusing this command."
+        exit 0
+    fi
 }
 
 confirm() {
@@ -441,12 +510,10 @@ confirm_regex() {
     # .NET -replace is not; the replacement then reintroduced the identical defect one function
     # over, via grep. Recorded here so a third instance is harder to write.
     #
-    # Checks the de-escaped view too -- see the cmd_loose note above.
-    if printf '%s' "$cmd" | grep -qziE -e "$1"; then
-        deny "CONFIRM REQUIRED: $2. Run manually if intentional."
-        exit 0
-    fi
-    if printf '%s' "$cmd_loose" | grep -qziE -e "$1"; then
+    # Checks the de-escaped view too -- see the cmd_loose note above. Matched through dc_grep,
+    # which refuses to read a grep failure as "no match": first under the caller's locale, then
+    # under C -- see dc_grep for the three bypasses that need both passes.
+    if dc_grep "$1" "" "$cmd" "$cmd_loose" || dc_grep "$1" C "$cmd" "$cmd_loose"; then
         deny "CONFIRM REQUIRED: $2. Run manually if intentional."
         exit 0
     fi
@@ -455,12 +522,12 @@ confirm_regex() {
 confirm_boundary() {
     # Like confirm(), but requires $1 to be bounded on BOTH sides: preceded by the
     # start of the string or a non-letter, and followed by whitespace or the literal
-    # end of the string — not just any non-letter on the trailing side, which
-    # block_boundary() accepts. WHY the stricter trailing boundary: "git merge" as a
-    # plain substring (or under block_boundary's non-letter check) also matches
+    # end of the string — not just any non-letter on the trailing side, which the
+    # pipe row's `([^a-z]|$)` accepts. WHY the stricter trailing boundary: "git merge" as a
+    # plain substring (or under that non-letter check) also matches
     # "git merge-base", a common, harmless read-only command this repo's own session
     # tooling uses constantly — the character after "merge" in "merge-base" is "-", a
-    # non-letter, so block_boundary's boundary rule would still false-positive there.
+    # non-letter, so a non-letter boundary rule would still false-positive there.
     # WHY a leading boundary too (found by code review, not present in the original
     # version): without one, "$1" also matches as a substring of a longer word — e.g.
     # "git commit -m 'legit merge of feature A'" contains the literal substring
@@ -483,15 +550,18 @@ confirm_boundary() {
     # resolves "GIT" to git.exe case-insensitively, and git's own subcommand
     # parsing only requires "merge" (not "GIT") to be lowercase. Folding both
     # $cmd and $1 to lowercase before the case match closes that platform gap
-    # without touching confirm()/block()/block_boundary(), which are unaffected
+    # without touching confirm()/block()/block_boundary() (the last since replaced by
+    # block_regex() for [NS-38]), which are unaffected
     # by this pattern and use the file's existing explicit-lowercase-variant
     # convention (see the "drop table"/"DROP TABLE" pairs above) instead.
     # Checks the de-escaped view too -- see the cmd_loose note above. This function was the
-    # ONE matcher of five the de-escaped-view retrofit missed, and the gap was live: with only
+    # FIRST matcher the de-escaped-view retrofit missed (warn() was the second, [NS-40]), and
+    # the gap was live: with only
     # the faithful view, `git m\erge main` and `git "merge" main` were both SILENT here while
     # the .ps1 twin CONFIRMed both -- a sh/ps1 divergence in the git merge CONFIRM tier,
     # reachable by the same escape and adjacent-quote techniques the retrofit closed in
-    # block()/block_boundary()/confirm()/confirm_regex(). The ps1 side never had the gap
+    # block()/block_boundary() (since replaced by block_regex())/confirm()/confirm_regex().
+    # The ps1 side never had the gap
     # because its `git merge` entry is one more row in the uniform $confirmPatterns loop.
     #
     # WHY the mutation proof did not catch this: deleting cmd_loose turned the escape tests red,
@@ -522,13 +592,28 @@ warn() {
     # default Windows and macOS filesystems are case-insensitive, so `ID_RSA` and `id_rsa` name
     # the same file; the .ps1 twin's OrdinalIgnoreCase already surfaced both.
     #
-    # WHY only the faithful view and not cmd_loose_lc: this matcher checks ONE view on both
-    # shells -- the .ps1 warn loop tests $cmd alone as well -- so adding the de-escaped view
-    # here would create a divergence rather than close one. That shared single-view limit is a
-    # real gap, but it is a gap in BOTH shells and out of scope for the case-folding fix.
+    # WHY this checks the de-escaped view too, [NS-40]: it was the second matcher the cmd_loose
+    # retrofit missed, after confirm_boundary(). Every warn pattern was evadable by one
+    # backslash or one pair of quotes -- `cat ~/.ssh/id\_rsa` and `cat ~/.ssh/"id"_rsa` warned
+    # on NEITHER shell, while plain `id_rsa` warned on both, and no BLOCK or CONFIRM row covers
+    # these paths as a fallback. A bypass of SURFACING, not of enforcement: WARN never blocks,
+    # so the command ran either way and what was lost was the notice. The .ps1 warn loop had
+    # the same single-view limit and gets the same fix, so the two shells still agree.
+    #
+    # WHY `return` after a match, unlike the other matchers: warn() does NOT exit -- the
+    # command proceeds. Without the return, a command matching both views (most of them, since
+    # the loose view differs only when backslashes or quotes are present) would print the
+    # warning twice.
     case "$cmd_lc" in
         *"$1"*)
             printf "WARNING: %s. Proceeding.\n" "$2"
+            return
+            ;;
+    esac
+    case "$cmd_loose_lc" in
+        *"$1"*)
+            printf "WARNING: %s. Proceeding.\n" "$2"
+            return
             ;;
     esac
 }
@@ -547,10 +632,27 @@ block "git push -f"      "force push (short form)"              # WHY: same as -
 # This also restores structural parity with the .ps1 twin, whose $blockPatterns never had them.
 block "drop table"       "SQL table drop"                       # WHY: irreversible schema destruction
 block "drop database"    "SQL database drop"                    # WHY: destroys entire database
-block_boundary "| bash" "command piped to bash (curl|bash, wget|bash, etc.)"  # WHY: remote code execution vector
-block_boundary "| sh"   "command piped to sh"                  # WHY: remote code execution via sh
-block_boundary "|bash"  "command piped to bash (no-space form)"  # WHY: curl|bash without spaces evades space-prefixed pattern
-block_boundary "|sh"    "command piped to sh (no-space form)"    # WHY: wget|sh without spaces evades space-prefixed pattern
+# WHY one regex replaces the four literal pipe rows ("| bash", "| sh", "|bash", "|sh"), [NS-38]:
+# see block_regex() -- a trailing pipe continues the command onto the next line, and a literal
+# cannot span the newline. It matches every input the four rows matched: measured over a
+# 4,900-input differential (spacing, case, CR/LF, NBSP, trailing byte) with zero losses.
+#   `\|&?`          -- also bash's `|&`, which pipes stdout AND stderr into the interpreter.
+#                      The four rows missed `curl x |& bash` on both shells.
+#   `[[:space:]]*`  -- no space, one space, and now newlines and blank lines after the pipe.
+#   `([^a-z]|$)`    -- the trailing boundary the rows had. Without it, "| sh" false-positives
+#                      on "| sha256sum" / "| shasum", tools this repo's own review-gate hash
+#                      verification depends on. A digit, `_`, `-`, `.` or `/` after the name
+#                      still counts as a boundary, as before: `| bash5` blocks.
+# KNOWN GAPS, recorded in standards/SECURITY-GUARDRAILS.md rather than matched. Both shells: a
+# comment line between the pipe and the interpreter (a real shell skips it), an interpreter
+# reached through another word (`| sudo sh`, `| env bash`, `| /bin/bash`), and any interpreter
+# other than bash and sh (zsh, dash, python, ...). The .ps1 twin only: its `\b` treats a digit or
+# `_` after the name as part of the word, so `| bash5` and `| bash_x` block here but not there.
+#
+# Each *_regex row needs one example in tests/test-dangerous-commands.sh's `_dc_ex` table, keyed by
+# row order within its matcher. The escape-parity invariant fails loudly on a row without one;
+# when inserting a row between existing ones, renumber the examples after it.
+block_regex "\|&?[[:space:]]*(bash|sh)([^a-z]|$)" "command piped to a shell interpreter (curl|bash, wget|sh, etc.)"  # WHY: remote code execution vector
 
 # CONFIRM: advanced ops with legitimate uses — require explicit manual invocation
 confirm "git filter-branch" "history rewriting"                 # WHY: rewrites commit history, rarely intentional
@@ -632,7 +734,7 @@ confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WH
 # The class also did not achieve what it cost: NEWLINE was never in the excluded set, so the gap
 # already spanned commands freely. It blocked ordinary messages and not the thing it was for.
 #
-# The two nested-gap `config` patterns keep a BOUND (`.{0,300}`) because they are the cubic pair
+# The two nested-gap `config` patterns keep a BOUND (`.{0,255}`) because they are the cubic pair
 # and need one -- but they no longer exclude separators either. That exclusion was left in place
 # for one round on the argument that a separator there means a different command; it was then
 # measured to be a live hole of its own:
@@ -649,8 +751,8 @@ confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WH
 # silent miss is not. Both are recorded in the accepted-false-positive list in
 # standards/SECURITY-GUARDRAILS.md rather than left for the next reviewer to rediscover.
 confirm_regex "(^|[^a-z])git (.*)-c *[\"']?commit\.gpgsign[\"']? *= *[\"']?(false|no|off|0)([^a-z0-9]|$)" "bypasses commit signing (local governance)"
-confirm_regex "(^|[^a-z])git (.{0,300})config (.{0,300})[\"']?commit\.gpgsign[\"']? *[= ] *[\"']?(false|no|off|0)([^a-z0-9]|$)" "bypasses commit signing (local governance)"
-confirm_regex "(^|[^a-z])git (.{0,300})config (.{0,300})--unset(-all)? +[\"']?commit\.gpgsign" "bypasses commit signing (local governance)"
+confirm_regex "(^|[^a-z])git (.{0,255})config (.{0,255})[\"']?commit\.gpgsign[\"']? *[= ] *[\"']?(false|no|off|0)([^a-z0-9]|$)" "bypasses commit signing (local governance)"
+confirm_regex "(^|[^a-z])git (.{0,255})config (.{0,255})--unset(-all)? +[\"']?commit\.gpgsign" "bypasses commit signing (local governance)"
 confirm_regex "(^|[^a-z])git (.*)--no-gpg-sign" "bypasses commit signing (local governance)"
 confirm_boundary "git merge" "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier"  # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
 

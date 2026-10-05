@@ -188,7 +188,17 @@ $cmdLoose = ($cmd -replace '[\\"'']', '') -replace ' +', ' '
 # vs .NET `-replace` in round 4, `grep` vs `-imatch` in round 6 (fixed with -z), and now `.`
 # vs `.`. confirm_regex()'s comment in the sh twin asked that a third instance be made harder
 # to write; this is that instance, handled at the same time as the change that would cause it.
-$DcRegexOpts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline'
+#
+# WHY CultureInvariant: IgnoreCase alone folds case by the CURRENT culture's rules, and under
+# tr-TR (and az) upper-case `I` does not fold to `i`. Measured on pwsh 7 with the thread culture
+# set to tr-TR, on a copy of this file without CultureInvariant: an upper-case config key --
+# `git config COMMIT.GPGSIGN false`, `git -c COMMIT.GPGSIGN=false commit`, which git accepts --
+# got no CONFIRM, and `| IEX` did not match the [NS-38] iex regexes below, a BLOCK regression
+# against the OrdinalIgnoreCase literals they replace. Invariant folding can only ADD matches for
+# these ASCII patterns. The sh twin narrows the same gap by running its signing rows under both the
+# caller's locale and C, but can still miss when the command also carries a long non-ASCII gap --
+# see dc_grep there and standards/SECURITY-GUARDRAILS.md.
+$DcRegexOpts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline, CultureInvariant'
 
 function Deny {
     param([string]$Reason)
@@ -210,7 +220,9 @@ function Deny {
 #
 # ROUND 8: growth was measured to be CUBIC, not quadratic (~8x per doubling), making the real
 # worst case at this bound ~47 minutes rather than the "roughly 8 seconds" previously claimed.
-# Only the two NESTED-gap `config` patterns blow up; they are bounded to {0,300}. The two
+# Only the two NESTED-gap `config` patterns blow up; they are bounded to {0,255} -- not 300,
+# because POSIX guarantees repetition bounds only up to 255 and the sh twin's grep must compile
+# the same regex; see the WHY-255 note in dangerous-commands.sh. The two
 # single-gap patterns are deliberately left unbounded -- bounding them broke the --no-gpg-sign
 # CONFIRM for any ordinary commit message, because that gap holds the message rather than flags.
 # See dangerous-commands.sh for the per-pattern measurements and why test assertions were
@@ -244,16 +256,26 @@ $blockPatterns = @(
     @{ pattern = "git push -f";      reason = "force push (short form)" }                   # WHY: same as --force, short flag form
     @{ pattern = "DROP TABLE";       reason = "SQL table drop" }                            # WHY: irreversible schema destruction
     @{ pattern = "DROP DATABASE";    reason = "SQL database drop" }                         # WHY: destroys entire database
-    @{ pattern = '\|\s*bash\b'; regex = $true; reason = "command piped to bash (curl|bash, wget|bash, etc.)" } # WHY: remote code execution vector. Regex with \b (not a plain substring): matches both spaced ("| bash") and unspaced ("|bash") forms in one pattern.
-    @{ pattern = '\|\s*sh\b';   regex = $true; reason = "command piped to sh" }              # WHY: remote code execution via sh. WHY regex, not substring: a plain "| sh" substring check false-positives on any command containing "| sha256sum", "| shasum", etc. -- tools this repo's own review-gate hash verification depends on (found when fixing the field-path bug that had made this pattern a no-op made this collision real). \b requires "sh" to end at a word boundary, so "sha256sum" (sh immediately followed by "a", no boundary) doesn't match, but a literal pipe-to-sh interpreter does.
+    # Each `regex = $true` row needs one example in tests/test-dangerous-commands.sh's `_dc_ex`
+    # table, keyed by row order within its tier array; renumber after an inserted row.
+    #
+    # WHY `\|&?`, [NS-38]: bash's `|&` pipes stdout AND stderr into the interpreter, and this hook
+    # also guards the Bash tool whenever pwsh is present, so `curl x |& bash` must block here too.
+    # `\s*` already spans a newline after the pipe -- the continuation form the sh twin missed.
+    @{ pattern = '\|&?\s*bash\b'; regex = $true; reason = "command piped to bash (curl|bash, wget|bash, etc.)" } # WHY: remote code execution vector. Regex with \b (not a plain substring): matches both spaced ("| bash") and unspaced ("|bash") forms in one pattern.
+    @{ pattern = '\|&?\s*sh\b';   regex = $true; reason = "command piped to sh" }              # WHY: remote code execution via sh. WHY regex, not substring: a plain "| sh" substring check false-positives on any command containing "| sha256sum", "| shasum", etc. -- tools this repo's own review-gate hash verification depends on (found when fixing the field-path bug that had made this pattern a no-op made this collision real). \b requires "sh" to end at a word boundary, so "sha256sum" (sh immediately followed by "a", no boundary) doesn't match, but a literal pipe-to-sh interpreter does.
     # PowerShell-native equivalents (triggered by the PowerShell tool)
     @{ pattern = "Remove-Item -Recurse -Force"; reason = "recursive force deletion (PowerShell rm -rf equivalent)" }         # WHY: Remove-Item -Recurse -Force is the PS equivalent of rm -rf
     @{ pattern = "Remove-Item -Force -Recurse"; reason = "recursive force deletion (PowerShell rm -rf, flags reversed)" }   # WHY: same as above — flag order varies in real commands
     @{ pattern = "Format-Volume";               reason = "disk volume format (PowerShell)" }                                # WHY: destroys all data on a volume
-    @{ pattern = "| Invoke-Expression";         reason = "command piped to Invoke-Expression (PS code execution)" }         # WHY: pipe-to-iex is the PS equivalent of pipe-to-bash
-    @{ pattern = "|Invoke-Expression";          reason = "command piped to Invoke-Expression (no-space form)" }             # WHY: no-space form evades space-prefixed pattern
-    @{ pattern = "| iex";                       reason = "command piped to iex (PS eval shorthand)" }                      # WHY: iex is the common alias for Invoke-Expression
-    @{ pattern = "|iex";                        reason = "command piped to iex (no-space form)" }                          # WHY: no-space form evades space-prefixed pattern
+    # WHY regexes and not the four literals they replace ("| Invoke-Expression", "|Invoke-Expression",
+    # "| iex", "|iex"), [NS-38]: PowerShell continues a pipeline after a trailing `|` onto the next
+    # line, including across blank lines (verified live), so `iwr x |` + newline + `iex` executes
+    # the download -- and no literal can span that newline. `\s*` covers the no-space, one-space and
+    # newline forms in one row. NO trailing boundary, deliberately: the literals had none, so the
+    # regexes are a strict superset of them. Adding `\b` would have narrowed the tier.
+    @{ pattern = '\|\s*Invoke-Expression'; regex = $true; reason = "command piped to Invoke-Expression (PS code execution)" }   # WHY: pipe-to-iex is the PS equivalent of pipe-to-bash
+    @{ pattern = '\|\s*iex';               regex = $true; reason = "command piped to iex (PS eval shorthand)" }                # WHY: iex is the common alias for Invoke-Expression
 )
 
 foreach ($entry in $blockPatterns) {
@@ -289,8 +311,8 @@ $confirmPatterns = @(
     # need \" and PowerShell single-quotes need '' for the same two characters. The
     # engine-visible pattern is identical; the parity test asserts behaviour, not text.
     @{ pattern = '(^|[^a-z])git (.*)-c *["'']?commit\.gpgsign["'']? *= *["'']?(false|no|off|0)([^a-z0-9]|$)'; regex = $true; reason = "bypasses commit signing (local governance)" }
-    @{ pattern = '(^|[^a-z])git (.{0,300})config (.{0,300})["'']?commit\.gpgsign["'']? *[= ] *["'']?(false|no|off|0)([^a-z0-9]|$)'; regex = $true; reason = "bypasses commit signing (local governance)" }
-    @{ pattern = '(^|[^a-z])git (.{0,300})config (.{0,300})--unset(-all)? +["'']?commit\.gpgsign'; regex = $true; reason = "bypasses commit signing (local governance)" }
+    @{ pattern = '(^|[^a-z])git (.{0,255})config (.{0,255})["'']?commit\.gpgsign["'']? *[= ] *["'']?(false|no|off|0)([^a-z0-9]|$)'; regex = $true; reason = "bypasses commit signing (local governance)" }
+    @{ pattern = '(^|[^a-z])git (.{0,255})config (.{0,255})--unset(-all)? +["'']?commit\.gpgsign'; regex = $true; reason = "bypasses commit signing (local governance)" }
     @{ pattern = '(^|[^a-z])git (.*)--no-gpg-sign'; regex = $true; reason = "bypasses commit signing (local governance)" }
     # WHY regex, not a plain substring: "git merge" as a bare substring also matches
     # "git merge-base", a common, harmless read-only command — the character after
@@ -334,7 +356,11 @@ $warnPatterns = @(
 )
 
 foreach ($entry in $warnPatterns) {
-    if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
+    # Checks the de-escaped view too, [NS-40]: this loop tested $cmd alone, exactly like the sh
+    # twin's warn(), so `id\_rsa` and `"id"_rsa` warned on neither shell. The -or keeps one if
+    # body, so a command matching both views warns once -- this tier does not exit.
+    if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
         Write-Host ($WARN_MSG -f $entry.reason)
     }
 }

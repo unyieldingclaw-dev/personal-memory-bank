@@ -74,15 +74,31 @@ to lower case **once** — `cmd_lc` and `cmd_loose_lc`, built beside `cmd_loose`
 `case` against those folded views.
 
 **The rule when adding a pattern to `dangerous-commands.sh`: write it in lower case.** `block`,
-`block_boundary`, `confirm`, `confirm_boundary` and `warn` compare `$1` against an already-folded
+`confirm`, `confirm_boundary` and `warn` compare `$1` against an already-folded
 subject and do **not** fold `$1` themselves. An upper-case pattern therefore matches nothing, ever —
 silently, and **fail-open**. Nothing at the call site looks wrong; the guard simply stops guarding.
 This is why `chmod -R 777` is spelled `chmod -r 777` in **the script's** pattern list, while the
 tier lists above show the command as an operator would actually type it. The real `chmod -R 777` is
 still caught, because the *subject* is folded before comparison.
 
-`confirm_regex` is the exception — its patterns go to `grep -qziE`, which folds via `-i`, so case
+`confirm_regex` and `block_regex` are the exception — their patterns go to `grep -qziE`, which folds via `-i`, so case
 there is unconstrained.
+
+**Regex rows and locale.** Case-insensitive regex matching follows the locale unless it is pinned.
+The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase` alone does not
+fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
+verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
+the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The byte locale
+counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
+row inherits its matcher's locale rule, which can change what it matches.
+
+**Platform requirement (sh hook): a grep with `-z`, such as GNU grep.** The regex rows run on every
+command, and a grep that cannot evaluate them makes the hook refuse rather than pass. BusyBox grep
+rejects `-z` (measured), so on Alpine with bash but without pwsh every Bash command prompts. Without
+bash as well, the hook wiring's `|| true` fallback runs no guard at all. Install PowerShell, or
+bash with GNU grep, there. Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
+a grep that supports `-z` but caps bounds there can still compile every row. The test suite fails on
+any row above 255.
 
 **Why the patterns aren't just folded per call** (the obvious alternative, which was built and then
 reverted): folding `$1` inside each matcher costs a `printf | tr` subshell per matcher *call* —

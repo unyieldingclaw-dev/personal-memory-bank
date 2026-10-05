@@ -3,6 +3,61 @@
 ## [Unreleased]
 
 ### Fixed
+- **A pipe to a shell split across a newline got past the BLOCK tier on sh ([NS-38]).** A trailing
+  `|` continues the command onto the next line, so `curl x |`, a newline, then `bash` runs as
+  `curl x | bash`. `dangerous-commands.sh` matched pipe-to-interpreter with four literal rows,
+  which could not span the newline. They are now one regex row (`block_regex`, `grep -z`) that
+  allows any whitespace after the pipe and also matches bash's `|&`. It matches every input the
+  four rows did: checked over 4,900 fuzzed inputs with no losses. `dangerous-commands.ps1`'s
+  bash/sh rows already spanned the newline and now also match `|&`. Its four `iex` /
+  `Invoke-Expression` literals had the same newline gap in PowerShell. They are now two regexes,
+  a strict superset of the literals. A heredoc that writes a YAML `run: |` block followed by a
+  `bash` line is now refused on sh, as it already was on ps1. This is recorded as an accepted
+  false positive in `standards/SECURITY-GUARDRAILS.md`, together with the pipe forms still not
+  covered.
+- **The WARN tier ignored the de-escaped view in both shells ([NS-40]).** `cat ~/.ssh/id\_rsa` and
+  `cat ~/.ssh/"id"_rsa` warned on neither shell. `warn()` and the ps1 warn loop now also check the
+  de-escaped view, and warn once when both views match.
+- **The signing CONFIRM could be skipped by locale, in both shells.** Case-insensitive matching
+  follows the locale, and under a Turkish one `I` does not fold to `i`. So an upper-case config key,
+  such as `git config COMMIT.GPGSIGN false` (git accepts it), got no CONFIRM there. The ps1 regexes
+  now use `CultureInvariant`. On sh, the signing rows run twice, first under the caller's locale
+  and then under `LC_ALL=C`, and prompt if either run matches. Neither locale alone is enough
+  (measured):
+  - `C` counts the rows' `.{0,255}` gaps in bytes, so a long multibyte path would not prompt on sh.
+  - A UTF-8 locale misses a lone-surrogate escape in a gap on GNU grep 3.7, and a Turkish UTF-8
+    locale also misses the upper-case key.
+  - Both passes still miss when either of those causes combines with a gap longer than 255 bytes.
+    This is recorded in `standards/SECURITY-GUARDRAILS.md`.
+
+  Both sh views now go through one `grep` per pass, joined by NUL, so the second pass adds no net
+  grep calls. The new pipe row runs under `LC_ALL=C` only, so it matches the same bytes in every
+  locale.
+- **CI now fails when the sh/ps1 parity checks cannot run.** The `mb-command-tests` job sets
+  `PMB_REQUIRE_PARITY=1`, so if pwsh ever disappears from the runner, the cross-shell checks fail
+  instead of silently skipping.
+- **The sh regex rows now prompt when `grep` fails.** `grep` exits 2 when it cannot evaluate a
+  pattern, and inside an `if` that read as "no match", which would have silently disabled every
+  regex row. It now prompts, like the hook's other "cannot analyze" cases. That makes a grep with
+  `-z`, such as GNU grep, a requirement of the sh hook. BusyBox grep rejects `-z` (measured), so on
+  Alpine with bash but without pwsh every Bash command prompts. Without bash as well, the hook
+  wiring's `|| true` fallback runs no guard at all (measured). The deny message says to install GNU
+  grep or PowerShell.
+- **The signing rows' gap bound is 255, not 300, in both shells.** POSIX guarantees repetition
+  bounds only up to 255 (`RE_DUP_MAX`), so a grep that supports `-z` but caps bounds there would
+  reject `{0,300}` and, with the fail-closed rule above, deny every command. No such grep has been
+  measured; macOS/BSD grep is the plausible case. BusyBox is not one: it rejects `-z` before
+  compiling any pattern, so the sh hook denies every command there at 255 and at 300 alike
+  (measured). The longest `-C` path the bound admits is now 250 characters (measured, both hooks).
+  A new test fails if any regex row carries a bound above 255.
+- **On `origin/main`, BusyBox grep silently disabled the sh regex rows.** A grep failure read as "no
+  match" there, so BusyBox's `-z` rejection let `git -c commit.gpgsign=false commit` through with no
+  prompt, while the literal rows still fired (measured). The fail-closed rule above closes this.
+- **A new test covers every guard row in both shells.** Every registered row is run through the
+  real hook with and without a backslash, and must get the same verdict from its own row. Rows,
+  examples, and matchers are counted exactly, so a skipped or unpaired row fails the test. Checked
+  by mutation: pointing any one matcher's de-escaped branch back at the plain view turns the test
+  red on that matcher's rows.
 - **`mb commit`'s subworktree check was wrong three ways, in both runtimes.** It compared
   `--git-common-dir` against `$PWD/.git`.
   - Inside an absorbed git submodule, whose `.git` is a gitlink *file*, it said "You are in a git
@@ -463,13 +518,14 @@
   It was the one function the retrofit missed, so `git m\erge main` and `git "merge" main` were
   silent in `.sh` while `.ps1` confirmed both. The mutation proof had verified the mechanism where it
   was wired, which says nothing about whether every matcher is wired to it.
-- **The two nested-gap CONFIRM regexes are bounded (`[^|;&]*` → `.{0,300}`), removing a hang.**
+- **The two nested-gap CONFIRM regexes are bounded (`[^|;&]*` → `.{0,300}`, later `.{0,255}`; see
+  the gap-bound entry above), removing a hang.**
   Backtracking on the `git (gap)config (gap)` shape is cubic (~8x per doubling, measured), so the
   50,000-character length bound permitted roughly **47 minutes** of matching per pattern — and a
   `PreToolUse` hook blocks the tool call, so this was a hang rather than a slow path, reachable by an
   ordinary large heredoc writing prose about `git config`. Now ~0.75s at 50,000 characters, still
-  matching a 296-character `-C` path. `{0,300}` is valid in GNU ERE and .NET alike, so one regex still
-  serves both shells.
+  matching a long `-C` path (250 characters at the final bound). One regex text still serves both
+  shells.
 - **Only the nested pair is bounded.** The `-c` and `--no-gpg-sign` patterns nest a single gap group,
   measure ~4.3s at 50,000 characters on the payload shape that is worst for them, and are left
   unbounded on purpose: in `git <gap> --no-gpg-sign`
@@ -498,8 +554,9 @@
 - **The same hole in the two `config` patterns is now closed too.** A separator between `git` and
   `config` defeated them the same way — `git -c core.pager='less | head' config --global
   commit.gpgsign false` permanently unsigns every commit in every repo, and `core.pager` with a pipe
-  is an ordinary configuration. Those gaps are now `.{0,300}`: still length-bounded, because these
-  two are the quadratic pair and bounding is what contains that, but no longer excluding separators.
+  is an ordinary configuration. Those gaps are now `.{0,300}` (later `.{0,255}`): still
+  length-bounded, because these two are the cubic pair and bounding is what contains that, but no
+  longer excluding separators.
   Measured at 50,000 characters the bounded-dot form is **0.795s, slightly faster** than the class it
   replaced (0.942s). **Accepted cost, now asserted in both suites so the trade stays visible:**
   `git config user.name x | grep commit.gpgsign false` prompts. Telling that apart from the real
