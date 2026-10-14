@@ -34,8 +34,9 @@
   runtimes rewrote every line starting `status: draft`, including in the plan body, and a draft
   opening with a `---` rule but no closing fence was treated as frontmatter. Status is now read
   and written inside the frontmatter only (a closing fence is required), a missing or empty
-  status becomes `planned`, a later status is kept, CRLF drafts stay CRLF (Git Bash's awk had
-  been writing them LF-only), and both runtimes report the outcome. The runtimes now agree that
+  status becomes `planned`, a later status is kept, a CRLF draft with frontmatter stays CRLF (on
+  Git Bash, `mb.sh`'s `sed -i` had been rewriting it LF-only), and both runtimes report the
+  outcome. The runtimes now agree that
   `status:` is case-sensitive and a `DRAFT` value is still a draft.
 - **`.claude/plans/` was never gitignored in adopter projects.** `WORKFLOW.md` and `/feature-dev`
   both call plan drafts gitignored scratch files, and `mb doctor` reports a tracked one as an
