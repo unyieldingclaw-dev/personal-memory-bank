@@ -68,16 +68,40 @@
 # The rule this encodes: extraction may fail only when the payload is genuinely unparseable, never
 # because a legal command contains an awkward character.
 #
-# WHY fall back to raw-stdin matching (not to no matching at all) when python3 is
-# missing or JSON parsing fails: this hook's whole purpose is catching genuinely
-# dangerous commands, and a real dangerous command's text is still present SOMEWHERE
-# in the raw payload even when extraction isn't possible -- raw matching never misses
-# a true positive, it only risks occasional false ones. Disabling the guardrail
-# entirely on a missing dependency would trade a rare false-positive-block for a
-# silent, total loss of protection, the wrong direction for a safety gate. This
-# fallback does NOT apply when python3 succeeds and tool_input.command is genuinely
-# empty -- that's a real, parsed answer ("no command to check"), not an extraction
-# failure, so it's trusted as-is rather than falling back to raw matching.
+# WHY fall back to matching the whole payload (not to no matching at all) when python3 is
+# missing or JSON parsing fails: disabling the guardrail on a missing dependency would trade
+# a false-positive block for a silent, total loss of protection, the wrong direction for a
+# safety gate. Its cost is that text in every OTHER field, such as `description`, is matched
+# too. This fallback does NOT apply when python3 succeeds and tool_input.command is genuinely
+# empty -- that's a real, parsed answer ("no command to check"), not an extraction failure.
+#
+# WHY the fallback DECODES the payload's JSON escapes first, CORRECTED 2026-10-14: this comment
+# used to say raw matching "never misses a true positive". It missed every command whose danger
+# needs whitespace other than a space. JSON writes a newline as the two characters `\n` and a tab
+# as `\t`, so with python3 off PATH a pipe to `bash` split across a newline, a tab-separated
+# signing key, a backslash-continued `git push --force`, and any `(^|[^a-z])git` row straight
+# after a newline all got NO verdict, while the parsed path refused or prompted (measured). So
+# did a bare `git merge`: in the payload it is followed by the closing `"`, not the end of string.
+# The decoder below models json.loads for every string in the payload:
+#   - `\" \\ \/ \b \f \n \r \t` and an ASCII `\uXXXX` become the character they stand for, and
+#     `\u0000` becomes nothing, as the shell drops a NUL from the extracted command;
+#   - a non-ASCII `\uXXXX` becomes `?`, and a surrogate PAIR becomes one `?`, since it is one
+#     character. awk cannot portably write UTF-8, and no row treats a non-ASCII character as a
+#     space, so a non-letter stand-in gets the same verdicts with two measured exceptions. It is
+#     stricter where the C-locale pass counts a `?` as 1 byte and the real character as 2 to 4. It
+#     is weaker where a UTF-8 locale's `grep -i` folds a real character to a letter -- U+017F
+#     (long s) matches `s`, so `commit.gpg<U+017F>ign` prompts on the parsed path and not here.
+#     git rejects that key, so the miss is a false positive's, not a bypass. A
+#     pair once written as `??` let 140 escaped emoji in a signing gap pass the {0,255} bound under
+#     a UTF-8 locale (measured). The .ps1 twin writes the real character, which is what its own
+#     parsed path sees;
+#   - an UNESCAPED `"` -- a JSON string delimiter, never command text -- becomes a space, so the
+#     end of the command string reads as a word boundary, as the end of the extracted command does.
+# Splitting on backslashes makes it one linear pass in which `\\` is consumed as a pair, so
+# `\\n` (a backslash, then n) is never read as a newline. Any other escape is kept verbatim.
+# WHY out() splits on quotes instead of calling gsub: gsub was measured QUADRATIC in the number of
+# matches on gawk 5.4 (128K unescaped quotes: 10.6 s; split: 0.17 s), and this runs before the
+# length bound, so a malformed payload full of raw quotes hung the hook for minutes.
 #
 # WHY hookSpecificOutput.permissionDecision, not exit code: settings.json wires this hook
 # as "... 2>/dev/null || bash ... || true" for cross-platform fail-open portability, and
@@ -91,7 +115,8 @@ if [ -z "$input" ]; then
     exit 0
 fi
 
-cmd="$input"
+cmd=""
+dc_parsed=0
 if command -v python3 >/dev/null 2>&1; then
     extracted=$(printf '%s' "$input" | python3 -c "
 import sys, json
@@ -105,7 +130,39 @@ try:
 except Exception:
     sys.exit(1)
 " 2>/dev/null)
-    [ $? -eq 0 ] && cmd="$extracted"
+    [ $? -eq 0 ] && cmd="$extracted" && dc_parsed=1
+fi
+if [ "$dc_parsed" -eq 0 ]; then
+    cmd=$(printf '%s' "$input" | LC_ALL=C awk '
+        function out(s,   q, m, i) { m = split(s, q, /"/); printf "%s", q[1]; for (i = 2; i <= m; i++) printf " %s", q[i] }
+        {
+            n = split($0, p, /\\/)
+            out(p[1])
+            hi = 0
+            for (k = 2; k <= n; k++) {
+                ph = hi; hi = 0
+                if (p[k] == "" && k < n) { printf "\\"; out(p[++k]); continue }
+                c = substr(p[k], 1, 1); r = substr(p[k], 2)
+                if (c == "\"" || c == "/") printf "%s", c
+                else if (c == "b") printf "\b"
+                else if (c == "f") printf "\f"
+                else if (c == "n") printf "\n"
+                else if (c == "r") printf "\r"
+                else if (c == "t") printf "\t"
+                else if (c == "u" && r ~ /^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/) {
+                    v = 0
+                    for (j = 1; j <= 4; j++) v = v * 16 + index("0123456789abcdef", tolower(substr(r, j, 1))) - 1
+                    r = substr(r, 5)
+                    if (ph && v >= 56320 && v <= 57343) ;   # low half of a pair: the high half wrote the ?
+                    else if (v >= 128) printf "?"
+                    else if (v > 0) printf "%c", v
+                    hi = (v >= 55296 && v <= 56319 && r == "")
+                }
+                else printf "\\%s", c
+                out(r)
+            }
+            printf "\n"
+        }')
 fi
 
 # WHY join backslash-newline continuations before any tier matching: the shell parser
@@ -280,7 +337,18 @@ cmd=$(printf '%s' "$cmd" | awk '
 # KNOWN COST, stated rather than hidden: stripping quotes creates matches a real shell would not
 # produce -- `echo "rm" "-rf"` collapses to `echo rm -rf` and now trips BLOCK. That is the same
 # accepted class as the documented quoted-invocation-as-text false positive below.
-cmd_loose=$(printf '%s' "$cmd" | tr -d '\\"'"'" | sed 's/  */ /g')
+#
+# WHY this view also deletes carriage returns, added 2026-10-14: Git Bash deletes a CR while
+# parsing, even with igncr off (measured: `ab<CR>cd` reaches the command as `abcd`), so
+# `git push --for<CR>ce` runs as a force push. One CR inside a word walked past every tier, on both
+# hooks and both paths. The faithful view keeps the CR. NOT strictly monotone, stated rather than
+# hidden: when a CR glued between letters was this view's only boundary, deleting it drops the match
+# (`x`, CR, `g"it" merge` was CONFIRM before, measured). That loses only false positives here, since
+# this hook judges Bash alone and no Bash treats that CR as a word break: Git Bash deletes it, and a
+# Linux bash keeps it inside the word (read, not measured here). The .ps1 twin also judges the
+# PowerShell tool, where a lone CR IS a statement break, so it keeps this view intact and matches a
+# CR-deleted copy in addition -- see $cmdLooseNoCr there.
+cmd_loose=$(printf '%s' "$cmd" | tr -d '\r\\"'"'" | sed 's/  */ /g')
 
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
@@ -386,10 +454,12 @@ dc_grep() {
     # glob matcher this replaced handled with no external tool. Same honest direction as the
     # length bound above: a command the guard cannot analyze prompts, it does not pass.
     # That makes a grep with -z a hard requirement of the sh hook. Measured on Alpine: BusyBox grep
-    # rejects -z ("unrecognized option: z"), so with bash but no pwsh every Bash command prompts.
-    # Without bash as well, the settings.json wiring `pwsh ... || bash ... || true` runs no guard at
-    # all and every command is allowed. The deny message names the fix. The requirement is recorded
-    # in docs/HOOKS-GUIDE.md and standards/SECURITY-GUARDRAILS.md.
+    # rejects -z ("unrecognized option: z"), so with bash but no pwsh every Bash command is refused:
+    # with CONFIRM REQUIRED, unless a literal BLOCK row, which runs before any regex row, matches
+    # first (measured on Alpine: `rm -rf` gets BLOCK, `ls` gets CONFIRM REQUIRED).
+    # The hook's full requirement, python3 included, is stated once, in
+    # standards/SECURITY-GUARDRAILS.md under "Platform requirement (sh hook)"; the deny message
+    # points there rather than restating it.
     #
     # WHY block_regex() passes C: grep's character classes follow the locale. Measured under GNU
     # grep 3.0, C.UTF-8 made [[:space:]] match NBSP and em-space (which this file keeps
@@ -426,7 +496,7 @@ dc_grep() {
     fi
     _dc_rc=$?
     if [ "$_dc_rc" -gt 1 ]; then
-        deny "CONFIRM REQUIRED: grep could not evaluate a guard pattern (exit ${_dc_rc}), so this command cannot be checked reliably. The sh hook needs a grep that supports -z, such as GNU grep; BusyBox grep does not. Install GNU grep or PowerShell (pwsh). Run manually if intentional."
+        deny "CONFIRM REQUIRED: grep could not evaluate a guard pattern (exit ${_dc_rc}), so this command cannot be checked reliably. The sh hook needs a grep that supports -z, such as GNU grep; BusyBox grep does not. Its full platform requirement is in standards/SECURITY-GUARDRAILS.md under Platform requirement (sh hook). Run manually if intentional."
         exit 0
     fi
     return "$_dc_rc"
@@ -519,9 +589,13 @@ confirm_regex() {
     fi
 }
 
+dc_nl='
+'
+dc_cr=$(printf '\r')
+
 confirm_boundary() {
     # Like confirm(), but requires $1 to be bounded on BOTH sides: preceded by the
-    # start of the string or a non-letter, and followed by whitespace or the literal
+    # start of the string or a non-letter, and followed by a space, a newline, a CR or the literal
     # end of the string — not just any non-letter on the trailing side, which the
     # pipe row's `([^a-z]|$)` accepts. WHY the stricter trailing boundary: "git merge" as a
     # plain substring (or under that non-letter check) also matches
@@ -539,8 +613,8 @@ confirm_boundary() {
     # side: $cmd already had tabs folded to spaces before this function ever
     # runs (see the blank-run collapse above), and dangerous-commands.ps1
     # does the same normalization -- so both sides only ever need to check for a
-    # plain ASCII space here, with no character-class/locale/Unicode ambiguity to
-    # keep in parity.
+    # plain ASCII space, a newline or a CR here, literal characters with no
+    # character-class/locale/Unicode ambiguity to keep in parity.
     # WHY case-fold both sides before matching (found by opposition review, not
     # present in the original version): POSIX case globs are case-sensitive, but
     # dangerous-commands.ps1's `-imatch` is not -- so "GIT merge main" (the
@@ -572,14 +646,21 @@ confirm_boundary() {
     # The two folded views this used to recompute per call are now hoisted beside cmd_loose --
     # see the cmd_lc note above. This function was the only one that folded, which is what made
     # the other four's omission look deliberate rather than missed.
+    #
+    # WHY a newline is a trailing boundary too, added 2026-10-14: tabs are folded to spaces above
+    # but newlines are not, so `git merge`, a newline, then another command -- which runs a bare
+    # `git merge` -- got no verdict on either shell. The .ps1 twin's row gained `\n` alongside.
+    # A CR is a boundary too, matching the .ps1 row: PowerShell reads a lone CR as a statement
+    # break, and that hook judges the PowerShell tool. No Bash does, so on this hook a CR after
+    # `git merge` is an accepted false positive, kept so the two hooks give one verdict.
     case "$cmd_lc" in
-        "$1 "*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1")
+        "$1 "*|"$1$dc_nl"*|"$1$dc_cr"*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1$dc_nl"*|*[!a-zA-Z]"$1$dc_cr"*|*[!a-zA-Z]"$1")
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
             ;;
     esac
     case "$cmd_loose_lc" in
-        "$1 "*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1")
+        "$1 "*|"$1$dc_nl"*|"$1$dc_cr"*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1$dc_nl"*|*[!a-zA-Z]"$1$dc_cr"*|*[!a-zA-Z]"$1")
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
             ;;

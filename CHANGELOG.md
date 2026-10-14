@@ -42,6 +42,29 @@
   both call plan drafts gitignored scratch files, and `mb doctor` reports a tracked one as an
   ERROR, but the entry existed only in PMB's own `.gitignore`. `mb init` and `mb upgrade` now add
   it in both runtimes, and a test asserts the bash and PowerShell entry lists stay identical.
+- **Without python3, the sh dangerous-commands hook missed newline and tab forms.** When python3
+  is missing or fails, the hook matches the whole JSON payload, and it matched that payload with
+  its escapes still encoded: a newline was the two characters `\n`. So, measured with python3 off
+  `PATH`, none of these got a verdict, though each is refused or prompted with python3: a pipe to
+  `bash` split across a newline or a tab, a backslash-continued `git push --force` or signing
+  change, a tab-separated signing key, and any signing or `git merge` row straight after a newline
+  (`git fetch`, a newline, then `git merge main`). A bare `git merge` at the end of the command was
+  missed too, because the closing quote followed it. The hook now decodes the payload's escapes
+  before matching, and reads the string delimiters as spaces. `dangerous-commands.ps1` falls back
+  only when parsing fails, and now decodes the same way, except that it writes a non-ASCII escape as
+  the real character where the sh hook writes `?`. The sh hook's platform requirement is now
+  stated once, under "Platform requirement (sh hook)" in `standards/SECURITY-GUARDRAILS.md`, and the
+  deny message and `docs/HOOKS-GUIDE.md` point there.
+- **`git merge` followed by a newline got no CONFIRM, in both shells.** The row's trailing boundary
+  was a space or the end of the command, so `git merge`, a newline, then another command ran a bare
+  merge with no prompt. A newline now counts as a boundary too, and so does a CR, which PowerShell
+  reads as a statement break.
+- **On Git Bash, a carriage return inside a word got past every tier, in both hooks.** Git Bash
+  deletes a CR while parsing (measured), so `git push --for`, a CR, then `ce` runs as a force push,
+  and `git merge`, CR, LF runs a bare merge. Neither hook gave a verdict on these, with or without
+  python3. The sh hook, which judges only Bash, now deletes CRs in its de-escaped view. The ps1
+  hook also judges the PowerShell tool, where a lone CR separates statements, so it keeps its
+  de-escaped view as it was and also matches a CR-deleted copy, which can only add matches.
 - **A pipe to a shell split across a newline got past the BLOCK tier on sh ([NS-38]).** A trailing
   `|` continues the command onto the next line, so `curl x |`, a newline, then `bash` runs as
   `curl x | bash`. `dangerous-commands.sh` matched pipe-to-interpreter with four literal rows,
@@ -80,8 +103,8 @@
   regex row. It now prompts, like the hook's other "cannot analyze" cases. That makes a grep with
   `-z`, such as GNU grep, a requirement of the sh hook. BusyBox grep rejects `-z` (measured), so on
   Alpine with bash but without pwsh every Bash command prompts. Without bash as well, the hook
-  wiring's `|| true` fallback runs no guard at all (measured). The deny message says to install GNU
-  grep or PowerShell.
+  wiring's `|| true` fallback runs no guard at all (measured). The deny message points to the sh
+  hook's full platform requirement in `standards/SECURITY-GUARDRAILS.md`.
 - **The signing rows' gap bound is 255, not 300, in both shells.** POSIX guarantees repetition
   bounds only up to 255 (`RE_DUP_MAX`), so a grep that supports `-z` but caps bounds there would
   reject `{0,300}` and, with the fail-closed rule above, deny every command. No such grep has been

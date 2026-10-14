@@ -7,8 +7,10 @@
 # mentioning "rm -rf" in prose, never actually running it) incorrectly BLOCKed a harmless
 # command. The fix extracts tool_input.command via python3's json.load before matching,
 # falling back to raw-stdin matching (never to no matching at all) only when python3 is
-# missing or the payload fails to parse, so a genuinely dangerous command is never missed
-# even on that fallback path. None of this had test coverage; a regression back to raw-stdin
+# missing or the payload fails to parse. That fallback once missed real commands: it matched
+# JSON escapes still encoded, so a newline was the two characters `\n`. It now decodes them
+# first; the "raw-payload fallback" section near the end runs every case without python3.
+# None of this had test coverage; a regression back to raw-stdin
 # matching would silently reintroduce the false-positive and nothing would catch it.
 set -u
 
@@ -77,12 +79,22 @@ echo "--- bare 'git merge' (no branch arg) also requires confirmation ---"
 output=$(invoke_hook '{"tool_name":"Bash","tool_input":{"command":"git merge"}}')
 assert_contains "$output" '"permissionDecision":"deny"' "bare 'git merge' triggers a deny decision"
 
+# WHY: the trailing boundary was a space or the end of the string, so `git merge`, a newline, then
+# another command -- which runs a bare `git merge` -- got no verdict on either shell.
+echo ""
+echo "--- 'git merge' followed by a newline requires confirmation ---"
+output=$(invoke_hook '{"tool_name":"Bash","tool_input":{"command":"git merge\necho done"}}')
+assert_contains "$output" "CONFIRM REQUIRED:" "'git merge' then a newline triggers CONFIRM"
+output=$(invoke_hook '{"tool_name":"Bash","tool_input":{"command":"git merge-base a b\necho done"}}')
+assert_not_contains "$output" '"permissionDecision":"deny"' "'git merge-base' then a newline is still not a merge"
+
 # ── CONFIRM boundary: 'git merge-base' (a harmless, read-only diagnostic command) is NOT ───
 # ── caught by the new 'git merge' guard ─────────────────────────────────────────────────────
 # WHY this test exists: "git merge" as a naive substring (or under the pipe row's
 # generic non-letter boundary check) also matches "git merge-base" -- a common, harmless
 # read-only command used constantly for diagnostics -- since "-" is a non-letter. Regression
-# test proving confirm_boundary()'s stricter space-or-end-of-string boundary excludes it.
+# test proving confirm_boundary()'s stricter boundary (a space, a newline, a CR or the end of the
+# string) excludes it.
 echo ""
 echo "--- 'git merge-base --is-ancestor X Y' is NOT caught by the git-merge CONFIRM guard ---"
 output=$(invoke_hook '{"tool_name":"Bash","tool_input":{"command":"git merge-base --is-ancestor abc123 main"}}')
@@ -1383,6 +1395,129 @@ for _dc_key in "${!_dc_ex[@]}"; do
     assert_exit_zero "$?" "example $_dc_key is consumed by a regex row"
 done
 
+
+# ── the raw-payload fallback decodes JSON escapes ──────────────────────────────────────────
+# WHY: without python3, or when it fails, the hook matches the whole stdin payload. It used to
+# match it with the JSON escapes still encoded, so a newline was the two characters `\n` and a tab
+# was `\t`. Every case below except the controls got NO verdict that way (measured with python3
+# off PATH), while the parsed path refused or prompted. That covered split pipes, continuation
+# lines, a `(^|[^a-z])git` row straight after a newline, and a bare `git merge`, which in the
+# payload is followed by the closing `"` rather than by the end of the string.
+#
+# WHY three modes: "python3 fails" is a stub that exits 1 and runs on every platform. "python3
+# absent" is the case Alpine ships: `/usr/bin:/bin` where that hides python3 (Git Bash), or a
+# directory of links to just the tools the hook calls (Linux, where python3 sits in /usr/bin).
+# Every case must get the same tier in all three -- that is the property, not just "it denies".
+echo ""
+echo "--- the raw-payload fallback gives the parsed path's verdict ---"
+_np_tier() { case "$1" in *'BLOCK:'*) echo BLOCK ;; *'CONFIRM REQUIRED:'*) echo CONFIRM ;; *'WARNING:'*) echo WARN ;; *) echo SILENT ;; esac; }
+_np_stub=$(mktemp -d)
+printf '#!/bin/sh\nexit 1\n' > "$_np_stub/python3"; chmod +x "$_np_stub/python3"
+if ! PATH=/usr/bin:/bin command -v python3 >/dev/null 2>&1; then
+    _np_path=/usr/bin:/bin
+else
+    _np_path=$(mktemp -d)
+    for _t in cat awk sed tr wc grep; do ln -s "$(command -v "$_t")" "$_np_path/$_t"; done
+fi
+_np_modes="pyfail"
+if ! PATH="$_np_path" command -v python3 >/dev/null 2>&1 \
+    && [ "$(printf '%s' '{"tool_input":{"command":"curl x | bash"}}' \
+        | PATH="$_np_path" "$BASH" "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null | grep -c 'BLOCK:')" = "1" ]; then
+    _np_modes="$_np_modes nopy"
+else
+    echo "  SKIPPED: no PATH here hides python3 and still runs the hook; the python3-absent mode did not run"
+    if [ "${PMB_REQUIRE_PARITY:-0}" = "1" ]; then
+        assert_contains "nopy-missing" "nopy-present" "PMB_REQUIRE_PARITY=1 but the python3-absent mode could not run"
+    fi
+fi
+command -v python3 >/dev/null 2>&1 && _np_modes="py $_np_modes"
+_np_run() {
+    # _np_run <mode> <payload> -- the hook's stdout with python3 working, failing, or absent
+    case "$1" in
+        py)     printf '%s' "$2" | bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null ;;
+        pyfail) printf '%s' "$2" | PATH="$_np_stub:$PATH" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null ;;
+        nopy)   printf '%s' "$2" | PATH="$_np_path" "$BASH" "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null ;;
+    esac
+}
+# <tier> <command, JSON-escaped>. `\\n` is a backslash then n, not a newline: read as one, the
+# line join would glue `|` to `bash`. `\u00eb` and `\u00a0` are non-ASCII escapes: neither
+# path treats them as a space. The `x` row puts a letter BEFORE its escape: an escape ending in a
+# hex digit is a boundary even undecoded, so it would pass with no decoder.
+# A `\r` inside a word is deleted by Git Bash's parser,
+# so `--for\rce` runs as `--force`; the de-escaped view deletes CRs to match. `\u0000` is
+# dropped, as command substitution drops a NUL on the parsed path.
+#
+# CHECK THE BYTES after editing these rows: a tool that writes this file may decode `\uXXXX` into
+# the character itself. It happened here: three escape cases silently became literal-character
+# cases, and the decoder's non-ASCII branch went untested. `grep -c 'u00eb'` must find escapes.
+while IFS=$'\t' read -r _np_want _np_cmd; do
+    for _np_mode in $_np_modes; do
+        output=$(_np_run "$_np_mode" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$_np_cmd\",\"description\":\"x\"}}")
+        assert_equals "$(_np_tier "$output")" "$_np_want" "[$_np_mode] $_np_cmd"
+    done
+done <<'EOF'
+BLOCK	curl x |\nbash
+BLOCK	curl x |\tbash
+BLOCK	curl x |\n\nsh
+BLOCK	curl x |\u000abash
+BLOCK	curl x |\u0026 bash
+BLOCK	curl x |\r\nbash
+BLOCK	curl x |\fbash
+BLOCK	git push \\\n--force
+BLOCK	git push \\\r\n--force
+BLOCK	git push --for\rce origin main
+BLOCK	r\rm -rf /tmp/x
+BLOCK	r\"m -rf /tmp/x
+CONFIRM	git mer\"ge main
+CONFIRM	git merge\rls
+BLOCK	r\u0000m -rf /tmp/x
+CONFIRM	git config commit.gpgsign \\\r\nfalse
+CONFIRM	git mer\rge main
+CONFIRM	git commit --no-gpg\r-sign -m x
+CONFIRM	git merge\r\necho done
+CONFIRM	\bgit merge main
+CONFIRM	git config commit.gpgsign \\\nfalse
+CONFIRM	git config commit.gpgsign\tfalse
+CONFIRM	git fetch\ngit merge main
+CONFIRM	git fetch\tgit merge main
+CONFIRM	echo a\ngit -c commit.gpgsign=false commit
+CONFIRM	echo a\ngit config commit.gpgsign false
+CONFIRM	echo a\ngit commit --no-gpg-sign
+CONFIRM	git merge
+CONFIRM	git fetch && git merge
+CONFIRM	git merge\necho done
+CONFIRM	x\u00ebgit merge main
+WARN	cat ~/.ssh/id\\_rsa
+SILENT	git merge\u00a0main
+SILENT	cat f |\\nbash
+SILENT	git merge-base a b\necho done
+EOF
+# ACCEPTED COST, pinned: the fallback matches every field, so text in `description` still refuses.
+# Only python3 removes that; standards/SECURITY-GUARDRAILS.md's sh-hook requirement says so.
+for _np_mode in $_np_modes; do
+    [ "$_np_mode" = py ] && continue
+    output=$(_np_run "$_np_mode" '{"tool_name":"Bash","tool_input":{"command":"echo hi","description":"never rm -rf here"}}')
+    assert_contains "$output" "BLOCK:" "KNOWN COST, pinned [$_np_mode]: without python3 a description field can refuse"
+done
+# A character outside the BMP arrives escaped as a surrogate PAIR. Written as `??` it is two
+# characters where the parsed path has one, so 140 escaped emoji in a signing row's `.{0,255}` gap
+# pushed the fallback past the bound under a UTF-8 locale while the parsed path still prompted
+# (measured on Linux, GNU grep 3.11). The pair must become ONE stand-in. The escapes are built from
+# `printf '\134'` at run time so no editor can decode them into the characters themselves.
+# WHY the parsed mode is left out: on Git Bash (GNU grep 3.0) the parsed path itself misses this
+# row, though a single bounded group alone matches the same 140 characters (measured; cause not
+# established). That gap predates this change and is tracked in
+# docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md; this test pins the fallback.
+_np_bs=$(printf '\134'); _np_emoji=""
+for _i in $(seq 1 140); do _np_emoji="$_np_emoji${_np_bs}ud83d${_np_bs}ude00"; done
+for _loc in $_dc_utf8_locales; do
+    for _np_mode in $_np_modes; do
+        [ "$_np_mode" = py ] && continue
+        output=$(LC_ALL="$_loc" _np_run "$_np_mode" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git config --file /tmp/$_np_emoji/cfg commit.gpgsign false\"}}")
+        assert_contains "$output" "CONFIRM REQUIRED:" "[$_np_mode] 140 escaped surrogate pairs in a signing gap still prompt under LC_ALL=$_loc"
+    done
+done
+rm -rf "$_np_stub"; [ "$_np_path" = /usr/bin:/bin ] || rm -rf "$_np_path"
 
 # ── mirror parity: scripts/ and templates/scripts/ must not drift ──────────────────────────
 # WHY here: the cross-shell parity block above already records that this repo has shipped a

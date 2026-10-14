@@ -92,11 +92,8 @@ the caller's locale and then under `LC_ALL=C`, because each alone misses a bypas
 counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
 row inherits its matcher's locale rule, which can change what it matches.
 
-**Platform requirement (sh hook): a grep with `-z`, such as GNU grep.** The regex rows run on every
-command, and a grep that cannot evaluate them makes the hook refuse rather than pass. BusyBox grep
-rejects `-z` (measured), so on Alpine with bash but without pwsh every Bash command prompts. Without
-bash as well, the hook wiring's `|| true` fallback runs no guard at all. Install PowerShell, or
-bash with GNU grep, there. Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
+**Platform requirement (sh hook):** stated once, with what each missing piece costs, in
+`standards/SECURITY-GUARDRAILS.md` under "Platform requirement (sh hook)". Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
 a grep that supports `-z` but caps bounds there can still compile every row. The test suite fails on
 any row above 255.
 

@@ -211,6 +211,12 @@ clear. Three cases do still trip, and are accepted rather than chased:
   false` really does disable signing. Both were live, unprompted bypasses. The cost is that
   `echo "rm" "-rf"` now collapses to `echo rm -rf` and trips BLOCK. The extra view can only ever
   *add* a match, never remove one, so the error direction is refusal rather than silence.
+  **(added 2026-10-14)** Carriage returns are deleted too, because Git Bash deletes a CR while
+  parsing, so `git push --for`, CR, `ce` runs as a force push. The sh hook deletes them inside its
+  de-escaped view, which can drop a match only where a CR glued between letters was the view's
+  only boundary, and no Bash treats that CR as a word break. The PowerShell hook also judges the
+  PowerShell tool, where a lone CR separates statements, so it keeps its de-escaped view and
+  matches a CR-deleted copy as well.
 
 A mechanism that stripped `-m`/`--message`/`-S`/`--grep` payloads before matching was built for
 these and then withdrawn: making the hook's view of a command deliberately differ from what the
@@ -238,18 +244,35 @@ could not span the newline, and the PowerShell `iex` literals could not either.
   - a comment line between the pipe and the interpreter, which a real shell skips;
   - an interpreter reached through another word: `| sudo sh`, `| env bash`, `| /bin/bash`;
   - any interpreter other than bash and sh: `| zsh`, `| dash`, `| python`, and so on;
-  - a PowerShell inline block comment (`|<#…#>iex`) or backtick escape (``i`ex``);
-  - the raw-payload fallback used when the JSON cannot be parsed, where a newline is the two
-    characters `\n`.
+  - a PowerShell inline block comment (`|<#…#>iex`) or backtick escape (``i`ex``).
 - **Not covered by the PowerShell hook only:** a digit or `_` straight after the interpreter name.
   Its `\b` boundary counts those as part of the word, so `| bash5` and `| bash_x` are refused by the
   sh hook but not the PowerShell one. This predates the change.
-- **Platform requirement (sh hook):** a grep that supports `-z`, such as GNU grep. The regex rows run
-  on every command, and a grep that cannot evaluate them is refused rather than trusted. Measured on
-  Alpine, which ships BusyBox grep and no pwsh: with bash installed, every Bash command prompts,
-  because BusyBox grep rejects `-z`. Without bash, the shipped hook wiring
-  (`pwsh ... || bash ... || true`) runs no guard at all, and every command is allowed. Install
-  PowerShell, or bash with GNU grep, there. With bash installed, the deny message names the same fix.
+- **Platform requirement (sh hook):** **pwsh, or bash plus a grep that supports `-z` (such as GNU
+  grep).** Without one of those, the hook refuses every Bash command or runs no guard at all.
+  **python3 is also expected:** without it the hook still guards, but less precisely. This is the one
+  full statement of the requirement; the hook's deny message, `docs/HOOKS-GUIDE.md` and the
+  changelog point here rather than restate it. A stock Alpine image has none of these. python3 is
+  an external dependency, which sits uneasily with PMB's "no external dependencies" constraint;
+  that question is open, and this bullet records the dependency as it stands without settling it.
+  What each missing piece costs:
+  - **No grep with `-z`:** the regex rows run on every command, and a grep that cannot evaluate them
+    is refused rather than trusted. So every Bash command is refused: with `CONFIRM REQUIRED`,
+    unless a literal BLOCK row, which runs first, matches it. Measured on Alpine with bash, BusyBox
+    grep and no pwsh.
+  - **No python3, or a python3 that fails:** the hook cannot extract `tool_input.command`, so it
+    matches the whole payload, with its JSON escapes decoded first. In a well-formed payload the
+    decoded command sits intact and bounded by spaces, so every row that matches it still matches.
+    The one substitution, `?` for each non-ASCII character written as a `\u` escape, is never a
+    space to any sh row, and neither is the real character. The costs are extra refusals: text in
+    another field, such as `description`, can trigger a row, and a payload over the length bound is
+    refused. One measured miss: under a UTF-8 locale `grep -i` folds U+017F (long s) to `s`, so an
+    escaped long s in a signing key prompts on the parsed path and not here; git rejects that key,
+    so no signing change is lost. **Corrected 2026-10-14:** before the decoding, a
+    newline here was the two characters `\n`, and split pipes, continuation lines, tab-separated
+    forms and a bare trailing `git merge` all got no verdict (measured with python3 off `PATH`).
+  - **No bash either:** the shipped hook wiring (`pwsh ... || bash ... || true`) runs no guard at
+    all, and every command is allowed.
 
 ### Database Operations
 
