@@ -276,6 +276,17 @@ $blockPatterns = @(
     # regexes are a strict superset of them. Adding `\b` would have narrowed the tier.
     @{ pattern = '\|\s*Invoke-Expression'; regex = $true; reason = "command piped to Invoke-Expression (PS code execution)" }   # WHY: pipe-to-iex is the PS equivalent of pipe-to-bash
     @{ pattern = '\|\s*iex';               regex = $true; reason = "command piped to iex (PS eval shorthand)" }                # WHY: iex is the common alias for Invoke-Expression
+    # WHY three STRUCTURAL rows beside the literals above: they match reordered, split and
+    # abbreviated forms the literals miss (`git push origin main --force`, `rm -r -f x`), and the
+    # shipped `Bash(git *)` allow rule approves a force push or a `!` git alias before Claude Code's
+    # auto-mode classifier sees it. Ported from Side-Quest-Atlas; see dangerous-commands.sh for the
+    # rationale, the measurements and the known gaps. Same regexes as the sh twin, except that the
+    # segment class is spelled `[^;&|\x00-\x1F\x7F]` -- .NET has no [:cntrl:] -- for the same bytes.
+    # Every gap is bounded {0,255}: unbounded, .NET backtracking took up to 11.24s per view on 50 KB.
+    # Here `rm` is also Remove-Item's alias, so the rm row reads `rm -r -fo x` and `rm x -Recurse -Force` too.
+    @{ pattern = '(^|[^a-z0-9_-])rm(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255} )?(-(-|[a-z]*)r[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]*)f|-(-|[a-z]*)f[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]*)r|-[a-z]*(r[a-z]*f|f[a-z]*r))'; regex = $true; reason = "irreversible recursive deletion (rm with recursive and force flags, in any order)" }
+    @{ pattern = '(^|[^a-z])git(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255}[ =])?push( [^;&|\x00-\x1F\x7F]{0,255})? (--force|--mirror|-[a-z]*f|\+[^ \x00-\x1F\x7F])'; regex = $true; reason = "force push (--force, --mirror or -f in any position, or a +refspec)" }
+    @{ pattern = 'alias\.[a-z0-9_.-]+(=| +)!|(^|[^a-z0-9_-])[gmn]?awk .{0,255}([^.a-z0-9_]system ?\(|\| ?getline)'; regex = $true; reason = "arbitrary command execution through a tool's own arguments (git alias !cmd, awk system() or cmd | getline)" }
 )
 
 foreach ($entry in $blockPatterns) {

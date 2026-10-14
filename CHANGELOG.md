@@ -57,6 +57,22 @@
 - **The WARN tier ignored the de-escaped view in both shells ([NS-40]).** `cat ~/.ssh/id\_rsa` and
   `cat ~/.ssh/"id"_rsa` warned on neither shell. `warn()` and the ps1 warn loop now also check the
   de-escaped view, and warn once when both views match.
+- **Force pushes, rm and command-running arguments in forms the BLOCK tier missed, in both
+  shells.** These are ported from Side-Quest-Atlas's local fix and rewritten as POSIX ERE.
+  - **What got through.** `git push origin main --force`, `git -C . push -f`,
+    `git push origin +main`, `git push --mirror`, `rm -r -f x`, `rm x -rf`, `rm --rec --forc x`,
+    `git -c alias.x='!cmd' x` and `awk 'BEGIN{system("cmd")}'` all ran with no verdict.
+  - **Why it mattered.** The template's `Bash(git *)` allow rule, and `/code-review`'s
+    `Bash(awk *)` grant, approve a command before Claude Code's auto-mode classifier sees it.
+  - **The change.** Three structural rows join the literal ones, which stay:
+    - rm with recursive and force flags in any order;
+    - a force push in any position;
+    - a `!` git alias, or awk `system()` / `| getline`.
+  - **Not ported.** `find -exec` (Claude Code already gates find's actions), sed's `e` command (no
+    shipped rule approves sed), and the network-fetch rows. For network fetching, a deny scoped to
+    the read-only review agents is in the backlog instead.
+  - **Gaps, false positives and measurements** are in `standards/SECURITY-GUARDRAILS.md`, including
+    that `rm -r` without `-f` runs unprompted in the Bash tool.
 - **The signing CONFIRM could be skipped by locale, in both shells.** Case-insensitive matching
   follows the locale, and under a Turkish one `I` does not fold to `i`. So an upper-case config key,
   such as `git config COMMIT.GPGSIGN false` (git accepts it), got no CONFIRM there. The ps1 regexes

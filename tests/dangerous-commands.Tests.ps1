@@ -712,6 +712,77 @@ Describe "dangerous-commands.ps1 ([NS-38] split pipes, [NS-40] WARN de-escaping,
     }
 }
 
+Describe "dangerous-commands.ps1 (structural rm / force-push / alias+awk rows)" {
+    # WHY these alongside the sh suite's fixture table: CI's pester-tests job runs this file
+    # unconditionally, and the sh suite's ps1 half is skipped wherever pwsh is absent. Each case
+    # asserts the row's OWN reason, so a literal row answering in its place does not pass.
+    BeforeAll {
+        function Get-Verdict([string]$Command) {
+            $json = @{ tool_name = "Bash"; tool_input = @{ command = $Command } } | ConvertTo-Json -Compress
+            (Invoke-DangerousCommandsHook $json).Output
+        }
+        $script:RmReason    = 'BLOCK: irreversible recursive deletion \(rm with recursive and force flags'
+        $script:PushReason  = 'BLOCK: force push \(--force, --mirror or -f'
+        $script:ExecReason  = 'BLOCK: arbitrary command execution through a tool'
+    }
+
+    It "blocks reordered, split and abbreviated rm forms through the structural row" {
+        foreach ($c in @('rm -r -f x', 'rm x -rf', 'rm --force -r x', 'rm --rec --forc x', 'sudo rm -r x -f',
+                         'rm.exe -r -f x', 'rm -r -fo C:\x', 'rm C:\x -Recurse -Force')) {
+            Get-Verdict $c | Should -Match $script:RmReason -Because "rm with recursive and force flags: $c"
+        }
+    }
+
+    It "blocks force pushes the literal rows miss" {
+        foreach ($c in @('git push origin main --force', 'git -C . push origin main -f', 'git push origin +main',
+                         'git push --mirror origin', 'git -c alias.p=push p origin main --force',
+                         'git.exe push origin main --force')) {
+            Get-Verdict $c | Should -Match $script:PushReason -Because "a force push in any position: $c"
+        }
+    }
+
+    It "blocks a git alias that runs a shell command, and awk system() / getline" {
+        foreach ($c in @("git -c alias.x='!id' x", 'git config alias.x !id', "awk 'BEGIN{system(`"id`")}'",
+                         "mawk 'BEGIN{system (`"id`")}'", "awk 'BEGIN{`"id`" | getline x}'")) {
+            Get-Verdict $c | Should -Match $script:ExecReason -Because "command execution through arguments: $c"
+        }
+    }
+
+    It "leaves the near-misses alone" {
+        foreach ($c in @('rm -r somedir', 'docker run --rm --read-only -it img --foo', 'git push origin main',
+                         'git push origin main --follow-tags', 'git config push.default current',
+                         'git config --get-all alias.list', "awk '{print `$1}' f | sort",
+                         "awk 'BEGIN{x=1}' f; grep -n 'os.system(' x.py")) {
+            Get-Verdict $c | Should -Not -Match '"permissionDecision":"deny"' -Because "not a force-delete, force push or exec: $c"
+        }
+    }
+
+    # THE PERFORMANCE GUARD for these rows. Their backtracking is QUADRATIC, not cubic like the
+    # signing rows above, so an 8000-char payload cannot discriminate: unbounded, the rm row costs
+    # ~0.3s there. Each payload below is 50000 chars of the shape that was worst for that row
+    # UNBOUNDED -- measured per view: rm 11.24s, push 6.11s, awk 5.91s; bounded, 0.01s, 0.00s and
+    # 0.10s. Timed in-process on the row's own regex, because the whole hook on a dense `git push`
+    # shape also pays for the signing rows. The 2s bar sits far from both sides.
+    It "matches each structural row on its worst 50000-char shape in under 2s" {
+        $opts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline, CultureInvariant'
+        $rows = Get-Content $script:HookScript | Where-Object { $_ -match 'regex = \$true' -and
+            ($_ -match 'irreversible recursive deletion \(rm with' -or $_ -match 'force push \(--force, --mirror' -or
+             $_ -match 'arbitrary command execution through') } |
+            ForEach-Object { if ($_ -match "pattern = '((?:[^']|'')*)'") { $Matches[1] -replace "''", "'" } }
+        $rows.Count | Should -Be 3 -Because "the three structural rows must be found, or this test proves nothing"
+        $n = 50000
+        $shapes = @(('rm ' + ('-r ' * 17000)), ('git ' + ('push ' * 10000)), ('awk |' * 10000)) |
+            ForEach-Object { $_.Substring(0, $n) }
+        for ($i = 0; $i -lt 3; $i++) {
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $m = [regex]::IsMatch($shapes[$i], $rows[$i], $opts)
+            $sw.Stop()
+            $m | Should -BeFalse -Because "the shape is built never to match, so the engine explores every start"
+            $sw.Elapsed.TotalSeconds | Should -BeLessThan 2 -Because "row $($i + 1) must stay bounded"
+        }
+    }
+}
+
 Describe "dangerous-commands.ps1 (JSON-parse-failure fallback)" {
     It "falls back to raw-stdin matching and still blocks a real dangerous command in malformed JSON" {
         $r = Invoke-DangerousCommandsHook '{"tool_input":{"command":"rm -rf /tmp/x"'

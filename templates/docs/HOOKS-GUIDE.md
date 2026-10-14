@@ -44,8 +44,8 @@ Configured in `.claude/settings.json`:
 
 Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
 
-**BLOCK** (19 patterns — command exits non-zero, Claude stops):\
-*Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
+**BLOCK** (17 patterns — command exits non-zero, Claude stops):\
+*Shell:* `rm -rf`, and `rm` with recursive and force flags in any order · `mkfs` · `dd if=` · `git push --force` · `git push -f`, and a force push in any position (`--force`, `--mirror`, `-f`, `+refspec`) · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh` · a git alias whose value starts with `!` · awk `system()` or `cmd | getline`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
 
 **CONFIRM** (10 patterns — surfaces confirmation dialog):

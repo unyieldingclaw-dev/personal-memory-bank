@@ -57,6 +57,67 @@ This standard defines what AI should **BLOCK**, **CONFIRM**, or **WARN** about.
 | Never execute commands that modify system files outside project | Scope violation |
 | Never run commands with `sudo` or admin privileges unless explicit | Privilege escalation |
 
+**How the hook matches rm and force push (added 2026-10-14).** `scripts/dangerous-commands.sh`/`.ps1`
+block the literals `rm -rf`, `git push --force` and `git push -f`, and also match both structurally,
+in a port of a Side-Quest-Atlas local rule:
+- **rm:** a recursive flag and a force flag anywhere in the same simple command, in either order,
+  split or clustered. Examples: `rm -r -f`, `rm x -rf`, getopt's abbreviated `rm --rec --forc`, and
+  `rm.exe`.
+- **git push:** any of these anywhere after `push`:
+  - `--force`, including its `-with-lease` and `-if-includes` forms;
+  - `--mirror`;
+  - a short flag cluster containing `f`;
+  - a `+refspec`.
+
+  Examples: `git push origin main --force`, `git -C . push -f`, and
+  `git -c alias.p=push p origin main --force`.
+
+This matters beyond defense in depth. The template allowlists `Bash(git *)`, and an allow rule
+resolves *before* Claude Code's auto-mode classifier. So a force push in one of those forms used to
+be approved with no review at all.
+
+- **Not covered:**
+  - **`rm -r` without `-f`.** The Bash tool's stdin is not a terminal, so rm skips its
+    write-protection prompt and `-f` adds nothing. Measured with GNU coreutils 8.32: `rm -r` deleted
+    a read-only file with no prompt. So these rows gate the *spelling*, not the harm.
+    - Recursive deletion itself is gated by Claude Code's own permission flow: a prompt in default
+      mode, and the classifier in auto mode.
+    - Under `bypassPermissions`, only critical-path targets are gated: the filesystem root, home, and
+      the working directory itself.
+  - **A flag more than 255 characters from the token before it.** Every gap is bounded, because
+    unbounded .NET backtracking took 11.24s per view on a 50 KB adversarial payload; bounded, 1.49s.
+    On the sh hook the bound counts **bytes**, so a gap of 256 bytes or more that is still 255
+    characters or fewer (a long non-ASCII path) is refused by the PowerShell hook and allowed by the
+    sh hook. Measured: 90 CJK characters, 294 bytes.
+  - **A `;`, `&` or `|` inside a quoted argument between `rm`/`push` and the flag.** The matcher ends
+    the command at it.
+  - **Flags held in a variable** (`F=-rf; rm $F x`), and the `GIT_CONFIG_*` environment variables.
+- **Accepted false positive:** a git command whose text names a force push, such as
+  `git log --grep 'push --force'`. The de-escaped view drops the quote.
+
+### Command Execution via Argument-Capable Tools
+
+Added 2026-10-14, ported from Side-Quest-Atlas. Some tools run an arbitrary command through their
+own arguments, so an allow rule for the tool approves that command too, and it then skips the
+auto-mode classifier.
+
+| Rule | How an allow rule reaches it | Enforcement |
+|------|------------------------------|-------------|
+| Never define a git alias whose value starts with `!` (`git -c alias.x='!cmd' x`, `git config alias.x '!cmd'`, or the same through `GIT_CONFIG_PARAMETERS`) | The template allowlists `Bash(git *)` | Blocked |
+| Never run a command through awk's `system()` or `"cmd" \| getline` (`awk`, `gawk`, `mawk`, `nawk`) | `/code-review`'s `allowed-tools` pre-approves `Bash(awk *)` for that turn | Blocked. `system` straight after a `.` (`os.system(`) does not count. The gap after `awk` is bounded at 255 characters (unbounded it cost 5.91s per view on 50 KB) |
+
+- **Not ported, deliberately:**
+  - `find` with `-exec`/`-ok`: Claude Code never lets a prefix rule approve find's command-running
+    actions, so they already reach a prompt or the classifier.
+  - sed's `e` command: no shipped allow rule approves sed.
+- **Not covered:**
+  - awk's `print ... | "cmd"`, which reads exactly like a shell pipe in the command text;
+  - an awk program held in a file (`awk -f`);
+  - other git config keys that run commands: `core.sshCommand`, `core.pager`, `diff.external`,
+    `credential.helper`, `--upload-pack` and `ext::` URLs. These are tracked in
+    `docs/backlog/shipped-allow-rules-skip-the-auto-mode-classifier.md`;
+  - general execution (`bash -c`, `python3 -c`), which this hook has never tried to block.
+
 ### AI Response to BLOCK
 
 ```
@@ -161,9 +222,12 @@ the config. These reach the same outcome and are deliberately not matched:
   new floor.
 
   **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
-  costs about **17.5 seconds** in the PowerShell hook, which blocks the tool call for that whole
-  time. It is quadratic now, so halving the 50,000-byte limit would quarter it; that trade has not
-  been made, and is recorded here rather than left for the next person to rediscover.
+  costs about **20 seconds** in the PowerShell hook, which blocks the tool call for that whole
+  time. That is 17.5s as first measured, and 19.8s → 20.5s re-measured on 2026-10-14 on a busier
+  machine, when the structural rm, force-push and alias rows were added; the per-shape table is in
+  `scripts/dangerous-commands.sh`. It is quadratic now, so halving the 50,000-byte limit would
+  quarter it; that trade has not been made, and is recorded here rather than left for the next
+  person to rediscover.
 
   **The `-c` and `--no-gpg-sign` patterns are deliberately NOT bounded**, and this distinction is
   load-bearing. Each nests only one gap group and is quadratic at worst (**4.3s** at 50,000
@@ -250,6 +314,21 @@ could not span the newline, and the PowerShell `iex` literals could not either.
   because BusyBox grep rejects `-z`. Without bash, the shipped hook wiring
   (`pwsh ... || bash ... || true`) runs no guard at all, and every command is allowed. Install
   PowerShell, or bash with GNU grep, there. With bash installed, the deny message names the same fix.
+
+### Network Access
+
+Decided 2026-10-14: there is **no fleet-wide rule** for `curl`, `wget`, `Invoke-WebRequest`/`iwr` or
+`Invoke-RestMethod`/`irm`. Side-Quest-Atlas carries one as a local rule, and PMB declined to ship it
+to every adopter:
+- CONFIRM in this hook is a hard deny, not a prompt, and adopters cannot tune a TEMPLATE_OWNED file.
+  Over 28,251 past agent commands, the rule would have denied 122, mostly real localhost and
+  dev-server checks.
+- In auto mode the classifier already blocks sending sensitive data to external endpoints by
+  default, and a text match on `curl` is sidestepped by `python -c`.
+- The real gap is narrower. A read-only review agent has no reason to fetch, and `opposition` has
+  been observed running `curl` outside its grant (`.claude/agents/opposition.md`'s SCOPE CAVEAT).
+  A deny scoped by the hook payload's `agent_type` is tracked in
+  `docs/backlog/agent-scoped-network-deny-for-review-agents.md`.
 
 ### Database Operations
 
