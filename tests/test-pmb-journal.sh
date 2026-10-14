@@ -182,6 +182,17 @@ assert_equals "$(jcode "$T/on" claim)" "1" "claim without an NS id is refused"
 assert_equals "$(jcode "$T/on" claim NS-123456)" "1" "a malformed NS id (6 digits) is refused"
 assert_equals "$(jcode "$T/on" claim NS-x1)" "1" "a malformed NS id (non-digit) is refused"
 assert_equals "$(jcode "$T/on" bogus 'x')" "1" "an unknown kind is refused"
+# WHY a command that holds a space or holds two kinds: the dispatch once tested $cmd as a SUBSTRING of the
+# space-separated kind list, so "note handoff" was accepted and wrote "...-note handoff-....md", a name
+# every reader and the gate skip, with exit 0. Each case must print usage on stderr, exit 1 and write nothing.
+files_under() { ( cd "$1" && find . -type f | sort ); }
+for c in 'note handoff' 'claim release' ' note' 'note ' 'not' 'ote'; do
+    before="$(files_under "$(pmbdir "$T/on")")"
+    out="$( cd "$T/on" && bash "$J" "$c" 'a body that is long enough to be a record' 2>&1 >/dev/null; echo "rc=$?" )"
+    assert_contains "$out" "usage: pmb-journal.sh" "command '$c' prints usage to stderr"
+    assert_contains "$out" "rc=1" "command '$c' exits 1"
+    assert_equals "$(files_under "$(pmbdir "$T/on")")" "$before" "command '$c' writes nothing"
+done
 # WHY the byte-limit cases run under a UTF-8 locale: the writer must count BYTES whatever locale it is
 # started from (it sets LC_ALL=C itself). The default locale here may already count bytes, which
 # would hide a removed `export LC_ALL=C`.
@@ -1294,6 +1305,16 @@ if command -v pwsh >/dev/null 2>&1; then
     done
     s="$(twin_run sh "$T/on" sessPREF001 bogus x)"; p="$(twin_run ps1 "$T/on" sessPREF001 bogus x)"
     assert_equals "${p//pmb-journal.ps1/pmb-journal.sh}" "$s" "ps1 and sh: an unknown kind prints the same usage to stderr and exits 1"
+    # A command holding a space matched the kind list as a substring in the sh twin only. Both twins must
+    # exit 1 with the same usage on stderr, and neither writes a file under pmb/.
+    for c in 'note handoff' 'claim release'; do
+        before="$(files_under "$(pmbdir "$T/on")")"
+        s="$(twin_run sh "$T/on" sessPREF001 "$c" 'a body that is long enough to be a record')"; p="$(twin_run ps1 "$T/on" sessPREF001 "$c" 'a body that is long enough to be a record')"
+        assert_equals "${p//pmb-journal.ps1/pmb-journal.sh}" "$s" "ps1 and sh: the command '$c' prints the same usage to stderr"
+        assert_equals "${s%%|*}" "rc=1" "sh: the command '$c' exits 1"
+        assert_equals "${p%%|*}" "rc=1" "ps1: the command '$c' exits 1"
+        assert_equals "$(files_under "$(pmbdir "$T/on")")" "$before" "neither twin writes anything for the command '$c'"
+    done
     # Every secret shape and near miss of the validation section, replayed (a pattern that .NET reads
     # differently from grep shows here). The A6.1 case: matching is per line, so a key on one line and
     # its value on the next is stored by both twins.

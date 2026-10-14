@@ -372,8 +372,8 @@ pmb_read_record() {
 # pmb_report_claimants OWN NS — list other live/idle sessions whose latest claim on NS is not
 # followed by a release. Live/idle (spec section 4.2) = heartbeat touched in the last 3 days, no
 # `end` marker, and the worktree named in `meta` still exists. WHY one `find` and no per-session
-# forks: this runs on every claim, and a fork is slow under Git Bash on Windows, where the claim
-# report and the gate run as hooks.
+# forks: this runs on every claim, and a fork is slow under Git Bash on Windows. (It is called from the
+# `claim` command; only the gate runs as a hook.)
 pmb_report_claimants() {
     local own="$1" ns="$2" dir fresh hb sdir s wt line p n lc lr ended others=""
     dir=$(pmb_dir) || return 0
@@ -784,8 +784,11 @@ case "$cmd" in
     gate)  pmb_gate; exit $? ;;
     help|-h|--help) usage; exit 0 ;;
     *)
-        case "$PMB_KINDS" in
-            *" $cmd "*) pmb_write_cmd "$cmd" "$@"; exit $? ;;
-            *) usage >&2; exit 1 ;;
-        esac ;;
+        # WHY an exact word match: a substring test of the space-separated list accepted a command that
+        # holds a space ("note handoff"), which wrote a record named "...-note handoff-....md" that every
+        # reader and the gate skip, and exited 0. The PowerShell twin compares whole words.
+        for kind in $PMB_KINDS; do
+            [ "$kind" = "$cmd" ] && { pmb_write_cmd "$cmd" "$@"; exit $?; }
+        done
+        usage >&2; exit 1 ;;
 esac

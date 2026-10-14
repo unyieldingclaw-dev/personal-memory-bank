@@ -56,7 +56,7 @@ Nothing in Plan A changes behaviour anywhere until Plan C's flag PR merges. A fi
 - Record-name grammar: `^[0-9]{8}T[0-9]{6}Z-[0-9]{6}-<kind>(-NS-(0|[1-9][0-9]{0,4}))?-[0-9a-f]{6}\.md$`.
 - Kinds (closed set): `claim release note handoff pickup learned decision blocked done promoted`.
 - Markers (hook- and gate-written only): `start compact end`.
-- `<seq>` is at most 999999, and is allocated above the highest seq in **both** `seq/` and the record names in `r/`.
+- `<seq>` is at most 999999, and is allocated above the highest number in `seq/`; while `seq/` holds a number (1-999999) it is authoritative and record names in `r/` above it are ignored, and only when `seq/` holds none does allocation go above the highest record name in `r/`.
 
 **Record bodies**
 - Valid UTF-8 with LF line endings; at most **1,024 bytes**. CR and ASCII controls other than TAB and LF are stripped, and a leading BOM is dropped.
