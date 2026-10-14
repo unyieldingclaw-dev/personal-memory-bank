@@ -210,6 +210,12 @@ assert_contains "$(cat "$TMPDIR_GI/.gitignore")" "\.claude/contracts/\*\.json" \
     "upgrade back-fills .claude/contracts/*.json"
 assert_contains "$(grep -c '^handoff\.md$' "$TMPDIR_GI/.gitignore")" "^1$" \
     "an entry already present is not duplicated"
+# WHY: standards/WORKFLOW.md Phase 3 and the feature-dev command both tell adopters that
+# .claude/plans/ drafts are gitignored scratch files, and mb doctor reports a tracked one as an
+# ERROR. Until [NS-19] the entry existed only in PMB's own .gitignore, so the claim was false in
+# every adopter.
+assert_equals "$(grep -c '^\.claude/plans/$' "$TMPDIR_GI/.gitignore")" "1" \
+    "upgrade back-fills .claude/plans/ (the scratch-plan directory WORKFLOW.md calls gitignored)"
 
 echo ""
 echo "--- .gitignore: second upgrade is a no-op ---"
@@ -224,7 +230,7 @@ echo "--- .gitignore: CRLF file is not re-appended (regression) ---"
 # WHY this is the most important case here: `grep -qxF` does NOT match a CRLF-terminated
 # line under real GNU grep, and this repo's own .gitignore is CRLF. Git Bash's grep strips
 # CR in text mode, so the bug was invisible on Windows -- an `mb upgrade` from WSL or Linux
-# CI would have re-appended all 11 entries on EVERY run, unbounded, to the very file the
+# CI would have re-appended every entry on EVERY run, unbounded, to the very file the
 # feature exists to repair. Caught in review, not by a test, which is why one exists now.
 
 TMPDIR_GICRLF="$(mktemp -d 2>/dev/null || mktemp -d -t mb-gitignore-crlf)"
@@ -286,5 +292,19 @@ output=$(cd "$TMPDIR_GIDRY" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade --dry-run
 assert_contains "$output" "would add" "dry-run reports what it would add"
 assert_contains "match=$([ "$BEFORE" = "$(cat "$TMPDIR_GIDRY/.gitignore")" ] && echo yes || echo no)" \
     "match=yes" "dry-run leaves .gitignore unchanged"
+
+echo ""
+echo "--- .gitignore: mb.sh and mb.ps1 install the same entries ---"
+# WHY: both arrays carry a comment saying they must stay identical because they already drifted
+# once, and every case above runs mb.sh only -- so an entry added to one runtime alone would pass
+# this suite while bash and pwsh adopters diverged again.
+_gi_entries() {  # $1 = file, $2 = regex matching the array's opening line
+    awk -v start="$2" '$0 ~ start {f=1; next} f && /^[[:space:]]*\)/ {exit} f' "$1" |
+        grep -o '"[^"]*"' | tr -d '"' | sort
+}
+SH_GI="$(_gi_entries "$REPO_ROOT/scripts/mb.sh" '^PMB_GITIGNORE_ENTRIES=[(]')"
+PS_GI="$(_gi_entries "$REPO_ROOT/scripts/mb.ps1" '^[$]PmbGitignoreEntries = @[(]')"
+assert_contains "$SH_GI" "contracts" "mb.sh gitignore entry list was extracted (non-vacuous)"
+assert_equals "$PS_GI" "$SH_GI" "mb.ps1 and mb.sh gitignore entry lists are identical"
 
 print_summary

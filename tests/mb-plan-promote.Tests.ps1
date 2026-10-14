@@ -199,3 +199,90 @@ related_plan: null
         Test-Path "docs/plans/2026-08-16-no-backlog.md" | Should -Be $true
     }
 }
+
+# WHY: standards/WORKFLOW.md Phase 3 says promote COPIES the draft and sets `status: planned`
+# unless a later status is set. Before [NS-19] Invoke-PlanPromote rewrote every line matching
+# '^status: draft' (body included), left a frontmatter without a status key unset, and printed no
+# status outcome. Mirrors tests/test-mb-plan.sh's frontmatter-scoped cases.
+Describe "Invoke-PlanPromote status handling is scoped to the frontmatter" {
+    BeforeEach {
+        $script:ProjectPath = Join-Path $TestDrive ([System.Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $script:ProjectPath -Force | Out-Null
+        Push-Location $script:ProjectPath
+        New-Item -ItemType Directory -Path ".claude/plans" -Force | Out-Null
+        # Frontmatter lines only (between the opening fence and the first closing fence).
+        function script:Get-Fm([string]$Path) {
+            $lines = (Get-Content $Path -Raw) -split "`r?`n"
+            $close = 1..($lines.Count - 1) | Where-Object { $lines[$_].TrimEnd() -eq '---' } | Select-Object -First 1
+            if ($close) { $lines[1..($close - 1)] } else { @() }
+        }
+    }
+
+    AfterEach {
+        Pop-Location
+    }
+
+    It "turns draft into planned without touching a body line that starts 'status: draft'" {
+        $stub = ".claude/plans/2099-02-01-draft.md"
+        Set-Content $stub "---`nstatus: draft`n---`n`n# Body`nstatus: draft is how this line starts`n" -NoNewline
+        Invoke-PlanPromote -Draft $stub
+        @(Get-Fm "docs/plans/2099-02-01-draft.md" | Where-Object { $_ -eq 'status: planned' }).Count | Should -Be 1
+        (Get-Content "docs/plans/2099-02-01-draft.md") -contains 'status: draft is how this line starts' | Should -Be $true
+        Test-Path $stub | Should -Be $true
+    }
+
+    It "adds status: planned when the frontmatter has no status key, and says so" {
+        $stub = ".claude/plans/2099-02-02-nokey.md"
+        Set-Content $stub "---`ncreated: 2099-01-01`n---`n`n# No status key`n" -NoNewline
+        $out = Invoke-PlanPromote -Draft $stub 6>&1 | Out-String
+        @(Get-Fm "docs/plans/2099-02-02-nokey.md" | Where-Object { $_ -eq 'status: planned' }).Count | Should -Be 1
+        $out | Should -Match 'status: planned added'
+    }
+
+    It "turns an empty status: into planned" {
+        $stub = ".claude/plans/2099-02-03-empty.md"
+        Set-Content $stub "---`nstatus:`n---`n`n# Empty`n" -NoNewline
+        Invoke-PlanPromote -Draft $stub
+        @(Get-Fm "docs/plans/2099-02-03-empty.md" | Where-Object { $_ -eq 'status: planned' }).Count | Should -Be 1
+    }
+
+    It "keeps a later status and reports it as preserved" {
+        $stub = ".claude/plans/2099-02-05-later.md"
+        Set-Content $stub "---`nstatus: active`n---`n`n# Later`n" -NoNewline
+        $out = Invoke-PlanPromote -Draft $stub 6>&1 | Out-String
+        @(Get-Fm "docs/plans/2099-02-05-later.md" | Where-Object { $_ -eq 'status: active' }).Count | Should -Be 1
+        $out | Should -Match 'preserved'
+    }
+
+    It "treats a leading --- with no closing fence as having no frontmatter" {
+        $stub = ".claude/plans/2099-02-06-rule.md"
+        Set-Content $stub "---`n`n# Starts with a rule, no closing fence`n" -NoNewline
+        Invoke-PlanPromote -Draft $stub
+        @(Get-Fm "docs/plans/2099-02-06-rule.md" | Where-Object { $_ -eq 'status: planned' }).Count | Should -Be 1
+        (Get-Content "docs/plans/2099-02-06-rule.md") -contains '# Starts with a rule, no closing fence' | Should -Be $true
+    }
+
+    It "keeps a CRLF draft CRLF on every line" {
+        $stub = ".claude/plans/2099-02-07-crlf.md"
+        [System.IO.File]::WriteAllText((Join-Path $PWD $stub), "---`r`ncreated: 2099-01-01`r`n---`r`n`r`n# CRLF`r`n")
+        Invoke-PlanPromote -Draft $stub
+        $raw = [System.IO.File]::ReadAllText((Join-Path $PWD "docs/plans/2099-02-07-crlf.md"))
+        @(Get-Fm "docs/plans/2099-02-07-crlf.md" | Where-Object { $_ -eq 'status: planned' }).Count | Should -Be 1
+        ($raw -replace "`r`n", '') -match "`n" | Should -Be $false
+    }
+
+    # Both runtimes: the key is case-sensitive (YAML), the draft value is not.
+    It "treats an uppercase DRAFT value as draft" {
+        $stub = ".claude/plans/2099-02-08-upper.md"
+        Set-Content $stub "---`nstatus: DRAFT`n---`n`n# Upper`n" -NoNewline
+        Invoke-PlanPromote -Draft $stub
+        @(Get-Fm "docs/plans/2099-02-08-upper.md" | Where-Object { $_ -eq 'status: planned' }).Count | Should -Be 1
+    }
+
+    It "does not treat a capitalised Status: key as the status key" {
+        $stub = ".claude/plans/2099-02-09-keycase.md"
+        Set-Content $stub "---`nStatus: active`n---`n`n# Key case`n" -NoNewline
+        Invoke-PlanPromote -Draft $stub
+        @(Get-Fm "docs/plans/2099-02-09-keycase.md" | Where-Object { $_ -ceq 'status: planned' }).Count | Should -Be 1
+    }
+}
