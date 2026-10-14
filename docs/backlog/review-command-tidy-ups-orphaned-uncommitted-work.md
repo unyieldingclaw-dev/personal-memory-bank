@@ -1,12 +1,15 @@
 ---
-status: open
+status: resolved
 created: 2026-09-22
-last-reviewed: 2026-09-25
+last-reviewed: 2026-10-05
 staleness-threshold: 90d
 related_plan: null
 ---
 
 # Orphaned uncommitted work in `.claude/worktrees/review-command-tidy-ups`
+
+**RESOLVED: PR #47 merged 2026-10-04 (local time) as `19931dc`** (`gh pr view 47` reports MERGED). The paragraph
+below is the 2026-09-25 state that this item said to close on.
 
 **Current state (verified 2026-09-25): no longer orphaned or uncommitted.** The work is committed
 as `3edef15` on `worktree-review-command-tidy-ups` and is the head of PR #47, OPEN. Its parent is

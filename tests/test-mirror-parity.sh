@@ -313,7 +313,8 @@ if [ -f "$MB_PS1" ] && [ -f "$MB_SH" ]; then
         # WHY THIS IS NOT AN EQUALITY, AND NOT A COUNT. The two runtimes deliberately disagree:
         # mb.ps1 force-overwrites standards/*.md (a453a5a), mb.sh leaves them ADVISORY_CREATE. That
         # disagreement is real, is documented in mb.sh's TEMPLATE_OWNED comment, and must not be
-        # closed by drift -- reconciling it needs templates/standards/WORKFLOW.md de-staled first.
+        # closed by drift -- reconciling it is a decision on whether upgrade may discard local edits
+        # to standards/, not a cleanup.
         #
         # WHY NOT "they differ by exactly 15 entries": that is a decaying absolute. It goes stale
         # the first time a sixteenth standard is added, and then either fails on a correct change
@@ -351,8 +352,8 @@ if [ -f "$MB_PS1" ] && [ -f "$MB_SH" ]; then
         # that mb.sh does not.
         #
         # This deliberately goes RED the day someone reconciles the runtimes. That is the point:
-        # reconciling requires de-staling templates/standards/WORKFLOW.md first (see mb.sh's
-        # TEMPLATE_OWNED comment), so it must be a decision that updates this test, never a drift
+        # reconciling means deciding whether upgrade may discard local edits to standards/ (see
+        # mb.sh's TEMPLATE_OWNED comment), so it must be a decision that updates this test, never a drift
         # that silently satisfies it.
         ps_only_std=$(printf '%s\n' "$ps_only" | grep -c '^standards/' || true)
         [ "$ps_only_std" -gt 0 ]
