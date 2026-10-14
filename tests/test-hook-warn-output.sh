@@ -3,10 +3,11 @@
 #
 # WHY this test exists: Claude Code writes a PreToolUse hook's plain-text stdout to its debug log
 # only -- the model never sees it, and neither does the transcript. Measured 2026-10-14 with two
-# throwaway hooks on one Write call: the model reported the JSON `additionalContext` codeword and
-# not the plain-text one, in the main agent and in a subagent. So every WARN these hooks printed
-# was invisible. The doc also requires stdout to be NOTHING BUT the JSON object, so a second
-# notice printed as a second object, or a line of text beside one, voids the whole output.
+# throwaway hooks on one Write call (headless `claude -p`): in the main agent the model reported
+# the JSON `additionalContext` codeword and not the plain-text one; a separate run showed the JSON
+# codeword reaching a subagent too. So every WARN these hooks printed was invisible. The doc also
+# requires stdout to be NOTHING BUT the JSON object, so a second notice printed as a second object,
+# or a line of text beside one, voids the whole output.
 #
 # What each hook must emit, and to whom:
 #   dangerous-commands WARN      -> systemMessage (user) + additionalContext (model)
@@ -54,11 +55,15 @@ run_hook() {
 
 # shape <stdout> -- EMPTY, INVALID, or "OBJ" followed by one field per line:
 #   sys=<systemMessage or -> / ctx=<additionalContext or -> / evt=<hookEventName or -> /
-#   dec=<permissionDecision or -> / keys=<sorted top-level keys>
+#   dec=<permissionDecision or -> / why=<permissionDecisionReason or -> /
+#   keys=<sorted top-level keys> /
+#   hkeys=<sorted hookSpecificOutput keys>
+# WHY exact key sets: a field asserted by name alone passes when an extra key rides along -- e.g. a
+# systemMessage added to a hook that must reach only the model.
 # WHY a real parser over the WHOLE stdout: "contains a JSON-looking line" would pass the exact
 # failure this suite guards against -- text beside the object, or two objects.
 # WHY PYTHONIOENCODING: on Windows python3's stdio defaults to cp1252, so a decoded "≤" (the ps1
-# twin escapes it as ≤) raised on print AFTER "OBJ" was out -- measured: the shape read as a
+# twin escapes it as \u2264) raised on print AFTER "OBJ" was out -- measured: the shape read as a
 # valid object with every field empty. UTF-8 on both sides also decodes the sh twin's raw bytes.
 shape() {
     printf '%s' "$1" | PYTHONIOENCODING=utf-8 python3 -c '
@@ -78,7 +83,9 @@ print("sys=" + str(d.get("systemMessage", "-")))
 print("ctx=" + str(h.get("additionalContext", "-")))
 print("evt=" + str(h.get("hookEventName", "-")))
 print("dec=" + str(h.get("permissionDecision", "-")))
+print("why=" + str(h.get("permissionDecisionReason", "-")))
 print("keys=" + ",".join(sorted(d.keys())))
+print("hkeys=" + ",".join(sorted(h.keys())))
 '
 }
 
@@ -90,19 +97,29 @@ payload_bash() {
 
 mkdir -p "$TMPDIR_HW/dc"
 
-# ── dangerous-commands: one WARN row ────────────────────────────────────────────────────────
+# ── dangerous-commands: every WARN row ──────────────────────────────────────────────────────
+# WHY every row, with exact values: the four rows share one emitter, but each row's reason is its
+# own literal -- a row whose reason broke the JSON, or that stopped matching, would pass a test of
+# one row. Exact strings also pin "one WARNING: per match" in the systemMessage and none in the
+# model-facing text.
 echo ""
-echo "--- dangerous-commands: a WARN row emits one object to user and model ---"
+echo "--- dangerous-commands: each WARN row emits one object to user and model ---"
 P_ONE=$(payload_bash 'cat ~/.ssh/id_rsa')
-for t in $TWINS; do
-    out=$(run_hook "$t" dangerous-commands "$TMPDIR_HW/dc" "$P_ONE")
-    s=$(shape "$out")
-    assert_equals "$(printf '%s' "$s" | head -1)" "OBJ" "$t: id_rsa output is exactly one JSON object"
-    assert_equals "$(field "$s" sys)" "WARNING: SSH private key access. Proceeding." "$t: systemMessage carries the WARNING text"
-    assert_contains "$(field "$s" ctx)" "SSH private key access" "$t: additionalContext names the access for the model"
-    assert_not_contains "$(field "$s" ctx)" "WARNING:" "$t: additionalContext does not repeat the WARNING: token (one notice per match)"
-    assert_equals "$(field "$s" evt)" "PreToolUse" "$t: hookEventName is PreToolUse"
-    assert_equals "$(field "$s" dec)" "-" "$t: a WARN sets no permissionDecision"
+for row in 'cat ~/.ssh/id_rsa|SSH private key access' \
+           'cat server.pem|certificate or key file access' \
+           'cat .env.production|production secrets file' \
+           'cat credentials.json|credential file access'; do
+    c="${row%%|*}"; r="${row#*|}"
+    p=$(payload_bash "$c")
+    for t in $TWINS; do
+        s=$(shape "$(run_hook "$t" dangerous-commands "$TMPDIR_HW/dc" "$p")")
+        assert_equals "$(printf '%s' "$s" | head -1)" "OBJ" "$t: '$c' output is exactly one JSON object"
+        assert_equals "$(field "$s" sys)" "WARNING: $r. Proceeding." "$t: '$c' systemMessage is exactly its WARNING line"
+        assert_equals "$(field "$s" ctx)" "dangerous-commands hook: this command matches $r (WARN tier: surfaced, not blocked)." "$t: '$c' additionalContext is exactly its model-facing line"
+        assert_equals "$(field "$s" keys)" "hookSpecificOutput,systemMessage" "$t: '$c' top-level keys are exactly systemMessage + hookSpecificOutput"
+        assert_equals "$(field "$s" hkeys)" "additionalContext,hookEventName" "$t: '$c' hookSpecificOutput keys are exactly hookEventName + additionalContext"
+        assert_equals "$(field "$s" evt)" "PreToolUse" "$t: '$c' hookEventName is PreToolUse"
+    done
 done
 
 # ── dangerous-commands: two WARN rows merge into ONE object ─────────────────────────────────
@@ -110,12 +127,11 @@ echo ""
 echo "--- dangerous-commands: two WARN rows merge into one object ---"
 P_TWO=$(payload_bash 'cat ~/.ssh/id_rsa server.pem')
 for t in $TWINS; do
-    out=$(run_hook "$t" dangerous-commands "$TMPDIR_HW/dc" "$P_TWO")
-    s=$(shape "$out")
+    s=$(shape "$(run_hook "$t" dangerous-commands "$TMPDIR_HW/dc" "$P_TWO")")
     assert_equals "$(printf '%s' "$s" | head -1)" "OBJ" "$t: two WARN rows still produce exactly one JSON object"
-    assert_contains "$(field "$s" sys)" "SSH private key access" "$t: merged systemMessage has the first reason"
-    assert_contains "$(field "$s" sys)" "certificate or key file access" "$t: merged systemMessage has the second reason"
-    assert_contains "$(field "$s" ctx)" "certificate or key file access" "$t: merged additionalContext has the second reason"
+    assert_equals "$(field "$s" sys)" "WARNING: SSH private key access. Proceeding. WARNING: certificate or key file access. Proceeding." "$t: merged systemMessage has both reasons, one WARNING: each"
+    assert_equals "$(field "$s" ctx)" "dangerous-commands hook: this command matches SSH private key access, certificate or key file access (WARN tier: surfaced, not blocked)." "$t: merged additionalContext has both reasons"
+    assert_equals "$(field "$s" keys)" "hookSpecificOutput,systemMessage" "$t: merged object's top-level keys are exact"
 done
 
 # ── dangerous-commands: silent and deny paths are unchanged ─────────────────────────────────
@@ -128,7 +144,11 @@ for t in $TWINS; do
     s=$(shape "$(run_hook "$t" dangerous-commands "$TMPDIR_HW/dc" "$P_BLOCK")")
     assert_equals "$(printf '%s' "$s" | head -1)" "OBJ" "$t: BLOCK + WARN filename is exactly one JSON object"
     assert_equals "$(field "$s" dec)" "deny" "$t: BLOCK + WARN filename still denies"
-    assert_equals "$(field "$s" sys)" "-" "$t: the deny carries no WARN systemMessage (BLOCK exits first)"
+    assert_equals "$(field "$s" why)" "BLOCK: irreversible recursive deletion. Refusing this command." "$t: the deny reason is exactly the BLOCK row's"
+    # WHY exact key sets here too, per twin: the parity check below compares the twins with each
+    # other, so it cannot see a key added to both, and it does not run at all without pwsh.
+    assert_equals "$(field "$s" keys)" "hookSpecificOutput" "$t: the deny carries no WARN systemMessage (BLOCK exits first)"
+    assert_equals "$(field "$s" hkeys)" "hookEventName,permissionDecision,permissionDecisionReason" "$t: the deny's hookSpecificOutput keys are exact (nothing model-facing beside it)"
 done
 
 # ── dangerous-commands: empty stdin ─────────────────────────────────────────────────────────
@@ -143,7 +163,7 @@ for t in $TWINS; do
 done
 s=$(shape "$(run_hook sh dangerous-commands "$TMPDIR_HW/dc" "")")
 assert_contains "$(field "$s" sys)" "HOOK ERROR" "sh: the fail-open notice is a systemMessage"
-assert_equals "$(field "$s" ctx)" "-" "sh: the fail-open notice is user-facing only"
+assert_equals "$(field "$s" keys)" "systemMessage" "sh: the fail-open notice is user-facing only (systemMessage is the only key)"
 
 # ── warn-stale-review-marker ────────────────────────────────────────────────────────────────
 echo ""
@@ -153,16 +173,24 @@ mkdir -p "$TMPDIR_HW/ws-none/.claude" "$TMPDIR_HW/ws-one/.claude" "$TMPDIR_HW/ws
 : > "$TMPDIR_HW/ws-one/.claude/.code-review-ok"
 : > "$TMPDIR_HW/ws-two/.claude/.code-review-ok"
 : > "$TMPDIR_HW/ws-two/.claude/.change-review-ok"
+ws_note() { printf 'Note: %s exists (an unconsumed review-gate marker). Editing now will invalidate it before commit/push -- if the last verdict was Approve, tell the user before editing further.' "$1"; }
+WS_NOTE_CR=$(ws_note .claude/.code-review-ok)
+WS_NOTE_CHR=$(ws_note .claude/.change-review-ok)
 for t in $TWINS; do
     assert_equals "$(shape "$(run_hook "$t" warn-stale-review-marker "$TMPDIR_HW/ws-none" "$P_EDIT")" | head -1)" "EMPTY" "$t: no marker, no output"
     s=$(shape "$(run_hook "$t" warn-stale-review-marker "$TMPDIR_HW/ws-one" "$P_EDIT")")
     assert_equals "$(printf '%s' "$s" | head -1)" "OBJ" "$t: one marker gives exactly one JSON object"
-    assert_contains "$(field "$s" ctx)" ".claude/.code-review-ok" "$t: additionalContext names the marker"
-    assert_equals "$(field "$s" sys)" "-" "$t: no systemMessage (model-facing advice only)"
+    # WHY the exact text: the model now reads this note, so its advice is behaviour -- it must point
+    # the agent at the user, not at committing or pushing on its own.
+    assert_equals "$(field "$s" ctx)" "$WS_NOTE_CR" "$t: additionalContext is exactly the code-review marker note"
+    assert_equals "$(field "$s" keys)" "hookSpecificOutput" "$t: no systemMessage (model-facing advice only)"
+    assert_equals "$(field "$s" hkeys)" "additionalContext,hookEventName" "$t: hookSpecificOutput keys are exactly hookEventName + additionalContext"
     assert_equals "$(field "$s" evt)" "PreToolUse" "$t: hookEventName is PreToolUse"
     s=$(shape "$(run_hook "$t" warn-stale-review-marker "$TMPDIR_HW/ws-two" "$P_EDIT")")
     assert_equals "$(printf '%s' "$s" | head -1)" "OBJ" "$t: two markers still give exactly one JSON object"
-    assert_contains "$(field "$s" ctx)" ".claude/.change-review-ok" "$t: merged additionalContext names the second marker"
+    assert_equals "$(field "$s" ctx)" "$WS_NOTE_CR $WS_NOTE_CHR" "$t: merged additionalContext is both marker notes, in order"
+    assert_equals "$(field "$s" keys)" "hookSpecificOutput" "$t: merged note has no systemMessage either"
+    assert_equals "$(field "$s" hkeys)" "additionalContext,hookEventName" "$t: merged hookSpecificOutput keys are exact"
 done
 
 # ── delegation-depth-check ──────────────────────────────────────────────────────────────────
@@ -174,12 +202,17 @@ for t in $TWINS; do
     d="$TMPDIR_HW/dd-under-$t"; mkdir -p "$d"
     assert_equals "$(shape "$(run_hook "$t" delegation-depth-check "$d" "$P_AGENT")" | head -1)" "EMPTY" "$t: first spawn prints nothing"
     assert_contains "$(cat "$d/.pmb-delegation-depth" 2>/dev/null)" "depth=1" "$t: first spawn records depth=1"
+    # WHY both sides of the threshold: the sixth spawn (stored depth 5) must stay silent and the
+    # seventh (stored depth 6) must warn, so a changed budget or comparison fails here directly.
+    d="$TMPDIR_HW/dd-edge-$t"; mkdir -p "$d"
+    printf 'depth=5\ntimestamp=%s\n' "$NOW_TS" > "$d/.pmb-delegation-depth"
+    assert_equals "$(shape "$(run_hook "$t" delegation-depth-check "$d" "$P_AGENT")" | head -1)" "EMPTY" "$t: sixth spawn (at budget) prints nothing"
     d="$TMPDIR_HW/dd-over-$t"; mkdir -p "$d"
     printf 'depth=6\ntimestamp=%s\n' "$NOW_TS" > "$d/.pmb-delegation-depth"
     s=$(shape "$(run_hook "$t" delegation-depth-check "$d" "$P_AGENT")")
     assert_equals "$(printf '%s' "$s" | head -1)" "OBJ" "$t: over budget gives exactly one JSON object"
-    assert_contains "$(field "$s" sys)" "Agent spawn count: 7" "$t: systemMessage carries the count"
-    assert_not_contains "$(field "$s" sys)" "this session" "$t: message does not claim a per-session count (the counter is per checkout)"
+    # Exact text, decoded: the ps1 twin writes the budget sign as an escape, the parser restores it.
+    assert_equals "$(field "$s" sys)" "[WARN] Agent spawn count: 7 in this checkout since the last 2-hour break (budget: ≤6 per standards/PERFORMANCE-BUDGET.md). High agent volume increases prompt-injection surface. Consider consolidating tasks." "$t: systemMessage is exactly the budget WARN (per checkout, ≤6)"
     assert_equals "$(field "$s" keys)" "systemMessage" "$t: systemMessage only -- nothing reaches the model"
 done
 
@@ -190,7 +223,8 @@ done
 if [ "$HAVE_PWSH" -eq 1 ]; then
     echo ""
     echo "--- cross-shell parity ---"
-    for p in "$P_ONE" "$P_TWO"; do
+    for p in "$P_ONE" "$P_TWO" "$(payload_bash 'cat server.pem')" \
+             "$(payload_bash 'cat .env.production')" "$(payload_bash 'cat credentials.json')"; do
         assert_equals "$(run_hook ps1 dangerous-commands "$TMPDIR_HW/dc" "$p")" \
                       "$(run_hook sh dangerous-commands "$TMPDIR_HW/dc" "$p")" "dangerous-commands twins emit identical bytes: $p"
     done

@@ -371,9 +371,10 @@ foreach ($entry in $warnPatterns) {
 
 # WHY one JSON object, not a Write-Host line per match: a PreToolUse hook's plain stdout goes only
 # to Claude Code's debug log -- neither the user nor the model ever saw a WARN -- and stdout must be
-# nothing but one object, so every match shares it. systemMessage reaches the user,
-# additionalContext the model (measured 2026-10-14). The model-facing text omits "WARNING:" so each
-# match still yields exactly one. [ordered] keeps the keys in the sh twin's order, byte for byte.
+# nothing but one object, so every match shares it. systemMessage reaches the user per Claude
+# Code's docs (a headless run cannot show it); additionalContext the model (measured 2026-10-14,
+# main agent and subagent). The model-facing text omits "WARNING:" so each match still yields
+# exactly one. [ordered] keeps the keys in the sh twin's order, byte for byte.
 if ($warnReasons.Count -gt 0) {
     [ordered]@{
         systemMessage      = (($warnReasons | ForEach-Object { $WARN_MSG -f $_ }) -join ' ')

@@ -46,7 +46,7 @@ cat >/dev/null 2>&1
 notes=""
 for marker in .claude/.code-review-ok .claude/.change-review-ok; do
     if [ -f "$marker" ]; then
-        notes="${notes:+$notes }Note: $marker exists (an unconsumed review-gate marker). Editing now will invalidate it before commit/push -- if the last verdict was Approve, consider committing/pushing first."
+        notes="${notes:+$notes }Note: $marker exists (an unconsumed review-gate marker). Editing now will invalidate it before commit/push -- if the last verdict was Approve, tell the user before editing further."
     fi
 done
 

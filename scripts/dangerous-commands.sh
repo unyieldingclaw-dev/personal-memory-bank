@@ -774,9 +774,10 @@ warn "credentials.json" "credential file access"                # WHY: credentia
 
 # WHY JSON, not the plain "WARNING:" lines this tier used to print: a PreToolUse hook's plain
 # stdout goes only to Claude Code's debug log -- neither the user nor the model ever saw a WARN.
-# systemMessage reaches the user; additionalContext reaches the model (measured 2026-10-14, main
-# agent and subagent). The model-facing text omits the "WARNING:" token so each match still
-# yields exactly one, which the existing one-notice-per-match tests count.
+# systemMessage reaches the user per Claude Code's docs (a headless run cannot show it);
+# additionalContext reaches the model (measured 2026-10-14, main agent and subagent). The
+# model-facing text omits the "WARNING:" token so each match still yields exactly one, which the
+# existing one-notice-per-match tests count.
 # WHY no JSON escaping: every value is a reason literal from the warn rows above. A future reason
 # containing `"` or `\` would emit invalid JSON here -- tests/test-hook-warn-output.sh catches it
 # by byte-comparing this output with the .ps1 twin, whose ConvertTo-Json escapes properly.

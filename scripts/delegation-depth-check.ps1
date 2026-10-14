@@ -30,7 +30,7 @@ try {
     }
 
     # WHY systemMessage-only JSON and the "in this checkout" wording: see the sh twin.
-    # EscapeNonAscii writes the "≤" as ≤, so the JSON is pure ASCII and survives pwsh's
+    # EscapeNonAscii writes the "≤" as \u2264, so the JSON is pure ASCII and survives pwsh's
     # non-UTF-8 stdout encoding on Windows (which turns it into "?" otherwise).
     if ($depth -ge $budgetLimit) {
         [ordered]@{

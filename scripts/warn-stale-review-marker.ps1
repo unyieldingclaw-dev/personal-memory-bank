@@ -48,7 +48,7 @@ trap {
 $notes = @()
 foreach ($marker in @(".claude/.code-review-ok", ".claude/.change-review-ok")) {
     if (Test-Path $marker) {
-        $notes += "Note: $marker exists (an unconsumed review-gate marker). Editing now will invalidate it before commit/push -- if the last verdict was Approve, consider committing/pushing first."
+        $notes += "Note: $marker exists (an unconsumed review-gate marker). Editing now will invalidate it before commit/push -- if the last verdict was Approve, tell the user before editing further."
     }
 }
 

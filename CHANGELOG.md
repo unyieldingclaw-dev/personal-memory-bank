@@ -4,21 +4,23 @@
 
 ### Fixed
 - **No WARN from a `PreToolUse` hook ever reached you or Claude.** Claude Code writes such a hook's
-  plain stdout to its debug log only. Measured 2026-10-14: a JSON `additionalContext` note reached
-  the model, in the main agent and in a subagent, while a plain-text note on the same tool call did
-  not. Each of these hooks now prints at most one JSON object (both twins and their `templates/`
-  copies):
+  plain stdout to its debug log only. Measured 2026-10-14 with headless `claude -p`: in the main
+  agent, a JSON `additionalContext` note reached the model while a plain-text note on the same tool
+  call did not; a separate run showed the JSON note reaching a subagent too. That `systemMessage`
+  reaches you rests on Claude Code's docs, since a headless run cannot show it. Each of these hooks
+  now prints at most one JSON object (both twins and their `templates/` copies):
   - `dangerous-commands` WARN (secrets-file access): `systemMessage` for you plus
     `additionalContext` for Claude, with every match in one object. Its fails-open notice is a
     `systemMessage`.
   - `warn-stale-review-marker`: `additionalContext` only. It is advice for the agent and fires on
-    every edit while a marker exists.
+    every edit while a marker exists. Now that the model reads it, it says to tell the user, no
+    longer to "consider committing/pushing first".
   - `delegation-depth-check`: `systemMessage` only, so an agent mid-review is not nudged to drop
     reviewers. Its message no longer says "this session": the counter is per checkout.
 
   BLOCK and CONFIRM output is unchanged. New `tests/test-hook-warn-output.sh` checks that stdout is
   exactly one object (or empty) and that the twins agree. The Contract Scope Check still prints
-  plain text and is tracked separately.
+  plain text; tracked in `docs/backlog/check-contract-output-is-plain-stdout.md`.
 - **The pre-push hook silently accepted every memory-bank edit.** Check 7 ran `mb doctor`, which
   rewrites `.pmb-checksums` at the end of every run, so an edit made outside mb tools was reported
   once, by the run that then erased it. New `mb doctor --check` (both runtimes) runs the same
