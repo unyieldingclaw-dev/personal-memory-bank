@@ -29,8 +29,11 @@ PMB_SEQ_MAX=999999
 PMB_SHOW_TAIL=100        # records `show` prints by default; a planted flood must not push the banner out
 PMB_LIVE_MINUTES=4320    # 3 days: a session whose heartbeat is older is idle past the claim report's window
 PMB_GATE_PROBES=3        # spec 4.3: a probe write into pmb/tmp/ that fails this many times blocks a manual /compact
+PMB_GATE_PROBE_DELAY=1   # seconds between two of those probe attempts
+PMB_GATE_BLOCKED_READ=16 # bytes read from gate-blocked: it holds one seq (at most 6 digits), and a planted large file is never read whole
 PMB_KINDS=" claim release note handoff pickup learned decision blocked done promoted "
 PMB_GATE_KINDS=" done learned decision blocked note handoff "
+PMB_MARKER_KINDS=" start compact "   # the markers (hook- and gate-written): a gate-kind record must be newer than the latest
 # NS ids are canonical: NS-5, never NS-05, so two claims on one item always share a name.
 PMB_NS_RE='NS-(0|[1-9][0-9]{0,4})'
 PMB_NAME_RE="^[0-9]{8}T[0-9]{6}Z-[0-9]{6}-(start|compact|end|claim|release|note|handoff|pickup|learned|decision|blocked|done|promoted)(-$PMB_NS_RE)?-[0-9a-f]{6}\\.md\$"
@@ -98,7 +101,8 @@ pmb_name_parse() {
 # instructions from a human reader -- zero-width and bidi controls (including U+061C), word joiners,
 # a BOM after the first byte, the Unicode tag block and the variation selectors supplement
 # (U+E0100-E01EF). U+FE00-FE0F stay allowed (emoji presentation). A denylist, not a proof. Matched
-# as UTF-8 byte sequences (LC_ALL=C above).
+# as UTF-8 byte sequences (LC_ALL=C above). pmb_strip_unsafe removes the same set from the gate's
+# block reason; keep the two in step.
 pmb_text_ok() {
     local t="$1"
     # Two callers reach this through pmb_check_body -- pmb_write_cmd and pmb_import_handoff -- and
@@ -166,12 +170,29 @@ pmb_rand6() { od -An -N3 -tx1 /dev/urandom | tr -d ' \n'; }
 # to the record outside r/). A value that is not the documented shape is ignored.
 pmb_now()   { if [[ ${PMB_TEST_TS:-} =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then printf '%s' "$PMB_TEST_TS"; else date -u +%Y%m%dT%H%M%SZ; fi; }
 
-# pmb_max_seq SDIR — the highest sequence number the session has allocated, from seq/ AND from the
-# record names in r/. WHY both: if seq/ is lost, counting from r/ keeps new records above the last
-# compact marker, so the gate can still pass (without it, numbering would restart at 1, below the
-# marker).
+# pmb_alloc_max SDIR — sets PMB_ALLOC to the highest number allocated in SDIR/seq, or 0 when it holds
+# none. seq/ holds every number a writer allocated, so a record name above PMB_ALLOC was planted.
+pmb_alloc_max() {
+    local f p
+    PMB_ALLOC=0
+    for f in "$1"/seq/*; do
+        p="${f##*/}"; [[ $p =~ ^[0-9]{1,6}$ ]] || continue
+        [ $((10#$p)) -gt "$PMB_ALLOC" ] && PMB_ALLOC=$((10#$p))
+    done
+    return 0
+}
+
+# pmb_max_seq SDIR — the highest sequence number the session has allocated: the highest in seq/, or,
+# when seq/ holds none, the highest record name in r/. WHY r/ names above seq/'s highest are ignored
+# while seq/ holds any: no writer allocated them, so they were planted, and counting one would push
+# every later number up -- a planted 999999 would exhaust the session at once, and silently stop the
+# gate's compact markers (the gate ignores such names too: pmb_gate_rec). WHY r/ when seq/ is empty:
+# if seq/ is lost, counting from r/ keeps new records above the last compact marker, so the gate can
+# still pass (without it, numbering would restart at 1, below the marker).
 pmb_max_seq() {
     local p n max=0
+    pmb_alloc_max "$1"
+    if [ "$PMB_ALLOC" -gt 0 ]; then printf '%d' "$PMB_ALLOC"; return 0; fi
     for p in "$1"/seq/* "$1"/r/*; do
         n="${p##*/}"
         if [[ $n =~ ^[0-9]{1,6}$ ]]; then :
@@ -228,17 +249,27 @@ pmb_publish() {
     die "could not publish a record after 20 attempts"
 }
 
+# pmb_first_link DIR SDIR — for the pmb directory DIR and the session directory SDIR: returns 0, with
+# PMB_LINK set to the first of the paths every write goes through (DIR, its sessions/ and tmp/, SDIR,
+# its r/ and seq/) that is a symbolic link, and 1 when none is. WHY one list: the writer
+# (pmb_ensure_session) and the gate must refuse the same paths; the writer dies, the gate fails open.
+pmb_first_link() {
+    local p
+    for p in "$1" "$1/sessions" "$2" "$2/r" "$2/seq" "$1/tmp"; do
+        if [ -L "$p" ]; then PMB_LINK="$p"; return 0; fi
+    done
+    return 1
+}
+
 # pmb_ensure_session SID — create the session directory and meta file if needed; print its path.
 # WHY refuse symbolic links: mkdir -p and every later write follow them, which would move the
 # session's files outside .git/pmb.
 pmb_ensure_session() {
-    local sid="$1" dir sdir tmp p
+    local sid="$1" dir sdir tmp
     dir=$(pmb_dir) || die "not inside a git repository"
     if [ -e "$dir" ] && [ ! -d "$dir" ]; then die "$dir exists but is not a directory"; fi
     sdir="$dir/sessions/$sid"
-    for p in "$dir" "$dir/sessions" "$sdir" "$sdir/r" "$sdir/seq" "$dir/tmp"; do
-        [ ! -L "$p" ] || die "$p is a symbolic link; refusing to write through it"
-    done
+    if pmb_first_link "$dir" "$sdir"; then die "$PMB_LINK is a symbolic link; refusing to write through it"; fi
     mkdir -p "$sdir/r" "$sdir/seq" "$dir/tmp" || die "cannot create $sdir"
     if [ ! -f "$sdir/meta" ]; then
         tmp=$(mktemp "$dir/tmp/meta.XXXXXX") || die "cannot create a temp file in $dir/tmp"
@@ -426,7 +457,7 @@ pmb_show() {
 # WHY `---` becomes `***`: a bare `---` line is refused in any record body (frontmatter forging),
 # but it is also an ordinary Markdown horizontal rule, common in handoff files. `***` renders the
 # same, so the import keeps the document's meaning instead of refusing the whole file.
-# WHY only the current worktree's files, and at most 64 KB: an import turns file text into records
+# WHY only the current worktree's files, and at most PMB_MAX_FILE: an import turns file text into records
 # that later sessions trust, so a file from another clone must not be converted by accident, and a
 # huge file must not become thousands of records.
 pmb_import_handoff() {
@@ -440,7 +471,7 @@ pmb_import_handoff() {
     top=$(git -C "$(dirname "$path")" rev-parse --show-toplevel 2>/dev/null) || die "$path is not inside a git worktree"
     cur=$(pmb_toplevel)
     [ "$top" = "$cur" ] || die "$path is not in this worktree ($cur); run import-handoff from its own worktree"
-    [ "$(wc -c < "$path" | tr -d ' ')" -le "$PMB_MAX_FILE" ] || die "$path is over 64 KB; split it first"
+    [ "$(wc -c < "$path" | tr -d ' ')" -le "$PMB_MAX_FILE" ] || die "$path is over $((PMB_MAX_FILE / 1024)) KB; split it first"
     sid="legacy-$(printf '%s\n' "$top" | git hash-object --stdin | cut -c1-12)"
     content=$(pmb_normalize < "$path")
     content="${content#"$PMB_BOM"}"
@@ -472,8 +503,9 @@ pmb_import_handoff() {
 }
 
 # pmb_json_str TEXT — TEXT as the body of a JSON string: `"` and `\` escaped, and every byte below
-# 0x20 written as \u00XX. WHY every control byte: a raw one is invalid inside a JSON string, and an
-# escape sequence must not reach the user's terminal through the block reason. WHY a byte loop: one
+# 0x20 written as \u00XX. WHY every control byte: a raw one is invalid inside a JSON string. Bytes
+# from 0x80 up pass through unchanged, so this alone does not keep a C1 control or a bidi override
+# out of the user's terminal: pmb_gate_block strips those first (pmb_strip_unsafe). WHY a byte loop: one
 # pass covers all 31 control bytes, where ${s//x/y} would need a substitution per byte. Under
 # LC_ALL=C, ${s:i:1} is one byte.
 pmb_json_str() {
@@ -489,32 +521,68 @@ pmb_json_str() {
     printf '%s' "$out"
 }
 
+# pmb_strip_unsafe TEXT — sets PMB_SAFE to TEXT without the characters that can act on, or hide text
+# in, the user's terminal: ASCII controls (0x01-0x1f) and DEL; C1 controls (U+0080-U+009F, which some
+# terminals obey: U+009B is CSI); and the invisible and bidi characters pmb_text_ok refuses in a record
+# body (keep the two sets in step). Whole UTF-8 sequences are removed, and the removal repeats until
+# nothing changes, because removing one sequence can join the bytes around it into another (C2, a
+# zero-width space, 9B becomes C2 9B). WHY a global rather than `$(...)`: no fork. WHY one helper: the
+# block reason strips both the worktree path and DETAIL, and one definition keeps the two (and the
+# PowerShell twin) from drifting apart.
+pmb_strip_unsafe() {
+    local s="$1" prev=""
+    while [ "$s" != "$prev" ]; do
+        prev="$s"
+        s="${s//[$'\x01'-$'\x1f'$'\x7f']/}"
+        s="${s//$'\xc2'[$'\x80'-$'\x9f']/}"                      # C1 controls
+        s="${s//$'\xe2\x80'[$'\x8b'-$'\x8f'$'\xa8'-$'\xae']/}"   # ZW*, LRM/RLM, LS/PS, bidi
+        s="${s//$'\xe2\x81'[$'\xa0'-$'\xaf']/}"                  # word joiner, invisible ops
+        s="${s//$'\xef\xbb\xbf'/}"                               # BOM / ZWNBSP
+        s="${s//$'\xd8\x9c'/}"                                   # U+061C Arabic letter mark
+        # Tag characters and the variation selectors supplement are 4 bytes; a sequence cut short at
+        # the end of TEXT is removed too.
+        s="${s//$'\xf3\xa0'[$'\x80'$'\x81'$'\x84'-$'\x87']?/}"
+        s="${s//$'\xf3\xa0'[$'\x80'$'\x81'$'\x84'-$'\x87']/}"
+    done
+    PMB_SAFE="$s"
+}
+
 # pmb_gate_block SID KIND DETAIL — block a MANUAL compaction and return 2. KIND is `record` (no
 # qualifying record: the next /compact passes, so the message offers that) or `env` (one of the two
 # environment conditions, which repeat until fixed, so it does not). WHY JSON on stdout as well as
 # text on stderr: Claude Code shows a PreCompact block reason to the USER only, taken from a JSON
 # `decision: block` when there is one and from stderr otherwise -- and this repository's hook wiring
 # discards stderr (`2>/dev/null`), so the JSON is what reaches the user. Exit 2 blocks even when the
-# JSON cannot be parsed (for example after a shell-profile banner). WHY control characters are
-# stripped from the worktree path and DETAIL: both quote paths and an OS error, which can carry any
-# byte, and the reason is printed to the user's terminal.
+# JSON cannot be parsed (for example after a shell-profile banner). WHY the worktree path and DETAIL
+# go through pmb_strip_unsafe: both quote paths and an OS error, which can carry any byte, and the
+# reason is printed to the user's terminal, where pmb_json_str's escaping covers only bytes below 0x20.
+# WHY the path is single-quoted in the suggested command: the user pastes that command into a shell,
+# and inside double quotes a path holding `$(...)`, a backquote or `"` would run code or break the
+# command; a ' in the path is written '\''. WHY --session when the id came from the payload
+# (PMB_G_FROM, set by pmb_gate_identify): the writer finds the session through
+# CLAUDE_CODE_SESSION_ID, which that client does not set, so without it the command writes nowhere.
+# WHY the only `return 2` of the gate is here: every block goes through this function, and its
+# callers pass its status on.
 pmb_gate_block() {
-    local sid="$1" kind="$2" detail="${3//[$'\x01'-$'\x1f'$'\x7f']/}" top msg
+    local sid="$1" kind="$2" detail top cmd sq="'\\''" sess="" msg
+    pmb_strip_unsafe "$3"; detail="$PMB_SAFE"
     top=$(pmb_toplevel); [ -n "$top" ] || top="<worktree>"
-    top="${top//[$'\x01'-$'\x1f'$'\x7f']/}"
+    pmb_strip_unsafe "$top"; top=${PMB_SAFE//\'/$sq}
+    cmd="bash '$top/scripts/pmb-journal.sh' note"
+    [ "${PMB_G_FROM:-}" = payload ] && sess=" --session $sid"
     if [ "$kind" = env ]; then
         msg="Compaction paused: this session's journal cannot be written.
 - $detail
 Checked session: $sid
 This block repeats until that is fixed. Then write a note (what you did, what is next), from this worktree:
-  bash \"$top/scripts/pmb-journal.sh\" note \"<text>\""
+  $cmd \"<text>\"$sess"
     else
         msg="Compaction paused: record this session's state in its journal first.
 - $detail
 Checked session: $sid
 Write a note of at least $PMB_MIN_GATE_BODY bytes (what you did, what is next), from this worktree:
-  bash \"$top/scripts/pmb-journal.sh\" note \"<text>\"
-  bash \"$top/scripts/pmb-journal.sh\" note --file <path-to-note>
+  $cmd \"<text>\"$sess
+  $cmd --file <path-to-note>$sess
 Or run /compact again to compact without a note."
     fi
     printf '{"decision":"block","reason":"%s"}\n' "$(pmb_json_str "$msg")"
@@ -530,20 +598,18 @@ pmb_gate_marker() {
     return 0
 }
 
-# pmb_gate — PreCompact gate in journal mode (spec section 4.3, as amended 2026-09-29/30).
-#   trigger=auto (or no trigger): always allow, and write a compact marker. WHY: the model is never
-#     shown a block reason, so it cannot react; a blocked automatic compaction only defers until the
-#     context limit, where the request fails instead (Claude Code hooks docs, PreCompact).
-#   trigger=manual: allow when this session has a qualifying record newer (by seq) than its latest
-#     start/compact marker. Otherwise block ONCE; a repeated manual /compact with nothing new is
-#     allowed, with a warning, so a session at full context can never be deadlocked.
-#   Blocks also on the two named environment conditions (manual only). Everything else fails OPEN.
-pmb_gate() {
-    local payload flat psid trigger sid dir sdir p f marker=0 alloc=0 ok=0 i err="" hit="" last=""
+# pmb_gate_identify — reads the hook payload on stdin; sets PMB_G_SID (the session to check),
+# PMB_G_FROM (`env` or `payload`: where that id came from) and PMB_G_TRIGGER. CLAUDE_CODE_SESSION_ID
+# wins over the payload's first session_id, with a warning when the two differ; an invalid
+# CLAUDE_CODE_SESSION_ID falls back to the payload's. Returns 1, after a fail-open warning, when
+# neither gives a valid session id.
+pmb_gate_identify() {
+    local payload flat psid sid
+    PMB_G_FROM=env
     payload=$(cat 2>/dev/null || true)
     flat=$(printf '%s' "$payload" | tr -d '\r\n')
     psid=$(printf '%s' "$flat" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]*"' | head -1 | sed 's/.*"\([A-Za-z0-9_-]*\)"$/\1/')
-    trigger=$(printf '%s' "$flat" | grep -o '"trigger"[[:space:]]*:[[:space:]]*"[a-z]*"' | head -1 | sed 's/.*"\([a-z]*\)"$/\1/')
+    PMB_G_TRIGGER=$(printf '%s' "$flat" | grep -o '"trigger"[[:space:]]*:[[:space:]]*"[a-z]*"' | head -1 | sed 's/.*"\([a-z]*\)"$/\1/')
     sid="${CLAUDE_CODE_SESSION_ID:-}"
     if [ -n "$sid" ] && ! pmb_valid_sid "$sid"; then
         printf 'pmb-journal gate: warning: CLAUDE_CODE_SESSION_ID is invalid; using the payload session_id\n' >&2
@@ -552,79 +618,79 @@ pmb_gate() {
     if [ -n "$sid" ] && [ -n "$psid" ] && [ "$psid" != "$sid" ]; then
         printf 'pmb-journal gate: warning: payload session_id %s differs from CLAUDE_CODE_SESSION_ID; checking %s\n' "$psid" "$sid" >&2
     fi
-    [ -n "$sid" ] || sid="$psid"
+    [ -n "$sid" ] || { sid="$psid"; PMB_G_FROM=payload; }
     if ! pmb_valid_sid "$sid"; then
         printf 'pmb-journal gate: cannot identify this session; allowing compaction (fail-open)\n' >&2
-        return 0
+        return 1
     fi
-    dir=$(pmb_dir) || { printf 'pmb-journal gate: not in a git repository; allowing (fail-open)\n' >&2; return 0; }
-    sdir="$dir/sessions/$sid"
-    # WHY before any write, on both triggers: mkdir, the probe and pmb_publish all follow a symbolic
-    # link, so a planted one would move the gate's writes outside .git/pmb. The writer's list
-    # (pmb_ensure_session); the gate fails open instead of dying.
-    for p in "$dir" "$dir/sessions" "$sdir" "$sdir/r" "$sdir/seq" "$dir/tmp"; do
-        if [ -L "$p" ]; then
-            printf 'pmb-journal gate: %s is a symbolic link; allowing without writing (fail-open)\n' "$p" >&2
-            return 0
-        fi
-    done
-    if [ "$trigger" != manual ]; then
-        pmb_gate_marker "$sdir" "compaction checkpoint (trigger=${trigger:-none}; allowed without a check)"
-        return 0
-    fi
+    PMB_G_SID="$sid"
+}
+
+# pmb_gate_env DIR SID — the two environment conditions that block a manual /compact (spec section
+# 4.3): DIR exists but is not a directory, or a probe write into DIR/tmp fails PMB_GATE_PROBES times.
+# Returns the block's status on either, else 0. Each block reports the path and the OS error.
+pmb_gate_env() {
+    local dir="$1" sid="$2" i err=""
     if [ -e "$dir" ] && [ ! -d "$dir" ]; then
-        pmb_gate_block "$sid" env "$dir exists but is not a directory. Fix: move that file aside so $dir can be a directory."
-        return 2
+        # The write the journal needs, made to fail: its message is the OS error (ENOTDIR).
+        err=$(mkdir "$dir/tmp" 2>&1)
+        pmb_gate_block "$sid" env "$dir exists but is not a directory (${err:-unknown error}). Fix: move that file aside so $dir can be a directory."
+        return $?
     fi
     mkdir -p "$dir/tmp" 2>/dev/null
     for ((i = 1; i <= PMB_GATE_PROBES; i++)); do
-        if err=$( ( : > "$dir/tmp/.probe.$$" ) 2>&1 ); then rm -f "$dir/tmp/.probe.$$"; ok=1; break; fi
-        [ "$i" -lt "$PMB_GATE_PROBES" ] && sleep 1
+        if err=$( ( : > "$dir/tmp/.probe.$$" ) 2>&1 ); then rm -f "$dir/tmp/.probe.$$"; return 0; fi
+        [ "$i" -lt "$PMB_GATE_PROBES" ] && sleep "$PMB_GATE_PROBE_DELAY"
     done
-    if [ "$ok" -ne 1 ]; then
-        pmb_gate_block "$sid" env "cannot write to $dir/tmp (tried $PMB_GATE_PROBES times: ${err:-unknown error}). Fix: restore write access to $dir/tmp."
-        return 2
-    fi
-    if [ -e "$sdir" ] && { [ ! -d "$sdir" ] || { [ -e "$sdir/r" ] && [ ! -d "$sdir/r" ]; }; }; then
-        printf 'pmb-journal gate: %s is not a usable session directory; allowing (fail-open)\n' "$sdir" >&2
-        return 0
-    fi
-    if [ -d "$sdir/r" ]; then
-        # WHY the allocated-seq ceiling: a record whose seq no writer allocated (seq/ holds every
-        # allocated number) was planted, and a planted high `compact` marker would otherwise block
-        # this session for good. With seq/ empty or lost, no ceiling applies.
-        for f in "$sdir"/seq/*; do
-            p="${f##*/}"; [[ $p =~ ^[0-9]{1,6}$ ]] || continue
-            [ $((10#$p)) -gt "$alloc" ] && alloc=$((10#$p))
-        done
-        # WHY a marker is read too: a record the reader refuses (a link, FIFO, NUL-bearing, empty or
-        # oversized file) is never trusted, and an empty file named like a newer marker would
-        # otherwise hide every record before it.
-        for f in "$sdir"/r/*; do
-            pmb_valid_name "${f##*/}" || continue
-            pmb_name_parse "${f##*/}"
-            [ "$alloc" -eq 0 ] || [ "$PMB_N_SEQ" -le "$alloc" ] || continue
-            case "$PMB_N_KIND" in
-                start|compact) [ "$PMB_N_SEQ" -gt "$marker" ] && pmb_read_record "$f" && marker=$PMB_N_SEQ ;;
-            esac
-        done
-        for f in "$sdir"/r/*; do
-            pmb_valid_name "${f##*/}" || continue
-            pmb_name_parse "${f##*/}"
-            [ "$alloc" -eq 0 ] || [ "$PMB_N_SEQ" -le "$alloc" ] || continue
-            case "$PMB_GATE_KINDS" in *" $PMB_N_KIND "*) ;; *) continue ;; esac
-            [ "$PMB_N_SEQ" -gt "$marker" ] || continue
-            pmb_read_record "$f" || continue
-            PMB_REC="${PMB_REC%$'\n'}"
-            [ "${#PMB_REC}" -ge "$PMB_MIN_GATE_BODY" ] || continue
-            hit=1; break
-        done
-    fi
-    if [ -n "$hit" ]; then
-        pmb_gate_marker "$sdir" "compaction checkpoint"
-        return 0
-    fi
-    [ -f "$sdir/gate-blocked" ] && [ ! -L "$sdir/gate-blocked" ] && IFS= read -r -n 16 last < "$sdir/gate-blocked"
+    pmb_gate_block "$sid" env "cannot write to $dir/tmp (tried $PMB_GATE_PROBES times: ${err:-unknown error}). Fix: restore write access to $dir/tmp."
+}
+
+# pmb_gate_rec PATH — the gate's test of one entry of r/, shared by both of its scans: returns 1
+# (skip it) unless the name passes the grammar and its seq is within the allocated-seq ceiling, and
+# sets PMB_N_SEQ and PMB_N_KIND. Needs PMB_ALLOC (pmb_alloc_max). WHY the ceiling: a record whose seq
+# no writer allocated was planted, and a planted high `compact` marker would otherwise block this
+# session for good. With seq/ empty or lost, no ceiling applies.
+pmb_gate_rec() {
+    pmb_valid_name "${1##*/}" || return 1
+    pmb_name_parse "${1##*/}"
+    [ "$PMB_ALLOC" -eq 0 ] || [ "$PMB_N_SEQ" -le "$PMB_ALLOC" ]
+}
+
+# pmb_gate_newest SDIR — sets PMB_G_MARKER to the seq of the session's latest start/compact marker
+# (0 when it has none) and PMB_G_HIT to 1 when a gate-kind record of at least PMB_MIN_GATE_BODY bytes
+# is newer, by seq, than that marker (0 otherwise).
+pmb_gate_newest() {
+    local f
+    PMB_G_MARKER=0; PMB_G_HIT=0
+    [ -d "$1/r" ] || return 0
+    pmb_alloc_max "$1"
+    # WHY a marker is read too: a record the reader refuses (a link, FIFO, NUL-bearing, empty or
+    # oversized file) is never trusted, and an empty file named like a newer marker would otherwise
+    # hide every record before it.
+    for f in "$1"/r/*; do
+        pmb_gate_rec "$f" || continue
+        case "$PMB_MARKER_KINDS" in
+            *" $PMB_N_KIND "*) [ "$PMB_N_SEQ" -gt "$PMB_G_MARKER" ] && pmb_read_record "$f" && PMB_G_MARKER=$PMB_N_SEQ ;;
+        esac
+    done
+    for f in "$1"/r/*; do
+        pmb_gate_rec "$f" || continue
+        case "$PMB_GATE_KINDS" in *" $PMB_N_KIND "*) ;; *) continue ;; esac
+        [ "$PMB_N_SEQ" -gt "$PMB_G_MARKER" ] || continue
+        pmb_read_record "$f" || continue
+        PMB_REC="${PMB_REC%$'\n'}"
+        [ "${#PMB_REC}" -ge "$PMB_MIN_GATE_BODY" ] || continue
+        PMB_G_HIT=1; return 0
+    done
+    return 0
+}
+
+# pmb_gate_once SDIR SID MARKER — no qualifying record since MARKER: block ONCE. The block records
+# MARKER in gate-blocked; a repeated manual /compact with that marker still the latest passes, with a
+# warning, so a session at full context can never be deadlocked. Returns the block's status, or 0.
+pmb_gate_once() {
+    local sdir="$1" sid="$2" marker="$3" last=""
+    [ -f "$sdir/gate-blocked" ] && [ ! -L "$sdir/gate-blocked" ] && IFS= read -r -n "$PMB_GATE_BLOCKED_READ" last < "$sdir/gate-blocked"
     if [ "$last" = "$marker" ]; then
         printf 'pmb-journal gate: warning: repeated /compact with no new journal record; allowing\n' >&2
         pmb_gate_marker "$sdir" "compaction checkpoint (repeated /compact without a new record)"
@@ -638,7 +704,45 @@ pmb_gate() {
         return 0
     fi
     pmb_gate_block "$sid" record "this session has no journal record (done/learned/decision/blocked/note/handoff, at least $PMB_MIN_GATE_BODY bytes) since its last start or compaction."
-    return 2
+}
+
+# pmb_gate — PreCompact gate in journal mode (spec section 4.3, as amended 2026-09-29/30). A short
+# sequencer: check order is behaviour, so each step is one call in that order.
+#   trigger=auto (or no trigger): always allow, and write a compact marker. WHY: the model is never
+#     shown a block reason, so it cannot react; a blocked automatic compaction only defers until the
+#     context limit, where the request fails instead (Claude Code hooks docs, PreCompact).
+#   trigger=manual: allow when this session has a qualifying record newer (by seq) than its latest
+#     start/compact marker. Otherwise block ONCE; a repeated manual /compact with nothing new is
+#     allowed, with a warning, so a session at full context can never be deadlocked.
+#   Blocks also on the two named environment conditions (manual only). Everything else fails OPEN.
+pmb_gate() {
+    local sid dir sdir
+    pmb_gate_identify || return 0
+    sid="$PMB_G_SID"
+    dir=$(pmb_dir) || { printf 'pmb-journal gate: not in a git repository; allowing (fail-open)\n' >&2; return 0; }
+    sdir="$dir/sessions/$sid"
+    # WHY before any write, on both triggers: mkdir, the probe and pmb_publish all follow a symbolic
+    # link, so a planted one would move the gate's writes outside .git/pmb. The list is the writer's
+    # (pmb_first_link, shared with pmb_ensure_session); the writer dies on a link, the gate fails open.
+    if pmb_first_link "$dir" "$sdir"; then
+        printf 'pmb-journal gate: %s is a symbolic link; allowing without writing (fail-open)\n' "$PMB_LINK" >&2
+        return 0
+    fi
+    if [ "$PMB_G_TRIGGER" != manual ]; then
+        pmb_gate_marker "$sdir" "compaction checkpoint (trigger=${PMB_G_TRIGGER:-none}; allowed without a check)"
+        return 0
+    fi
+    pmb_gate_env "$dir" "$sid" || return $?
+    if [ -e "$sdir" ] && { [ ! -d "$sdir" ] || { [ -e "$sdir/r" ] && [ ! -d "$sdir/r" ]; }; }; then
+        printf 'pmb-journal gate: %s is not a usable session directory; allowing (fail-open)\n' "$sdir" >&2
+        return 0
+    fi
+    pmb_gate_newest "$sdir"
+    if [ "$PMB_G_HIT" -eq 1 ]; then
+        pmb_gate_marker "$sdir" "compaction checkpoint"
+        return 0
+    fi
+    pmb_gate_once "$sdir" "$sid" "$PMB_G_MARKER"
 }
 
 cmd="${1:-help}"

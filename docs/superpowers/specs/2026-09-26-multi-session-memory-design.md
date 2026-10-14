@@ -230,7 +230,10 @@ runs today's behaviour:
     `noclobber` (`O_EXCL`) in bash, `FileMode.CreateNew` in PowerShell. Both are atomic. PowerShell
     has no exclusive `mkdir`: `New-Item` checks and then creates. Allocation starts above the highest
     seq in both `seq/` and the record names in `r/`, stops at 999999, and fails at once on any error
-    other than an existing number. The first write of a session publishes `start` only if it wins the
+    other than an existing number. While `seq/` holds any number, a record name in `r/` above its
+    highest is ignored, as the gate ignores it (§4.3): no writer allocated it, and one planted at
+    999999 would otherwise exhaust the session. With `seq/` empty or lost, `r/` still counts (amended
+    2026-10-04, Task 5 review). The first write of a session publishes `start` only if it wins the
     exclusive creation of `sessions/<sid>/started`.
   - Kind and NS id sit in the name, so the summary needs no file opens beyond one `meta` file per
     session (worktree, branch).
@@ -343,7 +346,15 @@ call. Nothing is injected.
   with no qualifying record newer than the marker passes, with a warning. Automatic compaction is
   never blocked; a manual no-record block passes on repeat; the two environment blocks below repeat
   until the environment is fixed (amended 2026-09-30, Plan A review).
+  Two consequences, stated here (amended 2026-10-04, Task 5 review):
+  - an automatic compaction also ends the once-only window, even for a session with no journal, so
+    the next manual `/compact` with nothing new blocks again;
+  - a no-record block whose own record (`gate-blocked`, §4.2) cannot be written is allowed instead,
+    with a warning, because the repeat could not see it and the block would recur forever.
 - **Markers:** every pass writes `compact` when the session has a journal (amended 2026-09-30, Plan A review).
+  A `start` or `compact` marker counts only if it passes the full reader (§4.2 Readers): an empty,
+  NUL-bearing, oversized or linked marker file is ignored. Markers written by a hook therefore need a
+  non-empty body; Plan B's `start`/`end` writer must keep that (amended 2026-10-04, Task 5 review).
 - **Block output:** exit 2, with `{"decision":"block","reason":…}` on stdout and the same text on
   stderr. The reason names the session it checked and the repo-local command. The JSON matters
   because the hook wiring discards stderr, and Claude Code shows a JSON reason when there is one.
@@ -352,7 +363,8 @@ call. Nothing is injected.
 - **On a manual trigger only, blocks on exactly two named environment conditions** (besides the
   once-only no-record block above), reporting the path and OS error (amended 2026-09-30, Plan A review):
   - `pmb` is not a directory;
-  - a probe write into `pmb/tmp/` still fails after 3 retries.
+  - a probe write into `pmb/tmp/` fails on each of 3 attempts (amended 2026-10-04, Task 5 review:
+    "after 3 retries" read as 4 attempts; the gate makes 3).
 - **Any other error**, including a timeout or a script fault, **fails open with a warning**, as today.
   The PowerShell catch-all is narrowed to exactly this rule.
 - There is no legacy fallback while journal mode applies.

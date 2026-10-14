@@ -766,7 +766,7 @@ unblock "$T/gate" sessGATE_01
 out="$(gout "$T/gate" sessGATE_01)"; err="$(cat "$T/gate.err")"
 assert_equals "$(printf '%s\n' "$out" | grep -c '^{"decision":"block","reason":".*"}$')" "1" "the block is a one-line JSON decision on stdout"
 assert_contains "$out" 'Checked session: sessGATE_01' "the block reason names the session it checked"
-assert_contains "$err" 'scripts/pmb-journal.sh" note' "the same reason, with the repo-local command, goes to stderr"
+assert_contains "$err" "scripts/pmb-journal.sh' note" "the same reason, with the repo-local command, goes to stderr"
 assert_equals "$(jreason "$out")" "$err" "the stderr text is the JSON reason, byte for byte"
 # The escape hatch: a repeated manual /compact with nothing new passes and writes a marker.
 assert_equals "$(gcode "$T/gate" sessGATE_01)" "0" "a repeated manual /compact with no new record passes (escape hatch)"
@@ -886,6 +886,7 @@ PF="$(pmbdir "$T/gatefile")"; printf 'not a dir\n' > "$PF"
 out="$(cd "$T/gatefile" && payload sessGATE_04 | CLAUDE_CODE_SESSION_ID=sessGATE_04 bash "$J" gate 2>/dev/null)"; code=$?
 assert_equals "$code" "2" "pmb that is a file: block"
 assert_contains "$out" "is not a directory" "the block names the not-a-directory condition"
+assert_contains "$out" "is not a directory ([^)]" "the not-a-directory block reports the OS error"
 assert_contains "$out" "Fix: " "the not-a-directory block says how to fix it"
 assert_not_contains "$out" "run /compact again" "the not-a-directory block does not offer the escape hatch, which cannot pass it"
 assert_equals "$(gcode "$T/gatefile" sessGATE_04)" "2" "pmb that is a file: a repeated manual /compact still blocks"
@@ -905,6 +906,14 @@ mkdir -p "$G/sessions/sessGBDIR_01/gate-blocked"
 assert_equals "$(gcode "$T/gate" sessGBDIR_01)" "0" "gate-blocked that is a directory (the block cannot be recorded): fail open"
 mkdir -p "$G/sessions" && printf 'x\n' > "$G/sessions/sessFILE_001"
 assert_equals "$(gcode "$T/gate" sessFILE_001)" "0" "a session path that is a file: fail open"
+# WHY the warning is asserted too: the gate-blocked write fails for a session path that is a file as
+# well, so the exit code alone would stay 0 with the session-directory check deleted.
+gout "$T/gate" sessFILE_001 >/dev/null
+assert_contains "$(cat "$T/gate.err")" "sessFILE_001 is not a usable session directory" "a session path that is a file fails open through the session-directory check"
+mkdir -p "$G/sessions/sessRFILE01" && printf 'x\n' > "$G/sessions/sessRFILE01/r"
+out="$(gout "$T/gate" sessRFILE01; echo "rc=$?")"
+assert_contains "$out" "rc=0" "a session whose r is a file: fail open"
+assert_contains "$(cat "$T/gate.err")" "sessRFILE01 is not a usable session directory" "a session whose r is a file is reported as not a usable session directory"
 # Fail-open: no identifiable session.
 assert_equals "$(cd "$T/gate" && printf '{}' | env -u CLAUDE_CODE_SESSION_ID bash "$J" gate >/dev/null 2>&1; echo $?)" "0" "no identifiable session: fail open"
 # Symbolic links: mkdir, the probe write and the marker publish all follow one, so a planted link
@@ -912,9 +921,14 @@ assert_equals "$(cd "$T/gate" && printf '{}' | env -u CLAUDE_CODE_SESSION_ID bas
 # on both triggers, and fails open without writing. WHY -newer and not a listing: the probe in tmp/
 # creates and removes its file, so only the directory's mtime shows that it wrote there. WHY the
 # sleep: a filesystem with 1-second timestamps would otherwise date a write the same as the reference.
+# gate-blocked, the seventh part, is guarded where it is read and where it is written, not by the
+# list: its target is a file holding the marker seq the block would record (the start marker is 1,
+# the note 2, the auto run's compact marker 3), so a read through the link would take the escape
+# hatch and a write through it would block. The auto run removes gate-blocked -- the link itself,
+# never its target -- so it is planted again before the manual run.
 printf 'x\n' > "$T/gl-probe-target"
 if ln -s "$T/gl-probe-target" "$T/gl-probe-link" 2>/dev/null && [ -L "$T/gl-probe-link" ]; then
-    for part in pmb sessions session r seq tmp; do
+    for part in pmb sessions session r seq tmp gate-blocked; do
         make_repo "$T/gl-$part" on
         ( cd "$T/gl-$part" && CLAUDE_CODE_SESSION_ID=sessLINK_001 bash "$J" note 'a note so that this session has a full journal, 40+ bytes' ) >/dev/null
         L="$(pmbdir "$T/gl-$part")"
@@ -924,11 +938,20 @@ if ln -s "$T/gl-probe-target" "$T/gl-probe-link" 2>/dev/null && [ -L "$T/gl-prob
             session) p="$L/sessions/sessLINK_001" ;;
             *) p="$L/sessions/sessLINK_001/$part"; [ "$part" = tmp ] && p="$L/tmp" ;;
         esac
-        mv "$p" "$T/gl-$part.target" && ln -s "$T/gl-$part.target" "$p"
+        if [ "$part" = gate-blocked ]; then
+            printf '3\n' > "$T/gl-$part.target" && ln -s "$T/gl-$part.target" "$p"
+        else
+            mv "$p" "$T/gl-$part.target" && ln -s "$T/gl-$part.target" "$p"
+        fi
         touch "$T/gl-$part.ref"; sleep 1
         assert_equals "$(gcode "$T/gl-$part" sessLINK_001 auto)" "0" "$part is a symbolic link, trigger=auto: allow"
+        [ -L "$p" ] || ln -s "$T/gl-$part.target" "$p"
         assert_equals "$(gcode "$T/gl-$part" sessLINK_001)" "0" "$part is a symbolic link, manual: fail open"
         assert_equals "$(find "$T/gl-$part.target" -newer "$T/gl-$part.ref" | wc -l | tr -d ' ')" "0" "$part is a symbolic link: the gate writes nothing through it"
+        if [ "$part" = gate-blocked ]; then
+            gout "$T/gl-$part" sessLINK_001 >/dev/null
+            assert_contains "$(cat "$T/gate.err")" "cannot record the block" "gate-blocked is a symbolic link: it is neither read nor written, so the block fails open"
+        fi
     done
 else
     rm -f "$T/gl-probe-link"
@@ -963,6 +986,89 @@ cmdline="$(printf '%s\n' "$err" | grep -F 'note "<text>"' | sed 's/^ *//; s/<tex
 ( cd "$T/gate" && export CLAUDE_CODE_SESSION_ID=sessGATE_06 && eval "$cmdline" ) >/dev/null 2>&1
 unblock "$T/gate" sessGATE_06
 assert_equals "$(gcode "$T/gate" sessGATE_06)" "0" "the block message's own command, run verbatim, satisfies the gate"
+assert_equals "$(printf '%s\n' "$err" | grep -c -- '--session')" "0" "with CLAUDE_CODE_SESSION_ID set, the suggested commands carry no --session"
+# A client without CLAUDE_CODE_SESSION_ID: the id comes from the payload, so the suggested commands
+# carry --session <id> (the writer cannot find the session otherwise), and run verbatim they pass.
+err="$(cd "$T/gate" && payload sessPAYID_01 | env -u CLAUDE_CODE_SESSION_ID bash "$J" gate 2>&1 >/dev/null)"
+assert_contains "$err" 'note "<text>" --session sessPAYID_01$' "an id from the payload: the note command carries --session <id>"
+assert_contains "$err" 'note --file <path-to-note> --session sessPAYID_01$' "an id from the payload: the --file command carries --session <id>"
+cmdline="$(printf '%s\n' "$err" | grep -F 'note "<text>"' | sed 's/^ *//; s/<text>/what I did and what is next, from a client without the env id/')"
+( cd "$T/gate" && unset CLAUDE_CODE_SESSION_ID && eval "$cmdline" ) >/dev/null 2>&1
+unblock "$T/gate" sessPAYID_01
+assert_equals "$(cd "$T/gate" && payload sessPAYID_01 | env -u CLAUDE_CODE_SESSION_ID bash "$J" gate >/dev/null 2>&1; echo $?)" "0" "an id from the payload: the block's own command, run verbatim without CLAUDE_CODE_SESSION_ID, satisfies the gate"
+# The worktree path is pasted into a shell, so it is single-quoted: a `$(...)` in it never runs, and
+# a ' in it is written '\''. WHY run the command: only a shell shows that the quoting holds -- the
+# old double quotes ran the substitution and left the command pointing at a path that does not exist.
+# WHY `git init .` from inside first, and the block asserted: Git for Windows refuses this name as an
+# argument, and a fixture that is not a repository fails open with no command -- both cases below
+# would then pass without testing anything.
+QD="$T/gq"'$(touch PWNED)'"'q"
+if mkdir "$QD" 2>/dev/null && ( cd "$QD" && git init -q . ) 2>/dev/null; then
+    make_repo "$QD" on 2>/dev/null
+    err="$(cd "$QD" && payload sessQUOTE_01 | CLAUDE_CODE_SESSION_ID=sessQUOTE_01 bash "$J" gate 2>&1 >/dev/null)"
+    assert_contains "$err" 'note "<text>"$' "a worktree path with \$(...) and ': the manual /compact blocks and suggests the note command"
+    cmdline="$(printf '%s\n' "$err" | grep -F 'note "<text>"' | sed 's/^ *//; s/<text>/a note written by the command from a quoted worktree path/')"
+    ( cd "$QD" && export CLAUDE_CODE_SESSION_ID=sessQUOTE_01 && eval "$cmdline" ) >/dev/null 2>&1
+    assert_equals "$([ -e "$QD/PWNED" ] && echo ran || echo quoted)" "quoted" "a \$(...) in the worktree path is not run by the suggested command"
+    unblock "$QD" sessQUOTE_01
+    assert_equals "$(gcode "$QD" sessQUOTE_01)" "0" "the suggested command, from a worktree path with \$(...) and ', satisfies the gate"
+else
+    echo "  SKIP: a directory name with \$(...) and ' cannot be created here"
+fi
+# C1 controls (U+009B is CSI) and bidi overrides in the path never reach the reason. WHY the
+# not-a-directory block: its DETAIL quotes the pmb path, and the command quotes the worktree.
+C1D="$T/gc"$'\xc2\x9b'"one"$'\xe2\x80\xae'"rlo"
+if mkdir "$C1D" 2>/dev/null && ( cd "$C1D" && git init -q . ) 2>/dev/null; then
+    make_repo "$C1D" on 2>/dev/null
+    printf 'not a dir\n' > "$(pmbdir "$C1D")"
+    out="$(gout "$C1D" sessC1PATH01)"; err="$(cat "$T/gate.err")"
+    assert_contains "$err" "gconerlo" "a path with a C1 control and a bidi override is reported with them stripped"
+    assert_equals "$(printf '%s%s' "$out" "$err" | LC_ALL=C grep -cE $'\xc2[\x80-\x9f]|\xe2\x80[\x8b-\x8f\xa8-\xae]')" "0" "no C1 control or bidi character reaches stdout or stderr"
+else
+    echo "  SKIP: a directory name with a C1 control cannot be created here"
+fi
+# pmb_strip_unsafe on its own, over one character of each class pmb_text_ok refuses. Kept: plain
+# text, a Latin letter (U+00E9) and an emoji presentation selector (U+FE0F). WHY "c2, ZWSP, 9b": after
+# the zero-width space is removed, the two bytes left are a C1 CSI, so one pass is not enough.
+eval "$(sed -n '/^pmb_strip_unsafe() {$/,/^}$/p' "$J")"
+sin='a'$'\x1b''b'$'\x7f''c'$'\xc2\x9b''d'$'\xe2\x80\x8b''e'$'\xe2\x80\xae''f'$'\xe2\x81\xa0''g'$'\xef\xbb\xbf''h'$'\xd8\x9c''i'
+sin+=$'\xf3\xa0\x80\x81''j'$'\xf3\xa0\x84\x80''k'$'\xc2\xe2\x80\x8b\x9b''l'$'\xc3\xa9''m'$'\xef\xb8\x8f''n'$'\xf3\xa0\x80'
+assert_equals "$( export LC_ALL=C; pmb_strip_unsafe "$sin"; printf '%s' "$PMB_SAFE" | od -An -tx1 | tr -d ' \n' )" \
+    "$(printf '%s' 'abcdefghijkl'$'\xc3\xa9''m'$'\xef\xb8\x8f''n' | od -An -tx1 | tr -d ' \n')" \
+    "pmb_strip_unsafe removes C0, DEL, C1, zero-width, bidi, word joiner, BOM, U+061C, tag and VS-supplement characters, and C1 bytes a removal joins"
+# The allocated-seq ceiling, applied to the allocator too (spec section 4.2): a planted record name
+# above seq/'s highest no longer pushes the next number up, so it can neither exhaust the session
+# (999999 is the last number) nor silently stop the gate's compact markers.
+# Planted compact marker 999998 and a manual pass: the gate's marker is the next real number.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessPLANT_01 bash "$J" note 'a real note in the session before anything is planted' ) >/dev/null
+printf 'x\n' > "$G/sessions/sessPLANT_01/r/20260101T000000Z-999998-compact-aaaaaa.md"
+assert_equals "$(gcode "$T/gate" sessPLANT_01)" "0" "planted compact 999998: the real note still passes"
+assert_equals "$(ls -1 "$G/sessions/sessPLANT_01/seq" | sort -n | tail -1)" "3" "planted compact 999998: the gate's marker takes the next real number"
+assert_equals "$(cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessPLANT_01 bash "$J" note 'a note written after the planted compact marker and a pass' >/dev/null 2>&1; echo $?)" "0" "planted compact 999998: the writer can still write"
+# Planted note 999998 and one automatic compaction.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessPLANT_02 bash "$J" note 'a real note in the session before anything is planted' ) >/dev/null
+printf 'a planted note long enough to pass the forty-byte minimum\n' > "$G/sessions/sessPLANT_02/r/20260101T000000Z-999998-note-aaaaaa.md"
+assert_equals "$(gcode "$T/gate" sessPLANT_02 auto)" "0" "planted note 999998, trigger=auto: allow"
+assert_equals "$(cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessPLANT_02 bash "$J" note 'a note written after the planted note and an automatic compaction' >/dev/null 2>&1; echo $?)" "0" "planted note 999998: after an automatic compaction the writer can still write"
+assert_equals "$(ls -1 "$G/sessions/sessPLANT_02/seq" | sort -n | tail -1)" "4" "planted note 999998: the marker and the next note take the next real numbers"
+# Planted note 999999: the gate is not silently disabled -- the pass writes its marker, so the next
+# manual /compact with nothing new blocks.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessPLANT_03 bash "$J" note 'a real note in the session before anything is planted' ) >/dev/null
+printf 'a planted note long enough to pass the forty-byte minimum\n' > "$G/sessions/sessPLANT_03/r/20260101T000000Z-999999-note-aaaaaa.md"
+assert_equals "$(gcode "$T/gate" sessPLANT_03)" "0" "planted note 999999: the real note passes"
+assert_equals "$(markers "$T/gate" sessPLANT_03)" "1" "planted note 999999: the pass writes its compact marker"
+assert_equals "$(gcode "$T/gate" sessPLANT_03)" "2" "planted note 999999: the next manual /compact with nothing new blocks (the gate is not disabled)"
+# With seq/ empty or lost no ceiling applies: a qualifying record still passes.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessNOSEQ_01 bash "$J" note 'a note whose seq/ entries are lost before the gate runs' ) >/dev/null
+rm -f "$G/sessions/sessNOSEQ_01/seq/"*
+assert_equals "$(gcode "$T/gate" sessNOSEQ_01)" "0" "seq/ empty: no ceiling applies, the note passes"
+# Entries of r/ that fail the name grammar are skipped by both scans: a README, and a file named like
+# a newer compact marker (upper-case suffix) whose seq is allocated, so only the grammar stops it.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessGRAMMAR1 bash "$J" note 'a note older than the grammar-failing compact name below' ) >/dev/null
+: > "$G/sessions/sessGRAMMAR1/seq/3"
+printf 'x\n' > "$G/sessions/sessGRAMMAR1/r/20260101T000000Z-000003-compact-ZZZZZZ.md"
+printf 'not a record\n' > "$G/sessions/sessGRAMMAR1/r/README"
+assert_equals "$(gcode "$T/gate" sessGRAMMAR1)" "0" "a README and a grammar-failing compact name in r/ are skipped: the note passes"
 
 # ── the real repository is untouched ──────────────────────────────────────────────────────────
 echo ""; echo "--- isolation ---"

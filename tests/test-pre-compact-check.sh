@@ -197,6 +197,11 @@ jm_code() { ( cd "$1" && jm_payload "${2:-manual}" sessJM_0001 | CLAUDE_CODE_SES
 jm_repo "$TMPDIR_PC/jm-on" on yes fresh
 assert_contains "code=$(jm_code "$TMPDIR_PC/jm-on")" "code=2" "[NS-22] opted in with the script: a fresh bank and today's handoff.md do NOT pass a manual /compact (the journal gate decides)"
 assert_contains "code=$(jm_code "$TMPDIR_PC/jm-on" auto)" "code=0" "opted in, trigger=auto: allowed"
+# WHY stdout is asserted through the real hook: the hook wiring discards stderr, so the JSON decision
+# is what reaches the user, and the exit code alone would not show it. WHY sessJM_0002: the manual
+# block above armed the once-only escape hatch for sessJM_0001.
+jm_out="$(cd "$TMPDIR_PC/jm-on" && jm_payload manual sessJM_0002 | CLAUDE_CODE_SESSION_ID=sessJM_0002 bash "$HOOK" 2>/dev/null)"
+assert_contains "$jm_out" '^{"decision":"block","reason":".*"}$' "opted in, manual: the real hook prints the JSON block decision on stdout"
 jm_repo "$TMPDIR_PC/jm-off" off yes fresh
 assert_contains "code=$(jm_code "$TMPDIR_PC/jm-off")" "code=0" "flag off: legacy gate unchanged (fresh bank passes)"
 jm_repo "$TMPDIR_PC/jm-noscript" on no fresh
