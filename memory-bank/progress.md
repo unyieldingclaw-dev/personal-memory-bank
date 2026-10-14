@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-10-05
+last-reviewed: 2026-10-13
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,13 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-10-13 — Memory-bank reconciliation committed after an 8-day pause
+
+- `/code-review` passed (Opus Approve) once the session resumed. A wiped scratchpad was handled by
+  re-deriving every reviewed figure, so the diff was proven unchanged before Step 5.
+- The merge-gate order is now in [NS-65] (user decision). The archive header's reproducer now cites
+  `3cadb06`; its `47,109` range was true only of the uncommitted working file.
 
 ## 2026-10-05 — PRs #51 (`07e3bd2`) and #53 (`3cadb06`, [NS-19]) merged
 
@@ -36,10 +43,10 @@ lineage: []
 
 ## 2026-10-04 — PR #47 merged (`19931dc`); `fix/ns19` rebased onto it
 
-- `fix/ns19-plan-workflow-template` was rebased onto `437d3c1`, `19931dc`, then `07e3bd2` (#51).
-  Its `progress.md` and `CHANGELOG.md` conflicts were resolved by date order and by keeping both
-  entries. Its hash citations now name the branch, because a rebase and a squash merge both
-  rewrite hashes.
+- `fix/ns19-plan-workflow-template` was rebased onto `437d3c1` and `19931dc`, and on 10-05 onto
+  `07e3bd2` (#51). Its `progress.md` and `CHANGELOG.md` conflicts were resolved by date order
+  and by keeping both entries. Its hash citations now name the branch, because a rebase and a
+  squash merge both rewrite hashes.
 - The stale root `handoff.md` (2026-09-25) has landed except for two things: its Codex-sandbox ACR
   note, carried by PR #48 (still open), and the open decision to track or ignore `.agents/` and
   `.codex/`. PR #48 tracks only 1 of the 9 `.agents/` files. Delete it only once both have a

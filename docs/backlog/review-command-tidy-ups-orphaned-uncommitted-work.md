@@ -8,7 +8,7 @@ related_plan: null
 
 # Orphaned uncommitted work in `.claude/worktrees/review-command-tidy-ups`
 
-**RESOLVED 2026-10-05: PR #47 merged as `19931dc`** (`gh pr view 47` reports MERGED). The paragraph
+**RESOLVED: PR #47 merged 2026-10-04 (local time) as `19931dc`** (`gh pr view 47` reports MERGED). The paragraph
 below is the 2026-09-25 state that this item said to close on.
 
 **Current state (verified 2026-09-25): no longer orphaned or uncommitted.** The work is committed

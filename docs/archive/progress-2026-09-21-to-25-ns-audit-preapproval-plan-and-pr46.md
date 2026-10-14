@@ -1,12 +1,16 @@
 # Archived: `progress.md` 2026-09-21 → 2026-09-25 — three sections relocated 2026-10-05
 
 **Relocated from `memory-bank/progress.md` on 2026-10-05, verbatim.** The three sections below the
-first `---` were extracted mechanically (`sed -n '47,109p'` of the pre-move file) and compared
-byte-for-byte with the source before it was cut. Nothing was summarised or reflowed.
+first `---` are lines 36-98 of `memory-bank/progress.md` at `3cadb06`. Reproduce with
+`git show 3cadb06:memory-bank/progress.md | sed -n '36,98p'`, which is byte-identical (`cmp`) to
+the text below. Nothing was summarised or reflowed. (The move itself extracted `47,109` of the
+working file, after an 11-line 2026-10-05 entry had been added above them; that state was never
+committed. Corrected 2026-10-13.)
 
 **Why:** PR #51's owed memory-bank delta (`[NS-64]`, `[NS-65]`, two addenda, a dated entry) and the
 PR #53 follow-ups had to fit under the aggregate startup-context ratchet, which stood at zero
-margin against `origin/main` after #53 merged. `progress.md` was also at 491 of its 500-line cap.
+margin against `origin/main` after #53 merged. `progress.md` was also at 480 of its 500-line
+cap at `3cadb06`, and at 491 once that entry was in.
 **Delta, not a level: 4,673 bytes and 63 lines moved out**, measured on the extracted range before
 the move. All three narratives concluded before it: the 09-21 audit is done, the 09-22 plan reviews
 finished (execution is `[NS-59]`), and PR #46 merged.
