@@ -14,6 +14,24 @@
 param()
 
 try {
+    # Journal mode -- docs/superpowers/specs/2026-09-26-multi-session-memory-design.md section 4.3.
+    # When this repository has opted in (.pmb-features on refs/remotes/origin/main) AND this branch
+    # carries scripts/pmb-journal.ps1, the gate checks this session's own journal instead of the
+    # files below. An adopter or an older branch lacks the script, so it keeps today's behaviour.
+    # WHY this twin needs the branch at all: Claude Code runs this .ps1 hook, not the .sh one,
+    # wherever pwsh is on PATH, so the .sh hook's own delegation never runs on such a machine.
+    # WHY detection has its own try: this outer try's catch fails OPEN, so an exception while
+    # merely detecting journal mode (git missing; a profile setting $ErrorActionPreference='Stop')
+    # would silently switch the legacy gate off while the flag is off. Any failure here means
+    # "not journal mode" and the legacy checks below still run.
+    $pmbJournal = $false
+    if (Test-Path -LiteralPath 'scripts/pmb-journal.ps1' -PathType Leaf) {
+        try { . ./scripts/pmb-journal.ps1; $pmbJournal = [bool](Test-PmbFlagOn) } catch { $pmbJournal = $false }
+    }
+    # Once journal mode applies, Invoke-PmbGate returns 2 only for its named block conditions, and
+    # any exception it throws reaches the catch below and fails open -- section 4.3's rule.
+    if ($pmbJournal) { exit (Invoke-PmbGate -Payload (Read-PmbStdin)) }
+
     $today = Get-Date -Format 'yyyy-MM-dd'
 
     $blockReasons = @()

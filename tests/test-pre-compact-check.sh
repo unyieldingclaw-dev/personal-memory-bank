@@ -224,7 +224,7 @@ assert_equals "$(jm_real_state)" "$JM_REAL_BEFORE" "no journal-mode case writes 
 HOOK_PS1="${PMB_TEST_HOOK_PS1:-$REPO_ROOT/scripts/pre-compact-check.ps1}"   # overridable for mutation checks
 if command -v pwsh >/dev/null 2>&1; then
     echo ""
-    echo "--- sh/ps1 parity: the .ps1 twin must agree on all five cases ---"
+    echo "--- sh/ps1 parity: the .ps1 twin must agree with the .sh hook ---"
     ps1_code() { ( cd "$1" && pwsh -NoProfile -NonInteractive -File "$HOOK_PS1" >/dev/null 2>&1; echo $? ); }
 
     assert_contains "code=$(ps1_code "$TMPDIR_PC/fresh")"              "code=0" "ps1: fresh bank, no handoff (allow)"
@@ -232,6 +232,45 @@ if command -v pwsh >/dev/null 2>&1; then
     assert_contains "code=$(ps1_code "$TMPDIR_PC/handoff-today")"      "code=0" "ps1: handoff dated today bypasses (allow)"
     assert_contains "code=$(ps1_code "$TMPDIR_PC/handoff-stale")"      "code=2" "ps1: [NS-22] stale handoff does NOT bypass (block)"
     assert_contains "code=$(ps1_code "$TMPDIR_PC/handoff-stale-fresh")" "code=0" "ps1: stale handoff does not hard-block a fresh bank"
+
+    # Journal mode in the ps1 hook -- the twin that runs first wherever pwsh exists. WHY sessJM_0003 and
+    # up: a manual block arms the once-only escape hatch for its session, and the sh cases above used
+    # sessJM_0001 and sessJM_0002 on these fixtures, so each ps1 scenario takes an id of its own (C6.8).
+    ps1_jm() { ( cd "$1" && jm_payload "$2" "$3" | CLAUDE_CODE_SESSION_ID="$3" pwsh -NoProfile -NonInteractive -File "$HOOK_PS1" >/dev/null 2>&1; echo $? ); }
+    assert_contains "code=$(ps1_jm "$TMPDIR_PC/jm-on" manual sessJM_0003)" "code=2" "ps1: [NS-22] opted in with the script: a fresh bank and today's handoff.md do NOT pass a manual /compact (the journal gate decides)"
+    assert_contains "code=$(ps1_jm "$TMPDIR_PC/jm-on" auto sessJM_0004)" "code=0" "ps1: opted in, trigger=auto: allowed"
+    jm_out="$(cd "$TMPDIR_PC/jm-on" && jm_payload manual sessJM_0005 | CLAUDE_CODE_SESSION_ID=sessJM_0005 pwsh -NoProfile -NonInteractive -File "$HOOK_PS1" 2>/dev/null)"
+    assert_contains "$jm_out" '^{"decision":"block","reason":".*"}$' "ps1: opted in, manual: the real hook prints the JSON block decision on stdout"
+    assert_contains "code=$(ps1_jm "$TMPDIR_PC/jm-on" manual sessJM_0005)" "code=0" "ps1: opted in, a repeated manual /compact with nothing new passes (escape hatch)"
+    # The payload path: no CLAUDE_CODE_SESSION_ID (Cursor, Codex, hook-less clients), so the id can come
+    # only from the payload. WHY a case of its own: with the env id set to the same value, the env path
+    # alone produces the same block.
+    jm_out="$(cd "$TMPDIR_PC/jm-on" && jm_payload manual sessJM_0012 | env -u CLAUDE_CODE_SESSION_ID pwsh -NoProfile -NonInteractive -File "$HOOK_PS1" 2>/dev/null)"
+    assert_contains "$jm_out" 'Checked session: sessJM_0012' "ps1: without CLAUDE_CODE_SESSION_ID the hook's block names the session it read from the payload"
+    assert_contains "$jm_out" 'note \\"<text>\\" --session sessJM_0012' "ps1: the payload-path block's command carries --session <id>"
+    # Inert when not opted in: each fixture is one the legacy gate passes and the journal gate blocks
+    # (or, for the thin bank, the reverse), so a delegation that fires, or swallows the legacy gate, shows.
+    assert_contains "code=$(ps1_jm "$TMPDIR_PC/jm-off" manual sessJM_0006)" "code=0" "ps1: flag off: legacy gate unchanged (fresh bank passes)"
+    assert_contains "code=$(ps1_jm "$TMPDIR_PC/jm-noscript" manual sessJM_0007)" "code=0" "ps1: flag on but no script: legacy gate unchanged"
+    assert_contains "code=$(ps1_jm "$TMPDIR_PC/jm-noflag" manual sessJM_0008)" "code=0" "ps1: script present, no flag file: legacy gate unchanged (fresh bank and today's handoff.md pass)"
+    assert_contains "code=$(ps1_jm "$TMPDIR_PC/jm-noflag-thin" manual sessJM_0009)" "code=2" "ps1: script present, no flag file, thin bank: the legacy gate still blocks"
+    # Detection must never drop the hook into its fail-open catch while the flag is off: with a profile's
+    # strict error preferences, and with no git at all. WHY cygpath: the hook path sits inside a -Command
+    # string, where Git Bash does not convert /c/... to C:/...
+    hook_native="$HOOK_PS1"; command -v cygpath >/dev/null 2>&1 && hook_native="$(cygpath -m "$HOOK_PS1")"
+    strict_code="$( (cd "$TMPDIR_PC/jm-noflag-thin" && jm_payload manual sessJM_0010 | pwsh -NoProfile -NonInteractive -Command "\$ErrorActionPreference='Stop'; \$PSNativeCommandUseErrorActionPreference=\$true; & '$hook_native'; exit \$LASTEXITCODE" >/dev/null 2>&1; echo $?) )"
+    assert_contains "code=$strict_code" "code=2" "ps1: strict error preferences during detection still leave the legacy gate blocking"
+    # WHY a PATH holding only pwsh's own directory: git cannot be started, so the detection's git call
+    # throws -- the case where both of the hook's guards (Test-PmbFlagOn's catch and the hook's own try)
+    # are needed. pwsh itself is started by its full path.
+    pwsh_bin="$(command -v pwsh)"; pwsh_dir="$(dirname "$pwsh_bin")"
+    if PATH="$pwsh_dir" command -v git >/dev/null 2>&1; then
+        echo "  SKIP: git sits beside pwsh, so a PATH without git cannot be built here"
+    else
+        nogit_code="$( (cd "$TMPDIR_PC/jm-noflag-thin" && jm_payload manual sessJM_0011 | PATH="$pwsh_dir" "$pwsh_bin" -NoProfile -NonInteractive -File "$HOOK_PS1" >/dev/null 2>&1; echo $?) )"
+        assert_contains "code=$nogit_code" "code=2" "ps1: with git missing, detection reads the flag as off and the legacy gate still blocks"
+    fi
+    assert_equals "$(jm_real_state)" "$JM_REAL_BEFORE" "no ps1 journal-mode case writes a session into the real pmb/"
 else
     echo ""
     echo "--- sh/ps1 parity: SKIPPED (pwsh not on PATH) ---"

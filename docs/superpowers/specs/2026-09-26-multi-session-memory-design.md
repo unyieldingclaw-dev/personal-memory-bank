@@ -188,6 +188,14 @@ pwsh's start-up cost — instead of patching each one. Everywhere this spec says
 Plans B and D should follow the same pattern for `sessions` and `snapshots` (user-approved
 2026-09-29).
 
+**Twin parity (amended 2026-10-14, Task 6 review).** The two twins make the same decisions, return
+the same exit codes, and write the same bytes to `pmb/`. Their output differs only in these accepted
+ways: paths in messages take each shell's form (`C:/...` from .NET and git, `/c/...` or `/tmp/...`
+from Git Bash); an OS error inside a message is the platform's own text (.NET's, or the shell tool's),
+as is the error for a secret pattern that cannot be applied (a .NET regex error, not a grep exit
+code); the first usage line names `pmb-journal.ps1`; and `pwsh -File` drops an argument that is
+exactly `--%` (and splits one shaped `-name:value`), so such text goes through `--file`.
+
 **Inert without this code.** A branch, or an adopter, that lacks `scripts/pmb-journal.sh`
 runs today's behaviour:
 - the gate enters journal mode only when the flag is on **and** `scripts/pmb-journal.sh` exists and its
@@ -229,12 +237,17 @@ runs today's behaviour:
   - `<seq>` is allocated by exclusively creating the empty file `sessions/<sid>/seq/<n>`:
     `noclobber` (`O_EXCL`) in bash, `FileMode.CreateNew` in PowerShell. Both are atomic. PowerShell
     has no exclusive `mkdir`: `New-Item` checks and then creates. Allocation starts above the highest
-    seq in both `seq/` and the record names in `r/`, stops at 999999, and fails at once on any error
-    other than an existing number. While `seq/` holds any number, a record name in `r/` above its
-    highest is ignored, as the gate ignores it (§4.3): no writer allocated it, and one planted at
-    999999 would otherwise exhaust the session. With `seq/` empty or lost, `r/` still counts (amended
-    2026-10-04, Task 5 review). The first write of a session publishes `start` only if it wins the
-    exclusive creation of `sessions/<sid>/started`.
+    number in `seq/` (a name of one to six digits, above 0; other names do not count); if `seq/` holds
+    none, above the highest record name in `r/`. It stops at 999999,
+    and fails at once on any error other than an existing number. While `seq/` holds a number, a
+    record name in `r/` above its highest is ignored, as the gate ignores it (§4.3): no writer
+    allocated it, and one planted at 999999 would otherwise exhaust the session. While `seq/` holds a number, it
+    is authoritative: if entries are lost from it, numbers above the highest remaining are reused, and
+    records above it are ignored by the gate until allocation passes them. `seq/` itself is equally
+    plantable (S3): a number planted there raises the ceiling. With `seq/` empty or lost, `r/` still
+    counts (amended 2026-10-04, Task 5 review; restated 2026-10-14, Task 5b review follow-up). The
+    first write of a session publishes `start` only if it wins the exclusive creation of
+    `sessions/<sid>/started`.
   - Kind and NS id sit in the name, so the summary needs no file opens beyond one `meta` file per
     session (worktree, branch).
 - **Session files** (amended 2026-09-30, Plan A review).
@@ -252,7 +265,8 @@ runs today's behaviour:
     (F20).
 - **Readers** re-validate the name grammar, the kind, the size and the character set. They skip and
   count invalid records, and never write another session's directory.
-  Readers accept only regular files (never a link, FIFO or directory), read at most 1,025 bytes,
+  Readers accept only regular files (never a link, FIFO or directory), refuse a zero-byte file, read
+  at most 1,025 bytes,
   and refuse C1 controls, zero-width and bidi characters, word joiners and Unicode tag characters,
   as writers do. `show` prefixes every body line with `| `, and prints the last 100 records unless
   `--all` is given. NS ids are canonical (`NS-5`, never `NS-05`). (Amended 2026-09-29, after the
@@ -340,8 +354,9 @@ call. Nothing is injected.
   checkout as of 2026-09-29).
 - **Pass condition (manual).** A valid record newer, by `<seq>`, than the session's latest `start`
   or `compact` marker, of kind `done`, `learned`, `decision`, `blocked`, `note` or `handoff`, with
-  a body of at least 40 B. Records above the highest allocated number in `seq/` are ignored, so an accidental or
-  stale record is not counted; a same-user process can still forge records (S3) (amended 2026-09-30, Plan A review).
+  a body of at least 40 B. While `seq/` holds a number, records above the highest allocated number in
+  `seq/` are ignored, so an accidental or stale record is not counted; a same-user process can still
+  forge records (S3) (amended 2026-09-30, Plan A review).
 - **Once only (manual).** Without such a record the gate blocks once. A repeated manual `/compact`
   with no qualifying record newer than the marker passes, with a warning. Automatic compaction is
   never blocked; a manual no-record block passes on repeat; the two environment blocks below repeat
@@ -352,9 +367,11 @@ call. Nothing is injected.
   - a no-record block whose own record (`gate-blocked`, §4.2) cannot be written is allowed instead,
     with a warning, because the repeat could not see it and the block would recur forever.
 - **Markers:** every pass writes `compact` when the session has a journal (amended 2026-09-30, Plan A review).
-  A `start` or `compact` marker counts only if it passes the full reader (§4.2 Readers): an empty,
-  NUL-bearing, oversized or linked marker file is ignored. Markers written by a hook therefore need a
-  non-empty body; Plan B's `start`/`end` writer must keep that (amended 2026-10-04, Task 5 review).
+  A `start` or `compact` marker counts only if it passes the full reader (§4.2 Readers): a zero-byte,
+  NUL-bearing, oversized or linked marker file is ignored. The `compact` marker (written by the gate)
+  and the `start` marker (published by a session's first write) therefore need a non-empty body, and
+  any other writer of them must keep that. The gate does not read `end` (amended 2026-10-04, Task 5
+  review; restated 2026-10-14, Task 5b review follow-up).
 - **Block output:** exit 2, with `{"decision":"block","reason":…}` on stdout and the same text on
   stderr. The reason names the session it checked and the repo-local command. The JSON matters
   because the hook wiring discards stderr, and Claude Code shows a JSON reason when there is one.
@@ -575,7 +592,7 @@ Tests use scratch repositories and assert that the real common dir's `pmb/` is u
 - A record written before the latest `compact` marker does not pass. A 39-byte `note` does not
   pass; a 40-byte one does.
 - `trigger=auto` never blocks. A repeated manual `/compact` with nothing new passes once. A
-  planted marker or note above the allocated seq changes nothing.
+  planted marker or note above the allocated seq changes nothing, while `seq/` holds a number.
 - The command in its block message runs verbatim while `MB_HOME` points at an older tree.
 
 **Awareness**

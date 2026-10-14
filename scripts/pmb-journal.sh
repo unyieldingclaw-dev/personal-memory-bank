@@ -29,16 +29,23 @@ PMB_SEQ_MAX=999999
 PMB_SHOW_TAIL=100        # records `show` prints by default; a planted flood must not push the banner out
 PMB_LIVE_MINUTES=4320    # 3 days: a session whose heartbeat is older is idle past the claim report's window
 PMB_GATE_PROBES=3        # spec 4.3: a probe write into pmb/tmp/ that fails this many times blocks a manual /compact
-PMB_GATE_PROBE_DELAY=1   # seconds between two of those probe attempts
+PMB_GATE_PROBE_DELAY="${PMB_GATE_PROBE_DELAY:-1}"   # seconds between two of those probe attempts
+# WHY the environment may set it: tests shorten it (and read it back through a stand-in `sleep`). A value
+# that is not a plain number of seconds is ignored, as the PMB_TEST_* seams below are.
+[[ $PMB_GATE_PROBE_DELAY =~ ^[0-9]+(\.[0-9]+)?$ ]] || PMB_GATE_PROBE_DELAY=1
 PMB_GATE_BLOCKED_READ=16 # bytes read from gate-blocked: it holds one seq (at most 6 digits), and a planted large file is never read whole
 PMB_KINDS=" claim release note handoff pickup learned decision blocked done promoted "
 PMB_GATE_KINDS=" done learned decision blocked note handoff "
-PMB_MARKER_KINDS=" start compact "   # the markers (hook- and gate-written): a gate-kind record must be newer than the latest
+# The markers the gate reads: a gate-kind record must be newer, by seq, than the latest of these. `start`
+# is published by a session's first write and `compact` by the gate itself. `end` is a marker too, but
+# the gate never reads it, so it is deliberately not listed.
+PMB_MARKER_KINDS=" start compact "
 # NS ids are canonical: NS-5, never NS-05, so two claims on one item always share a name.
 PMB_NS_RE='NS-(0|[1-9][0-9]{0,4})'
 PMB_NAME_RE="^[0-9]{8}T[0-9]{6}Z-[0-9]{6}-(start|compact|end|claim|release|note|handoff|pickup|learned|decision|blocked|done|promoted)(-$PMB_NS_RE)?-[0-9a-f]{6}\\.md\$"
 PMB_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PMB_BOM=$'\xef\xbb\xbf'
+PMB_BS='\'   # a backslash, quoted where it is used in a pattern (pmb_import_handoff)
 
 die() { printf 'pmb-journal: %s\n' "$*" >&2; exit 1; }
 
@@ -101,8 +108,9 @@ pmb_name_parse() {
 # instructions from a human reader -- zero-width and bidi controls (including U+061C), word joiners,
 # a BOM after the first byte, the Unicode tag block and the variation selectors supplement
 # (U+E0100-E01EF). U+FE00-FE0F stay allowed (emoji presentation). A denylist, not a proof. Matched
-# as UTF-8 byte sequences (LC_ALL=C above). pmb_strip_unsafe removes the same set from the gate's
-# block reason; keep the two in step.
+# as UTF-8 byte sequences (LC_ALL=C above). pmb_strip_unsafe removes every character this refuses from
+# the gate's block reason, and a little more (TAB and LF, and the byte after a cut-short tag prefix);
+# keep the two in step.
 pmb_text_ok() {
     local t="$1"
     # Two callers reach this through pmb_check_body -- pmb_write_cmd and pmb_import_handoff -- and
@@ -253,6 +261,8 @@ pmb_publish() {
 # PMB_LINK set to the first of the paths every write goes through (DIR, its sessions/ and tmp/, SDIR,
 # its r/ and seq/) that is a symbolic link, and 1 when none is. WHY one list: the writer
 # (pmb_ensure_session) and the gate must refuse the same paths; the writer dies, the gate fails open.
+# gate-blocked, the gate's one other write, is not in this list: pmb_gate_once guards it where it is
+# read and where it is written.
 pmb_first_link() {
     local p
     for p in "$1" "$1/sessions" "$2" "$2/r" "$2/seq" "$1/tmp"; do
@@ -461,13 +471,17 @@ pmb_show() {
 # that later sessions trust, so a file from another clone must not be converted by accident, and a
 # huge file must not become thousands of records.
 pmb_import_handoff() {
-    local path="${1:-}" top cur sid sdir content chunk="" line body reason
+    local path="${1:-}" name top cur sid sdir content chunk="" line body reason
     local -a chunks=()
     [ -f "$path" ] && [ ! -L "$path" ] || die "usage: import-handoff <path-to-handoff.md>"
     # WHY only handoff*.md: the import turns file text into records that later sessions read, so
     # `.env` or any other credential file in the worktree must not be convertible (spec section 4.3
     # describes only handoff.md). The secret list is best effort, so the file name is the first line.
-    case "${path##*/}" in handoff*.md) ;; *) die "import-handoff converts only a file named handoff*.md, not ${path##*/}" ;; esac
+    # WHY both / and \ end a directory part, on every platform: Git Bash (and the PowerShell twin on
+    # Windows) open `handoff-x\..\notes.md` as notes.md, so a name taken after the last / alone would
+    # pass that path as handoff*.md. The twins take the name the same way, so they decide alike.
+    name="${path##*/}"; name="${name##*"$PMB_BS"}"
+    case "$name" in handoff*.md) ;; *) die "import-handoff converts only a file named handoff*.md, not $name" ;; esac
     top=$(git -C "$(dirname "$path")" rev-parse --show-toplevel 2>/dev/null) || die "$path is not inside a git worktree"
     cur=$(pmb_toplevel)
     [ "$top" = "$cur" ] || die "$path is not in this worktree ($cur); run import-handoff from its own worktree"
@@ -524,11 +538,15 @@ pmb_json_str() {
 # pmb_strip_unsafe TEXT — sets PMB_SAFE to TEXT without the characters that can act on, or hide text
 # in, the user's terminal: ASCII controls (0x01-0x1f) and DEL; C1 controls (U+0080-U+009F, which some
 # terminals obey: U+009B is CSI); and the invisible and bidi characters pmb_text_ok refuses in a record
-# body (keep the two sets in step). Whole UTF-8 sequences are removed, and the removal repeats until
-# nothing changes, because removing one sequence can join the bytes around it into another (C2, a
-# zero-width space, 9B becomes C2 9B). WHY a global rather than `$(...)`: no fork. WHY one helper: the
-# block reason strips both the worktree path and DETAIL, and one definition keeps the two (and the
-# PowerShell twin) from drifting apart.
+# body (keep the two sets in step). Well-formed UTF-8 sequences are removed whole (a cut-short tag
+# prefix loses the byte after it, and a lone 0x80-0x9f byte, which is not a sequence, is left). The removal
+# repeats until nothing changes, because removing one sequence can join the bytes around it into
+# another (C2, a zero-width space, 9B becomes C2 9B). That repeat is an artefact of working on BYTES
+# under LC_ALL=C: a twin that works on decoded characters has no such joins, so it is not part of the
+# cross-twin contract, and the twin needs only the same removed set (and a test that C2, ZWSP, 9B ends
+# up empty). WHY a global rather than `$(...)`: no fork. WHY one helper: the block reason strips both
+# the worktree path and DETAIL, and one definition keeps the two (and the PowerShell twin) from
+# drifting apart.
 pmb_strip_unsafe() {
     local s="$1" prev=""
     while [ "$s" != "$prev" ]; do
@@ -561,8 +579,9 @@ pmb_strip_unsafe() {
 # command; a ' in the path is written '\''. WHY --session when the id came from the payload
 # (PMB_G_FROM, set by pmb_gate_identify): the writer finds the session through
 # CLAUDE_CODE_SESSION_ID, which that client does not set, so without it the command writes nowhere.
-# WHY the only `return 2` of the gate is here: every block goes through this function, and its
-# callers pass its status on.
+# WHY the `return 2` is here and nowhere else in the gate: every block goes through this function, and
+# its callers pass its status on with an explicit `return $?`, so a block can never be turned into a
+# pass by a line added after the call.
 pmb_gate_block() {
     local sid="$1" kind="$2" detail top cmd sq="'\\''" sess="" msg
     pmb_strip_unsafe "$3"; detail="$PMB_SAFE"
@@ -597,6 +616,14 @@ pmb_gate_marker() {
     rm -f "$1/gate-blocked" 2>/dev/null
     return 0
 }
+
+# The gate's shared state. Bash plumbing only -- a twin passes these however it likes (objects, a
+# result record): PMB_G_SID, PMB_G_FROM, PMB_G_TRIGGER (pmb_gate_identify), PMB_G_MARKER, PMB_G_HIT
+# (pmb_gate_newest), PMB_ALLOC (pmb_alloc_max), PMB_N_SEQ and PMB_N_KIND (pmb_name_parse, also left
+# set by a pmb_gate_rec that returns 1), PMB_LINK (pmb_first_link), PMB_SAFE (pmb_strip_unsafe) and
+# PMB_REC (pmb_read_record). pmb_gate_rec needs PMB_ALLOC set first; pmb_max_seq overwrites it. The
+# cross-twin contract is only what a caller can observe: the exit code (2 = block, 0 = allow), the
+# text on stderr, the one-line JSON decision on stdout, and the gate-blocked file.
 
 # pmb_gate_identify — reads the hook payload on stdin; sets PMB_G_SID (the session to check),
 # PMB_G_FROM (`env` or `payload`: where that id came from) and PMB_G_TRIGGER. CLAUDE_CODE_SESSION_ID
@@ -643,6 +670,7 @@ pmb_gate_env() {
         [ "$i" -lt "$PMB_GATE_PROBES" ] && sleep "$PMB_GATE_PROBE_DELAY"
     done
     pmb_gate_block "$sid" env "cannot write to $dir/tmp (tried $PMB_GATE_PROBES times: ${err:-unknown error}). Fix: restore write access to $dir/tmp."
+    return $?
 }
 
 # pmb_gate_rec PATH — the gate's test of one entry of r/, shared by both of its scans: returns 1
@@ -704,6 +732,7 @@ pmb_gate_once() {
         return 0
     fi
     pmb_gate_block "$sid" record "this session has no journal record (done/learned/decision/blocked/note/handoff, at least $PMB_MIN_GATE_BODY bytes) since its last start or compaction."
+    return $?
 }
 
 # pmb_gate — PreCompact gate in journal mode (spec section 4.3, as amended 2026-09-29/30). A short
