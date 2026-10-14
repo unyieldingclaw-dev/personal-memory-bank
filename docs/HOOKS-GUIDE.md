@@ -74,15 +74,31 @@ to lower case **once** — `cmd_lc` and `cmd_loose_lc`, built beside `cmd_loose`
 `case` against those folded views.
 
 **The rule when adding a pattern to `dangerous-commands.sh`: write it in lower case.** `block`,
-`block_boundary`, `confirm`, `confirm_boundary` and `warn` compare `$1` against an already-folded
+`confirm`, `confirm_boundary` and `warn` compare `$1` against an already-folded
 subject and do **not** fold `$1` themselves. An upper-case pattern therefore matches nothing, ever —
 silently, and **fail-open**. Nothing at the call site looks wrong; the guard simply stops guarding.
 This is why `chmod -R 777` is spelled `chmod -r 777` in **the script's** pattern list, while the
 tier lists above show the command as an operator would actually type it. The real `chmod -R 777` is
 still caught, because the *subject* is folded before comparison.
 
-`confirm_regex` is the exception — its patterns go to `grep -qziE`, which folds via `-i`, so case
+`confirm_regex` and `block_regex` are the exception — their patterns go to `grep -qziE`, which folds via `-i`, so case
 there is unconstrained.
+
+**Regex rows and locale.** Case-insensitive regex matching follows the locale unless it is pinned.
+The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase` alone does not
+fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
+verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
+the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The byte locale
+counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
+row inherits its matcher's locale rule, which can change what it matches.
+
+**Platform requirement (sh hook): a grep with `-z`, such as GNU grep.** The regex rows run on every
+command, and a grep that cannot evaluate them makes the hook refuse rather than pass. BusyBox grep
+rejects `-z` (measured), so on Alpine with bash but without pwsh every Bash command prompts. Without
+bash as well, the hook wiring's `|| true` fallback runs no guard at all. Install PowerShell, or
+bash with GNU grep, there. Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
+a grep that supports `-z` but caps bounds there can still compile every row. The test suite fails on
+any row above 255.
 
 **Why the patterns aren't just folded per call** (the obvious alternative, which was built and then
 reverted): folding `$1` inside each matcher costs a `printf | tr` subshell per matcher *call* —
@@ -264,7 +280,7 @@ PMB distributes two git hooks through the `.githooks/` directory, which is versi
 - Uncommitted working tree changes *(warn)*
 - Missing `.gitattributes` *(warn)*
 - Files over 500 KB *(warn)*
-- Memory-bank integrity via `mb doctor` *(warn, or UNKNOWN if `mb` is unavailable)*
+- Memory-bank integrity via `mb doctor --check` *(warn, or UNKNOWN if `mb` is unavailable or predates `--check`)*
 - Scans first pushes via `git log HEAD --not --remotes` when no upstream tracking ref exists
 
 Dispatches to `scripts/pre-push-check.ps1` (Windows/pwsh) or `scripts/pre-push-check.sh` (POSIX/bash). Fails open — if the script errors unexpectedly, the push is allowed through.
@@ -294,8 +310,19 @@ that was wrong in the same way the code was, and `scripts/pre-push-check.sh` was
 same change without this file being updated alongside it. Check 7 now runs `mb doctor` and derives its
 verdict from that command's structured output: counting `[OK]`/`[WARN]`/`[ERROR]` lines yields both
 the result *and* positive evidence the command actually ran. Zero result lines means UNKNOWN, never
-success. (`mb doctor` also exits 0 regardless of findings, so switching commands alone would not
-have fixed this.)
+success. (`mb doctor`'s exit code would not have fixed this either: it is 1 only for a fatal
+finding, and its advisory `[ERROR]` lines — checksum mismatch, startup-context ceiling — leave it
+at 0.)
+
+**Why `--check`.** Plain `mb doctor` rewrites `.pmb-checksums` at the end of every run, so a hook
+that ran it re-baselined on every push: a memory-bank edit was reported once, by the run that then
+erased it. Check 7 runs `mb doctor --check`, which compares without writing, and requires the
+`Integrity check mode:` line it prints — an `mb.sh` older than the hook ignores the flag and
+rewrites silently, so a run without that line is UNKNOWN. A checksum mismatch gets its own
+`[WARN] memory-bank changed since the last accepted integrity baseline` line and keeps appearing on
+every push until the edits are reviewed and accepted with `mb verify-integrity`. It counts as a
+warning, so `ENFORCE=true` blocks until then. A missing baseline (fresh clone or worktree —
+`.pmb-checksums` is gitignored) is reported as `[INFO]` and does not count.
 
 Relatedly, deprecated redirect shims now exit **2** ("command moved") rather than 0, so a script
 reading only an exit code can tell that nothing ran. `mb update` is deliberately excluded — it is a

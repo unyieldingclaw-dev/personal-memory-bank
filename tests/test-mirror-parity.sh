@@ -209,6 +209,19 @@ for name in $STD_DIVERGE_OK; do
     fi
 done
 
+# WHY a narrower check for WORKFLOW.md: the anti-rot loop above only proves the pair differs
+# SOMEWHERE, and the one intended difference (the Phase 3.5 "Why" paragraph, generic in the
+# template) keeps that green forever. [NS-19] was Phase 3 drifting apart behind exactly that cover,
+# so pin the divergence to that single paragraph: any other changed line fails here.
+echo ""
+echo "--- WORKFLOW.md differs only in the Phase 3.5 \"Why\" paragraph ---"
+WF_WHY='^[<>] \*\*Why:\*\* self-review, however adversarial'
+WF_DIFF="$(diff "$STD_LIVE/WORKFLOW.md" "$STD_TMPL/WORKFLOW.md" | grep -E '^[<>] ')"
+assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE "$WF_WHY")" "2" \
+    "WORKFLOW.md: the Phase 3.5 \"Why\" line is the allowed divergence (one line each side)"
+assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -vcE "$WF_WHY")" "0" \
+    "WORKFLOW.md: no other line differs between live and template (Phase 3 stays in sync)"
+
 # ── AGENTS.md delivery surfaces: PMB-specific live file + generic portable template ─────
 echo ""
 echo "--- AGENTS.md live/template recovery contract ---"
@@ -300,7 +313,8 @@ if [ -f "$MB_PS1" ] && [ -f "$MB_SH" ]; then
         # WHY THIS IS NOT AN EQUALITY, AND NOT A COUNT. The two runtimes deliberately disagree:
         # mb.ps1 force-overwrites standards/*.md (a453a5a), mb.sh leaves them ADVISORY_CREATE. That
         # disagreement is real, is documented in mb.sh's TEMPLATE_OWNED comment, and must not be
-        # closed by drift -- reconciling it needs templates/standards/WORKFLOW.md de-staled first.
+        # closed by drift -- reconciling it is a decision on whether upgrade may discard local edits
+        # to standards/, not a cleanup.
         #
         # WHY NOT "they differ by exactly 15 entries": that is a decaying absolute. It goes stale
         # the first time a sixteenth standard is added, and then either fails on a correct change
@@ -338,8 +352,8 @@ if [ -f "$MB_PS1" ] && [ -f "$MB_SH" ]; then
         # that mb.sh does not.
         #
         # This deliberately goes RED the day someone reconciles the runtimes. That is the point:
-        # reconciling requires de-staling templates/standards/WORKFLOW.md first (see mb.sh's
-        # TEMPLATE_OWNED comment), so it must be a decision that updates this test, never a drift
+        # reconciling means deciding whether upgrade may discard local edits to standards/ (see
+        # mb.sh's TEMPLATE_OWNED comment), so it must be a decision that updates this test, never a drift
         # that silently satisfies it.
         ps_only_std=$(printf '%s\n' "$ps_only" | grep -c '^standards/' || true)
         [ "$ps_only_std" -gt 0 ]

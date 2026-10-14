@@ -129,19 +129,36 @@ the config. These reach the same outcome and are deliberately not matched:
   alternation cannot see through command substitution.
 - An **indirected key** — `K=commit.gpgsign; git config "$K" false`. Resolving it requires
   *evaluating* the shell rather than reading it.
-- **(added 2026-08-24)** More than 300 characters between `git` and `config`, or between `config`
+- **(added 2026-08-24)** More than 255 characters between `git` and `config`, or between `config`
   and the key. Those two patterns nest two gap groups, which made matching **cubic** (~8x per
   doubling, measured): at the 50,000-character input limit the guard could spend roughly **47
   minutes** inside a single pattern, and a `PreToolUse` hook blocks the tool call while it runs — so
   an oversized command hung the agent outright rather than merely running slowly. That was reachable
   without an attacker: a large heredoc writing prose *about* `git config`, containing no `|`, `;` or
-  `&`, has exactly that shape. Those four gap groups are now bounded to `{0,300}`. **The longest
-  `-C` path that still matches is 296 characters** — measured, and it follows from the arithmetic:
-  the gap must also hold `-C `, the leading `/` and the trailing space, so path + 4 <= 300; an earlier version of this paragraph
-  said 490, which was wrong because the gap must also hold `-C ` and the trailing space. The cost is
+  `&`, has exactly that shape. Those four gap groups are now bounded to `{0,255}`. The bound was
+  `{0,300}` until 2026-09-30. It was lowered because POSIX guarantees repetition bounds only up to
+  255: a grep that supports `-z` but caps bounds there would reject `{0,300}`, and under the
+  fail-closed rule the sh hook would then deny every command. No such grep has been measured
+  (macOS/BSD grep is the plausible case). BusyBox is not one: it rejects `-z` first, so the sh hook
+  denies every command there at either bound.
+  **The longest `-C` path that still matches is 250 characters**, measured in both hooks. It follows
+  from the arithmetic: the gap must also hold `-C `, the leading `/` and the space before `config`,
+  so path + 5 <= 255. At `{0,300}` the same measurement gives 295; this paragraph had said 296, and
+  earlier 490. The cost is
   flag-and-path territory, where real gaps are short (`--global` is 9 characters), and it does not
   lower the floor — anyone able to pad the command text already has the two unclosable cases above,
   which are strictly easier.
+
+  **(added 2026-09-30)** On the sh hook the bound can count **bytes**, not characters. GNU grep
+  counts `.{0,255}` in bytes under the byte locale (`C`), and the sh signing rows fall back to that
+  locale when a match under the caller's locale fails. So the limit is 255 bytes, about 85 CJK
+  characters, in at least these cases:
+  - the caller's locale is `C`;
+  - a Turkish locale with an upper-case key;
+  - a lone-surrogate escape in the gap, on a strict GNU grep (3.7 measured).
+
+  The PowerShell hook counts characters in all three. This is the same padding class as above, not a
+  new floor.
 
   **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
   costs about **17.5 seconds** in the PowerShell hook, which blocks the tool call for that whole
@@ -184,7 +201,7 @@ clear. Three cases do still trip, and are accepted rather than chased:
   configuration. Distinguishing "separator inside a quoted argument" from "separator that ends the
   command" requires tokenizing the shell, which this matcher deliberately does not do. So the
   choice is which way to be wrong; a spurious prompt was taken over a silent miss. The gaps stay
-  length-bounded (`.{0,300}`) because those two patterns are the ones with the quadratic blowup —
+  length-bounded (`.{0,255}`) because those two patterns are the ones with the cubic blowup —
   bounding is what contains that, not the character class, and the bounded form measured slightly
   faster than the class it replaced.
 - **(added 2026-08-24)** a command whose meaning changes when backslashes and quotes are stripped.
@@ -206,6 +223,33 @@ before git sees the command, so a wrapped invocation runs exactly as its one-lin
 round 4 the hook matched the raw two-line text and no pattern's glue matched a backslash or a
 newline — `git config commit.gpgsign \`⏎`false` disabled signing with no prompt. The join applies to
 every tier, because the same evasion defeated literal BLOCK substrings such as `git push --force`.
+
+**A trailing pipe also continues the command (added 2026-09-27, [NS-38]).** `curl x |`⏎`bash` runs
+exactly as `curl x | bash`, blank lines included, in both bash and PowerShell (verified live). The
+pipe-to-interpreter BLOCK rows are regexes that allow any whitespace, newlines included, between the
+pipe and the interpreter, and they also match bash's `|&`. Before this, the sh hook's literal rows
+could not span the newline, and the PowerShell `iex` literals could not either.
+
+- **Accepted false positive:** a heredoc body is data to the shell but text to this matcher. So
+  writing a YAML block scalar (`run: |`) whose next line starts with `bash` or `sh` is refused.
+  Telling a heredoc body apart from a real split pipe requires tokenizing the shell. The PowerShell
+  hook refused this shape before the change too. The refusal errs toward blocking.
+- **Not covered, in either shell:**
+  - a comment line between the pipe and the interpreter, which a real shell skips;
+  - an interpreter reached through another word: `| sudo sh`, `| env bash`, `| /bin/bash`;
+  - any interpreter other than bash and sh: `| zsh`, `| dash`, `| python`, and so on;
+  - a PowerShell inline block comment (`|<#…#>iex`) or backtick escape (``i`ex``);
+  - the raw-payload fallback used when the JSON cannot be parsed, where a newline is the two
+    characters `\n`.
+- **Not covered by the PowerShell hook only:** a digit or `_` straight after the interpreter name.
+  Its `\b` boundary counts those as part of the word, so `| bash5` and `| bash_x` are refused by the
+  sh hook but not the PowerShell one. This predates the change.
+- **Platform requirement (sh hook):** a grep that supports `-z`, such as GNU grep. The regex rows run
+  on every command, and a grep that cannot evaluate them is refused rather than trusted. Measured on
+  Alpine, which ships BusyBox grep and no pwsh: with bash installed, every Bash command prompts,
+  because BusyBox grep rejects `-z`. Without bash, the shipped hook wiring
+  (`pwsh ... || bash ... || true`) runs no guard at all, and every command is allowed. Install
+  PowerShell, or bash with GNU grep, there. With bash installed, the deny message names the same fix.
 
 ### Database Operations
 

