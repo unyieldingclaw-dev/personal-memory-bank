@@ -13,9 +13,13 @@
 # commit/push time and denies on any mismatch. A present-but-stale marker is
 # already rejected exactly the same as an absent one, so this hook adds zero
 # new safety. It only makes visible, before the edit, what would otherwise
-# only be discovered after a failed commit attempt. Matches check-contract.ps1's
-# established warn-only pattern in this repo (plain message, exit 0, no
-# permission decision).
+# only be discovered after a failed commit attempt.
+#
+# WHY additionalContext JSON, not a plain message: a PreToolUse hook's plain
+# stdout goes only to Claude Code's debug log, so the plain "Note:" this hook
+# printed reached no one -- defeating its only purpose. additionalContext reaches
+# the model (measured 2026-10-14). Model-only, no systemMessage: it is advice for
+# the agent about to edit, and it fires on every edit while a marker exists.
 #
 # WHY no marker deletion: review-reminders.ps1's marker consumption is the
 # sole writer/reader of these files, via an atomic rename specifically to
@@ -41,10 +45,22 @@ trap {
     exit 0
 }
 
+$notes = @()
 foreach ($marker in @(".claude/.code-review-ok", ".claude/.change-review-ok")) {
     if (Test-Path $marker) {
-        Write-Host "Note: $marker exists (an unconsumed review-gate marker). Editing now will invalidate it before commit/push -- if the last verdict was Approve, consider committing/pushing first."
+        $notes += "Note: $marker exists (an unconsumed review-gate marker). Editing now will invalidate it before commit/push -- if the last verdict was Approve, consider committing/pushing first."
     }
+}
+
+# WHY one object even with both markers present: stdout must be nothing but one object, or Claude
+# Code ignores it. [ordered] keeps the sh twin's key order, byte for byte.
+if ($notes.Count -gt 0) {
+    [ordered]@{
+        hookSpecificOutput = [ordered]@{
+            hookEventName     = "PreToolUse"
+            additionalContext = ($notes -join ' ')
+        }
+    } | ConvertTo-Json -Compress | Write-Output
 }
 
 exit 0

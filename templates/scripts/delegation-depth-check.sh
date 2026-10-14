@@ -26,9 +26,14 @@ if [ -f "$DEPTH_FILE" ]; then
     fi
 fi
 
+# WHY a systemMessage JSON object, not plain text: a PreToolUse hook's plain stdout goes only to
+# Claude Code's debug log, so this WARN reached no one. systemMessage ONLY (user decision
+# 2026-10-14): the agent budget is the operator's call, and telling the model to "consolidate"
+# mid-review would nudge it to drop reviewers. WHY "in this checkout ... since the last 2-hour
+# break", not "this session": the counter is one file in the CWD, shared by every session there,
+# and resets only after MAX_AGE_MINUTES with no spawn.
 if [ "$depth" -ge "$BUDGET_LIMIT" ]; then
-    printf '[WARN] Agent spawn count: %d this session (budget: ≤%d per standards/PERFORMANCE-BUDGET.md)\n' "$((depth + 1))" "$BUDGET_LIMIT"
-    printf '       High agent volume increases prompt-injection surface. Consider consolidating tasks.\n'
+    printf '{"systemMessage":"[WARN] Agent spawn count: %d in this checkout since the last 2-hour break (budget: ≤%d per standards/PERFORMANCE-BUDGET.md). High agent volume increases prompt-injection surface. Consider consolidating tasks."}\n' "$((depth + 1))" "$BUDGET_LIMIT"
 fi
 
 ts=$(date '+%Y-%m-%d %H:%M')
