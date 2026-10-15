@@ -1107,12 +1107,13 @@ done
 # ── [NS-40] warn() prints ONE notice per row, whichever views match ───────────────────────
 # WHY: warn() does not exit, so each of its two case arms returns after printing -- without that,
 # a plain command matches both views and the notice prints twice. assert_contains cannot see a
-# duplicate and the escape-parity verdict reads only the first line, so this counts lines.
+# duplicate and the escape-parity verdict reads only the first line, so this counts occurrences --
+# not lines: every notice now shares one JSON line, where a duplicate is a second "WARNING:" on it.
 echo ""
-echo "--- warn() prints exactly one WARNING line for a row matched by both views ---"
+echo "--- warn() emits exactly one WARNING: for a row matched by both views ---"
 for _dc_cmd in 'cat ~/.ssh/id_rsa' 'cat ~/.ssh/id\\_rsa'; do
     output=$(invoke_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$_dc_cmd\"}}")
-    assert_equals "$(printf '%s\n' "$output" | grep -c 'WARNING:')" "1" "one WARNING line for: $_dc_cmd"
+    assert_equals "$(printf '%s\n' "$output" | grep -o 'WARNING:' | grep -c .)" "1" "one WARNING: for: $_dc_cmd"
 done
 
 
