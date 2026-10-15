@@ -9,7 +9,11 @@
 set -e
 
 # WHY: Reads from stdin because Claude Code PostToolUse hooks pass tool input as JSON.
-INPUT=$(cat /dev/stdin 2>/dev/null || true)
+# WHY plain `cat` (fd 0) and not `cat /dev/stdin`: when a native Windows process such as Claude
+# Code launches Git Bash, fd 0 is a native pipe, and /dev/stdin -> /proc/self/fd/0 -> pipe:[0]
+# cannot be reopened by path, so `cat /dev/stdin` failed (ENOENT) and the hook silently did
+# nothing. Every other shell hook here already reads fd 0 directly.
+INPUT=$(cat 2>/dev/null || true)
 if [ -z "$INPUT" ]; then exit 0; fi
 
 # WHY: Use python3 for JSON parsing — available on all supported platforms (Mac, Linux).
@@ -35,6 +39,13 @@ if [ -z "$FILE_PATH" ]; then exit 0; fi
 # WHY: Normalize path separators before checking — may receive mixed slashes.
 NORMALIZED=$(echo "$FILE_PATH" | tr '\\' '/')
 if [[ "$NORMALIZED" != */memory-bank/* ]]; then exit 0; fi
+
+# WHY use the normalized path from here on: perl -i places its temp file by splitting the path
+# on '/', so a backslash-only Windows path puts the temp file in the cwd. Cygwin perl unlinks
+# the original before renaming the temp over it, so when the cwd is on another drive the rename
+# fails and the file is lost. One path also keeps the -f check, the grep and the edit on the same
+# file. Trade-off: a POSIX filename containing a literal backslash is now skipped, not updated.
+FILE_PATH="$NORMALIZED"
 
 if [ ! -f "$FILE_PATH" ]; then exit 0; fi
 
