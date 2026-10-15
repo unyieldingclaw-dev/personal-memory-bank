@@ -380,6 +380,32 @@ SJ_LIVE="$REPO_ROOT/.claude/settings.json"
 SJ_TMPL="$REPO_ROOT/templates/.claude/settings.json"
 assert_file_exists "$SJ_TMPL" "settings.json: template exists"
 if [ -f "$SJ_LIVE" ] && [ -f "$SJ_TMPL" ]; then
+    # ── PMB-only trial exemption: the pre-approval-check Stop hook ───────────────────────────
+    # WHY: docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md runs this hook as a
+    # PMB-only trial, so it is deliberately absent from templates/ (adopters would otherwise get a
+    # hook that blocks about a third of turn endings, through mb upgrade's force-overwrite, with no
+    # trial). Exactly one live `"command":` line may differ, and only in the Stop entry: the one that
+    # runs scripts/pre-approval-check. It is compared as if it were the template's paused-popup line.
+    # Every other line, and every (event, matcher, commands) triple, is still compared as before.
+    # REMOVE THIS BLOCK at trial end, whether the hook is promoted into templates/ or deleted. The
+    # count assertions below make a stale exemption fail rather than silently widen.
+    SJ_LIVE_CMP="$(mktemp)"
+    pa_live_n=$(grep -c 'scripts/pre-approval-check\.' "$SJ_LIVE" 2>/dev/null)
+    pa_tmpl_n=$(grep -c '"command":.*Claude has paused and is waiting for input' "$SJ_TMPL" 2>/dev/null)
+    [ "${pa_live_n:-0}" -eq 1 ] && [ "${pa_tmpl_n:-0}" -eq 1 ]
+    assert_exit_zero "$?" "settings.json: trial exemption matches exactly one live pre-approval line ($pa_live_n) and one template popup line ($pa_tmpl_n)"
+    pa_tmpl_line=$(grep '"command":.*Claude has paused and is waiting for input' "$SJ_TMPL")
+    PA_TMPL_LINE="$pa_tmpl_line" awk '/scripts\/pre-approval-check\./ { print ENVIRON["PA_TMPL_LINE"]; next } { print }' "$SJ_LIVE" > "$SJ_LIVE_CMP"
+    SJ_LIVE="$SJ_LIVE_CMP"
+    # The trial runs 14 days from merge; this date adds a 7-day grace. When it passes, CI fails until
+    # the exemption is resolved: remove this block (hook promoted into templates/ or deleted), or move
+    # the date deliberately. A WARN would not do: this repo recorded one being ignored (2026-08-12).
+    # A date left as the placeholder fails too (review finding L1). If the template's popup line is
+    # removed, or loses the text "Claude has paused and is waiting for input", rewrite this block: the
+    # swap depends on that line (review finding L3).
+    PA_TRIAL_EXPIRES="2026-11-04"
+    [[ "$PA_TRIAL_EXPIRES" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [[ "$(date +%Y-%m-%d)" < "$PA_TRIAL_EXPIRES" ]]
+    assert_exit_zero "$?" "settings.json: pre-approval trial exemption has not expired (expires $PA_TRIAL_EXPIRES)"
     sj_live_cmds=$(grep -c '"command":' "$SJ_LIVE" 2>/dev/null || printf '0')
     [ "$sj_live_cmds" -gt 0 ]
     assert_exit_zero "$?" "settings.json: live file declares at least one hook command ($sj_live_cmds)"
@@ -432,6 +458,7 @@ PYEOF
     else
         echo "  SKIP: settings.json structural hook compare (python3 not installed on this machine)"
     fi
+    rm -f "$SJ_LIVE_CMP"
 fi
 
 print_summary
