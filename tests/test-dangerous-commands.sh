@@ -1140,6 +1140,132 @@ for _loc in $_dc_utf8_locales; do
     assert_contains "$output" "CONFIRM REQUIRED:" "a lone surrogate before the signing flag still prompts under LC_ALL=$_loc"
 done
 
+# ── THE GUARANTEE: what the LC_ALL=C pass promises, pinned so it cannot move silently ───────
+# standards/SECURITY-GUARDRAILS.md ("restated 2026-10-15") states it once: when python3 extracts
+# the command intact, a signing-row match whose bounded gaps are each at most 255 bytes gets a
+# verdict in every locale, because the C pass runs whenever the caller's-locale pass misses.
+#
+# WHY each cell names the mutant it exists to kill: the earlier text ENUMERATED the cases where
+# the caller's pass misses, and four review rounds each found one more. A cell that kills no
+# mutant reads as coverage while adding none, so every cell below says what it kills and where
+# (measured with scratch-copy mutants on GNU grep 3.0 and 3.11). Every failure message names the
+# two texts that state the rule, because a change here is a change to that rule.
+#
+# WHY the assertions match the row's reason and not "CONFIRM REQUIRED:": a grep that cannot
+# evaluate a pattern denies with that same prefix (see dc_grep), which would pass a cell here
+# without the row ever matching.
+_dc_hint="if this changed on purpose, update dc_grep and SECURITY-GUARDRAILS"
+_dc_sign="bypasses commit signing"
+_dc_KEY=$(printf '%s' "$_dc_key" | tr 'a-z' 'A-Z')
+_dc_gap() {
+    # _dc_gap <row: 2|3> <group: 1|2> <unit: a|cjk|emoji|sur> <gap-bytes> <key> <git-word>
+    # Prints a payload in which bounded gap <group> of signing row <row> is exactly <gap-bytes>
+    # bytes as the hook's extraction writes it (a lone surrogate is 3). Group 1 is `-C /<pad> `
+    # between git and config; group 2 is `--file /<pad> ` between config and the key. The JSON
+    # is ASCII with \u escapes, the form a JSON writer emits for a lone surrogate.
+    python3 -c '
+import json, sys
+row, grp, unit, n, key, git = sys.argv[1:7]
+u = {"a": "a", "cjk": "中", "emoji": "\U0001F600", "sur": "\udcff"}[unit]
+b = lambda s: len(s.encode("utf-8", "surrogatepass"))
+pre = "-C /" if grp == "1" else "--file /"
+room = int(n) - len(pre) - 1
+gap = pre + u * (room // b(u)) + "a" * (room % b(u)) + " "
+assert b(gap) == int(n), b(gap)
+tail = key + " fal" + "se" if row == "2" else "--unset " + key
+cmd = git + " " + (gap + "config " + tail if grp == "1" else "config " + gap + tail)
+sys.stdout.write(json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}))
+' "$@"
+}
+_dc_run_sh() { printf '%s' "$2" | LC_ALL="$1" bash "$REPO_ROOT/scripts/dangerous-commands.sh" 2>/dev/null; }
+_dc_run_ps1() { printf '%s' "$1" | pwsh -NonInteractive -File "$REPO_ROOT/scripts/dangerous-commands.ps1" 2>/dev/null; }
+
+# The edge, per bounded gap group: 255 bytes prompts and 256 does not, in both shells. Under
+# LC_ALL=C both passes count bytes, so this is deterministic on every grep. Kills `{0,254}` on
+# THAT group only -- each group's mutant survived every other cell (measured), which is why all
+# four are here. ASCII, so the .ps1's UTF-16 count equals the byte count: 255 is the 250-character
+# `-C` path the standard quotes. The 256 cells are a KNOWN LIMIT, pinned like the one above.
+echo ""
+echo "--- the guarantee's edge: each bounded gap prompts at 255 bytes and not at 256 ---"
+for _dc_rg in "2 1" "2 2" "3 1" "3 2"; do
+    read -r _dc_row _dc_grp <<< "$_dc_rg"
+    for _dc_n in 255 256; do
+        _dc_p=$(_dc_gap "$_dc_row" "$_dc_grp" a "$_dc_n" "$_dc_key" git)
+        output=$(_dc_run_sh C "$_dc_p")
+        _dc_ps=""
+        command -v pwsh >/dev/null 2>&1 && _dc_ps=$(_dc_run_ps1 "$_dc_p")
+        if [ "$_dc_n" = 255 ]; then
+            assert_contains "$output" "$_dc_sign" "sh: row $_dc_row gap $_dc_grp at 255 bytes prompts -- $_dc_hint"
+            command -v pwsh >/dev/null 2>&1 && assert_contains "$_dc_ps" "$_dc_sign" "ps1: row $_dc_row gap $_dc_grp at 255 ASCII characters prompts -- $_dc_hint"
+        else
+            assert_not_contains "$output" '"permissionDecision":"deny"' "KNOWN LIMIT sh: row $_dc_row gap $_dc_grp at 256 bytes gets no verdict -- $_dc_hint"
+            command -v pwsh >/dev/null 2>&1 && assert_not_contains "$_dc_ps" '"permissionDecision":"deny"' "KNOWN LIMIT ps1: row $_dc_row gap $_dc_grp at 256 ASCII characters gets no verdict -- $_dc_hint"
+        fi
+    done
+done
+
+# The guarantee in every locale, at exactly 255 bytes (row 2, gap 2). The lower-case ASCII key at
+# 255 bytes is the edge cell above. Which locales: C, every effective UTF-8 locale, and a Turkish
+# one where it is effective.
+_dc_tr_loc=""
+for _loc in tr_TR.UTF-8 tr_TR.utf8; do
+    _dc_tr_ok "$_loc" && { _dc_tr_loc=$_loc; break; }
+done
+# WHY probe strictness with this exact shape: the surrogate cell can kill the drop-the-C-pass
+# mutant only where `.` refuses to cross ED B3 BF. Under plain C it always crosses (1), so a
+# Turkish or UTF-8 locale that silently fell back to C reads as non-strict, never as strict.
+# Measured: 0 under C.UTF-8 and tr_TR.UTF-8 on GNU grep 3.11, 1 everywhere on GNU grep 3.0.
+_dc_strict_ok() { [ "$(printf 'a\355\263\277b\0' | LC_ALL="$1" grep -zc 'a.*b' 2>/dev/null)" = "0" ]; }
+_dc_strict=""
+for _loc in $_dc_utf8_locales $_dc_tr_loc; do
+    _dc_strict_ok "$_loc" && _dc_strict="$_dc_strict $_loc"
+done
+echo ""
+echo "--- the guarantee holds in every locale at 255 bytes ---"
+[ -n "$_dc_tr_loc" ] || echo "  NOTE: no effective Turkish locale; the upper-case cells cannot kill a mutant that drops the C pass here"
+[ -n "$_dc_strict" ] || echo "  NOTE: no strict-grep UTF-8 locale; the lone-surrogate cell cannot kill a mutant that drops the C pass here"
+for _loc in C $_dc_utf8_locales $_dc_tr_loc; do
+    # Kills dropping the C pass, under the Turkish locale (the caller's pass cannot fold `I`).
+    output=$(_dc_run_sh "$_loc" "$(_dc_gap 2 2 a 255 "$_dc_KEY" git)")
+    assert_contains "$output" "$_dc_sign" "upper-case key, 255-byte gap, prompts under LC_ALL=$_loc -- $_dc_hint"
+    # Same kill set as the upper-case key (measured); kept because GIT is its own `I`.
+    output=$(_dc_run_sh "$_loc" "$(_dc_gap 2 2 a 255 "$_dc_key" GIT)")
+    assert_contains "$output" "$_dc_sign" "upper-case GIT, 255-byte gap, prompts under LC_ALL=$_loc -- $_dc_hint"
+    # Kills dropping the C pass on GNU grep 3.0 only: its caller's pass misses the full row when
+    # the gap holds an astral character, though every fragment of the row matches (measured).
+    # No CI runner has that grep, so this kill is local evidence only.
+    output=$(_dc_run_sh "$_loc" "$(_dc_gap 2 2 emoji 255 "$_dc_key" git)")
+    assert_contains "$output" "$_dc_sign" "emoji gap of 255 bytes prompts under LC_ALL=$_loc -- $_dc_hint"
+    # Kills dropping the C pass where grep is strict (see _dc_strict_ok). Asserted everywhere:
+    # the guarantee holds on a lax grep too, it just cannot discriminate there.
+    output=$(_dc_run_sh "$_loc" "$(_dc_gap 2 2 sur 255 "$_dc_key" git)")
+    assert_contains "$output" "$_dc_sign" "lone-surrogate gap of 255 bytes prompts under LC_ALL=$_loc -- $_dc_hint"
+done
+
+# ── KNOWN LIMITS of the guarantee, pinned like the quoted-invocation limit above ─────────────
+# These assert CURRENT behaviour, not desired behaviour: a gap longer than 255 bytes that fits in
+# 255 characters gets no verdict on sh when the caller's pass misses. If one starts prompting,
+# the limit has moved and the standard's statement of it is stale.
+# (b) Deterministic: under LC_ALL=C both passes count bytes. 377 bytes, 133 characters. Kills
+# running the second pass under a UTF-8 locale instead of C (measured).
+echo ""
+echo "--- KNOWN LIMIT: a gap over 255 bytes but within 255 characters (documented, not desired) ---"
+_dc_p=$(_dc_gap 2 2 cjk 377 "$_dc_key" git)
+output=$(_dc_run_sh C "$_dc_p")
+assert_not_contains "$output" '"permissionDecision":"deny"' "KNOWN LIMIT sh: a 377-byte CJK gap gets no verdict under LC_ALL=C -- $_dc_hint"
+if command -v pwsh >/dev/null 2>&1; then
+    output=$(_dc_run_ps1 "$_dc_p")
+    assert_contains "$output" "$_dc_sign" "ps1: the same 133-character gap prompts -- $_dc_hint"
+fi
+# (c) Turkish + upper-case key + the same gap: the caller's pass cannot fold `I` and the C pass
+# counts 377 bytes. Kills the same UTF-8 second-pass mutant, under the Turkish locale.
+if [ -n "$_dc_tr_loc" ]; then
+    output=$(_dc_run_sh "$_dc_tr_loc" "$(_dc_gap 2 2 cjk 377 "$_dc_KEY" git)")
+    assert_not_contains "$output" '"permissionDecision":"deny"' "KNOWN LIMIT sh: Turkish locale + upper-case key + 377-byte gap gets no verdict -- $_dc_hint"
+else
+    echo "  SKIPPED: Turkish known limit (no locale on this machine shows the Turkish I fold)"
+fi
+
 # ── [NS-40] warn() prints ONE notice per row, whichever views match ───────────────────────
 # WHY: warn() does not exit, so each of its two case arms returns after printing -- without that,
 # a plain command matches both views and the notice prints twice. assert_contains cannot see a

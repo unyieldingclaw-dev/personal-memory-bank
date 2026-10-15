@@ -510,16 +510,15 @@ dc_grep() {
     #     .NET and not under C, so the sh CONFIRM went silent while ps1 prompted.
     #   - The caller's locale alone: under tr_TR.UTF-8, -i does not fold `I` to `i`, so an
     #     upper-case key -- `git config COMMIT.GPGSIGN false`, which git accepts -- got no
-    #     verdict; and under any UTF-8 locale `.` does not match an invalid sequence, so a lone
-    #     surrogate escape in a gap (the extraction writes it as bytes ED B3 BF) got none either
-    #     on GNU grep 3.7. Both pass under C. Both are the sh twin of defects the .ps1 closes
-    #     with CultureInvariant and .NET's `.`.
+    #     verdict; and under a UTF-8 locale on a strict grep (GNU 3.7+ measured; 3.0 is not
+    #     strict) `.` does not match an invalid sequence, so a lone surrogate escape in a gap (the
+    #     extraction writes it as bytes ED B3 BF) got none either. Both pass under C. Both are the
+    #     sh twin of defects the .ps1 closes with CultureInvariant and .NET's `.`.
     # The union can only add matches. Its cost is a second grep per row, paid only when the
     # first misses -- that is, on almost every command -- and the NUL join above pays for it.
-    # It does not close every combination: when the caller's pass misses for one of the reasons
-    # above AND the gap is longer than 255 bytes, the C pass misses too, so a
-    # Turkish locale plus an upper-case key plus a long CJK path gets no verdict here while the .ps1
-    # twin prompts. Recorded in standards/SECURITY-GUARDRAILS.md.
+    # The union guarantees only what C matches: gaps of up to 255 bytes, when python3 extracts
+    # the command intact. Beyond that, a match depends on the caller's pass, which can fail for
+    # the reasons above and others; see standards/SECURITY-GUARDRAILS.md.
     _dc_re=$1
     _dc_lc=$2
     shift 2
