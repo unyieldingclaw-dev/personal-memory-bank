@@ -736,14 +736,15 @@ Describe "dangerous-commands.ps1 (structural rm / force-push / alias+awk rows)" 
     It "blocks force pushes the literal rows miss" {
         foreach ($c in @('git push origin main --force', 'git -C . push origin main -f', 'git push origin +main',
                          'git push --mirror origin', 'git -c alias.p=push p origin main --force',
-                         'git.exe push origin main --force')) {
+                         'git.exe push origin main --force', 'git push -4f origin main', 'git push --mir origin')) {
             Get-Verdict $c | Should -Match $script:PushReason -Because "a force push in any position: $c"
         }
     }
 
     It "blocks a git alias that runs a shell command, and awk system() / getline" {
         foreach ($c in @("git -c alias.x='!id' x", 'git config alias.x !id', "awk 'BEGIN{system(`"id`")}'",
-                         "mawk 'BEGIN{system (`"id`")}'", "awk 'BEGIN{`"id`" | getline x}'")) {
+                         "mawk 'BEGIN{system (`"id`")}'", "awk 'BEGIN{`"id`" | getline x}'",
+                         "awk 'BEGIN{`"id`" |& getline x}'")) {
             Get-Verdict $c | Should -Match $script:ExecReason -Because "command execution through arguments: $c"
         }
     }
@@ -752,33 +753,52 @@ Describe "dangerous-commands.ps1 (structural rm / force-push / alias+awk rows)" 
         foreach ($c in @('rm -r somedir', 'docker run --rm --read-only -it img --foo', 'git push origin main',
                          'git push origin main --follow-tags', 'git config push.default current',
                          'git config --get-all alias.list', "awk '{print `$1}' f | sort",
-                         "awk 'BEGIN{x=1}' f; grep -n 'os.system(' x.py")) {
+                         "awk 'BEGIN{x=1}' f; grep -n 'os.system(' x.py", 'git stash push -m "wip +tests"',
+                         "git stash push -m 'wip -fix later'", 'rm -r somedir && tail -f log')) {
             Get-Verdict $c | Should -Not -Match '"permissionDecision":"deny"' -Because "not a force-delete, force push or exec: $c"
         }
     }
 
     # THE PERFORMANCE GUARD for these rows. Their backtracking is QUADRATIC, not cubic like the
-    # signing rows above, so an 8000-char payload cannot discriminate: unbounded, the rm row costs
-    # ~0.3s there. Each payload below is 50000 chars of the shape that was worst for that row
-    # UNBOUNDED -- measured per view: rm 11.24s, push 6.11s, awk 5.91s; bounded, 0.01s, 0.00s and
-    # 0.10s. Timed in-process on the row's own regex, because the whole hook on a dense `git push`
-    # shape also pays for the signing rows. The 2s bar sits far from both sides.
-    It "matches each structural row on its worst 50000-char shape in under 2s" {
+    # signing rows above, so an 8000-char payload cannot discriminate. Two kinds of 50000-char shape,
+    # timed in-process on each row's own regex (the whole hook on a dense `git push` shape also pays
+    # for the signing rows):
+    #   - the slowest shapes found for the rows AS SHIPPED, so growth in the real worst case shows;
+    #   - shapes on which an UNBOUNDED quantifier is slow, gap by gap: a shape that suits one gap can
+    #     be instant for another (`rm -r x ...` misses the gap after `-f`; `rm -f x ...` catches it),
+    #     so one shape per row is not enough.
+    # Measured figures are in dangerous-commands.sh's comments. The 5s bar clears the shipped worst
+    # case on a slow runner. When written, every gap unbounded ON ITS OWN exceeded it on some shape
+    # below, with one exception: the push row's `=` branch before `push` peaked at 2.7s, because its
+    # cost grows with the number of `git` words, not with the payload. A run of flag letters
+    # unbounded on its own is linear (it starts only at a `-` and stops at the word's end); two
+    # unbounded together, as the cluster alternative once had, exceed the bar on `rm -rrr...`.
+    It "keeps each structural row's slowest known 50000-char shapes under 5s, as shipped and as an unbounding would expose" {
         $opts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline, CultureInvariant'
-        $rows = Get-Content $script:HookScript | Where-Object { $_ -match 'regex = \$true' -and
-            ($_ -match 'irreversible recursive deletion \(rm with' -or $_ -match 'force push \(--force, --mirror' -or
-             $_ -match 'arbitrary command execution through') } |
-            ForEach-Object { if ($_ -match "pattern = '((?:[^']|'')*)'") { $Matches[1] -replace "''", "'" } }
-        $rows.Count | Should -Be 3 -Because "the three structural rows must be found, or this test proves nothing"
+        $keys = @{ rm = 'irreversible recursive deletion \(rm with'; push = 'force push \(--force, --mirror'
+                   exec = 'arbitrary command execution through' }
+        $lines = Get-Content $script:HookScript | Where-Object { $_ -match 'regex = \$true' }
+        $rows = @{}
+        foreach ($k in $keys.Keys) {
+            $hit = @($lines | Where-Object { $_ -match $keys[$k] })
+            $hit.Count | Should -Be 1 -Because "the $k row must be found exactly once, or this test proves nothing"
+            if ($hit[0] -match "pattern = '((?:[^']|'')*)'") { $rows[$k] = $Matches[1] -replace "''", "'" }
+        }
         $n = 50000
-        $shapes = @(('rm ' + ('-r ' * 17000)), ('git ' + ('push ' * 10000)), ('awk |' * 10000)) |
-            ForEach-Object { $_.Substring(0, $n) }
-        for ($i = 0; $i -lt 3; $i++) {
+        $shapes = @(
+            @('rm', ('rm ' + ('-r ' * 17000))), @('rm', ('rm -r x ' * 6250)), @('rm', ('rm -r ' * 8334)),
+            @('rm', ('rm -f x ' * 6250)), @('rm', ('rm -f ' * 8334)),
+            @('rm', ('rm -' + ('r' * $n))), @('rm', ('rm -' + ('f' * $n))),
+            @('push', ('git ' + ('push ' * 10000))), @('push', ('git push x ' * 4546)), @('push', ('git push ' * 5556)),
+            @('push', ('git stash push ' * 3334)),
+            @('exec', ('awk |' * 10000)), @('exec', ('awk ' * 12500)))
+        foreach ($s in $shapes) {
+            $text = $s[1].Substring(0, $n)
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            $m = [regex]::IsMatch($shapes[$i], $rows[$i], $opts)
+            $m = [regex]::IsMatch($text, $rows[$s[0]], $opts)
             $sw.Stop()
             $m | Should -BeFalse -Because "the shape is built never to match, so the engine explores every start"
-            $sw.Elapsed.TotalSeconds | Should -BeLessThan 2 -Because "row $($i + 1) must stay bounded"
+            $sw.Elapsed.TotalSeconds | Should -BeLessThan 5 -Because "the $($s[0]) row on '$($text.Substring(0, 16))...' must stay bounded"
         }
     }
 }

@@ -226,22 +226,22 @@ fi
 # and at 300 alike (measured end to end, BusyBox 1.37.0 on Alpine with bash). GNU grep accepts both
 # bounds. The .ps1 twin uses the same 255 so the two shells keep one regex text and one bound.
 #
-# WHOLE-HOOK worst case at the 50000-byte bound, measured end to end, .ps1 side. Re-measured
-# 2026-10-14 when the structural rm / force-push / alias rows were added, on a busier machine than
-# the first measurement (17.55s then for the same shape), before -> after those rows:
-#     dense `git `         19.77s -> 20.48s   <- the real number to reason about
-#     dense `git config `   9.26s ->  9.61s
-#     dense `git push `     8.68s -> 10.60s   (worst shape for the force-push row)
-#     dense `rm -r `        0.50s ->  3.51s   (worst shape for the rm row)
-#     ordinary text         0.59s ->  0.51s
-# The awk alternative of the alias row was bounded after that table was taken; its worst shape
-# (dense `awk |`) measured 0.10s per view in-process, against 5.91s with the gap unbounded.
+# WHOLE-HOOK worst case at the 50000-byte bound, measured end to end, .ps1 side: median of 3
+# interleaved runs (min-max in brackets), without -> with the structural rm / force-push /
+# command-execution rows, on 2026-10-14 (17.55s on a quieter machine at the first measurement):
+#     dense `git `        18.04s [17.45-18.25] -> 18.65s [18.58-18.89]   <- the number to reason about
+#     dense `git config `  8.67s [8.46-8.84]   ->  8.52s [8.46-8.54]
+#     dense `git push `    8.03s [8.01-8.10]   -> 10.16s [10.11-10.17]
+#     dense `rm -r `       0.43s [0.41-0.43]   ->  3.10s [3.04-3.28]
+#     `rm -` + r x 49988   0.41s [0.39-0.41]   ->  0.44s [0.40-0.45]   (18.99s with flag letters unbounded)
+#     ordinary text        0.43s [0.42-0.44]   ->  0.43s [0.43-0.45]
 # ~20s is not a hang (the ~47-minute cubic case is gone) but a PreToolUse hook blocks the tool
 # call for its whole duration, so this is the honest figure for "what does a pathological 50 KB
 # command cost". It is quadratic, not cubic: halving DC_MAX_CMD would quarter it. That trade has
 # NOT been made here -- it is recorded so the next person changing DC_MAX_CMD knows the shape.
-# The sh twin stays flat on every shape (1.4-3.7s on Windows Git Bash, where process start-up
-# dominates and run-to-run noise is about 1s); GNU grep is a DFA.
+# The sh twin stays flat on every shape: 1.0-1.3s on Windows Git Bash in the runs above, where
+# process start-up dominates, and the three structural rows add about 0.15s there, one grep each.
+# GNU grep is a DFA.
 #
 # WHY leaving them unbounded is not laziness: in `git (<gap>)--no-gpg-sign` the gap holds the
 # COMMIT MESSAGE, not flags. Bounding it to 200 silently disabled that CONFIRM for any commit
@@ -661,8 +661,8 @@ block "drop database"    "SQL database drop"                    # WHY: destroys 
 # when inserting a row between existing ones, renumber the examples after it.
 block_regex "\|&?[[:space:]]*(bash|sh)([^a-z]|$)" "command piped to a shell interpreter (curl|bash, wget|sh, etc.)"  # WHY: remote code execution vector
 
-# WHY three STRUCTURAL rows beside the literal ones above, ported from Side-Quest-Atlas's local fix
-# (b600ac4, 199f545, 6998a29) and rewritten from its PCRE into POSIX ERE: the literals match one
+# WHY three STRUCTURAL rows beside the literal ones above, ported from a sibling project's local fix
+# and rewritten from its PCRE into POSIX ERE: the literals match one
 # spelling each, and real commands reorder, split and abbreviate. `git push origin main --force`,
 # `git -C . push -f`, `git push origin +main`, `rm -r -f x`, `rm x -rf` and `rm --rec --forc x` all
 # executed with no verdict from this file. The literals STAY: a regex row can only add matches, so
@@ -680,38 +680,54 @@ block_regex "\|&?[[:space:]]*(bash|sh)([^a-z]|$)" "command piped to a shell inte
 #                        newline without a literal newline in the row. The .ps1 twin spells the same
 #                        byte set `[^;&|\x00-\x1F\x7F]`. Backslash-newline needs no special case: the
 #                        join above has already removed it.
-#   `{0,255}`         -- every gap is bounded. Unbounded, .NET backtracking took 11.24s (rm) and 6.11s
-#                        (push) per view on a 50 KB adversarial payload; bounded, 1.49s and 1.06s.
-#                        255 is the POSIX ceiling (see WHY 255 above).
+#   `{0,255}`         -- every gap between words is bounded, and `{0,32}` bounds every run of letters
+#   `{0,32}`             inside one flag token. Both are needed: .NET backtracking is quadratic in any
+#                        unbounded run. Per view on a 50 KB payload, unbounded -> bounded ON THE SAME
+#                        SHAPE: gaps, `rm -r -r ...` 11.24s -> 0.01s and `git push push ...` 6.11s ->
+#                        0.00s; flag letters, `rm -rrrr...` 9-11s -> 0.01s. The slowest shapes found
+#                        for the bounded rows are `rm -f rm -f ...` (1.55s), `rm -r rm -r ...` and
+#                        `git push git push ...` (about 1.2s); tests/dangerous-commands.Tests.ps1
+#                        times them. 255 is the POSIX ceiling (see WHY 255 above); 32 letters is far
+#                        past any real flag cluster.
 #   no quote classes  -- the de-escaped view strips quotes and backslashes before matching, so
 #                        `git push origin '+main'` and `alias.x='!cmd'` arrive unquoted there. A quote
 #                        class here would also defeat the escape-parity guard in the tests.
 # KNOWN GAPS, recorded in standards/SECURITY-GUARDRAILS.md rather than matched: a gap longer than
-# 255 (bytes here, CHARACTERS in the .ps1 twin -- a long non-ASCII path blocks there and not here),
-# a quoted `;` `&` or `|` inside the segment, flags held in a variable, and `rm -r` WITHOUT `-f`,
-# which the Bash tool runs with no prompt because its stdin is not a terminal (measured).
+# 255 (bytes here, CHARACTERS in the .ps1 twin -- a long non-ASCII path blocks there and not here)
+# or a flag cluster longer than 32 letters, a quoted `;` `&` or `|` inside the segment, flags held
+# in a variable, anything set up by an EARLIER command or in user config (an alias such as
+# `pf = push --force`, `remote.<name>.mirror`, a `+` push refspec), and `rm -r` WITHOUT `-f`, which
+# the Bash tool runs with no prompt because its stdin is not a terminal (measured).
 #
 # rm: `rm` (or `rm.exe`) as a word -- not after `-`, so docker's `--rm` is not it -- then, within one
 # segment, a recursive token and a force token in either order, or one short token holding both.
-# `-(-|[a-z]*)r` takes `-r`, `-vr`, `--recursive` and getopt's unambiguous `--rec`; `f` likewise.
-# On the PowerShell side the same row also reads `rm -r -fo x` and `rm x -Recurse -Force`, since
-# `rm` is an alias of Remove-Item there.
-block_regex "(^|[^a-z0-9_-])rm(\.exe)? ([^;&|[:cntrl:]]{0,255} )?(-(-|[a-z]*)r[^;&|[:cntrl:]]{0,255} -(-|[a-z]*)f|-(-|[a-z]*)f[^;&|[:cntrl:]]{0,255} -(-|[a-z]*)r|-[a-z]*(r[a-z]*f|f[a-z]*r))" "irreversible recursive deletion (rm with recursive and force flags, in any order)"
+# `-(-|[a-z]{0,32})r` takes `-r`, `-vr`, `--recursive` and getopt's unambiguous `--rec`; `f`
+# likewise. On the PowerShell side the same row also reads `rm -r -fo x` and `rm x -Recurse -Force`,
+# since `rm` is an alias of Remove-Item there -- but only that alias and only an ASCII `-`:
+# `Remove-Item`, `del` and an en-dash `–Force` are not matched (a gap in the standard).
+block_regex "(^|[^a-z0-9_-])rm(\.exe)? ([^;&|[:cntrl:]]{0,255} )?(-(-|[a-z]{0,32})r[^;&|[:cntrl:]]{0,255} -(-|[a-z]{0,32})f|-(-|[a-z]{0,32})f[^;&|[:cntrl:]]{0,255} -(-|[a-z]{0,32})r|-[a-z]{0,32}(r[a-z]{0,32}f|f[a-z]{0,32}r))" "irreversible recursive deletion (rm with recursive and force flags, in any order)"
 # force push: `git` as a word, then `push` after a space or `=` within the segment -- `=` so that
 # `git -c alias.p=push p origin main --force` counts -- then a force indicator anywhere after it:
-# `--force` and its `-with-lease`/`-if-includes` forms, `--mirror` (overwrites and deletes every
-# remote ref), a short flag cluster holding `f`, or a `+refspec`. `push.default` and `--push-option`
-# do not count: `push` must be followed by a space. ACCEPTED FALSE POSITIVE: `git log --grep
-# 'push --force'` blocks, because the de-escaped view drops the quote.
-block_regex "(^|[^a-z])git(\.exe)? ([^;&|[:cntrl:]]{0,255}[ =])?push( [^;&|[:cntrl:]]{0,255})? (--force|--mirror|-[a-z]*f|\+[^ [:cntrl:]])" "force push (--force, --mirror or -f in any position, or a +refspec)"
+# `--force` and its `-with-lease`/`-if-includes` forms, `--mir` (git accepts any unambiguous
+# abbreviation of `--mirror`, which overwrites and deletes every remote ref), a short flag cluster
+# holding `f` (digits too: `-4f` is --ipv4 plus force), or a `+refspec`. `push.default` and
+# `--push-option` do not count: `push` must be followed by a space. Nor does `git stash push`, which
+# never touches a remote: the alternatives before the space spell out "any word not ending in
+# ` stash`", since ERE has no lookbehind. So a `-C` directory named exactly `stash` hides a push
+# (a gap in the standard). ACCEPTED FALSE POSITIVES: `git log --grep 'push --force'` and
+# `git commit -m 'drop rm -r and -f'` block, because quotes do not end a segment.
+block_regex "(^|[^a-z])git(\.exe)? ([^;&|[:cntrl:]]{0,255}([^;&|[:cntrl:]h]|[^;&|[:cntrl:]s]h|[^;&|[:cntrl:]a]sh|[^;&|[:cntrl:]t]ash|[^;&|[:cntrl:]s]tash|[^;&|[:cntrl:] ]stash) |[^;&|[:cntrl:]]{0,255}=)?push( [^;&|[:cntrl:]]{0,255})? (--force|--mir|-[a-z0-9]{0,32}f|\+[^ [:cntrl:]])" "force push (--force, --mirror or -f in any position, or a +refspec)"
 # Commands run through a tool's own arguments: a git alias whose value starts with `!` runs as a
 # shell command (also reached through `GIT_CONFIG_PARAMETERS`), and awk runs one through system()
-# or `"cmd" | getline`. `system` must not follow a `.`, so `grep 'os.system('` later in the same
-# command is not awk's. The awk gap is bounded too: unbounded it took 5.91s per view on 50 KB.
-# DELIBERATELY NOT PORTED from Side-Quest-Atlas, with the reason in the standard: find -exec/-ok
-# (Claude Code never lets a prefix rule approve find's exec actions) and sed's `e` command (no
-# shipped allow rule approves sed, so it already meets the prompt or the classifier).
-block_regex "alias\.[a-z0-9_.-]+(=| +)!|(^|[^a-z0-9_-])[gmn]?awk .{0,255}([^.a-z0-9_]system ?\(|\| ?getline)" "arbitrary command execution through a tool's own arguments (git alias !cmd, awk system() or cmd | getline)"
+# or `"cmd" | getline` (and gawk's coprocess `"cmd" |& getline`). `system` must not follow a `.`, so
+# `grep 'os.system('` later in the same command is not awk's. The awk gap is bounded too: unbounded
+# it took 5.91s per view on 50 KB. Unlike the other rows that gap is `.`, not the segment class,
+# because an awk program holds `;` between its statements and a regex cannot tell a quoted `;` from
+# a command separator. ACCEPTED FALSE POSITIVE as a result: `awk ... ; grep "system(" f` blocks.
+# DELIBERATELY NOT PORTED, with the reason in the standard: find -exec/-ok (Claude Code never lets a
+# prefix rule approve find's exec actions) and sed's `e` command (no shipped settings allow rule or
+# command `allowed-tools` approves sed, so it already meets the prompt or the classifier).
+block_regex "alias\.[a-z0-9_.-]+(=| +)!|(^|[^a-z0-9_-])[gmn]?awk .{0,255}([^.a-z0-9_]system ?\(|\|&? ?getline)" "arbitrary command execution through a tool's own arguments (git alias !cmd, awk system() or cmd | getline)"
 
 # CONFIRM: advanced ops with legitimate uses — require explicit manual invocation
 confirm "git filter-branch" "history rewriting"                 # WHY: rewrites commit history, rarely intentional

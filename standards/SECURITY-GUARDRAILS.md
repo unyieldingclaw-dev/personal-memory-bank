@@ -58,19 +58,18 @@ This standard defines what AI should **BLOCK**, **CONFIRM**, or **WARN** about.
 | Never run commands with `sudo` or admin privileges unless explicit | Privilege escalation |
 
 **How the hook matches rm and force push (added 2026-10-14).** `scripts/dangerous-commands.sh`/`.ps1`
-block the literals `rm -rf`, `git push --force` and `git push -f`, and also match both structurally,
-in a port of a Side-Quest-Atlas local rule:
+block the literals `rm -rf`, `git push --force` and `git push -f`, and also match both structurally:
 - **rm:** a recursive flag and a force flag anywhere in the same simple command, in either order,
-  split or clustered. Examples: `rm -r -f`, `rm x -rf`, getopt's abbreviated `rm --rec --forc`, and
-  `rm.exe`.
+  split or clustered. Examples: `rm -r -f`, `rm x -rf`, `rm -vr x -f`, getopt's abbreviated
+  `rm --rec --forc`, and `rm.exe`.
 - **git push:** any of these anywhere after `push`:
   - `--force`, including its `-with-lease` and `-if-includes` forms;
-  - `--mirror`;
-  - a short flag cluster containing `f`;
+  - `--mirror` and its abbreviations down to `--mir`;
+  - a short flag cluster containing `f`, digits included (`-4f`);
   - a `+refspec`.
 
   Examples: `git push origin main --force`, `git -C . push -f`, and
-  `git -c alias.p=push p origin main --force`.
+  `git -c alias.p=push p origin main --force`. `git stash push` is not a push and does not count.
 
 This matters beyond defense in depth. The template allowlists `Bash(git *)`, and an allow rule
 resolves *before* Claude Code's auto-mode classifier. So a force push in one of those forms used to
@@ -84,39 +83,56 @@ be approved with no review at all.
       mode, and the classifier in auto mode.
     - Under `bypassPermissions`, only critical-path targets are gated: the filesystem root, home, and
       the working directory itself.
-  - **A flag more than 255 characters from the token before it.** Every gap is bounded, because
-    unbounded .NET backtracking took 11.24s per view on a 50 KB adversarial payload; bounded, 1.49s.
-    On the sh hook the bound counts **bytes**, so a gap of 256 bytes or more that is still 255
-    characters or fewer (a long non-ASCII path) is refused by the PowerShell hook and allowed by the
-    sh hook. Measured: 90 CJK characters, 294 bytes.
+  - **A flag more than 255 characters from the token before it, or a flag cluster longer than 32
+    letters.** Both are bounded because the PowerShell hook's regex engine backtracks, and an
+    unbounded run costs seconds per call on a 50 KB command; the measured figures are in
+    `scripts/dangerous-commands.sh`. On the sh hook the 255 bound counts **bytes**, so a gap of 256
+    bytes or more that is still 255 characters or fewer (a long non-ASCII path) is refused by the
+    PowerShell hook and allowed by the sh hook. Measured: 90 CJK characters, 294 bytes.
   - **A `;`, `&` or `|` inside a quoted argument between `rm`/`push` and the flag.** The matcher ends
     the command at it.
   - **Flags held in a variable** (`F=-rf; rm $F x`), and the `GIT_CONFIG_*` environment variables.
-- **Accepted false positive:** a git command whose text names a force push, such as
-  `git log --grep 'push --force'`. The de-escaped view drops the quote.
+  - **Anything set up before the command runs.** The hook sees one command's text, so it cannot see
+    a git alias defined earlier or in user config (`pf = push --force`, then `git pf`), nor
+    `remote.<name>.mirror` or a `+` push refspec in config, whether set earlier or passed with `-c`.
+  - **A `-C` directory named exactly `stash`** (`git -C stash push --force`). Excluding
+    `git stash push` costs this: the regex dialect has no lookbehind.
+  - **PowerShell's own spellings.** The PowerShell hook reads `rm` as Remove-Item's alias
+    (`rm x -Recurse -Force`), but not `Remove-Item`, `del` or `erase`, a parameter written with an
+    en dash (`–Force`), or a backtick escape. Nor does either hook read a quoted path to the binary
+    (`& "C:\...\git.exe" push --force`).
+  - **Tab-separated forms when the hook cannot parse its JSON input** and falls back to matching the
+    raw text, where a tab is still the two characters `\t`.
+- **Accepted false positives:** text that names the flags, such as `git log --grep 'push --force'`
+  or `git commit -m 'drop rm -r and -f'`. Quotes do not end a command for this matcher.
 
 ### Command Execution via Argument-Capable Tools
 
-Added 2026-10-14, ported from Side-Quest-Atlas. Some tools run an arbitrary command through their
-own arguments, so an allow rule for the tool approves that command too, and it then skips the
-auto-mode classifier.
+Added 2026-10-14. Some tools run an arbitrary command through their own arguments, so an allow rule
+for the tool approves that command too, and it then skips the auto-mode classifier.
 
 | Rule | How an allow rule reaches it | Enforcement |
 |------|------------------------------|-------------|
 | Never define a git alias whose value starts with `!` (`git -c alias.x='!cmd' x`, `git config alias.x '!cmd'`, or the same through `GIT_CONFIG_PARAMETERS`) | The template allowlists `Bash(git *)` | Blocked |
-| Never run a command through awk's `system()` or `"cmd" \| getline` (`awk`, `gawk`, `mawk`, `nawk`) | `/code-review`'s `allowed-tools` pre-approves `Bash(awk *)` for that turn | Blocked. `system` straight after a `.` (`os.system(`) does not count. The gap after `awk` is bounded at 255 characters (unbounded it cost 5.91s per view on 50 KB) |
+| Never run a command through awk's `system()`, `"cmd" \| getline` or gawk's `"cmd" \|& getline` (`awk`, `gawk`, `mawk`, `nawk`) | `/code-review`'s `allowed-tools` pre-approves `Bash(awk *)` for that turn | Blocked. `system` straight after a `.` (`os.system(`) does not count. The match reaches at most 255 characters past `awk` |
 
 - **Not ported, deliberately:**
   - `find` with `-exec`/`-ok`: Claude Code never lets a prefix rule approve find's command-running
     actions, so they already reach a prompt or the classifier.
-  - sed's `e` command: no shipped allow rule approves sed.
+  - sed's `e` command: no shipped settings allow rule or command `allowed-tools` approves sed. The
+    shipped agent definitions list `Bash(sed *)` among their tools; whether that grants anything
+    beyond making the tool available is unresolved.
 - **Not covered:**
   - awk's `print ... | "cmd"`, which reads exactly like a shell pipe in the command text;
   - an awk program held in a file (`awk -f`);
+  - gawk's indirect calls (`f = "system"; @f("cmd")`) and extensions loaded with `@load`;
   - other git config keys that run commands: `core.sshCommand`, `core.pager`, `diff.external`,
-    `credential.helper`, `--upload-pack` and `ext::` URLs. These are tracked in
-    `docs/backlog/shipped-allow-rules-skip-the-auto-mode-classifier.md`;
+    `credential.helper`, `--upload-pack` and `ext::` URLs;
   - general execution (`bash -c`, `python3 -c`), which this hook has never tried to block.
+- **Accepted false positive:** an awk command followed by another that names `system(`, such as
+  `awk '{print $2}' f; grep "system(" main.c`. The awk match has to cross `;`, because an awk
+  program separates its statements with it, and the matcher cannot tell a quoted `;` from a
+  command separator.
 
 ### AI Response to BLOCK
 
@@ -223,11 +239,10 @@ the config. These reach the same outcome and are deliberately not matched:
 
   **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
   costs about **20 seconds** in the PowerShell hook, which blocks the tool call for that whole
-  time. That is 17.5s as first measured, and 19.8s → 20.5s re-measured on 2026-10-14 on a busier
-  machine, when the structural rm, force-push and alias rows were added; the per-shape table is in
-  `scripts/dangerous-commands.sh`. It is quadratic now, so halving the 50,000-byte limit would
-  quarter it; that trade has not been made, and is recorded here rather than left for the next
-  person to rediscover.
+  time. The per-shape table, re-measured when the structural rm, force-push and command-execution
+  rows were added, is in `scripts/dangerous-commands.sh`. It is quadratic now, so halving the
+  50,000-byte limit would quarter it; that trade has not been made, and is recorded here rather
+  than left for the next person to rediscover.
 
   **The `-c` and `--no-gpg-sign` patterns are deliberately NOT bounded**, and this distinction is
   load-bearing. Each nests only one gap group and is quadratic at worst (**4.3s** at 50,000
@@ -317,18 +332,15 @@ could not span the newline, and the PowerShell `iex` literals could not either.
 
 ### Network Access
 
-Decided 2026-10-14: there is **no fleet-wide rule** for `curl`, `wget`, `Invoke-WebRequest`/`iwr` or
-`Invoke-RestMethod`/`irm`. Side-Quest-Atlas carries one as a local rule, and PMB declined to ship it
-to every adopter:
-- CONFIRM in this hook is a hard deny, not a prompt, and adopters cannot tune a TEMPLATE_OWNED file.
-  Over 28,251 past agent commands, the rule would have denied 122, mostly real localhost and
-  dev-server checks.
+There is **no rule** in this hook for `curl`, `wget`, `Invoke-WebRequest`/`iwr` or
+`Invoke-RestMethod`/`irm`. Network access goes through Claude Code's own permission flow:
+- CONFIRM in this hook is a hard deny, not a prompt, and you cannot tune a TEMPLATE_OWNED file, so a
+  text rule here would deny every routine localhost or dev-server check.
 - In auto mode the classifier already blocks sending sensitive data to external endpoints by
   default, and a text match on `curl` is sidestepped by `python -c`.
-- The real gap is narrower. A read-only review agent has no reason to fetch, and `opposition` has
-  been observed running `curl` outside its grant (`.claude/agents/opposition.md`'s SCOPE CAVEAT).
-  A deny scoped by the hook payload's `agent_type` is tracked in
-  `docs/backlog/agent-scoped-network-deny-for-review-agents.md`.
+- A read-only review agent has no reason to fetch, and `opposition` has been observed running `curl`
+  outside its grant (`.claude/agents/opposition.md`'s SCOPE CAVEAT). A deny scoped to those agents
+  is the narrower fix, and is not in this hook yet.
 
 ### Database Operations
 

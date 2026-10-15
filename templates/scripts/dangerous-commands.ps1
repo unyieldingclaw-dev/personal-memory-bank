@@ -279,14 +279,16 @@ $blockPatterns = @(
     # WHY three STRUCTURAL rows beside the literals above: they match reordered, split and
     # abbreviated forms the literals miss (`git push origin main --force`, `rm -r -f x`), and the
     # shipped `Bash(git *)` allow rule approves a force push or a `!` git alias before Claude Code's
-    # auto-mode classifier sees it. Ported from Side-Quest-Atlas; see dangerous-commands.sh for the
-    # rationale, the measurements and the known gaps. Same regexes as the sh twin, except that the
+    # auto-mode classifier sees it. See dangerous-commands.sh for the rationale, the measurements,
+    # the accepted false positives and the known gaps. Same regexes as the sh twin, except that the
     # segment class is spelled `[^;&|\x00-\x1F\x7F]` -- .NET has no [:cntrl:] -- for the same bytes.
-    # Every gap is bounded {0,255}: unbounded, .NET backtracking took up to 11.24s per view on 50 KB.
-    # Here `rm` is also Remove-Item's alias, so the rm row reads `rm -r -fo x` and `rm x -Recurse -Force` too.
-    @{ pattern = '(^|[^a-z0-9_-])rm(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255} )?(-(-|[a-z]*)r[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]*)f|-(-|[a-z]*)f[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]*)r|-[a-z]*(r[a-z]*f|f[a-z]*r))'; regex = $true; reason = "irreversible recursive deletion (rm with recursive and force flags, in any order)" }
-    @{ pattern = '(^|[^a-z])git(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255}[ =])?push( [^;&|\x00-\x1F\x7F]{0,255})? (--force|--mirror|-[a-z]*f|\+[^ \x00-\x1F\x7F])'; regex = $true; reason = "force push (--force, --mirror or -f in any position, or a +refspec)" }
-    @{ pattern = 'alias\.[a-z0-9_.-]+(=| +)!|(^|[^a-z0-9_-])[gmn]?awk .{0,255}([^.a-z0-9_]system ?\(|\| ?getline)'; regex = $true; reason = "arbitrary command execution through a tool's own arguments (git alias !cmd, awk system() or cmd | getline)" }
+    # Every gap is bounded {0,255} and every run of flag letters {0,32}: this engine backtracks, and
+    # an unbounded run of either is quadratic here (measured figures are in the sh twin).
+    # Here `rm` is also Remove-Item's alias, so the rm row reads `rm -r -fo x` and `rm x -Recurse -Force`
+    # too -- that alias only: `Remove-Item`, `del` and an en-dash `–Force` are known gaps.
+    @{ pattern = '(^|[^a-z0-9_-])rm(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255} )?(-(-|[a-z]{0,32})r[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]{0,32})f|-(-|[a-z]{0,32})f[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]{0,32})r|-[a-z]{0,32}(r[a-z]{0,32}f|f[a-z]{0,32}r))'; regex = $true; reason = "irreversible recursive deletion (rm with recursive and force flags, in any order)" }
+    @{ pattern = '(^|[^a-z])git(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255}([^;&|\x00-\x1F\x7Fh]|[^;&|\x00-\x1F\x7Fs]h|[^;&|\x00-\x1F\x7Fa]sh|[^;&|\x00-\x1F\x7Ft]ash|[^;&|\x00-\x1F\x7Fs]tash|[^;&|\x00-\x1F\x7F ]stash) |[^;&|\x00-\x1F\x7F]{0,255}=)?push( [^;&|\x00-\x1F\x7F]{0,255})? (--force|--mir|-[a-z0-9]{0,32}f|\+[^ \x00-\x1F\x7F])'; regex = $true; reason = "force push (--force, --mirror or -f in any position, or a +refspec)" }
+    @{ pattern = 'alias\.[a-z0-9_.-]+(=| +)!|(^|[^a-z0-9_-])[gmn]?awk .{0,255}([^.a-z0-9_]system ?\(|\|&? ?getline)'; regex = $true; reason = "arbitrary command execution through a tool's own arguments (git alias !cmd, awk system() or cmd | getline)" }
 )
 
 foreach ($entry in $blockPatterns) {

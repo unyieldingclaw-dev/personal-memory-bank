@@ -25,7 +25,7 @@ So anything a shipped allow rule matches runs with **no review at all** in auto 
 `scripts/dangerous-commands.*` stops it. The port blocked these forms:
 - force push in any position;
 - a `!` git alias;
-- awk `system()` / `| getline`.
+- awk `system()` / `| getline` / `|& getline`.
 
 The rest of the surface is still open.
 
@@ -42,9 +42,19 @@ The rest of the surface is still open.
     exfiltration channel.
 - **`/code-review`'s `allowed-tools`** grants `Bash(awk *)` and `Bash(find *)`, and
   `/change-review`'s grants `Bash(find *)`.
-  - The port covers awk's `system()` and `getline`, but not `print ... | "cmd"`.
+  - The port covers awk's `system()` and `getline`, but not `print ... | "cmd"`, gawk's indirect
+    `@f()` calls or `@load`.
   - Narrowing the grant itself may be the better fix: decide what those commands actually need awk
     for.
+- **Agent `tools:` lists.** `templates/.claude/agents/opposition.md` names `Bash(sed *)`,
+  `Bash(awk *)` and `Bash(find *)`, and `researcher.md` names `Bash(find *)`. Unresolved: whether a
+  subagent's `tools:` entry acts as an allow rule or only makes the tool available. The answer
+  decides whether "no shipped rule approves sed" (the reason the port skipped sed's `e` command)
+  holds inside those agents. Found by the port's /code-review (Correctness F3).
+- **A force push the hook cannot see.** A push alias in user config (`pf = push --force`),
+  `remote.<name>.mirror` or a `+` push refspec turns a plain `git push` / `git pf` into a forced or
+  mirror push, all under `Bash(git *)`. A text hook sees only the command; closing this would need
+  a check of the effective git config.
 
 ## Options
 

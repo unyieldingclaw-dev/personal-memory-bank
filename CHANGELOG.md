@@ -66,10 +66,16 @@
     `Bash(awk *)` grant, approve a command before Claude Code's auto-mode classifier sees it.
   - **The change.** Three structural rows join the literal ones, which stay:
     - rm with recursive and force flags in any order;
-    - a force push in any position;
-    - a `!` git alias, or awk `system()` / `| getline`.
+    - a force push in any position, including `-4f` and `--mirror` abbreviated to `--mir`, but not
+      `git stash push`;
+    - a `!` git alias, or awk `system()` / `| getline` / gawk's `|& getline`.
+  - **Adopter-visible:** the hook is `TEMPLATE_OWNED`, so `mb upgrade` delivers these rows and
+    enforces them in every project. They are hard denies, with accepted false positives on text that
+    names the flags (`git commit -m 'drop rm -r and -f'`) and on `awk ...; grep "system(" f`. On
+    bash, `mb upgrade` does not refresh `standards/`, so copy `standards/SECURITY-GUARDRAILS.md` by
+    hand to get the documented gaps.
   - **Not ported.** `find -exec` (Claude Code already gates find's actions), sed's `e` command (no
-    shipped rule approves sed), and the network-fetch rows. For network fetching, a deny scoped to
+    shipped settings allow rule or command grant approves sed), and the network-fetch rows. For network fetching, a deny scoped to
     the read-only review agents is in the backlog instead.
   - **Gaps, false positives and measurements** are in `standards/SECURITY-GUARDRAILS.md`, including
     that `rm -r` without `-f` runs unprompted in the Bash tool.

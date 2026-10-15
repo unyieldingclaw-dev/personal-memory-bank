@@ -1345,7 +1345,7 @@ _dc_F=(
     BLOCK  "rm: under sudo, flags split"              'sudo rm -r x -f'
     BLOCK  "rm: .exe"                                 'rm.exe -r -f x'
     BLOCK  "rm: backslash-newline continuation"       $'rm -r \\\n  -f somedir'
-    BLOCK  "rm: upper case"                           'RM -R -F x'
+    BLOCK  "rm: upper case"                           'RM -R -f x'
     BLOCK  "rm: escaped"                              'r\m -r -\f x'
     BLOCK  "rm: PowerShell alias, -fo"                'rm -r -fo C:\x'
     BLOCK  "rm: PowerShell alias, long parameters"    'rm C:\x -Recurse -Force'
@@ -1355,6 +1355,13 @@ _dc_F=(
     SILENT "rm: quoted separator (KNOWN GAP)"         "rm -r 'a;b' -f"
     SILENT "rm: flags in a variable (KNOWN GAP)"      'FLAGS=-rf; rm $FLAGS somedir'
     SILENT "rm: plain file"                           'rm somefile.txt'
+    BLOCK  "rm: another flag before r, -f split off"  'rm -vr somedir -f'
+    BLOCK  "rm: -dr then --force"                     'rm -dr somedir --force'
+    BLOCK  "rm: flags named in a message (ACCEPTED FALSE POSITIVE)"  "git commit -m 'drop rm -r and -f'"
+    SILENT "rm: -f in the command after &&"           'rm -r somedir && tail -f log'
+    SILENT "rm: -f in the command after |"            'rm -rv somedir | tail -f log'
+    SILENT "rm: cluster over 32 letters (KNOWN GAP)"  'rm -vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvrf x'
+    SILENT "rm: a word ending in rm"                  'farm -r -f x'
     BLOCK  "push: --force after the branch"           'git push origin main --force'
     BLOCK  "push: -f after the branch"                'git push origin main -f'
     BLOCK  "push: global option first"                'git -C . push origin main --force'
@@ -1376,11 +1383,27 @@ _dc_F=(
     SILENT "push: --follow-tags"                      'git push origin main --follow-tags'
     SILENT "push: hyphenated branch"                  'git push origin feature-fix'
     SILENT "push: --delete"                           'git push origin --delete old'
-    SILENT "push: + in an earlier command's message"  "git commit -m 'feat: a + b' && git push"
+    SILENT "push: + only before the push"             "git commit -m 'feat: a + b' && git push"
     SILENT "push: push.default config"                'git config push.default current'
     SILENT "push: push.default beside a forced fetch" 'git -c push.default=current fetch -f origin main:main'
     SILENT "push: pushDefault config"                 'git -c remote.pushDefault=origin push origin main'
     SILENT "push: --push-option"                      'git push --push-option=ci.skip origin main'
+    BLOCK  "push: -4f (--ipv4 plus force)"            'git push -4f origin main'
+    BLOCK  "push: --mir abbreviates --mirror"         'git push --mir origin'
+    BLOCK  "push: -C path ending in stash"            'git -C /tmp/stash push --force'
+    BLOCK  "push: -C path ending in h"                'git -C /x/h push --force'
+    BLOCK  "push: -C path ending in sh"               'git -C /x/sh push --force'
+    BLOCK  "push: -C path ending in ash"              'git -C /x/ash push --force'
+    BLOCK  "push: -C path ending in tash"             'git -C /x/tash push --force'
+    SILENT "push: a word ending in git"               'digit push origin main -f'
+    SILENT "push: stash push, + in the message"       'git stash push -m "wip +tests"'
+    SILENT "push: stash push, -f in the message"      "git stash push -m 'wip -fix later'"
+    SILENT "push: stash push after a global option"   'git -C x stash push -m "+a"'
+    SILENT "push: -f in the command after &&"         'git push origin main && rm -f x.lock'
+    SILENT "push: -f on the next line"                $'git push origin main\necho -f'
+    SILENT "push: -C directory named stash (KNOWN GAP)"  'git -C stash push --force'
+    SILENT "push: alias from user config (KNOWN GAP)"    'git pf origin main'
+    SILENT "push: remote.*.mirror config (KNOWN GAP)"    'git -c remote.origin.mirror=true push origin'
     BLOCK  "alias: -c, quoted value"                  "git -c alias.probe='!echo X' probe"
     BLOCK  "alias: git config --global"               "git config --global alias.lg '!git log --oneline'"
     BLOCK  "alias: whole argument quoted"             'git -c "alias.x=!echo PWNED" x'
@@ -1404,6 +1427,11 @@ _dc_F=(
     SILENT "awk: the word awkward"                    'echo awkward; os.system(1)'
     SILENT "awk: program in a file (KNOWN GAP)"       'awk -f prog.awk data'
     SILENT "awk: print to a command (KNOWN GAP)"      "awk '{print \"id\" | \"cat\"}'"
+    BLOCK  "awk: gawk coprocess |& getline"           "awk 'BEGIN{\"id\" |& getline x}'"
+    BLOCK  "awk: system( after a ; in the program"    "awk '{a=1; system(\"id\")}'"
+    BLOCK  "awk: system( in a later grep (ACCEPTED FALSE POSITIVE)"  "awk -F, '{print \$2}' d.csv; grep -n \"system(\" main.c"
+    SILENT "awk: gawk indirect call (KNOWN GAP)"      "gawk 'BEGIN{f=\"system\"; @f(\"id\")}'"
+    SILENT "awk: a word ending in awk"                "hawk '{system(1)}'"
     SILENT "find -exec (NOT PORTED: Claude Code gates find actions)"  'find . -name x -exec echo {} \;'
     SILENT "sed 1e (NOT PORTED: no shipped rule approves sed)"        "sed '1e id' f"
     SILENT "sed s///e (NOT PORTED)"                                   "sed 's/a/b/e' f"
