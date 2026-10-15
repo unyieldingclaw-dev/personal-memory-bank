@@ -96,12 +96,14 @@ try {
     $cmd = if ($data.tool_input.command) { [string]$data.tool_input.command } else { "" }
 } catch {
     # WHY fall back to raw-stdin matching (not exit 0 immediately) on a JSON-parse
-    # failure: mirrors dangerous-commands.sh's identical fallback exactly — a real
+    # failure: same reasoning as dangerous-commands.sh's fallback (which also falls back
+    # when python3 is missing; this one falls back only on a parse failure) — a real
     # dangerous command's text is still present somewhere in the raw payload even when
-    # structured extraction fails, so raw matching never misses a true positive, it
-    # only risks occasional false ones. Exiting immediately here would silently
-    # disable the guardrail entirely on a parse error, the wrong direction for a
-    # safety gate. Only applies when $raw was actually captured (the IsNullOrWhiteSpace
+    # structured extraction fails, so raw matching still finds one written plainly,
+    # though it can miss one whose separators are JSON-escaped (a tab arrives as the two
+    # characters `\t`), and it risks occasional false positives. Exiting immediately here
+    # would silently disable the guardrail entirely on a parse error, the wrong direction
+    # for a safety gate. Only applies when $raw was actually captured (the IsNullOrWhiteSpace
     # early-exit above already handles the genuine "nothing to check" case, which
     # this catch block never reaches).
     if ($raw) {
@@ -282,10 +284,10 @@ $blockPatterns = @(
     # auto-mode classifier sees it. See dangerous-commands.sh for the rationale, the measurements,
     # the accepted false positives and the known gaps. Same regexes as the sh twin, except that the
     # segment class is spelled `[^;&|\x00-\x1F\x7F]` -- .NET has no [:cntrl:] -- for the same bytes.
-    # Every gap is bounded {0,255} and every run of flag letters {0,32}: this engine backtracks, and
-    # an unbounded run of either is quadratic here (measured figures are in the sh twin).
+    # Gaps are bounded {0,255} and flag-letter runs {0,32} because this engine backtracks; which of
+    # those bounds the measurements actually need, and the figures, are in the sh twin.
     # Here `rm` is also Remove-Item's alias, so the rm row reads `rm -r -fo x` and `rm x -Recurse -Force`
-    # too -- that alias only: `Remove-Item`, `del` and an en-dash `–Force` are known gaps.
+    # too. The row needs the word `rm`, so other Remove-Item spellings are not matched by it.
     @{ pattern = '(^|[^a-z0-9_-])rm(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255} )?(-(-|[a-z]{0,32})r[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]{0,32})f|-(-|[a-z]{0,32})f[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]{0,32})r|-[a-z]{0,32}(r[a-z]{0,32}f|f[a-z]{0,32}r))'; regex = $true; reason = "irreversible recursive deletion (rm with recursive and force flags, in any order)" }
     @{ pattern = '(^|[^a-z])git(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255}([^;&|\x00-\x1F\x7Fh]|[^;&|\x00-\x1F\x7Fs]h|[^;&|\x00-\x1F\x7Fa]sh|[^;&|\x00-\x1F\x7Ft]ash|[^;&|\x00-\x1F\x7Fs]tash|[^;&|\x00-\x1F\x7F ]stash) |[^;&|\x00-\x1F\x7F]{0,255}=)?push( [^;&|\x00-\x1F\x7F]{0,255})? (--force|--mir|-[a-z0-9]{0,32}f|\+[^ \x00-\x1F\x7F])'; regex = $true; reason = "force push (--force, --mirror or -f in any position, or a +refspec)" }
     @{ pattern = 'alias\.[a-z0-9_.-]+(=| +)!|(^|[^a-z0-9_-])[gmn]?awk .{0,255}([^.a-z0-9_]system ?\(|\|&? ?getline)'; regex = $true; reason = "arbitrary command execution through a tool's own arguments (git alias !cmd, awk system() or cmd | getline)" }

@@ -453,7 +453,7 @@ Describe "dangerous-commands.ps1 (round-8 regression guards)" {
     # 8000 chars = 44s on this shape, and the growth was cubic, so 50000 extrapolated to ~3 HOURS.
     # (Payload-shape caveat: dense `git config ` is the worst case for the NESTED gaps this test
     # guards. The single-gap patterns are worst on dense `git ` text and cost ~4.3s each; the
-    # whole-hook worst case at the 50000 bound is ~17.5s. See dangerous-commands.sh.) A regression at
+    # whole-hook figures at the 50000 bound are in dangerous-commands.sh's table.) A regression at
     # 50000 would present as a CI hang rather than a failing test -- and the earlier claim that this
     # assertion was "confirmed to discriminate by reverting the fix" cannot have been executed at
     # that size. At 8000 the unbounded build takes 44s against this 10s bar: same signal, bounded
@@ -763,17 +763,17 @@ Describe "dangerous-commands.ps1 (structural rm / force-push / alias+awk rows)" 
     # signing rows above, so an 8000-char payload cannot discriminate. Two kinds of 50000-char shape,
     # timed in-process on each row's own regex (the whole hook on a dense `git push` shape also pays
     # for the signing rows):
-    #   - the slowest shapes found for the rows AS SHIPPED, so growth in the real worst case shows;
+    #   - shapes that are slow for the rows AS SHIPPED, so growth there shows;
     #   - shapes on which an UNBOUNDED quantifier is slow, gap by gap: a shape that suits one gap can
     #     be instant for another (`rm -r x ...` misses the gap after `-f`; `rm -f x ...` catches it),
     #     so one shape per row is not enough.
-    # Measured figures are in dangerous-commands.sh's comments. The 5s bar clears the shipped worst
-    # case on a slow runner. When written, every gap unbounded ON ITS OWN exceeded it on some shape
-    # below, with one exception: the push row's `=` branch before `push` peaked at 2.7s, because its
-    # cost grows with the number of `git` words, not with the payload. A run of flag letters
-    # unbounded on its own is linear (it starts only at a `-` and stops at the word's end); two
-    # unbounded together, as the cluster alternative once had, exceed the bar on `rm -rrr...`.
-    It "keeps each structural row's slowest known 50000-char shapes under 5s, as shipped and as an unbounding would expose" {
+    # Measured figures are in dangerous-commands.sh's comments. When this guard was written, each gap
+    # unbounded on its own exceeded the 5s bar on some shape below, with one exception: the push
+    # row's `=` branch before `push` stayed under it on every shape tried. Unbounding the rm cluster
+    # alternative's two letter runs together exceeds it on `rm -rrr...`.
+    # NOT timed here: repeated short clusters (`rm -rrrrrrrr ` repeated), about 3s per view as shipped
+    # -- too close to the bar for a CI runner of unknown speed.
+    It "keeps the structural rows under 5s on a set of 50000-char shapes, as shipped and as an unbounding would expose" {
         $opts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline, CultureInvariant'
         $keys = @{ rm = 'irreversible recursive deletion \(rm with'; push = 'force push \(--force, --mirror'
                    exec = 'arbitrary command execution through' }

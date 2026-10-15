@@ -35,10 +35,11 @@ merge.
 - This predates the branch: `main` without python3 gives no verdict on these too. But the branch's
   new newline-pipe BLOCK row does nothing without python3, and Alpine ships without it.
 - **Texts that are wrong about this.** Each has a byte-identical copy under `templates/`.
-  - `scripts/dangerous-commands.sh:71-75` says raw matching "never misses a true positive".
-  - `scripts/dangerous-commands.ps1:99-102` says the same, and also says its fallback "mirrors
-    dangerous-commands.sh's identical fallback exactly". It does not: the ps1 hook falls back only
-    when parsing fails, while the sh hook also falls back when python3 is missing.
+  - Fixed 2026-10-15 on `feat/port-sqa-dangerous-commands`: the fallback comments in
+    `scripts/dangerous-commands.sh` and `.ps1` said raw matching "never misses a true positive",
+    and the ps1 one called its fallback identical to the sh one's. Both now say a JSON-escaped
+    separator can be missed, and the ps1 one notes that only the sh hook falls back when python3
+    is missing.
   - `standards/SECURITY-GUARDRAILS.md:242-243` gives only "the JSON cannot be parsed" as the
     trigger.
 - **Every statement of the remedy leaves python3 out.** Each review round found a new incomplete

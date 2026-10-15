@@ -1360,7 +1360,17 @@ _dc_F=(
     BLOCK  "rm: flags named in a message (ACCEPTED FALSE POSITIVE)"  "git commit -m 'drop rm -r and -f'"
     SILENT "rm: -f in the command after &&"           'rm -r somedir && tail -f log'
     SILENT "rm: -f in the command after |"            'rm -rv somedir | tail -f log'
-    SILENT "rm: cluster over 32 letters (KNOWN GAP)"  'rm -vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvrf x'
+    SILENT "rm: over 32 letters before the r (KNOWN GAP)"  'rm -vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvrf x'
+    SILENT "rm: over 32 letters between r and f (KNOWN GAP)"  'rm -rvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvf x'
+    BLOCK  "rm: 30 letters before r, 30 between (each run under 32)"  'rm -vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvrvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvf x'
+    SILENT "rm: flags padded 300 apart (KNOWN GAP)"   "$(printf 'rm -r %0300d -f' 0)"
+    SILENT "rm: Remove-Item, path first (KNOWN GAP)"  'Remove-Item C:\tmp\x -Recurse -Force'
+    SILENT "rm: Remove-Item -Path (KNOWN GAP)"        'Remove-Item -Path C:\tmp\x -Recurse -Force'
+    SILENT "rm: ri alias (KNOWN GAP)"                 'ri C:\tmp\x -Recurse -Force'
+    SILENT "rm: del alias (KNOWN GAP)"                'del C:\tmp\x -Recurse -Force'
+    SILENT "rm: rd alias (KNOWN GAP)"                 'rd C:\tmp\x -Recurse -Force'
+    SILENT "rm: rmdir alias (KNOWN GAP)"              'rmdir C:\tmp\x -Recurse -Force'
+    SILENT "rm: en-dash parameters (KNOWN GAP)"       'rm C:\tmp\x –Recurse –Force'
     SILENT "rm: a word ending in rm"                  'farm -r -f x'
     BLOCK  "push: --force after the branch"           'git push origin main --force'
     BLOCK  "push: -f after the branch"                'git push origin main -f'
@@ -1404,6 +1414,13 @@ _dc_F=(
     SILENT "push: -C directory named stash (KNOWN GAP)"  'git -C stash push --force'
     SILENT "push: alias from user config (KNOWN GAP)"    'git pf origin main'
     SILENT "push: remote.*.mirror config (KNOWN GAP)"    'git -c remote.origin.mirror=true push origin'
+    SILENT "push: --mi abbreviates --mirror (KNOWN GAP)" 'git push --mi origin'
+    SILENT "push: --m abbreviates --mirror (KNOWN GAP)"  'git push --m origin'
+    SILENT "push: --namespace stash (KNOWN GAP)"         'git --namespace stash push --force origin main'
+    SILENT "push: -C STASH, any case (KNOWN GAP)"        'git -C STASH push -f origin main'
+    SILENT "push: first word a tail of stash (KNOWN GAP)"  'git h push --force'
+    SILENT "push: send-pack (KNOWN GAP)"                 'git send-pack --force git@example.invalid:o/r.git main'
+    SILENT "push: quoted backslash path to git (KNOWN GAP)"  '& "C:\Program Files\Git\cmd\git.exe" push origin main --force'
     BLOCK  "alias: -c, quoted value"                  "git -c alias.probe='!echo X' probe"
     BLOCK  "alias: git config --global"               "git config --global alias.lg '!git log --oneline'"
     BLOCK  "alias: whole argument quoted"             'git -c "alias.x=!echo PWNED" x'
@@ -1433,7 +1450,7 @@ _dc_F=(
     SILENT "awk: gawk indirect call (KNOWN GAP)"      "gawk 'BEGIN{f=\"system\"; @f(\"id\")}'"
     SILENT "awk: a word ending in awk"                "hawk '{system(1)}'"
     SILENT "find -exec (NOT PORTED: Claude Code gates find actions)"  'find . -name x -exec echo {} \;'
-    SILENT "sed 1e (NOT PORTED: no shipped rule approves sed)"        "sed '1e id' f"
+    SILENT "sed 1e (NOT PORTED: no settings or command grant approves sed)"  "sed '1e id' f"
     SILENT "sed s///e (NOT PORTED)"                                   "sed 's/a/b/e' f"
     SILENT "git -c core.sshCommand (KNOWN GAP, backlog)"              "git -c core.sshCommand='echo X' fetch"
 )

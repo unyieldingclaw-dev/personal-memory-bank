@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-10-14
-last-reviewed: 2026-10-14
+last-reviewed: 2026-10-15
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -18,9 +18,14 @@ Re-read the docs pages and re-measure before relying on them.
 ## The decision
 
 - **No fleet-wide rule for `curl`, `wget`, `Invoke-WebRequest`/`iwr` or `Invoke-RestMethod`/`irm`.**
-  The reasons are in `standards/SECURITY-GUARDRAILS.md`, "Network Access":
+  The shipped standard ("Network Access") gives the reasons in general terms; the evidence is here:
   - CONFIRM in this hook is a hard deny;
-  - 122 of 28,251 past agent commands would have been denied, mostly real localhost checks;
+  - a scan on 2026-10-14 of about 28,000 Bash and PowerShell tool calls in main-session transcripts
+    under `~/.claude/projects` found about 120 that such a rule would have denied, about 60% of them
+    localhost checks. Subagent transcripts (about 53,000 more calls) were not counted. Side-Quest-
+    Atlas's own word boundary matches about 150 on the same calls, the extra ones being text that
+    only names a tool. An earlier version of this line said "122 of 28,251": 28,251 was the
+    denominator of a different, later scan;
   - the auto-mode classifier already blocks sending sensitive data to external endpoints.
 - **Instead: deny network fetches only when the tool call comes from one of PMB's read-only review
   agents**, `opposition`, `researcher` and `security-reviewer`. None of them has a reason to fetch.
