@@ -16,10 +16,11 @@
 # only be discovered after a failed commit attempt.
 #
 # WHY additionalContext JSON, not a plain message: a PreToolUse hook's plain
-# stdout goes only to Claude Code's debug log, so the plain "Note:" this hook
-# printed reached no one -- defeating its only purpose. additionalContext reaches
-# the model (measured 2026-10-14). Model-only, no systemMessage: it is advice for
-# the agent about to edit, and it fires on every edit while a marker exists.
+# stdout never reaches the model and is not shown in the visible transcript
+# (per Claude Code's docs), so the plain "Note:" this hook printed reached no
+# one -- defeating its only purpose. additionalContext reaches the model (measured 2026-10-14).
+# Model-only, no systemMessage: it is advice for the agent about to edit, and
+# it fires on every edit while a marker exists.
 #
 # WHY no marker deletion: review-reminders.ps1's marker consumption is the
 # sole writer/reader of these files, via an atomic rename specifically to

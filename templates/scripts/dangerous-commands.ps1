@@ -5,7 +5,8 @@
     Reads the Bash tool input JSON from stdin, extracts the command string,
     and enforces BLOCK / CONFIRM / WARN tier matching via simple substring and
     regex checks. All output is ONE JSON object on stdout: plain stdout from a
-    PreToolUse hook goes only to Claude Code's debug log, so a deny uses
+    PreToolUse hook never reaches the model and is not shown in the visible
+    transcript (per Claude Code's docs; it only records it), so a deny uses
     permissionDecision, a WARN uses systemMessage (user) + additionalContext
     (model), and any text beside the object would void it. Fails open on a
     genuine read failure: exits 0 (with a [HOOK ERROR] systemMessage if the
@@ -369,9 +370,10 @@ foreach ($entry in $warnPatterns) {
     }
 }
 
-# WHY one JSON object, not a Write-Host line per match: a PreToolUse hook's plain stdout goes only
-# to Claude Code's debug log -- neither the user nor the model ever saw a WARN -- and stdout must be
-# nothing but one object, so every match shares it. systemMessage reaches the user per Claude
+# WHY one JSON object, not a Write-Host line per match: a PreToolUse hook's plain stdout never
+# reaches the model and is not shown in the visible transcript (per Claude Code's docs; it only
+# records it) -- neither the user nor the model ever saw a WARN -- and stdout must be nothing but
+# one object, so every match shares it. systemMessage reaches the user per Claude
 # Code's docs (a headless run cannot show it); additionalContext the model (measured 2026-10-14,
 # main agent and subagent). The model-facing text omits "WARNING:" so each match still yields
 # exactly one. [ordered] keeps the keys in the sh twin's order, byte for byte.

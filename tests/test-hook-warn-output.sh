@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # tests/test-hook-warn-output.sh — WARN-tier PreToolUse hooks emit one JSON object, not plain text
 #
-# WHY this test exists: Claude Code writes a PreToolUse hook's plain-text stdout to its debug log
-# only -- the model never sees it, and neither does the transcript. Measured 2026-10-14 with two
-# throwaway hooks on one Write call (headless `claude -p`): in the main agent the model reported
-# the JSON `additionalContext` codeword and not the plain-text one; a separate run showed the JSON
-# codeword reaching a subagent too. So every WARN these hooks printed was invisible. The doc also
-# requires stdout to be NOTHING BUT the JSON object, so a second notice printed as a second object,
-# or a line of text beside one, voids the whole output.
+# WHY this test exists: Claude Code only records a PreToolUse hook's plain-text stdout (debug log,
+# session file) -- the model never sees it, and per the docs the visible transcript does not show
+# it. Measured 2026-10-14 with two throwaway hooks on one Write call (headless `claude -p`): in
+# the main agent the model reported the JSON `additionalContext` codeword and not the plain-text
+# one; a separate run showed the JSON codeword reaching a subagent too. So every WARN these hooks
+# printed was invisible. The doc also requires stdout to be NOTHING BUT the JSON object, so a
+# second notice printed as a second object, or a line of text beside one, voids the whole output.
 #
 # What each hook must emit, and to whom:
 #   dangerous-commands WARN      -> systemMessage (user) + additionalContext (model)

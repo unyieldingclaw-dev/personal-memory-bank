@@ -3,8 +3,9 @@
 ## [Unreleased]
 
 ### Fixed
-- **No WARN from a `PreToolUse` hook ever reached you or Claude.** Claude Code writes such a hook's
-  plain stdout to its debug log only. Measured 2026-10-14 with headless `claude -p`: in the main
+- **No WARN from a `PreToolUse` hook ever reached you or Claude.** Claude Code passes such a hook's
+  plain stdout to neither: it only records it (debug log, session file), and its docs say it is
+  not shown in the visible transcript. Measured 2026-10-14 with headless `claude -p`: in the main
   agent, a JSON `additionalContext` note reached the model while a plain-text note on the same tool
   call did not; a separate run showed the JSON note reaching a subagent too. That `systemMessage`
   reaches you rests on Claude Code's docs, since a headless run cannot show it. Each of these hooks

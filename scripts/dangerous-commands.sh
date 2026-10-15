@@ -87,8 +87,9 @@
 
 input=$(cat 2>/dev/null)
 if [ -z "$input" ]; then
-    # WHY systemMessage JSON, not plain text: a PreToolUse hook's plain stdout goes only to Claude
-    # Code's debug log, so the fails-open notice reached no one. systemMessage is shown to the user.
+    # WHY systemMessage JSON, not plain text: a PreToolUse hook's plain stdout never reaches the
+    # model and is not shown in the visible transcript (per Claude Code's docs), so the fails-open
+    # notice reached no one. systemMessage is shown to the user.
     printf '{"systemMessage":"[HOOK ERROR] dangerous-commands.sh: could not read stdin. Proceeding in fails-open mode."}\n'
     exit 0
 fi
@@ -773,7 +774,8 @@ warn ".env.production"  "production secrets file"               # WHY: productio
 warn "credentials.json" "credential file access"                # WHY: credential file — may be intentional (auth setup)
 
 # WHY JSON, not the plain "WARNING:" lines this tier used to print: a PreToolUse hook's plain
-# stdout goes only to Claude Code's debug log -- neither the user nor the model ever saw a WARN.
+# stdout never reaches the model and is not shown in the visible transcript (per Claude Code's
+# docs; it only records it) -- neither the user nor the model ever saw a WARN.
 # systemMessage reaches the user per Claude Code's docs (a headless run cannot show it);
 # additionalContext reaches the model (measured 2026-10-14, main agent and subagent). The
 # model-facing text omits the "WARNING:" token so each match still yields exactly one, which the

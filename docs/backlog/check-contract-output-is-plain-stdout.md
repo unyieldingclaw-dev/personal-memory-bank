@@ -9,9 +9,10 @@ related_plan: null
 # The Contract Scope Check's output reaches no one
 
 `check-contract.sh` and `check-contract.ps1` (and their `templates/` copies) still print plain
-text. A `PreToolUse` hook's plain stdout goes only to Claude Code's debug log, which PR #55 measured
-on 2026-10-14 and fixed for three other hooks. It did not touch these, so all three of their
-outputs are lost:
+text. A `PreToolUse` hook's plain stdout never reaches the model (PR #55 measured this on
+2026-10-14 and fixed it for three other hooks) and, per Claude Code's docs, is not shown in the
+visible transcript; Claude Code only records it (debug log, session file). PR #55 did not touch
+these two, so all three of their outputs are lost:
 
 - **Out-of-scope write (default).** The `CONTRACT SCOPE` warning reaches neither the user nor the
   model (the model side was measured; the user side rests on Claude Code's docs, since a headless

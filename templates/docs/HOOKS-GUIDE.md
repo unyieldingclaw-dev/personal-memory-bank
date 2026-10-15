@@ -40,7 +40,7 @@ Hooks are one layer in a four-layer enforcement stack. Understanding which layer
 
 Configured in `.claude/settings.json`:
 
-**How a `PreToolUse` hook is heard.** Plain text a `PreToolUse` hook prints goes only to Claude Code's debug log — neither you nor Claude sees it. So each hook prints at most ONE JSON object: `permissionDecision: "deny"` to block, top-level `systemMessage` for you, `hookSpecificOutput.additionalContext` for Claude. Any text beside that object makes Claude Code ignore it. The Contract Scope Check (§3) still prints plain text, so its warning is currently not seen.
+**How a `PreToolUse` hook is heard.** Plain text a `PreToolUse` hook prints never reaches Claude (measured), and Claude Code's docs say it is not shown in the visible transcript — it is only recorded (debug log, session file). So each hook prints at most ONE JSON object: `permissionDecision: "deny"` to block, top-level `systemMessage` for you, `hookSpecificOutput.additionalContext` for Claude. Any text beside that object makes Claude Code ignore it. The Contract Scope Check (§3) still prints plain text, so its warning is currently not seen.
 
 ### 1. Dangerous-Command Blocker (`PreToolUse` — Bash + PowerShell tools)
 
