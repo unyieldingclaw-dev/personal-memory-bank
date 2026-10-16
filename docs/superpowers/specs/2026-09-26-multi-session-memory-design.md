@@ -189,21 +189,26 @@ pwsh's start-up cost — instead of patching each one. Everywhere this spec says
 Plans B and D should follow the same pattern for `sessions` and `snapshots` (user-approved
 2026-09-29).
 
-**Twin parity (amended 2026-10-14, Task 6 review).** The two twins make the same decisions, return
-the same exit codes, and write the same bytes to `pmb/`. Their output differs only in these accepted
+**Twin parity (amended 2026-10-14, Task 6 review; 2026-10-16, review of `cc5e51c`).** The two twins
+make the same decisions, return the same exit codes, and write the same bytes to `pmb/`. The one
+exception is a Linux or macOS host with no `test` binary, where the PowerShell twin's decisions and
+exit codes differ (Regular files, below). Their output differs only in these accepted
 ways: paths in messages take each shell's form (`C:/...` from .NET and git, `/c/...` or `/tmp/...`
 from Git Bash); an OS error inside a message is the platform's own text (.NET's, or the shell tool's),
 as is the error for a secret pattern that cannot be applied (a .NET regex error, not a grep exit
 code); the first usage line names `pmb-journal.ps1`; and `pwsh -File` drops an argument that is
 exactly `--%` (and splits one shaped `-name:value`), so such text goes through `--file`.
 
-**Regular files (amended 2026-10-16, review of `4738ad5`).** Both twins refuse to open a FIFO or a
-device, since opening a FIFO blocks the hook. The sh twin uses its built-in `[ -f ]`. .NET reports a
-FIFO as an existing file, so on Linux and macOS the PowerShell twin runs the first of
-`/usr/bin/test` and `/bin/test` that exists, found once per process. Alpine ships only
-`/usr/bin/test`. Windows needs no binary. If neither exists, the twin throws rather than refusing
-every file, and its behaviour then differs from the sh twin's (an accepted parity difference):
-- `show`, `note --file` and `import-handoff` print the error and exit 1;
+**Regular files (amended 2026-10-16, reviews of `4738ad5` and `cc5e51c`).** Both twins refuse to
+open a FIFO or a device, since opening a FIFO blocks the hook. The sh twin uses its built-in
+`[ -f ]`. .NET reports a FIFO as an existing file, so on Linux and macOS the PowerShell twin runs
+the first of `/usr/bin/test` and `/bin/test` that exists, found once per process. Alpine ships
+only `/usr/bin/test`. Windows needs no binary. If neither exists, the twin throws rather than refusing
+every file. It throws the first time it checks a file that exists and is not a link; a missing
+file still reads as not regular, with no throw. Its behaviour then differs from the sh twin's (the
+parity exception above):
+- `show` of a session with at least one record prints its header, then the error, and exits 1;
+- `note --file` and `import-handoff` print the error and exit 1;
 - the claim report is skipped without a message, and the claim itself still exits 0;
 - the gate fails open on every compaction that reads a record or `gate-blocked`. Run as the hook,
   it prints `[HOOK ERROR]` on stdout and logs the error to `.pmb-hook-errors.log`. Run as
