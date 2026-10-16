@@ -115,6 +115,14 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 { "matcher": "PowerShell", "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true" }
 ```
 
+**Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
+`timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
+out does not block the tool call: its output is discarded and the call proceeds, unless the entry
+sets `"onFailure": "block"` (Claude Code v2.1.295 or later). This hook's worst case, a ~50 KB
+command, is recorded at about 17.5 seconds in `standards/SECURITY-GUARDRAILS.md`, far inside the
+default. Whether to set `onFailure` is an open decision in
+`docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md`.
+
 **Two bugs found and fixed (2026-07-02) that made this hook a near-total no-op:**
 
 1. **Wrong JSON field path.** The hook read `$data.command` (flat), but the real `PreToolUse` payload nests everything under `tool_input` (`{"tool_name":"Bash","tool_input":{"command":"..."}}`), confirmed by capturing a live hook payload. `$cmd` was always empty, so no BLOCK/CONFIRM/WARN pattern ever matched, regardless of the command run. Fixed to read `$data.tool_input.command`.

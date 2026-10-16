@@ -87,11 +87,12 @@
 #     `\u0000` becomes nothing, as the shell drops a NUL from the extracted command;
 #   - a non-ASCII `\uXXXX` becomes `?`, and a surrogate PAIR becomes one `?`, since it is one
 #     character. awk cannot portably write UTF-8, and no row treats a non-ASCII character as a
-#     space, so a non-letter stand-in gets the same verdicts with two measured exceptions. It is
-#     stricter where the C-locale pass counts a `?` as 1 byte and the real character as 2 to 4. It
-#     is weaker where a UTF-8 locale's `grep -i` folds a real character to a letter -- U+017F
-#     (long s) matches `s`, so `commit.gpg<U+017F>ign` prompts on the parsed path and not here.
-#     git rejects that key, so the miss is a false positive's, not a bypass. A
+#     space, so a non-letter stand-in gets the same verdicts with two measured kinds of exception.
+#     It is stricter where the C-locale pass counts a `?` as 1 byte and the real character as 2 to
+#     4. It is weaker where a UTF-8 locale's `grep -i` folds a real character to an ASCII letter --
+#     a class, not one character: U+017F (long s) matches `s` and U+0131 (dotless i) matches `i`,
+#     so `commit.gpg<U+017F>ign` prompts on the parsed path and not here. In every measured case git
+#     rejected the word or failed on the value, so the misses are false positives', not bypasses. A
 #     pair once written as `??` let 140 escaped emoji in a signing gap pass the {0,255} bound under
 #     a UTF-8 locale (measured). The .ps1 twin writes the real character, which is what its own
 #     parsed path sees;
@@ -337,18 +338,30 @@ cmd=$(printf '%s' "$cmd" | awk '
 # KNOWN COST, stated rather than hidden: stripping quotes creates matches a real shell would not
 # produce -- `echo "rm" "-rf"` collapses to `echo rm -rf` and now trips BLOCK. That is the same
 # accepted class as the documented quoted-invocation-as-text false positive below.
-#
-# WHY this view also deletes carriage returns, added 2026-10-14: Git Bash deletes a CR while
+cmd_loose=$(printf '%s' "$cmd" | tr -d '\\"'"'" | sed 's/  */ /g')
+
+# WHY a THIRD view with carriage returns deleted, added 2026-10-14: Git Bash deletes a CR while
 # parsing, even with igncr off (measured: `ab<CR>cd` reaches the command as `abcd`), so
 # `git push --for<CR>ce` runs as a force push. One CR inside a word walked past every tier, on both
-# hooks and both paths. The faithful view keeps the CR. NOT strictly monotone, stated rather than
-# hidden: when a CR glued between letters was this view's only boundary, deleting it drops the match
-# (`x`, CR, `g"it" merge` was CONFIRM before, measured). That loses only false positives here, since
-# this hook judges Bash alone and no Bash treats that CR as a word break: Git Bash deletes it, and a
-# Linux bash keeps it inside the word (read, not measured here). The .ps1 twin also judges the
-# PowerShell tool, where a lone CR IS a statement break, so it keeps this view intact and matches a
-# CR-deleted copy in addition -- see $cmdLooseNoCr there.
-cmd_loose=$(printf '%s' "$cmd" | tr -d '\r\\"'"'" | sed 's/  */ /g')
+# hooks and both paths.
+# WHY in ADDITION rather than deleting CRs inside cmd_loose, as a first version did: deleting them
+# there glued the words on either side of a CR together, so `x`, CR, `g"it" merge` lost the CONFIRM
+# the CR-keeping view gave it. On Bash those were false positives, but the .ps1 twin judges the Bash
+# tool too whenever pwsh is present, and it keeps every verdict (it must: PowerShell reads a lone CR
+# as a statement break). Two policies made the verdict depend on which hook ran. An added view can
+# only add a match, so both hooks now give one verdict, by the rule every view here follows.
+# WHY computed only when the command holds a CR: otherwise this view equals cmd_loose and matching it
+# again finds nothing new, while each `$(...)` here is a subprocess on every Bash tool call. Left
+# empty, it matches no row: every case arm needs the pattern's text, and dc_grep is not given it.
+dc_nl='
+'
+dc_cr=$(printf '\r')
+# WHY a parameter expansion and not a `case`: a `case` on a raw view is what the completeness tests
+# forbid every matcher to do, and a top-level `case` would read to them as a matcher row.
+cmd_loose_nocr=""
+if [ "${cmd_loose#*"$dc_cr"}" != "$cmd_loose" ]; then
+    cmd_loose_nocr=$(printf '%s' "$cmd_loose" | tr -d '\r' | sed 's/  */ /g')
+fi
 
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
@@ -417,11 +430,13 @@ fi
 # into a red test the moment someone writes one.
 cmd_lc=$(printf '%s' "$cmd" | tr 'A-Z' 'a-z')
 cmd_loose_lc=$(printf '%s' "$cmd_loose" | tr 'A-Z' 'a-z')
+cmd_loose_nocr_lc=""
+[ -n "$cmd_loose_nocr" ] && cmd_loose_nocr_lc=$(printf '%s' "$cmd_loose_nocr" | tr 'A-Z' 'a-z')
 
 block() {
     # BLOCK: irreversible or highly destructive — refuse unconditionally.
-    # Checks the de-escaped view too -- see the cmd_loose note above -- and both views folded
-    # to lower case -- see the cmd_lc note above. $1 MUST be written lower case.
+    # Checks the de-escaped view too -- see the cmd_loose note above -- and its CR-deleted copy,
+    # and all of them folded to lower case -- see the cmd_lc note above. $1 MUST be written lower case.
     case "$cmd_lc" in
         *"$1"*)
             deny "BLOCK: $2. Refusing this command."
@@ -429,6 +444,12 @@ block() {
             ;;
     esac
     case "$cmd_loose_lc" in
+        *"$1"*)
+            deny "BLOCK: $2. Refusing this command."
+            exit 0
+            ;;
+    esac
+    case "$cmd_loose_nocr_lc" in
         *"$1"*)
             deny "BLOCK: $2. Refusing this command."
             exit 0
@@ -517,8 +538,8 @@ block_regex() {
     # WHY the pipe rows are merged into one alternation rather than one row per interpreter:
     # each row costs a grep subprocess on every Bash tool call (see dc_grep), so one row is one
     # call, not two. Runs under LC_ALL=C -- see dc_grep for why.
-    # Checks the de-escaped view too -- see the cmd_loose note above.
-    if dc_grep "$1" C "$cmd" "$cmd_loose"; then
+    # Checks the de-escaped view and its CR-deleted copy too -- see the cmd_loose notes above.
+    if dc_grep "$1" C "$cmd" "$cmd_loose" ${cmd_loose_nocr:+"$cmd_loose_nocr"}; then
         deny "BLOCK: $2. Refusing this command."
         exit 0
     fi
@@ -526,10 +547,10 @@ block_regex() {
 
 confirm() {
     # CONFIRM: advanced op with legitimate uses — require explicit manual invocation.
-    # Checks the de-escaped view too -- see the cmd_loose note above -- and both views folded
-    # to lower case -- see the cmd_lc note above. Without the fold, `--No-Verify` and `SUDO RM`
-    # walked through this tier on the sh side while the .ps1 twin gated both.
-    # $1 MUST be written lower case.
+    # Checks the de-escaped view too -- see the cmd_loose note above -- and its CR-deleted copy,
+    # and all of them folded to lower case -- see the cmd_lc note above. Without the fold,
+    # `--No-Verify` and `SUDO RM` walked through this tier on the sh side while the .ps1 twin gated
+    # both. $1 MUST be written lower case.
     case "$cmd_lc" in
         *"$1"*)
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
@@ -537,6 +558,12 @@ confirm() {
             ;;
     esac
     case "$cmd_loose_lc" in
+        *"$1"*)
+            deny "CONFIRM REQUIRED: $2. Run manually if intentional."
+            exit 0
+            ;;
+    esac
+    case "$cmd_loose_nocr_lc" in
         *"$1"*)
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
@@ -580,18 +607,15 @@ confirm_regex() {
     # .NET -replace is not; the replacement then reintroduced the identical defect one function
     # over, via grep. Recorded here so a third instance is harder to write.
     #
-    # Checks the de-escaped view too -- see the cmd_loose note above. Matched through dc_grep,
-    # which refuses to read a grep failure as "no match": first under the caller's locale, then
-    # under C -- see dc_grep for the three bypasses that need both passes.
-    if dc_grep "$1" "" "$cmd" "$cmd_loose" || dc_grep "$1" C "$cmd" "$cmd_loose"; then
+    # Checks the de-escaped view and its CR-deleted copy too -- see the cmd_loose notes above.
+    # Matched through dc_grep, which refuses to read a grep failure as "no match": first under the
+    # caller's locale, then under C -- see dc_grep for the three bypasses that need both passes.
+    if dc_grep "$1" "" "$cmd" "$cmd_loose" ${cmd_loose_nocr:+"$cmd_loose_nocr"} \
+        || dc_grep "$1" C "$cmd" "$cmd_loose" ${cmd_loose_nocr:+"$cmd_loose_nocr"}; then
         deny "CONFIRM REQUIRED: $2. Run manually if intentional."
         exit 0
     fi
 }
-
-dc_nl='
-'
-dc_cr=$(printf '\r')
 
 confirm_boundary() {
     # Like confirm(), but requires $1 to be bounded on BOTH sides: preceded by the
@@ -651,8 +675,11 @@ confirm_boundary() {
     # but newlines are not, so `git merge`, a newline, then another command -- which runs a bare
     # `git merge` -- got no verdict on either shell. The .ps1 twin's row gained `\n` alongside.
     # A CR is a boundary too, matching the .ps1 row: PowerShell reads a lone CR as a statement
-    # break, and that hook judges the PowerShell tool. No Bash does, so on this hook a CR after
-    # `git merge` is an accepted false positive, kept so the two hooks give one verdict.
+    # break, and that hook judges the PowerShell tool. The arm decides a verdict alone only when
+    # another character follows the CR (`git merge`, CR, `ls`): Git Bash deletes the CR and runs
+    # `git mergels`, so on this hook that one is an accepted false positive, kept so the two hooks
+    # give one verdict. A CR before a space, a newline or the end is a true positive on Git Bash,
+    # and the CR-deleted view catches it as well.
     case "$cmd_lc" in
         "$1 "*|"$1$dc_nl"*|"$1$dc_cr"*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1$dc_nl"*|*[!a-zA-Z]"$1$dc_cr"*|*[!a-zA-Z]"$1")
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
@@ -661,6 +688,13 @@ confirm_boundary() {
     esac
     case "$cmd_loose_lc" in
         "$1 "*|"$1$dc_nl"*|"$1$dc_cr"*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1$dc_nl"*|*[!a-zA-Z]"$1$dc_cr"*|*[!a-zA-Z]"$1")
+            deny "CONFIRM REQUIRED: $2. Run manually if intentional."
+            exit 0
+            ;;
+    esac
+    # No CR arms here: this view has none.
+    case "$cmd_loose_nocr_lc" in
+        "$1 "*|"$1$dc_nl"*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1$dc_nl"*|*[!a-zA-Z]"$1")
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
             ;;
@@ -692,6 +726,12 @@ warn() {
             ;;
     esac
     case "$cmd_loose_lc" in
+        *"$1"*)
+            printf "WARNING: %s. Proceeding.\n" "$2"
+            return
+            ;;
+    esac
+    case "$cmd_loose_nocr_lc" in
         *"$1"*)
             printf "WARNING: %s. Proceeding.\n" "$2"
             return

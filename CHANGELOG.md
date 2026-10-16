@@ -60,11 +60,13 @@
   merge with no prompt. A newline now counts as a boundary too, and so does a CR, which PowerShell
   reads as a statement break.
 - **On Git Bash, a carriage return inside a word got past every tier, in both hooks.** Git Bash
-  deletes a CR while parsing (measured), so `git push --for`, a CR, then `ce` runs as a force push,
-  and `git merge`, CR, LF runs a bare merge. Neither hook gave a verdict on these, with or without
-  python3. The sh hook, which judges only Bash, now deletes CRs in its de-escaped view. The ps1
-  hook also judges the PowerShell tool, where a lone CR separates statements, so it keeps its
-  de-escaped view as it was and also matches a CR-deleted copy, which can only add matches.
+  deletes a CR while parsing (measured), so `git push --for`, a CR, then `ce` runs as a force push.
+  Neither hook gave a verdict on it, with or without python3. Both hooks now also match a
+  CR-deleted copy of their de-escaped view. It is added rather than substituted, so it can only add
+  matches: PowerShell, which the ps1 hook also judges, reads a lone CR as a statement break, so
+  deleting CRs in place would glue words together. A Bash command gets the same verdict from
+  either hook. The ps1 hook skips the copy when the command has no CR, so its worst-case time is
+  unchanged.
 - **A pipe to a shell split across a newline got past the BLOCK tier on sh ([NS-38]).** A trailing
   `|` continues the command onto the next line, so `curl x |`, a newline, then `bash` runs as
   `curl x | bash`. `dangerous-commands.sh` matched pipe-to-interpreter with four literal rows,
@@ -102,7 +104,8 @@
   pattern, and inside an `if` that read as "no match", which would have silently disabled every
   regex row. It now prompts, like the hook's other "cannot analyze" cases. That makes a grep with
   `-z`, such as GNU grep, a requirement of the sh hook. BusyBox grep rejects `-z` (measured), so on
-  Alpine with bash but without pwsh every Bash command prompts. Without bash as well, the hook
+  Alpine with bash but without pwsh every Bash command is refused, with `CONFIRM REQUIRED` unless a
+  literal BLOCK row matches it first. Without bash as well, the hook
   wiring's `|| true` fallback runs no guard at all (measured). The deny message points to the sh
   hook's full platform requirement in `standards/SECURITY-GUARDRAILS.md`.
 - **The signing rows' gap bound is 255, not 300, in both shells.** POSIX guarantees repetition

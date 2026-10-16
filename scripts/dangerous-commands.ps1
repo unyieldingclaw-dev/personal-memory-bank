@@ -186,8 +186,9 @@ $cmd = $cmd -replace '[ \t]+', ' '
 #
 # WHY match both views rather than replacing the faithful one: this view is deliberately NOT
 # faithful -- it destroys information a real shell keeps. Matching it in ADDITION can only ever
-# ADD a match, never remove one, so the change is strictly fail-closed. Kept byte-identical in
-# intent with the sh twin's $cmd_loose; see dangerous-commands.sh for the full rationale.
+# ADD a match, never remove one, so the change is strictly fail-closed. Kept identical in intent
+# with the sh twin's $cmd_loose, carriage returns included; see dangerous-commands.sh for the full
+# rationale, and the CR-deleted view below.
 #
 # KNOWN COST, stated rather than hidden: stripping quotes creates matches a real shell would not
 # produce -- `echo "rm" "-rf"` collapses to `echo rm -rf` and now trips BLOCK. Same accepted
@@ -201,8 +202,16 @@ $cmdLoose = ($cmd -replace '[\\"'']', '') -replace ' +', ' '
 # `x`, CR, `g"it" merge main` runs git. A first version deleted CRs inside $cmdLoose itself; that
 # glued `x` to `git` and dropped verdicts the CR-keeping view gave, including a BLOCK, on the
 # PowerShell tool (review finding OPP-1). Keeping $cmdLoose as it was and matching this view IN
-# ADDITION can only add matches, which is the rule every view here follows.
+# ADDITION can only add matches, which is the rule every view here follows. The sh twin does the
+# same (cmd_loose_nocr), so both hooks give the Bash tool one verdict.
+#
+# WHY $DcNoCrDiffers gates every use: without a CR this view equals $cmdLoose, so matching it again
+# only repeats a pass that already failed. Measured on the ~50 KB worst case, dense `git `, it added
+# about half again (medians of three interleaved runs on one machine, 2026-10-15: 19.5 s at
+# e3c2f43, 28.8 s with the view ungated, 18.8 s gated). Skipping an identical string cannot change
+# a verdict.
 $cmdLooseNoCr = ($cmdLoose -replace '\r', '') -replace ' +', ' '
+$DcNoCrDiffers = $cmdLooseNoCr -cne $cmdLoose
 
 # WHY Singleline, added round 9 alongside the `.*` gaps: under `grep -z` the sh twin treats the
 # whole payload as ONE record, so its `.` matches a newline. .NET's `.` does NOT, unless
@@ -306,7 +315,7 @@ $blockPatterns = @(
 )
 
 foreach ($entry in $blockPatterns) {
-    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLooseNoCr, $entry.pattern, $DcRegexOpts) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLooseNoCr.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) }
+    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) -or ($DcNoCrDiffers -and [regex]::IsMatch($cmdLooseNoCr, $entry.pattern, $DcRegexOpts)) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or ($DcNoCrDiffers -and $cmdLooseNoCr.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) }
     if ($isMatch) {
         Deny ($BLOCK_MSG -f $entry.reason)
         exit 0
@@ -366,13 +375,15 @@ $confirmPatterns = @(
     # without Multiline `$` matches only at the end or before a FINAL newline, so `git merge`, a
     # newline, then another command -- which runs a bare `git merge` -- got no verdict here or in
     # the sh twin. WHY `\r` too: PowerShell reads a lone CR as a statement break (measured), so
-    # `git merge`, CR, `ls` on the PowerShell tool is a bare merge. On Bash a CR is no word break,
-    # so there it is an accepted false positive, kept so both hooks give one verdict.
+    # `git merge`, CR, `ls` on the PowerShell tool is a bare merge. On Git Bash, which deletes the
+    # CR, that one runs `git mergels`: an accepted false positive, kept so both hooks give one
+    # verdict. A CR before a space, a newline or the end is a true positive there, which the
+    # CR-deleted view catches as well.
     @{ pattern = '(^|[^a-zA-Z])git merge( |\r|\n|$)'; regex = $true; reason = "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier" } # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
 )
 
 foreach ($entry in $confirmPatterns) {
-    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLooseNoCr, $entry.pattern, $DcRegexOpts) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLooseNoCr.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) }
+    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) -or ($DcNoCrDiffers -and [regex]::IsMatch($cmdLooseNoCr, $entry.pattern, $DcRegexOpts)) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or ($DcNoCrDiffers -and $cmdLooseNoCr.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) }
     if ($isMatch) {
         Deny ($CONFIRM_MSG -f $entry.reason)
         exit 0
@@ -394,7 +405,7 @@ foreach ($entry in $warnPatterns) {
     # body, so a command matching several views warns once -- this tier does not exit.
     if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or
         $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or
-        $cmdLooseNoCr.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
+        ($DcNoCrDiffers -and $cmdLooseNoCr.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase))) {
         Write-Host ($WARN_MSG -f $entry.reason)
     }
 }

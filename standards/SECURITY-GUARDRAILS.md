@@ -211,12 +211,11 @@ clear. Three cases do still trip, and are accepted rather than chased:
   false` really does disable signing. Both were live, unprompted bypasses. The cost is that
   `echo "rm" "-rf"` now collapses to `echo rm -rf` and trips BLOCK. The extra view can only ever
   *add* a match, never remove one, so the error direction is refusal rather than silence.
-  **(added 2026-10-14)** Carriage returns are deleted too, because Git Bash deletes a CR while
-  parsing, so `git push --for`, CR, `ce` runs as a force push. The sh hook deletes them inside its
-  de-escaped view, which can drop a match only where a CR glued between letters was the view's
-  only boundary, and no Bash treats that CR as a word break. The PowerShell hook also judges the
-  PowerShell tool, where a lone CR separates statements, so it keeps its de-escaped view and
-  matches a CR-deleted copy as well.
+  **(added 2026-10-14)** Both hooks also match a third view, the de-escaped one with carriage
+  returns deleted, because Git Bash deletes a CR while parsing, so `git push --for`, CR, `ce` runs
+  as a force push. It is added, not substituted, so it too can only add a match: PowerShell reads a
+  lone CR as a statement break, and deleting CRs inside the de-escaped view itself glued words
+  together and dropped verdicts. A Bash command gets the same verdict whichever hook runs.
 
 A mechanism that stripped `-m`/`--message`/`-S`/`--grep` payloads before matching was built for
 these and then withdrawn: making the hook's view of a command deliberately differ from what the
@@ -262,15 +261,19 @@ could not span the newline, and the PowerShell `iex` literals could not either.
     grep and no pwsh.
   - **No python3, or a python3 that fails:** the hook cannot extract `tool_input.command`, so it
     matches the whole payload, with its JSON escapes decoded first. In a well-formed payload the
-    decoded command sits intact and bounded by spaces, so every row that matches it still matches.
-    The one substitution, `?` for each non-ASCII character written as a `\u` escape, is never a
-    space to any sh row, and neither is the real character. The costs are extra refusals: text in
-    another field, such as `description`, can trigger a row, and a payload over the length bound is
-    refused. One measured miss: under a UTF-8 locale `grep -i` folds U+017F (long s) to `s`, so an
-    escaped long s in a signing key prompts on the parsed path and not here; git rejects that key,
-    so no signing change is lost. **Corrected 2026-10-14:** before the decoding, a
-    newline here was the two characters `\n`, and split pipes, continuation lines, tab-separated
-    forms and a bare trailing `git merge` all got no verdict (measured with python3 off `PATH`).
+    decoded command sits intact and bounded by spaces, so a row that matches it still matches, with
+    the exceptions below. The one substitution, `?` for each non-ASCII character written as a `\u`
+    escape, is never a space to any sh row, and neither is the real character. The costs are extra
+    refusals: text in another field, such as `description`, can trigger a row, and a payload over
+    the length bound is refused. The substitution is also stricter in one way: the `LC_ALL=C` pass
+    counts a `?` as one byte where the real character takes two to four, so more of a long gap fits
+    a row's bound. Measured misses, one class: under a UTF-8 locale `grep -i` folds some non-ASCII
+    letters to ASCII ones, U+017F (long s) to `s` and U+0131 (dotless i) to `i`, so an escaped one in
+    a guarded word prompts on the parsed path and not here. In every measured case git rejected
+    the word or failed on the value, so no signing change was lost. **Corrected 2026-10-14:**
+    before the decoding, a newline here was the two characters `\n`, and split pipes, continuation
+    lines, tab-separated forms and a bare trailing `git merge` all got no verdict (measured with
+    python3 off `PATH`).
   - **No bash either:** the shipped hook wiring (`pwsh ... || bash ... || true`) runs no guard at
     all, and every command is allowed.
 

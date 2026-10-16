@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-10-05
-last-reviewed: 2026-10-14
+last-reviewed: 2026-10-15
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -13,13 +13,17 @@ recorded and did not fix. **Item 1 was the merge condition** that review set: th
 tracked before the PR merged. It is now fixed (see item 1). The other items never blocked the
 merge and are still open unless marked.
 
-**IDs.** `J2-1` and `C-7` are review-finding IDs the user supplied with the 2026-10-14 task. The
-report that defines them is not in this repo; each is described in full where it appears.
+**IDs.** `J2-1` and `C-7` are review-finding IDs the user supplied with the 2026-10-14 task. IDs
+from the reviews of item 1's fix carry a prefix naming the review, because the same short ID recurs
+across reviews: `R2/` and `R3/` are /code-review rounds 2 and 3 (2026-10-14), and `CHR/` is the
+/change-review that followed (so `CHR/J2-1` is not `J2-1`). None of those reports is in this repo;
+each finding is described in full where it appears.
 
 **What decays here, and what to re-verify before relying on it:**
 - **Where item 1's fix lives.** It was written on branch `claude/sweet-lovelace-b4d2dc` on
   2026-10-14. PRs here are squash-merged, so once it merges the branch name stops resolving: find
   the fix by the CHANGELOG entry headed "Without python3, the sh dangerous-commands hook missed".
+  Its review follow-ups were written on 2026-10-15 on `claude/dc-round3-followups`, stacked on it.
 - **Line numbers in items 2 to 4 are from `ab2dbfe`** and drift with any edit. `ab2dbfe` is NOT in
   `main`'s history, because PR #52 was squash-merged as `e3c2f43`. It is still reachable from the
   PR's head ref: run `git fetch origin refs/pull/52/head`, then `git show ab2dbfe:<path>`.
@@ -54,24 +58,30 @@ checked against it:
 - **The fix.** The sh fallback decodes every JSON escape before matching: `\" \\ \/ \b \f \n \r
   \t`, an ASCII `\uXXXX` to its character, and `\u0000` to nothing. A non-ASCII `\uXXXX` becomes
   `?`, and an escaped surrogate pair becomes one `?`, because awk cannot portably write UTF-8, and
-  no row treats a non-ASCII character as a letter or a space. An unescaped `"` (a string delimiter)
+  no row treats a non-ASCII character as a space (the exceptions this stand-in has are listed in
+  the standard's "No python3" bullet). An unescaped `"` (a string delimiter)
   becomes a space. The ps1 hook falls back only when parsing fails, and now decodes the same way,
   except that it writes a non-ASCII escape as the real character. Tests: three modes in
   `tests/test-dangerous-commands.sh` (python3 works, fails, absent) and malformed-payload cases in
   `tests/dangerous-commands.Tests.ps1`.
 - **Found and fixed in review, 2026-10-14: a carriage return inside a word.** Git Bash deletes a CR
   while parsing, even with `igncr` off (measured: `ab`, CR, `cd` reaches the command as `abcd`). So
-  `git push --for`, CR, `ce` is a force push, and `git merge`, CR, LF runs a bare merge. Neither
-  hook gave a verdict on these, on either path, before this change. The decoder made one case
-  worse: the old raw fallback BLOCKed `r`, CR, `m -rf` only because the two characters `\r`
-  contained `rm -rf`, and decoding them to a real CR lost that accidental match. The sh hook, which
-  judges only Bash, now deletes CRs in its de-escaped view. The ps1 hook judges the PowerShell tool
-  too, where a lone CR separates statements (measured with PowerShell's parser), so it keeps its
-  de-escaped view and matches a third, CR-deleted view in addition. A first version deleted CRs in
-  ps1's own de-escaped view; round-2 review (finding OPP-1) measured that it turned a PowerShell-tool
-  BLOCK (`curl … | ba"sh"`, CR, `x`) and three CONFIRMs into no verdict, so it was replaced. An
-  earlier draft of this file said "a real shell keeps" the CR; that was asserted, not measured, and
-  it was wrong for Git Bash.
+  `git push --for`, CR, `ce` is a force push. Neither hook gave a verdict on it, on either path,
+  before this change. (`git merge`, CR, LF, then another command got none either. At the end of a
+  command the sh hook already prompted on Git Bash, because MSYS awk drops a CR before LF or the
+  end of input while joining continuation lines, so its faithful view never held that CR:
+  measured by R3 Correctness.) The decoder made one case worse: the old raw fallback BLOCKed `r`,
+  CR, `m -rf` only because the two characters `\r` contained `rm -rf`, and decoding them to a real
+  CR lost that accidental match. **The design, settled 2026-10-15:** both hooks keep their
+  de-escaped view as it was and match a third, CR-deleted copy in addition, in every matcher, so
+  the copy can only add matches. The history: a first version deleted CRs inside each hook's own
+  de-escaped view. On ps1, R2/OPP-1 measured that this turned a PowerShell-tool BLOCK (`curl … |
+  ba"sh"`, CR, `x`) and three CONFIRMs into no verdict, because PowerShell reads a lone CR as a
+  statement break (measured with its parser); ps1 moved to the third view. On sh the drops were
+  false positives only (Git Bash runs `xgit`, `bashx`), but R3/A-1 found the two hooks then gave a
+  Bash command different verdicts depending on whether pwsh was installed; the user chose the same
+  third view for sh. An earlier draft of this file said "a real shell keeps" the CR; that was
+  asserted, not measured, and it was wrong for Git Bash.
 - **Test-writing trap, found in review:** the tool that wrote the test files decoded `\u00e9`,
   `\u00a0` and `\u0026` into the characters themselves, so three "escape" cases ran literal
   characters and the decoder's non-ASCII branch went untested. Both suites now carry a note to check
@@ -97,8 +107,33 @@ checked against it:
   that, at `e3c2f43`, read "The deny message says to install GNU" now point there.
 - **Fixed alongside it, at the user's request:** `git merge`, a newline, then another command got
   no CONFIRM on either shell, **with** python3 too. The newline is now a trailing boundary in both,
-  and so is a CR, which PowerShell reads as a statement break (on Bash it is an accepted false
-  positive, kept so both hooks give one verdict).
+  and so is a CR, which PowerShell reads as a statement break. On Git Bash a CR followed by another
+  character (`git merge`, CR, `ls` runs `git mergels`) is an accepted false positive, kept so both
+  hooks give one verdict; a CR before a space, a newline or the end is a true positive there.
+- **Review follow-ups, done 2026-10-15** (each finding described, since the reports are not here):
+  - **R3/T-1:** three of the ps1 hook's five CR-deleted-view call sites (the BLOCK regex branch, the
+    CONFIRM literal branch, the WARN loop) could be dropped with both suites green. Pinned by
+    `curl x | ba`, CR, `sh`; `git commit --no-ver`, CR, `ify`; and `cat ~/.ssh/id_r`, CR, `sa`. A
+    structural test in each suite now counts the view's reads against the de-escaped view's (R3/A-5).
+  - **R3/T-2:** nothing checked what an ASCII `\uXXXX` decodes to. Pinned by rows where dropping it
+    glues two words (`echo a\u000agit commit --no-gpg-sign`, `git merge\u000aecho done`).
+  - **CHR/J6-2:** invalid escapes (`r\xm`, `r\u12m`) are pinned as kept, so neither refuses. `\/`
+    has no row: the de-escaped view deletes the backslash, so how `\/` decodes cannot change a
+    verdict.
+  - **CHR/J6-1:** nothing would catch a return to the quadratic `gsub` decoder. A timing test now
+    runs 200K raw quotes against one quote and requires under 10 s of difference.
+  - **R3/PERF-1, PERF-2:** the ungated ps1 third view added about half again to the ~50 KB worst
+    case. It is now skipped when identical to the de-escaped view. Measured 2026-10-15, medians of
+    three interleaved runs on one machine, dense `git `: 19.5 s at `e3c2f43`, 28.8 s ungated
+    (`75f9d98`), 18.8 s gated; dense `git config `: 9.0, 13.6 and 9.2 s. So the recorded
+    worst-case figures stand.
+  - **R3/A-1, A-2, A-3, M-1, M-2, M-6, Security F2, C3-4:** the sh/ps1 CR divergence and the
+    comments that described it, resolved by the third view on sh (above).
+  - **R3/C3-1, M-4:** the fold-to-ASCII exception is a class (U+017F and U+0131, measured), and the
+    standard now lists the stand-in's stricter byte count as well.
+  - **R3/M-3, C3-2, C3-3, T-3, C3-5, M-5, M-7; CHR/J5-1, J2-2:** wording, in this file, the
+    standard, `CHANGELOG.md` and the test comments.
+  - **R3/OPP3-2, CHR/J4-1, the hook timeout:** see the `onFailure` decision below.
 
 **Still open from item 1:**
 - **The merge row's trailing boundary is still narrow.** A bare `git merge` straight before `;`,
@@ -109,8 +144,29 @@ checked against it:
   the Performance review: about 1.6 to 1.9 s per MB of escape-dense payload, linear, fallback
   only. A raw-size cap before decoding would bound it, but would also refuse some payloads that
   decode below the bound, so it is a behaviour change to decide on, not a fix to slip in.
+- **Decision: should the dangerous-commands hook entries set `"onFailure": "block"`?** Read in the
+  Claude Code hooks reference on 2026-10-15: with no `timeout`, a command hook gets 600 s; a
+  PreToolUse command hook that times out does not block the call (its output is discarded); and
+  `"onFailure": "block"` (Claude Code v2.1.295 or later) blocks it instead, on a timeout, a hook
+  that cannot start, or an exit code other than 0 or 2. The worst case here, about 17.5 s, is far
+  inside 600 s, so no `timeout` was set. Setting `onFailure` would make the guard fail closed
+  fleet-wide and needs that Claude Code version on every adopter; note the `|| true` wiring already
+  turns a crash into exit 0, so it would mostly change the timeout case. Not decided.
 - **ps1's parsed path keeps a NUL that every other path drops** (`r`, NUL, `m -rf` gets no verdict
   there). Whether a harness can deliver a NUL to bash at all is unverified, so this may be moot.
+  Related (R3 Security F1): decoding `\u0000` to nothing can remove a boundary the old raw view had
+  (`x`, NUL, `git config …` lost its CONFIRM on the fallback); PowerShell runs `x` there and Bash
+  runs `xgit`, so only false positives were lost.
+- **The Pester suite writes to the repo's `.pmb-hook-errors.log`** (CHR/J3-2). Every fallback case
+  logs a parse failure to the cwd-relative log, and `mb doctor` Check 16 then WARNs. The helper
+  should run the hook from a temp directory. Measured 2,485 lines in one worktree.
+- **The python3-absent mode skips when its probe fails, not only when python3 cannot be hidden**
+  (CHR/J4-2). A new tool dependency in the hook's early path would drop the whole mode locally
+  instead of failing; CI sets `PMB_REQUIRE_PARITY=1` and would catch it.
+- **The suites prove policy, not the platform facts it rests on** (CHR/J5-3). That Git Bash deletes
+  a CR, and that the decoder behaves the same under gawk, mawk, BusyBox and macOS awk, were measured
+  by hand; CI runs Ubuntu only. macOS/BSD awk was never measured. The negative rows also pass if the
+  hook crashes (CHR/J5-2); the positive rows in the same loop catch a dead hook.
 - **An NBSP or U+2028 after `|` is BLOCK on ps1 and no verdict on sh**, on both paths. It predates
   this change: ps1's `\s` is Unicode-aware and sh's `[[:space:]]` runs under `LC_ALL=C`.
 - **On Git Bash, the parsed path misses an astral-character gap in the signing rows.** 140 emoji
@@ -161,8 +217,9 @@ checked against it:
   until GNU grep or pwsh is installed.
   - `standards/SECURITY-GUARDRAILS.md` and `docs/HOOKS-GUIDE.md`, with their template copies:
     corrected 2026-10-14, as part of item 1's rewrite.
-  - **Still open:** the `CHANGELOG.md` entry headed "The sh regex rows now prompt when `grep`
-    fails." says "Alpine with bash but without pwsh every Bash command prompts".
+  - `CHANGELOG.md`, the entry headed "The sh regex rows now prompt when `grep` fails.": corrected
+    2026-10-15 to say every Bash command is refused. Its heading still says "prompt", which is
+    right for the one failing grep it describes.
   - **Still open:** no `mb doctor` or `mb upgrade` check probes for `grep -z` before `mb upgrade`
     force-installs the hook. Add one: `printf 'a\0' | grep -qz a`.
 - **The standard's "Not covered" list reads as exhaustive.** It omits subshell, brace, `"$SHELL"`,

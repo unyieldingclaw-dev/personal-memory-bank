@@ -112,6 +112,13 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 { "matcher": "PowerShell", "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true" }
 ```
 
+**Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
+`timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
+out does not block the tool call: its output is discarded and the call proceeds, unless the entry
+sets `"onFailure": "block"` (Claude Code v2.1.295 or later). This hook's worst case, a ~50 KB
+command, is recorded at about 17.5 seconds in `standards/SECURITY-GUARDRAILS.md`, far inside the
+default.
+
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
 ### 2. Stop Notification (`Stop`) — excluded from install template
