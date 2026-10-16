@@ -9,7 +9,7 @@ an ask without a Findings section and a Recommendation.
 **Architecture:** A Stop hook script pair, `scripts/pre-approval-check.{sh,ps1}`, reads the Stop
 payload's `last_assistant_message` and classifies the ending. It then returns a JSON block decision,
 or allows the turn and launches the "Claude has paused" notification detached and self-closing
-(600 s). It replaces the existing modal popup Stop entry.
+(600 s on Windows). It replaces the existing modal popup Stop entry.
 - That live entry differs from the template's, so `tests/test-mirror-parity.sh` gains a narrow,
   dated trial exemption (spec §5, option A+).
 - A new "Pre-Approval Protocol" section in `WORKFLOW.md` holds the procedure, and supersedes
@@ -26,7 +26,7 @@ Read it before starting; this plan does not re-derive its decisions.
 
 Amendments 1–7 were approved by the user before execution, on 2026-10-14. Amendments 8 and 9 were
 found by the first execution attempt that day, amendment 10 is a user decision of 2026-10-15, and
-amendment 11 one of 2026-10-16.
+amendments 11 and 12 are user decisions of 2026-10-16.
 
 A pre-execution drift check against `origin/main` found one blocking break and several smaller
 ones. It had two review passes: the author's own, and an Opus `opposition` pass that returned
@@ -68,8 +68,9 @@ contract on 2026-10-14. Each change is also marked where it lands.
    diff that commit 2 does not contain.
 4. **Route:** the setup session ran Task 1 Steps 1 and 3 (worktree, contract) and wrote these
    amendments. **Execution runs in a fresh session opened directly in this worktree**, the route
-   constraint 1 prefers, starting at Task 1 Step 2. Its session id differs from the one below, so
-   Task 2 Step 1's substitution applies.
+   constraint 1 prefers, starting at Task 1 Step 2. Its session id differed from the setup
+   session's, so Task 2 Step 1's substitution applied. It has been applied: the id below,
+   `012ed341…`, is the executing session's (Task 2 Results).
 5. **Stale numbers and line cites corrected:**
    - Task 7 Step 4's "354-421 (146 passed, 2 failed)" and "(150/0)";
    - the "Claude Opus 5" trailers, which are now "Claude Opus 5.5".
@@ -114,15 +115,16 @@ contract on 2026-10-14. Each change is also marked where it lands.
     - **Doc corrections:**
       - error-log dedup is described as once per kind, not per session, in spec §3 and both
         scripts' comments (M-4, S5, C3);
-      - the trial exemption is re-dated to commit 2's date plus 21 days (A-F2);
+      - the trial exemption is re-dated to 2026-10-15 plus 21 days, `2026-11-05` (A-F2);
       - amendment 2's mutation count (M-8);
       - `WORKFLOW.md` says how a Task Contract proposal complies (OPP-4);
       - `HOOKS-GUIDE.md` places the hook in a note after the enforcement-layer table (A-F1).
     - **Deferred** to the trial-end promotion decision, and listed in spec §5: every other finding.
     - **Task 10 Step 3** also stages the two scripts and `tests/test-pre-approval-check.sh`. Its
       commit message names the fixes.
-    - **The Task 4–6 code blocks are commit-1 text.** The shipped scripts and test supersede them;
-      re-extracting a block would undo these fixes.
+    - **The code blocks in Tasks 4–10 are the text as first executed.** The shipped files supersede
+      them: Tasks 4–6 are commit-1 text, and the Task 7–10 blocks predate the fixes in amendments 10
+      and 11. Re-extracting any block would undo those fixes.
 11. **Commit 2's first `/code-review`** (2026-10-16): 26 findings, none blocking, one Medium. The
     Medium: the Phase 3.5 pointer said the independent review now runs before every ask; it runs
     only on escalation-list asks. Opposition was not run. The user chose to fix the Medium and the
@@ -148,16 +150,54 @@ contract on 2026-10-14. Each change is also marked where it lands.
         note that the Task 4–6 code blocks are commit-1 text, the Design Note's "once per
         session", and "a note after the enforcement-layer table" instead of "in" it.
     - **Deferred to spec §5** (now listed in its promotion checklist):
-      - A-F1, a template content assertion;
-      - A-F3, the template guide naming the PMB-only hook;
-      - A-F4, CLAUDE.md, AGENTS.md and templates/CLAUDE.md saying hooks "cannot be talked around",
-        and the contract format having a second source;
-      - A-F5, the findings vocabulary;
-      - A-F6, the spawn budget;
-      - A-F7, `python3 -I` for the other hooks;
-      - M-1, tag prefixes;
-      - M-6, comments on the awk;
-      - the escape regexes' options are unpinned.
+      Tags are the round-1 report's own and reuse commit 1's letters, so they are written in full:
+      - architecture F1, a template content assertion;
+      - architecture F3, the template guide naming the PMB-only hook;
+      - architecture F4, CLAUDE.md, AGENTS.md and templates/CLAUDE.md saying hooks "cannot be
+        talked around", and the contract format having a second source;
+      - architecture F5, the findings vocabulary;
+      - architecture F6, the spawn budget;
+      - architecture F7, `python3 -I` for the other hooks;
+      - maintainability MAINT-1, tag prefixes;
+      - maintainability MAINT-6, comments on the awk;
+      - testing finding 3, the escape regexes' options are unpinned.
+12. **Commit 2's second `/code-review`, and a follow-up commit** (2026-10-16). Five domains plus an
+    Opus `opposition` pass: **Approve**, with 30 findings (about 20 distinct), none blocking.
+    Commit 2 landed as reviewed (`aae2be8`). `origin/main` (PRs #55 and #56) was then merged in
+    (`1d014a6`). That cleared the startup-context ratchet, which had failed only because #56 shrank
+    `memory-bank/` after this branch forked. The user chose to fold the Low fixes into one
+    follow-up commit with its own review. The report is out of repo, at
+    `pmb-session-artifacts/pre-approval-review/review-commit2-round2.md`; the tags below are its
+    own.
+    - **Fixed in the follow-up:**
+      - the expiry-date comment and Task 11's grace arithmetic (correctness F1, testing T-1,
+        maintainability F3, architecture AD-1), and the date's anchor (correctness F2);
+      - the stale code blocks and "identical" Results (correctness F3, maintainability F1,
+        architecture AD-2);
+      - amendment 11's tags, now written in full (correctness F4, maintainability F2);
+      - WORKFLOW's contract-placement sentence (correctness F5);
+      - spec §5's checklist preamble (correctness F6) and its F5 bullet (architecture AD-4);
+      - the spec header, Known Limitation 5's marker, and the Testing section's provenance and
+        wording (correctness F8 and F9, maintainability F5 and F6, opposition OPP-2);
+      - the template guide's two tiers (correctness F10) and amendment 4's session id (F11);
+      - the remaining unqualified 600 s claims (maintainability F5);
+      - the parity comment's Multiline claim (testing T-2, maintainability F4) and the region-pin
+        assertion's name (testing T-3);
+      - in `HOOKS-GUIDE.md`, fail-open as a design property and the cases the trial log misses
+        (security F1), and the "deny-tier" scope of the guarantee (architecture AD-3);
+      - the permission-mode Results, which the user corrected.
+    - **Round-1 items amendment 11 dropped** (correctness F7): MAINT-7's Known Limitation 12
+      cross-reference, the security fail-open sentence and MAINT-8's dedup comment are fixed here;
+      architecture F2's owner question is deferred to spec §5.
+    - **Deferred to spec §5:** the expiry failure's owner (architecture AD-5), the testing gaps, and
+      security F4.
+    - **Declined:**
+      - security F2: "on Windows" narrows the claim, and the 600 s evidence is unchanged and
+        disclosed in the Task 8–9 Results;
+      - security F3: already spec §5's A-F3;
+      - correctness F12: covered by the Tasks 4–10 code-block note, and commit 2's message was
+        written separately and names the fixes;
+      - opposition OPP-1: it concerns the orchestrator's notes, not the repo.
 
 ---
 
@@ -622,7 +662,9 @@ Task 8 Step 3 and Task 9 Step 2 use the kill-switch result.
 - **Mode:** the session left `default` during the spikes (to auto, then acceptEdits) by a route this
   session did not observe. The user's later switch to Ask permissions in the app's picker did not show
   in `get_session`, which still said acceptEdits. `set_session_permission_mode` to `default` did.
-  Every spike `settings.json` edit after spike 1 was made in `default`.
+  Every spike `settings.json` edit after spike 1 was made in `default`. **Correction (2026-10-16):**
+  the user said they switch modes deliberately, to avoid approving every call, so these changes were
+  most likely theirs.
 
 ---
 
@@ -1340,7 +1382,7 @@ reproduced on 2026-09-22 as 146 passed, 2 failed. Absolute counts have moved sin
 `FAIL` lines.
 
 Compute the expiry, 21 days from today (the 14-day trial from merge plus a 7-day grace).
-**Re-dated by amendment 10:** commit 2 sets it to commit 2's date plus 21 days, `2026-11-05`; the
+**Re-dated by amendment 10:** commit 2 sets it to 2026-10-15 plus 21 days, `2026-11-05`; the
 `2026-11-04` in this task's Results is the commit-1 value.
 
 ```bash
@@ -1848,11 +1890,11 @@ Expected:
 
 **Results (2026-10-15, Tasks 8–9 and amendment 10):**
 - **Task 8:** Steps 1, 3, 3b and 3c were spliced from this plan's blocks by an extraction script.
-  Each is identical to its block. The kill switch reads "takes effect on the next turn", per
-  Task 3. Mirror test: 154 passed, 0 failed, the figure amendment 2 measured. `baseline-health`
-  passed all 7 checks.
-- **Task 9:** both §2 blocks are identical to their plan blocks. Step 4: 0 "excluded", 1 caveat
-  per file.
+  Each was identical to its block at splice time; amendments 10 and 11 changed the files since. The
+  kill switch reads "takes effect on the next turn", per Task 3. Mirror test: 154 passed, 0 failed,
+  the figure amendment 2 measured. `baseline-health` passed all 7 checks.
+- **Task 9:** both §2 blocks were identical to their plan blocks at splice time. Step 4: 0
+  "excluded", 1 caveat per file.
 - **Amendment 10 fixes:** five mutants, one per fix, each failed the assertion its fix added:
   - T1, a typo in one twin;
   - T2, a fail-open when a Recommendation is present;
@@ -1870,7 +1912,8 @@ Expected:
 - **Permission mode:** on 2026-10-15 the session was found in acceptEdits with no observed cause,
   and the user was not sure whether they had changed it. It was reset to default, and the user
   chose default for the commit-2 review. This is the second session where the mode changed this
-  way.
+  way. **Correction (2026-10-16):** the user switches to auto deliberately, to avoid approving every
+  call, and commit 2's review rounds ran in auto.
 - **Popup timeout:** WScript.Shell.Popup self-closed (return -1) on both launch paths, so the
   "closes itself after 600 s" claim is measured, not assumed. Git Bash shows that -1 as exit 127.
   Two new-style popups seen still open 15 minutes after launch, during that defective run, are
@@ -1988,10 +2031,10 @@ Pushing, opening a PR and merging are **each** separate approvals from the user.
 with Findings and a Recommendation.
 
 **Before the push, re-check the exemption's expiry date** (review finding L2). Commit 2 set it to
-2026-10-15 plus 21 days, `2026-11-05` (amendment 10, re-dating Task 7 Step 4's value), so every
-day the merge lands after 2026-10-22 comes out of the 7-day grace. If
-merge is unlikely before `expiry - 14 days`, move the date in a new commit through the gate, not an
-amend.
+2026-10-15 plus 21 days, `2026-11-05` (amendment 10, re-dating Task 7 Step 4's value). Each day
+the merge lands after 2026-10-15 uses up a day of the 7-day grace, and a merge after 2026-10-22
+(`expiry - 14 days`) leaves less than 14 days of trial. If merge is unlikely by then, move the date
+in a new commit through the gate, not an amend.
 
 **Constraint 2 still applies inside the skill** (review finding N3). The skill's own push command
 won't start with the literal `cd`, so write the push yourself (below).

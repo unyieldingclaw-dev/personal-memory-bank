@@ -43,9 +43,10 @@ notify() {
 }
 
 # At most one line per kind, so a persistent fault cannot bury other hooks' errors in `mb doctor`'s
-# `tail -3` of the shared log. The key has a session field, but every caller passes `-` (most errors
-# come before a session id is known), so in practice it is once per kind until the log is cleared.
-# The trial log still records every fail-open.
+# `tail -3` of the shared log. The key has a session field, but it is always `-`: two callers pass it
+# literally, and the third passes the classifier's `ERROR - parse` line, whose session field is `-`
+# (most errors come before a session id is known). So in practice it is once per kind until the log
+# is cleared. The trial log still records each fail-open this script reaches.
 log_error_once() {
     local key="pre-approval-check.sh: session=$1 kind=$2"
     grep -qF -- "$key" "$ERR_LOG" 2>/dev/null && return 0

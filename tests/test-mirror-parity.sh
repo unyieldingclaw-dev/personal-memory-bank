@@ -250,7 +250,7 @@ wf_regions() {
 WF_LIVE_R="$(wf_regions "$STD_LIVE/WORKFLOW.md" 2>/dev/null)"
 WF_TMPL_R="$(wf_regions "$STD_TMPL/WORKFLOW.md" 2>/dev/null)"
 assert_equals "$(printf '%s\n' "$WF_LIVE_R" | tail -n 1)" "regions: phase35=1 protocol=1 row35=1 rowreview=1 inner=0" \
-    "WORKFLOW.md (live): each named region found exactly once, with no heading inside"
+    "WORKFLOW.md (live): each named region found exactly once, no heading inside, protocol closed by ## Context Management"
 assert_equals "$(printf '%s\n' "$WF_TMPL_R" | tail -n 1)" "regions: phase35=1 protocol=0 row35=1 rowreview=1 inner=0" \
     "WORKFLOW.md (template): each named region found, no protocol section, no heading inside"
 [ -n "$WF_LIVE_R" ] && [ "$(printf '%s\n' "$WF_LIVE_R" | sed '$d')" = "$(printf '%s\n' "$WF_TMPL_R" | sed '$d')" ]
@@ -433,11 +433,12 @@ if [ -f "$SJ_LIVE" ] && [ -f "$SJ_TMPL" ]; then
     pa_tmpl_line=$(grep '"command":.*Claude has paused and is waiting for input' "$SJ_TMPL")
     PA_TMPL_LINE="$pa_tmpl_line" awk '/scripts\/pre-approval-check\./ { print ENVIRON["PA_TMPL_LINE"]; next } { print }' "$SJ_LIVE" > "$SJ_LIVE_CMP"
     SJ_LIVE="$SJ_LIVE_CMP"
-    # The date was set on 2026-10-15 as that day plus 21 days: a 14-day trial from a merge expected
-    # that week, plus a 7-day grace. Every day the merge lands after 2026-10-22 comes out of the grace,
-    # so re-date it at merge if that slips (plan Task 11 checks). When it passes, CI fails until the
-    # exemption is resolved: remove this block (hook promoted into templates/ or deleted), or move the
-    # date deliberately. Resolve the undated WORKFLOW.md region pin above in the same decision. A WARN
+    # The date is 2026-10-15 plus 21 days: a 14-day trial plus a 7-day grace, counted from that day.
+    # Each day the merge lands after 2026-10-15 uses up a day of the grace. A merge after 2026-10-22
+    # (the expiry minus 14 days) leaves less than 14 days of trial, so re-date it if the merge slips
+    # past that day (plan Task 11 checks). When the date passes, CI fails until the exemption is
+    # resolved: remove this block (hook promoted into templates/ or deleted), or move the date
+    # deliberately. Resolve the undated WORKFLOW.md region pin above in the same decision. A WARN
     # would not do: this repo recorded one being ignored (2026-08-12).
     # A date left as the placeholder fails too (review finding L1). If the template's popup line is
     # removed, or loses the text "Claude has paused and is waiting for input", rewrite this block: the

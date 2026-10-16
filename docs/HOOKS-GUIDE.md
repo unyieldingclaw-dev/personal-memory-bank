@@ -32,7 +32,7 @@ Hooks are one layer in a four-layer enforcement stack. Understanding which layer
 
 **Design rule:** Don't duplicate concerns across layers. If a check belongs in CI, adding it to hooks creates two places to update when patterns change. If a check is semantic, adding it to hooks creates false confidence (simple pattern matching misses context). Each layer does its job; the stack as a whole provides defense in depth.
 
-**One deliberate exception, on trial in PMB only:** the `pre-approval-check` Stop hook (§2) runs once per turn, not per tool call. It pattern-matches the assistant's prose, which is a semantic signal. It is held to the design rule by checking only that the protocol's sections *exist*. Whether the checks behind them were adequate stays with the Reviewer / Opponent layer. The model can also answer a false positive with an escape phrase. So the hook adds friction, not the "cannot be talked around" guarantee the other hooks give. The trial decides whether it stays (design spec §5).
+**One deliberate exception, on trial in PMB only:** the `pre-approval-check` Stop hook (§2) runs once per turn, not per tool call. It pattern-matches the assistant's prose, which is a semantic signal. It is held to the design rule by checking only that the protocol's sections *exist*. Whether the checks behind them were adequate stays with the Reviewer / Opponent layer. The model can also answer a false positive with an escape phrase. So the hook adds friction, not the "cannot be talked around" guarantee the deny-tier `PreToolUse` hooks give. The trial decides whether it stays (design spec §5).
 
 **Worked example — why "was this authorized?" stays advisory:** A session merged a feature branch into a shared branch after the user replied "what do you suggest" to a structured choice — a request for a recommendation, not a directive, but the agent treated it as one. A `PreToolUse` hook can't fix this: it sees only the `git merge` command about to run, never the chat turn that did or didn't authorize it. The tempting fix — a marker file the agent writes after concluding "the user approved this" — is exactly as fakeable as a self-written code-review marker, which is why `/code-review` and `/change-review` bind their markers to a SHA-256 of the actual reviewed diff instead of an unverifiable claim (see the `review-reminders.sh`/`.ps1` header comments). There's no equivalent artifact to hash for "the user meant this right now," so this stays a `standards/SECURITY-GUARDRAILS.md` rule (see "What Counts as Approval") — caught by drift-resistant discipline, not a gate that always fires.
 
@@ -147,14 +147,16 @@ In PMB, one Stop entry, `scripts/pre-approval-check.ps1` with its `.sh` twin, do
     is a measured heuristic trigger, and adequacy stays with the Reviewer/Opponent layer. See the
     design rule above on false confidence.
 - **"Claude has paused" notification.** It is launched detached on every exit except a block, and
-  on Windows it closes itself after 600 s. The harness no longer waits on it. It used to be a separate, modal
-  Stop entry:
+  on Windows it closes itself after 600 s. The harness no longer waits on it. It used to be a
+  separate, modal Stop entry:
   - `--Remote-Control` and headless sessions hung on it, with no one present to dismiss it;
   - a block would have shown "waiting for input" about an ask that was about to be replaced.
 
-Blocks, post-block outcomes and fail-opens go to `.pmb-pre-approval.log` (gitignored, no message
-text) for the trial that decides template rollout. Kill switch: `"PMB_PRE_APPROVAL": "off"` in the
-`settings.json` env block (takes effect on the next turn).
+The hook fails open by design: on any error it allows the turn. Blocks, post-block outcomes and the
+fail-opens the script reaches go to `.pmb-pre-approval.log` (gitignored, no message text) for the
+trial that decides template rollout. Two cases leave no line: the kill switch, and both scripts
+failing to start (for example from a subfolder; design spec, Known Limitation 10). Kill switch:
+`"PMB_PRE_APPROVAL": "off"` in the `settings.json` env block (takes effect on the next turn).
 
 **What adopters get today.** `templates/.claude/settings.json` still installs the older modal popup
 as its Stop entry. During the trial, PMB's live entry differs from it under a dated exemption in

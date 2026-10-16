@@ -37,7 +37,7 @@ function Add-LogLine {
 # At most one line per kind, so a persistent fault cannot bury other hooks' errors in `mb doctor`'s
 # `tail -3` of the shared log. The key has a session field, but every caller passes '-' (most errors
 # come before a session id is known), so in practice it is once per kind until the log is cleared.
-# The trial log still records every fail-open.
+# The trial log still records each fail-open this script reaches.
 function Write-HookErrorOnce {
     param([string]$Session, [string]$Kind, [string]$Detail)
     $key = "pre-approval-check.ps1: session=$Session kind=$Kind"

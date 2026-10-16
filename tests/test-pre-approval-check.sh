@@ -230,8 +230,9 @@ fi
 # single-quoted strings both keep backslashes literally, so identical source text means identical
 # pattern text. A renamed variable fails too: each literal must be found exactly once in each twin.
 # NOT compared: the regex options. Python's flags and PowerShell's RegexOptions have no common
-# spelling. The behavioural cases pin IgnoreCase and Multiline for ASK, FINDINGS and RECOMMEND;
-# nothing pins the two escape regexes' options.
+# spelling. The behavioural cases pin IgnoreCase for ASK, FINDINGS and RECOMMEND, and Multiline for
+# FINDINGS and RECOMMEND (ASK has no anchors, so Multiline does not affect it); nothing pins the two
+# escape regexes' options.
 # WHY -c and not `python3 - FILE <<heredoc`: on Windows, python3 can be the Python install manager,
 # which then treats the first FILE argument as the script and runs its shebang. Here that ran the
 # hook script itself with bash.

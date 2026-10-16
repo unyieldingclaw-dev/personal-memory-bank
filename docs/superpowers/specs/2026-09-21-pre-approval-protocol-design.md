@@ -11,7 +11,7 @@ review:
 
 **Amended 2026-09-22** with two decisions the user took after further review rounds on the plan:
 - **The parity conflict:** option A+ (§5).
-- **The popup:** it closes itself after 600 s (§3).
+- **The popup:** on Windows, it closes itself after 600 s (§3).
 
 Those rounds found that the plan as written would fail CI, because
 `tests/test-mirror-parity.sh:354-421` (382-436 as of `e3c2f43`) pins the live Stop wiring to the
@@ -22,8 +22,9 @@ template's.
   the `CHANGELOG.md` and `scripts/mb.sh` edits (Files Changed).
 - **2026-10-15:** error-log dedup is once per kind, not per session (§3, Failure handling), and the
   promotion checklist, from commit 1's review (§5).
-- **2026-10-16:** commit 2's cases in Testing, Known Limitation 11, and the promotion checklist's
-  items from commit 2's first review (§5).
+- **2026-10-16:** commit 2's cases in Testing; Known Limitations 5, 11 and 12; the promotion
+  checklist's items from commit 2's two reviews (§5); and "on Windows" on every 600 s claim
+  (marked once, at Known Limitation 5).
 
 ## Problem
 
@@ -210,7 +211,7 @@ allow. On a block there is no popup.
 This changes the popup from modal to non-modal. It no longer holds the session until dismissed,
 which also removes the stall that `HOOKS-GUIDE:116` records.
 
-**The popup closes itself after 600 s** (user decision 2026-09-22). On Windows it is
+**On Windows, the popup closes itself after 600 s** (user decision 2026-09-22). There it is
 `(New-Object -ComObject WScript.Shell).Popup(<text>, 600, 'Claude Code', 64)`, not a `MessageBox`.
 
 Why it has a timeout:
@@ -375,8 +376,11 @@ protocol text still covers these asks. Spikes 3 and 4 are removed with it.
   convention for the 27 of 29 plans without a status line, and it would verify form only.
 - **Promotion checklist (added 2026-10-15): deferred until a decision to put the hook into
   `templates/`.** Commit 1's `/code-review` approved with 40 findings, none blocking. The report is
-  out of repo, at `pmb-session-artifacts/pre-approval-review/review-commit1.md`. Six findings were
-  fixed in commit 2 (plan amendment 10). The rest matter only if adopters get the hook:
+  out of repo, at `pmb-session-artifacts/pre-approval-review/review-commit1.md`. Commit 2 fixed six
+  of them in code and corrected the docs for several more (plan amendment 10). The items below are
+  deferred to that decision. Most matter only if adopters get the hook, but two also affect the PMB
+  trial itself: `mb upgrade` reverting it (A-F6) and the unlogged kill switch (S4). Items that
+  commit 2 resolved, or that needed no action, are not listed:
   - **Wiring and paths:**
     - scripts and logs are found by relative path, so a different cwd skips the check silently
       (S3);
@@ -402,7 +406,7 @@ protocol text still covers these asks. Spikes 3 and 4 are removed with it.
     - the window's upper bound (T7).
   - **Cost:**
     - about 1.4 s per turn on the `.sh` path (P1);
-    - one popup process per unanswered turn, alive for up to 600 s (P2).
+    - one popup process per unanswered turn, alive for up to 600 s on Windows (P2).
   - **Housekeeping:**
     - removing the trial exemption touches several sites (M-6);
     - `mb upgrade` inside PMB would revert the trial silently (A-F6);
@@ -421,7 +425,10 @@ protocol text still covers these asks. Spikes 3 and 4 are removed with it.
       around". They also own the Task Contract proposal format, which `WORKFLOW.md` now constrains
       too, so the format has a second source (architecture F4);
     - the protocol's Findings table does not use `standards/CODE-REVIEW.md`'s Basis, Severity and
-      Blocking vocabulary, and does not say whether it means to (architecture F5);
+      Blocking vocabulary, and does not say whether it means to. Superseding Phase 3.5 also dropped
+      its rule that a `Blocking: true` finding is fixed before proceeding and the rest disclosed,
+      and the protocol has no counterpart to CODE-REVIEW's absence-claim scope rule (architecture
+      F5);
     - step 2's `opposition` spawn counts against `standards/PERFORMANCE-BUDGET.md`'s spawn limit,
       which nothing mentions (architecture F6);
     - only this hook runs `python3 -I`; `dangerous-commands.sh` and `check-contract.sh` still run
@@ -432,6 +439,16 @@ protocol text still covers these asks. Spikes 3 and 4 are removed with it.
       or its rule order (maintainability MAINT-6);
     - the twin parity check compares the escape regexes' pattern literals but not their options.
       An `ESC_A` option drift passed the full suite (testing finding 3).
+  - **From commit 2's second review** (added 2026-10-16). The report is out of repo, at
+    `pmb-session-artifacts/pre-approval-review/review-commit2-round2.md`, with its own tags:
+    - no one is recorded as owning the CI failure the trial exemption's expiry date forces
+      (architecture AD-5);
+    - the twin parity check finds each literal in only one spelling per twin, so a later
+      reassignment in another spelling is invisible to it; the `python3 -I` case plants only a
+      `json.py` in the cwd, not `PYTHONPATH` or a user-site module; and the expiry assertion has no
+      upper bound, so a far-future date passes (testing gaps);
+    - whether the `.ps1`'s `Start-Process powershell.exe` can resolve a binary in the project
+      directory is unverified (security F4, SPECULATIVE; a probe was refused).
 
 ### 6. Why a hook, when the August design ruled hook enforcement out
 
@@ -552,13 +569,16 @@ real conversation text is committed.
   Absent and duplicated were verified by mutation at design time (2026-09-22); the executor
   re-verifies the expiry case (plan Task 7 Step 4).
 
-Added in commit 2 (amended 2026-10-16), from commit 1's review:
+Added in commit 2 (amended 2026-10-16). The first five come from commit 1's review, the region pin
+from plan amendment 2:
 - The kill switch is case-sensitive in both shells: `PMB_PRE_APPROVAL=OFF` still blocks.
-- A `json.py` in the hook's directory does not disable the check and is never imported
-  (`python3 -I`).
+- A `json.py` in the hook's cwd does not disable the check and is never imported (`python3 -I`).
+  Only the `.sh` runs `python3`, and on a machine with `pwsh` the `.sh` is the fallback link: the
+  live path runs the `.ps1`.
 - A Findings heading after a preamble line counts (the multiline anchor).
-- Every allow case also asserts that no fail-open was logged. That catches a classifier that fails
-  open, not a missing script; the block cases catch that.
+- Every allow case that is not the kill switch or a deliberate fail-open also asserts that no
+  fail-open was logged. That catches a classifier that fails open, not a missing script; the block
+  cases catch that.
 - A static check that the five rule regexes' pattern literals are identical in both twins. Their
   options are not compared.
 - In `tests/test-mirror-parity.sh`, the `WORKFLOW.md` region pin asserts the region counts on each
@@ -616,8 +636,9 @@ Not changed: `CLAUDE.md`, `templates/` except `HOOKS-GUIDE.md`, `.claude/command
    out-of-sample (evidence row 10). Other projects' phrasing was not measured. A miss degrades to
    today's behavior, and the trial log tracks blocks, not misses.
 4. **Fires for every session in this directory** once merged, including peers mid-task.
-5. **The popup becomes non-modal and, on Windows, closes itself after 600 s.** That is a deliberate behavior
-   change (§3). A notice ignored for longer than that is lost.
+5. **The popup becomes non-modal and, on Windows, closes itself after 600 s** ("on Windows"
+   amended 2026-10-16). That is a deliberate behavior change (§3). A notice ignored for longer than
+   that is lost.
 6. **The first-pass reminder is user-level auto-memory**, not version-controlled. Revisit at
    template rollout.
 7. **`feature-dev.md` drift** until template rollout (§5).
@@ -638,7 +659,8 @@ Not changed: `CLAUDE.md`, `templates/` except `HOOKS-GUIDE.md`, `.claude/command
     whose swap needs the template's popup line; rewrite the exemption in the same change (review
     finding L3).
 12. **The trial exemption must be resolved by its expiry date.** CI fails after that date until the
-    exemption is removed (hook promoted or deleted) or the date is deliberately extended.
+    exemption is removed (hook promoted or deleted) or the date is deliberately extended. The same
+    decision rewrites the undated `WORKFLOW.md` region pin (§5; amended 2026-10-16).
 
 ## Out of Scope
 

@@ -123,8 +123,8 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 
 PMB's own `.claude/settings.json` runs a single Stop hook, `scripts/pre-approval-check.ps1`, with
 two jobs:
-- it enforces PMB's Pre-Approval Protocol: a turn ending in an ask must carry a Findings section and
-  a Recommendation;
+- it enforces PMB's Pre-Approval Protocol: a turn ending in an approve-or-choose ask must carry a
+  Findings section and a Recommendation, and a turn ending in any other question a Recommendation;
 - it shows a detached "Claude has paused" notification that, on Windows, closes itself after 600 s.
 
 **A pass means the sections exist, not that the checks behind them were good.** Ask detection is a

@@ -229,7 +229,8 @@ the ask, so the workflow stays at 7 phases. It supersedes Phase 3.5. Design and 
    - When the escalation list fired, one row carries the `opposition` verdict.
    - A question that is not an approve-or-choose ask still needs a Recommendation.
    - A Task Contract proposal in CLAUDE.md's format is an approval ask too. Put both sections
-     above its `Type "approved"` line, or the hook sends it back.
+     above its `Type "approved"` line. The hook checks only that they are present somewhere in the
+     message, and sends the proposal back if they are not.
 
 **Enforcement:**
 - **The hook:** `pre-approval-check` (PMB-only; `docs/HOOKS-GUIDE.md` §2) sends back, once, any
