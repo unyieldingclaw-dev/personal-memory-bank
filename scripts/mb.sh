@@ -2163,10 +2163,10 @@ invoke_upgrade() {
         # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md was then STALE,
         # not genericized: its Phase 3 described a superseded plan flow, so force-overwriting would
         # have replaced a correct governance file with a known-wrong one. [NS-19] fixed that
-        # template, and test-mirror-parity.sh now pins WORKFLOW.md's remaining divergence to one
-        # generic paragraph. The overwrite would still discard an adopter's own edits to
-        # standards/, and three of the fifteen stay on test-mirror-parity.sh's STD_DIVERGE_OK
-        # allowlist, which asserts they must KEEP diverging.
+        # template, and test-mirror-parity.sh now pins WORKFLOW.md's remaining divergence to named
+        # regions (Phase 3.5, PMB's live-only Pre-Approval Protocol, two table rows). The overwrite
+        # would still discard an adopter's own edits to standards/, and three of the fifteen stay on
+        # test-mirror-parity.sh's STD_DIVERGE_OK allowlist, which asserts they must KEEP diverging.
         #
         # The two runtimes therefore disagree, deliberately and visibly: mb.ps1 force-overwrites
         # standards, mb.sh does not. That disagreement is now pinned by an assertion in

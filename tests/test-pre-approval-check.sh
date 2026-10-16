@@ -83,13 +83,22 @@ notified() {
 
 log_text() { cat "$SB/.pmb-pre-approval.log" 2>/dev/null; }
 
+# assert_allowed MSG -- the hook printed nothing AND logged no fail-open (review finding T2). An empty
+# OUT alone also passes when the classifier crashes and fails open, so a regression that fails every
+# compliant ask open would stay green. It does NOT catch a missing script, or a crash before anything
+# is logged: neither writes a log. The block cases in this suite catch those.
+assert_allowed() {
+    assert_equals "$OUT" "" "$1"
+    assert_not_contains "$(log_text)" "event=failopen" "$1 (and did not fail open)"
+}
+
 check_shell() {
     local S="$1" ask
     echo ""
     echo "--- [$S] classification ---"
 
     run_case "$S" "$(payload 'Done. The file is updated and the suite is green.')"
-    assert_equals "$OUT" "" "[$S] a statement is allowed silently"
+    assert_allowed "[$S] a statement is allowed silently"
     notified 6; assert_exit_zero "$?" "[$S] a statement still shows the paused notification"
 
     run_case "$S" "$(payload 'I checked it. Want me to push it now? Zanzibar')"
@@ -109,9 +118,9 @@ check_shell() {
     done
 
     run_case "$S" "$(payload $'Review complete.\n\n**Verdict:** Approve')"
-    assert_equals "$OUT" "" "[$S] a bare Verdict: Approve line is not an ask"
+    assert_allowed "[$S] a bare Verdict: Approve line is not an ask"
     run_case "$S" "$(payload 'The protocol covers anything I ask you to approve.')"
-    assert_equals "$OUT" "" "[$S] mentioning approve in prose is not an ask"
+    assert_allowed "[$S] mentioning approve in prose is not an ask"
 
     run_case "$S" "$(payload 'Which should we brainstorm first?')"
     assert_contains "$OUT" 'No recommendation applies:' "[$S] a tier B question without a Recommendation is blocked"
@@ -121,17 +130,20 @@ check_shell() {
     assert_contains "$OUT" '"decision":"block"' "[$S] trailing markdown after the ? is still a question"
 
     run_case "$S" "$(payload $'## Recommendation\nStart with the hook, because it unblocks the rest.\n\nWhich should we brainstorm first?')"
-    assert_equals "$OUT" "" "[$S] tier B with a Recommendation heading is allowed"
+    assert_allowed "[$S] tier B with a Recommendation heading is allowed"
 
     run_case "$S" "$(payload $'**My recommendation:** start with the hook.\n\nWhich should we brainstorm first?')"
-    assert_equals "$OUT" "" "[$S] a lower-case recommendation in a bold label counts (case-insensitive)"
+    assert_allowed "[$S] a lower-case recommendation in a bold label counts (case-insensitive)"
 
     run_case "$S" "$(payload $'## Findings\n| # | Question | How | Result |\n|---|---|---|---|\n| 1 | x | `ls` | ok |\n\n## Recommendation\nShip it.\n\nWant me to proceed?')"
-    assert_equals "$OUT" "" "[$S] tier A with Findings and Recommendation is allowed"
+    assert_allowed "[$S] tier A with Findings and Recommendation is allowed"
     notified 6; assert_exit_zero "$?" "[$S] an allowed ask shows the notification"
 
     run_case "$S" "$(payload $'## FINDINGS\n| 1 | x | `ls` | ok |\n\n## RECOMMENDATION\nShip it.\n\nWant me to proceed?')"
-    assert_equals "$OUT" "" "[$S] upper-case section headings count (review finding F10)"
+    assert_allowed "[$S] upper-case section headings count (review finding F10)"
+
+    run_case "$S" "$(payload $'I ran the checks below before asking.\n\n## Findings\n| 1 | x | `ls` | ok |\n\n## Recommendation\nShip it.\n\nWant me to proceed?')"
+    assert_allowed "[$S] a Findings heading after a preamble line counts (multiline anchor; review finding T3)"
 
     # 150 em dashes are 150 characters but 450 bytes. Decoded as UTF-8, the ask stays inside the
     # 400-character window; decoded byte by byte (the ibm437/cp1252 bug), it falls outside and is missed.
@@ -142,16 +154,16 @@ check_shell() {
     assert_contains "$(log_text)" 'missing=recommendation' "[$S] Findings without a Recommendation is blocked"
 
     run_case "$S" "$(payload $'## Supported Findings\n| Domain | Severity |\n\n**Verdict:** Approve\n\nWant me to commit?')"
-    assert_equals "$OUT" "" "[$S] a /code-review-shaped report (Supported Findings + Verdict) is allowed"
+    assert_allowed "[$S] a /code-review-shaped report (Supported Findings + Verdict) is allowed"
 
     echo "--- [$S] loop guard and post-block logging ---"
     run_case "$S" "$(payload 'Not an approval ask: that was a status update.' 1)"
-    assert_equals "$OUT" "" "[$S] stop_hook_active true is always allowed"
+    assert_allowed "[$S] stop_hook_active true is always allowed"
     assert_contains "$(log_text)" 'event=post-block findings=no recommendation=no escape=not_an_approval_ask' "[$S] the tier A escape is logged"
     notified 6; assert_exit_zero "$?" "[$S] the post-block stop shows the notification"
 
     run_case "$S" "$(payload 'I checked it. Want me to push it now?' 1)"
-    assert_equals "$OUT" "" "[$S] stop_hook_active true allows even an unsectioned tier A ask (review finding F8)"
+    assert_allowed "[$S] stop_hook_active true allows even an unsectioned tier A ask (review finding F8)"
 
     run_case "$S" "$(payload 'No recommendation applies: I need the repo URL from you.' 1)"
     assert_contains "$(log_text)" 'escape=no_recommendation_applies' "[$S] the tier B escape is logged separately"
@@ -165,8 +177,20 @@ check_shell() {
     assert_file_not_exists "$SB/.pmb-pre-approval.log" "[$S] PMB_PRE_APPROVAL=off logs nothing"
     notified 6; assert_exit_zero "$?" "[$S] PMB_PRE_APPROVAL=off still notifies"
 
+    run_case "$S" "$(payload 'Want me to push it now?')" PMB_PRE_APPROVAL=OFF
+    assert_contains "$OUT" '"decision":"block"' "[$S] the kill switch is case-sensitive: OFF does not disable it (review finding C2)"
+
+    if [ "$S" = "sh" ]; then
+        # A json.py in the hook's cwd must not shadow the standard library (review finding S2).
+        printf 'open("shadowed", "w").write("x")\n' > "$SB/json.py"
+        run_case "$S" "$(payload 'Want me to push it now?')"
+        rm -f "$SB/json.py"
+        assert_contains "$OUT" '"decision":"block"' "[$S] a json.py in the cwd does not disable the check (python3 -I; review finding S2)"
+        assert_file_not_exists "$SB/shadowed" "[$S] a json.py in the cwd is never imported"
+    fi
+
     run_case "$S" "$(payload '')"
-    assert_equals "$OUT" "" "[$S] an empty message is allowed"
+    assert_allowed "[$S] an empty message is allowed"
 
     run_case "$S" 'this is not json'
     assert_equals "$OUT" "" "[$S] malformed JSON is allowed"
@@ -199,6 +223,36 @@ else
         assert_contains "pwsh-missing" "pwsh-present" "PMB_REQUIRE_PARITY=1 but pwsh is not on PATH"
     fi
 fi
+
+# ── twin parity: the rule literals, compared directly (review finding T1) ──────────────────────
+# WHY on top of the behavioural cases: those exercise only a few of the ASK alternatives, so a typo
+# in one twin's copy of any other alternative passed every case. Python raw strings and PowerShell
+# single-quoted strings both keep backslashes literally, so identical source text means identical
+# pattern text. A renamed variable fails too: each literal must be found exactly once in each twin.
+# NOT compared: the regex options. Python's flags and PowerShell's RegexOptions have no common
+# spelling. The behavioural cases pin IgnoreCase and Multiline for ASK, FINDINGS and RECOMMEND;
+# nothing pins the two escape regexes' options.
+# WHY -c and not `python3 - FILE <<heredoc`: on Windows, python3 can be the Python install manager,
+# which then treats the first FILE argument as the script and runs its shebang. Here that ran the
+# hook script itself with bash.
+echo ""
+echo "--- twin parity: rule literals ---"
+PARITY_SRC=$(cat <<'PY'
+import re, sys
+sh = open(sys.argv[1], encoding="utf-8").read()
+ps = open(sys.argv[2], encoding="utf-8").read()
+out = []
+for py_name, ps_name in [("ASK", "askRx"), ("FINDINGS", "findingsRx"), ("RECOMMEND", "recommendRx"), ("ESC_A", "escARx"), ("ESC_B", "escBRx")]:
+    a = re.findall(r"^%s = re\.compile\(r'(.*)', " % py_name, sh, re.M)
+    b = re.findall(r"^\$%s = \[regex\]::new\('(.*)', " % ps_name, ps, re.M)
+    out.append(py_name + "=" + ("same" if len(a) == 1 and len(b) == 1 and a[0] == b[0] else "DIFFERENT"))
+# One line, written with no newline: Windows Python's text-mode stdout turns each newline into CRLF,
+# and the command substitution below strips only a trailing newline, so a CR would remain.
+sys.stdout.write(" ".join(out))
+PY
+)
+PARITY=$(python3 -I -c "$PARITY_SRC" "$REPO_ROOT/scripts/pre-approval-check.sh" "$REPO_ROOT/scripts/pre-approval-check.ps1" 2>&1)
+assert_equals "$PARITY" "ASK=same FINDINGS=same RECOMMEND=same ESC_A=same ESC_B=same" "the five rule regexes' pattern literals are identical in both twins (options not compared)"
 
 # ── settings.json wiring: the exact command the harness runs ─────────────────────────────────
 echo ""

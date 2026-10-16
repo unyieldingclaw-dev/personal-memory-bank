@@ -5,9 +5,11 @@
 # Recommendation. Tier B: a turn ending in any other question must carry a Recommendation.
 # Spec: docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md
 #
-# WHY a JSON decision on stdout and exit 0, never exit 2: settings.json wires hooks as
-# `... 2>/dev/null || true`, which erases an exit code and discards stderr -- the same finding
-# dangerous-commands.sh records for PreToolUse.
+# WHY a JSON decision on stdout and exit 0, never exit 2: settings.json runs this script as the
+# second link of `pwsh ... || bash ... || <fallback notifier> || true`, with stderr discarded, so an
+# exit-2 reason on stderr never reaches the harness -- the same finding dangerous-commands.sh records
+# for PreToolUse. A non-zero exit would also make the chain run its next link, the fallback
+# notifier: a second popup, or one after a block.
 #
 # WHY this script owns the "Claude has paused" notification: the old popup was a separate, modal
 # Stop entry the harness waited on, so a block would have shown "waiting for input" about an ask
@@ -40,8 +42,10 @@ notify() {
     return 0
 }
 
-# One line per session per kind, so a persistent fault cannot bury other hooks' errors in
-# `mb doctor`'s `tail -3` of the shared log.
+# At most one line per kind, so a persistent fault cannot bury other hooks' errors in `mb doctor`'s
+# `tail -3` of the shared log. The key has a session field, but every caller passes `-` (most errors
+# come before a session id is known), so in practice it is once per kind until the log is cleared.
+# The trial log still records every fail-open.
 log_error_once() {
     local key="pre-approval-check.sh: session=$1 kind=$2"
     grep -qF -- "$key" "$ERR_LOG" 2>/dev/null && return 0
@@ -116,7 +120,10 @@ PY
 if [ "${PMB_PRE_APPROVAL_TEST_FAULT:-}" = "1" ]; then
     RESULT=""   # test-only: simulates a classifier failure (tests/test-pre-approval-check.sh)
 else
-    RESULT=$(printf '%s' "$INPUT" | python3 -c "$PY_SRC" 2>/dev/null)
+    # WHY -I: with plain -c, Python puts the cwd first on sys.path, so a json.py or re.py there would
+    # be imported in place of the standard library, run its code, and disable the check (review
+    # finding S2). -I also ignores PYTHON* environment variables and the user site directory.
+    RESULT=$(printf '%s' "$INPUT" | python3 -I -c "$PY_SRC" 2>/dev/null)
 fi
 
 read -r KIND SID REST <<EOF

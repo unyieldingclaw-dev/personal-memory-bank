@@ -5,9 +5,11 @@
 .DESCRIPTION
     Tier A: a turn ending in an approve-or-choose ask must carry a "Findings" heading AND a
     Recommendation. Tier B: a turn ending in any other question must carry a Recommendation.
-    Emits {"decision":"block",...} on stdout and always exits 0: settings.json wires hooks as
-    `... 2>/dev/null || true`, which erases exit codes. Owns the "Claude has paused" notification,
-    launched detached on every exit except a block.
+    Emits {"decision":"block",...} on stdout and always exits 0. settings.json runs this script as
+    the first link of `pwsh ... || bash pre-approval-check.sh ... || <fallback notifier> || true`,
+    with stderr discarded, so a non-zero exit would also run the .sh twin: a second check and a
+    second notification. Owns the "Claude has paused" notification, launched detached on every exit
+    except a block.
     Spec: docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md
 #>
 $ErrorActionPreference = 'Stop'
@@ -32,8 +34,10 @@ function Add-LogLine {
     try { Add-Content -LiteralPath $logPath -Value $Line } catch { Write-Verbose "Could not write $logPath; ignoring." }
 }
 
-# One line per session per kind, so a persistent fault cannot bury other hooks' errors in
-# `mb doctor`'s `tail -3` of the shared log.
+# At most one line per kind, so a persistent fault cannot bury other hooks' errors in `mb doctor`'s
+# `tail -3` of the shared log. The key has a session field, but every caller passes '-' (most errors
+# come before a session id is known), so in practice it is once per kind until the log is cleared.
+# The trial log still records every fail-open.
 function Write-HookErrorOnce {
     param([string]$Session, [string]$Kind, [string]$Detail)
     $key = "pre-approval-check.ps1: session=$Session kind=$Kind"
@@ -74,7 +78,9 @@ function Invoke-PausedNotification {
 }
 
 try {
-    if ($env:PMB_PRE_APPROVAL -eq 'off') { return }
+    # WHY -ceq: -eq ignores case, so "OFF" disabled this twin but not the .sh, whose test is
+    # case-sensitive (review finding C2). Both twins now accept only the exact value 'off'.
+    if ($env:PMB_PRE_APPROVAL -ceq 'off') { return }
     # WHY a UTF-8 StreamReader, not [Console]::In: on Windows the latter decodes with the OEM code
     # page (ibm437), splitting each non-ASCII character into several (review finding F5). Same fix as
     # dangerous-commands.ps1.
