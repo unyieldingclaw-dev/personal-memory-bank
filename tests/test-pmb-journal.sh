@@ -1929,8 +1929,8 @@ sessions-file=0'
     ( cd "$T/pgtext" && CLAUDE_CODE_SESSION_ID=sessXSHARE1 bash "$J" note "$(head -c 40 /dev/zero | tr '\0' 'n')" ) >/dev/null
     gm_twin=ps1; assert_equals "$(gm_gate "$T/pgtext" "$(payload sessXSHARE1)" sessXSHARE1)" "0" "ps1 gate: 40 bytes written by the sh twin pass -- shared on-disk format"
 
-    # FIFOs, and the ps1 regular-file check that refuses them. Linux and macOS only: Windows pwsh reads
-    # Git Bash's emulated FIFO as a plain read-only file, so there the twins see different files. Every
+    # FIFOs, and the ps1 regular-file check that refuses them. Linux and macOS only: Windows pwsh does
+    # not see a Git Bash FIFO under its name, only a `<name>.lnk` file, so the twins see different files. Every
     # call runs under `tmo`, so a twin that opens a FIFO fails here as rc=124 instead of hanging.
     # tpdot DIR CODE — pdot under `tmo`.
     tpdot() { ( cd "$1" && tmo pwsh -NoProfile -NonInteractive -Command ". '$(pnat "$1/scripts/pmb-journal.ps1")'; $2" </dev/null ); }
@@ -1960,6 +1960,10 @@ sessions-file=0'
         assert_equals "$out" "True" "ps1 regular-file check resolves the test binary once"
         out="$(tpdot "$T/on" "\$script:PmbFileTestPaths = @('/nonexistent/pmb-test-a', '/nonexistent/pmb-test-b'); \$script:PmbFileTest = \$null; try { [void](Test-PmbRegularFile '$T/fifo/rf-empty'); Write-PmbOut 'no-throw' } catch { Write-PmbOut \$_.Exception.Message }" 2>&1)"
         assert_contains "$out" "no test binary" "ps1 regular-file check fails visibly when no test binary exists, rather than refusing every file"
+        # WHY again under strict mode: a profile's Set-StrictMode makes indexing an empty array throw
+        # its own error, which would replace this message.
+        out="$(tpdot "$T/on" "Set-StrictMode -Version Latest; \$script:PmbFileTestPaths = @('/nonexistent/pmb-test-a'); \$script:PmbFileTest = \$null; try { [void](Test-PmbRegularFile '$T/fifo/rf-empty'); Write-PmbOut 'no-throw' } catch { Write-PmbOut \$_.Exception.Message }" 2>&1)"
+        assert_contains "$out" "no test binary" "ps1 regular-file check names the missing test binary under Set-StrictMode too"
         # The gate, in each twin: a FIFO named gate-blocked is neither read nor written, so it fails open.
         for tw in sh ps1; do
             sid="sessGBFIFO_$tw"

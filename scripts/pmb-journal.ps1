@@ -187,8 +187,10 @@ function Test-PmbLink([string]$Path) {
 # blocks. Get-Item cannot decide it (measured, pwsh 7.4.7 on Linux): a FIFO's UnixMode reads
 # "-rw-r--r--", and the provider turns '\' into '/', so a file named `sub\handoff.md` is not found.
 # The binary is the first of PmbFileTestPaths that exists, found on the first call (Alpine ships
-# only /usr/bin/test). With none, this throws: refusing every file instead would make every read,
-# claim report and --file fail without saying why (the gate fails open on the throw, spec 4.1).
+# only /usr/bin/test). With none, this throws rather than refusing every file, which would skip
+# every record and refuse every --file as if it were not a regular file. What each caller then does
+# is listed in spec 4.1, "Regular files". WHY a loop and not @(...)[0]: under a profile's
+# Set-StrictMode, indexing an empty array throws its own error first, and this message is lost.
 # WHY the two preferences are set here: a profile can set them, and
 # $PSNativeCommandUseErrorActionPreference makes test's nonzero exit an error (a throw under Stop,
 # a message on stderr otherwise), while Legacy argument passing splits a path that holds a '"'.
@@ -198,7 +200,7 @@ function Test-PmbRegularFile([string]$Path) {
     if ((Test-PmbLink $Path) -or -not [System.IO.File]::Exists($Path)) { return $false }
     if ($IsWindows) { return $true }
     if (-not $script:PmbFileTest) {
-        $script:PmbFileTest = @($script:PmbFileTestPaths | Where-Object { [System.IO.File]::Exists($_) })[0]
+        foreach ($c in $script:PmbFileTestPaths) { if ([System.IO.File]::Exists($c)) { $script:PmbFileTest = $c; break } }
         if (-not $script:PmbFileTest) { throw ('pmb-journal: no test binary at {0}; cannot tell a regular file from a FIFO' -f ($script:PmbFileTestPaths -join ' or ')) }
     }
     $PSNativeCommandUseErrorActionPreference = $false

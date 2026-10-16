@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+# WHY every job sets timeout-minutes: GitHub's default is 6 hours, and a FIFO opened by mistake
+# hangs a job until then. MB Command Tests ran 10m03s on 4738ad5 (run 38890930402), which carries
+# the journal suite, so it gets 30; every other job ran under 2 minutes there and gets 10.
 jobs:
   file-size:
     name: File Size
@@ -638,7 +641,7 @@ jobs:
   mb-command-tests:
     name: MB Command Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -661,9 +664,8 @@ jobs:
       # test-pre-compact-check.sh SKIP when pwsh is missing, loudly but without failing. The runner
       # ships pwsh today, so this changes nothing now; it turns a runner that stopped shipping it
       # into a red build instead of a green one that no longer checks the shell Windows runs first.
-      # PMB_REQUIRE_FIFO does the same for test-pmb-journal.sh's FIFO cases (mkfifo and timeout).
-      # WHY every job has timeout-minutes: GitHub's default is 6 hours, and a FIFO opened by mistake
-      # hangs until then. This job takes about 4 minutes on main, the others under 2.
+      #
+      # WHY PMB_REQUIRE_FIFO: the same, for test-pmb-journal.sh's FIFO cases (mkfifo and timeout).
       - name: Run mb command tests
         shell: bash
         env:

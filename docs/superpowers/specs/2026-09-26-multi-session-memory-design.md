@@ -201,11 +201,19 @@ exactly `--%` (and splits one shaped `-name:value`), so such text goes through `
 device, since opening a FIFO blocks the hook. The sh twin uses its built-in `[ -f ]`. .NET reports a
 FIFO as an existing file, so on Linux and macOS the PowerShell twin runs the first of
 `/usr/bin/test` and `/bin/test` that exists, found once per process. Alpine ships only
-`/usr/bin/test`. If neither exists, the twin throws rather than refusing every file. From the CLI
-the throw shows as an error with exit 1. In the gate it fails open with a warning on stderr, which
-the hook wiring (`2>/dev/null`) currently discards. Windows needs no binary.
+`/usr/bin/test`. Windows needs no binary. If neither exists, the twin throws rather than refusing
+every file, and its behaviour then differs from the sh twin's (an accepted parity difference):
+- `show`, `note --file` and `import-handoff` print the error and exit 1;
+- the claim report is skipped without a message, and the claim itself still exits 0;
+- the gate fails open on every compaction that reads a record or `gate-blocked`. Run as the hook,
+  it prints `[HOOK ERROR]` on stdout and logs the error to `.pmb-hook-errors.log`. Run as
+  `pmb-journal.ps1 gate`, it warns on stderr.
+
 When a FIFO or other non-regular file sits at `gate-blocked`, it is neither read nor written, so the
-block cannot be recorded and the gate fails open (§4.3).
+block cannot be recorded and the gate fails open (§4.3). Both twins check the file and then open it,
+so a FIFO swapped in between the two can still block the hook; S3 puts such same-user writes out of
+scope. On Windows, pwsh sees a Git Bash FIFO only as a `<name>.lnk` file. macOS is not exercised by
+CI.
 
 **Inert without this code.** A branch, or an adopter, that lacks `scripts/pmb-journal.sh`
 runs today's behaviour:
