@@ -726,8 +726,11 @@ pmb_gate_once() {
     fi
     # WHY fail open when the block cannot be recorded: gate-blocked is what lets the repeated
     # /compact pass, so a block that cannot write it would repeat forever -- the deadlock the
-    # once-only rule exists to prevent.
-    if ! { mkdir -p "$sdir" && [ ! -L "$sdir/gate-blocked" ] && printf '%s\n' "$marker" > "$sdir/gate-blocked"; } 2>/dev/null; then
+    # once-only rule exists to prevent. An existing gate-blocked that is not a regular file (a FIFO,
+    # whose open blocks the hook, or a device) cannot record it either, and is never opened.
+    if ! { mkdir -p "$sdir" && [ ! -L "$sdir/gate-blocked" ] \
+           && { [ ! -e "$sdir/gate-blocked" ] || [ -f "$sdir/gate-blocked" ]; } \
+           && printf '%s\n' "$marker" > "$sdir/gate-blocked"; } 2>/dev/null; then
         printf 'pmb-journal gate: cannot record the block in %s/gate-blocked; allowing (fail-open)\n' "$sdir" >&2
         return 0
     fi

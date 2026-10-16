@@ -10,6 +10,7 @@ jobs:
   file-size:
     name: File Size
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -271,6 +272,7 @@ jobs:
   forbidden-patterns:
     name: Forbidden Patterns
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -388,6 +390,7 @@ jobs:
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
         with:
@@ -403,6 +406,7 @@ jobs:
   sast:
     name: SAST (Semgrep)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -430,6 +434,7 @@ jobs:
   rules-file-integrity:
     name: Rules-File Integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -603,6 +608,7 @@ jobs:
   template-integrity:
     name: Template Integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -632,6 +638,7 @@ jobs:
   mb-command-tests:
     name: MB Command Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -654,15 +661,20 @@ jobs:
       # test-pre-compact-check.sh SKIP when pwsh is missing, loudly but without failing. The runner
       # ships pwsh today, so this changes nothing now; it turns a runner that stopped shipping it
       # into a red build instead of a green one that no longer checks the shell Windows runs first.
+      # PMB_REQUIRE_FIFO does the same for test-pmb-journal.sh's FIFO cases (mkfifo and timeout).
+      # WHY every job has timeout-minutes: GitHub's default is 6 hours, and a FIFO opened by mistake
+      # hangs until then. This job takes about 4 minutes on main, the others under 2.
       - name: Run mb command tests
         shell: bash
         env:
           PMB_REQUIRE_PARITY: "1"
+          PMB_REQUIRE_FIFO: "1"
         run: bash tests/run.sh
 
   powershell-lint:
     name: PowerShell Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -687,6 +699,7 @@ jobs:
   mb-doctor-self-check:
     name: MB Doctor Self-Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -717,6 +730,7 @@ jobs:
   pester-tests:
     name: Pester Tests (mb.ps1)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 

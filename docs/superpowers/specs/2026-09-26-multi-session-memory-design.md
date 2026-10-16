@@ -80,7 +80,8 @@ Everything else goes to Appendix A, together with the incident that would bring 
   non-live session stay listed until triage marks them promoted.
 - **S6 — Honest budget.** The ratchet counts cap A, and the PR that introduces it must pay for it.
 - **S7 — Tier 1.**
-  - Bash, PowerShell and git only; no python3 in new code.
+  - Bash, PowerShell and git only; no python3 in new code. One exception: on Linux and macOS the
+    PowerShell twin also needs the system `test` binary (§4.1, regular files).
   - Claude Code gets hooks; Cursor and Codex follow a documented manual convention.
   - Opting in is one committed flag, with no per-machine install.
 
@@ -195,6 +196,16 @@ from Git Bash); an OS error inside a message is the platform's own text (.NET's,
 as is the error for a secret pattern that cannot be applied (a .NET regex error, not a grep exit
 code); the first usage line names `pmb-journal.ps1`; and `pwsh -File` drops an argument that is
 exactly `--%` (and splits one shaped `-name:value`), so such text goes through `--file`.
+
+**Regular files (amended 2026-10-16, review of `4738ad5`).** Both twins refuse to open a FIFO or a
+device, since opening a FIFO blocks the hook. The sh twin uses its built-in `[ -f ]`. .NET reports a
+FIFO as an existing file, so on Linux and macOS the PowerShell twin runs the first of
+`/usr/bin/test` and `/bin/test` that exists, found once per process. Alpine ships only
+`/usr/bin/test`. If neither exists, the twin throws rather than refusing every file. From the CLI
+the throw shows as an error with exit 1. In the gate it fails open with a warning on stderr, which
+the hook wiring (`2>/dev/null`) currently discards. Windows needs no binary.
+When a FIFO or other non-regular file sits at `gate-blocked`, it is neither read nor written, so the
+block cannot be recorded and the gate fails open (§4.3).
 
 **Inert without this code.** A branch, or an adopter, that lacks `scripts/pmb-journal.sh`
 runs today's behaviour:
