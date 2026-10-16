@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-10-13
+last-reviewed: 2026-10-14
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,13 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-10-14 — PR #55 opened (WARN-tier hooks → JSON); its review's findings recorded
+
+- PR #55 got `/code-review` Approve and `/change-review` Approve with conditions in its worktree,
+  and is open for the user to merge (`[NS-66]`). Its review found four pre-existing hook defects, now `[NS-67]`.
+- Recorded from the main checkout, since a worktree may not edit `memory-bank/`. Funded by moving
+  "Earlier Work" out verbatim; see its stub below.
 
 ## 2026-10-13 — Memory-bank reconciliation committed after an 8-day pause
 
@@ -417,33 +424,12 @@ there, so a citation to any of them still resolves:
 - 📌 ACR drifted 2 versions behind PMB and ran a 13-task feature under stale governance hooks before
   it was caught; still unfixed. Current state: `activeContext.md`'s `[NS-14]`.
 
-## Earlier Work (2026-07-02 through 2026-08-10) — condensed, full detail archived
+## Relocated 2026-07-02 → 2026-08-10 — "Earlier Work", moved verbatim 2026-10-14
 
-- **2026-07-16 through 2026-08-05 — Review-gate mechanism evolution**: self-attestation fix (marker-write
-  moved into the last dispatched review subagent), a false-positive fix in `review-reminders.sh`'s
-  command matching, the confirm-step redesign (durable `docs/review-log/` + user-confirmed marker write),
-  a worktree-root-resolution fix (closed a real denial-from-inside-a-worktree bug), a hook-lib dedup
-  (`_review-gate-lib.sh`/`.ps1`), and the confirm-step's first live whole-branch review (found and fixed
-  one real Blocking finding). Full detail: `docs/archive/progress-2026-07-review-gate-evolution.md`.
-- **2026-07-02 through 2026-07-13 — Repo governance, CI hardening, branch protection**: `mb upgrade`
-  slash-command auto-discovery fixes, 4 pre-existing CI failures closed (SAST config, 2 false-positive
-  greps, PowerShell lint), CI hardening across 3 downstream repos, branch protection rolled out to 5
-  public repos, a real hash byte-mismatch bug fixed (bash vs. PowerShell diverged on trailing-newline
-  handling), the cross-repo write boundary hook built after a real incident (this session wrote into
-  another repo's working directory without checking ownership), and the review-flow fleet audit (found
-  real enforcement in only 2 of 11 repos). Full detail:
-  `docs/archive/progress-2026-07-repo-governance-and-ci.md`.
-- **2026-07-14, 2026-07-23 — `mb backlog` Task 1 + mb update-notifier**: `mb backlog`'s Task 1 shipped
-  with two real Critical/High security bugs found and fixed (path traversal, sed-delimiter injection);
-  Tasks 2-5 not started (`[NS-0]`). The update-notifier shipped clean, but the same session produced an
-  authorization-drift incident (a "what do you suggest" non-answer treated as merge approval) that
-  produced the "What Counts as Approval" rule. Full detail:
-  `docs/archive/progress-2026-07-mb-backlog-and-notifier.md`.
-- **2026-08-08, 2026-08-10 — Concurrent session claims + memory-bank freshness hook**: session-claims
-  shipped (13 tasks + 5 post-review fixes, including one found only by a final whole-branch review after
-  every individual task had already passed its own two-stage review); the freshness-hook spec was
-  designed and committed but not yet implemented (`[NS-13]`). Full detail:
-  `docs/archive/progress-2026-08-freshness-and-session-claims.md`.
+Moved to `docs/archive/progress-2026-07-02-to-08-10-earlier-work.md` **verbatim** to fund the
+PR #55 delta under the ratchet. Delta and citation check: that file's header.
+
+- **Earlier Work (2026-07-02 through 2026-08-10) — condensed, full detail archived**
 
 ## Backlog
 

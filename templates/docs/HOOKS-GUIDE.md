@@ -40,6 +40,8 @@ Hooks are one layer in a four-layer enforcement stack. Understanding which layer
 
 Configured in `.claude/settings.json`:
 
+**How a `PreToolUse` hook is heard.** Plain text a `PreToolUse` hook prints never reaches Claude (measured), and Claude Code's docs say it is not shown in the visible transcript — it is only recorded (debug log, session file). So each hook prints at most ONE JSON object: `permissionDecision: "deny"` to block, top-level `systemMessage` for you, `hookSpecificOutput.additionalContext` for Claude. Any text beside that object makes Claude Code ignore it. The Contract Scope Check (§3) still prints plain text, so its warning is currently not seen.
+
 ### 1. Dangerous-Command Blocker (`PreToolUse` — Bash + PowerShell tools)
 
 Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
@@ -63,7 +65,7 @@ deliberately does not cover (`GIT_CONFIG_*` env vars, direct `.git/config` write
 **WARN** (4 patterns — exits 0, surfaces access alert):
 `id_rsa` · `.pem` · `.env.production` · `credentials.json`
 
-If BLOCK or CONFIRM is triggered, the tool call is denied before it executes. WARN surfaces the access as advisory text and lets the command proceed.
+If BLOCK or CONFIRM is triggered, the tool call is denied before it executes. WARN surfaces the access — a `systemMessage` for you and `additionalContext` for Claude, all matches in one object — and lets the command proceed.
 
 #### Matching is case-insensitive — and in `.sh`, **patterns must be written in lower case**
 
@@ -137,7 +139,7 @@ or remote sessions with no one to dismiss it. Whether adopters keep it is an ope
 Checks whether a file being written is within the scope declared in the active task contract (`.claude/contracts/active-task.json`). Implemented in `scripts/check-contract.ps1` and `scripts/check-contract.sh`. See `docs/CONTRACTS-GUIDE.md` for the full contract schema.
 
 - **No contract / inactive contract:** exits 0 silently.
-- **Out-of-scope write (default):** prints a warning and exits 0. Claude sees it and should pause.
+- **Out-of-scope write (default):** prints a warning and exits 0. The warning is plain text, so it currently reaches neither you nor Claude (see "How a `PreToolUse` hook is heard" above; a known gap in this release).
 - **Out-of-scope write (hard-block mode):** the tool call is denied when `PMB_CONTRACT_HARD_BLOCK=1` is set in the `env` block of `.claude/settings.json`.
 
 Set `PMB_CONTRACT_HARD_BLOCK=1` for sessions where scope discipline is critical. See `standards/SECURITY-GUARDRAILS.md` for the full env-block example.
@@ -209,7 +211,7 @@ checklist.
 
 ### 6. Agent Spawn-Volume Advisory (`PreToolUse` — Agent tool)
 
-Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and emits a WARN once it exceeds the budget in `standards/PERFORMANCE-BUDGET.md` (default: ≤6 spawns per rolling 2-hour window). Always exits 0 — advisory, never blocking. Implemented in `scripts/delegation-depth-check.ps1` and `scripts/delegation-depth-check.sh`.
+Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and emits a WARN once it exceeds the budget in `standards/PERFORMANCE-BUDGET.md` (default: ≤6 spawns, counted per checkout and reset only after 2 hours with no spawn). The WARN is a `systemMessage` only — shown to you, deliberately not to Claude, so an agent mid-review is not nudged to drop reviewers. Always exits 0 — advisory, never blocking. Implemented in `scripts/delegation-depth-check.ps1` and `scripts/delegation-depth-check.sh`.
 
 **It does not measure nesting depth, despite the name.** There is no `PostToolUse:Agent` event, so a hook cannot tell a returned agent from a running one — six parallel agents and a six-deep chain are indistinguishable to it. The file name, state file and internal variable still say "depth" for compatibility; the semantics have only ever been a spawn count. This entry described it as nesting depth, with a ≤1 default, until 2026-09-03; the shipped scripts had used 6 since `5c0e8c9`.
 
@@ -244,7 +246,7 @@ On detected failure, the hook recomputes the diff hash fresh (a failed commit/pu
 
 Warns, before an edit happens, if a review-gate marker (`.claude/.code-review-ok` or `.claude/.change-review-ok`) currently exists and is about to be invalidated by that edit. Any tracked-file change alters the reviewed diff, which silently invalidates the marker's bound hash — without this hook, the only place that notices is the Review Gate above, at the moment of the next commit/push attempt.
 
-Warn-only, no `permissionDecision` — the Review Gate already recomputes the hash fresh at commit/push time and denies on any mismatch, so this hook adds zero new safety; it only surfaces the fact earlier. Does not inspect the edited file or delete the marker — marker deletion stays the sole responsibility of the Review Gate's `consume_marker()`. Implemented in `scripts/warn-stale-review-marker.ps1` and `scripts/warn-stale-review-marker.sh`.
+Warn-only, no `permissionDecision` — the Review Gate already recomputes the hash fresh at commit/push time and denies on any mismatch, so this hook adds zero new safety; it only surfaces the fact earlier. The notice is `additionalContext` only — advice for Claude, not a message for you, since it fires on every edit while a marker exists. Does not inspect the edited file or delete the marker — marker deletion stays the sole responsibility of the Review Gate's `consume_marker()`. Implemented in `scripts/warn-stale-review-marker.ps1` and `scripts/warn-stale-review-marker.sh`.
 
 ## Git Hooks (versioned)
 

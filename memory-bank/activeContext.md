@@ -7,7 +7,7 @@ tags:
   - session/focus
   - session/blockers
   - session/next-steps
-last-reviewed: 2026-10-13
+last-reviewed: 2026-10-14
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -16,7 +16,7 @@ lineage: []
 
 # Active Context
 
-## Last Updated: 2026-10-13 (verify branch and SHA from Git, not this file)
+## Last Updated: 2026-10-14 (verify branch and SHA from Git, not this file)
 
 ## Trim History
 
@@ -128,6 +128,8 @@ the detail those entries were condensed from. Older: `docs/archive/context-2026-
 63. [NS-63] **Two more merge-gate escapes (path/`.exe` wrapper: `.sh` only; quoted `NAME=value`: both twins), folded 2026-09-25 into `docs/backlog/merge-gate-misses-gh-global-flags-graphql-and-powe.md`** — the source of truth. Unfixed.
 64. [NS-64] **`mb doctor --check` shipped (PR #51, `07e3bd2`). The follow-ups are open but none is blocking; the full list is in PR #51's body, "Memory-bank delta".** O-1 (Medium; PR #51 pairs it with decision B): routine memory-bank edits keep pre-push Check 7's WARN up on nearly every push, and the only routine way to clear it, plain `mb doctor`, accepts the change without review. Then one hardening branch: T-1 first (no Pester test covers the ps1 `$warned++`); R4-1 (an empty `.pmb-checksums` reads as verified); F1 (`--check` spelling parity between runtimes); O-A (new clones and worktrees have no baseline).
 65. [NS-65] **Port Side-Quest-Atlas's OPP-3** (a pre-push secret scan using `--remerge-diff` over unpushed commits) into `scripts/` and `templates/pre-push-check.*`, from SQA's merged `origin/main` once it ships there. User decision, 2026-10-04. **Order after it (user decision 2026-10-05):** the merge-gate work. Do the [NS-63] escape fixes first, then the deny-to-forced-permission-prompt decision (`docs/backlog/replace-the-gh-pr-merge-deny-with-a-forced-permiss.md`), starting with an Opus design pass.
+66. [NS-66] **PR #55 (`fix/hook-warn-visibility`): PreToolUse WARN-tier hooks now emit JSON, since plain stdout reaches only the debug log. Open 2026-10-14; the user merges.** After it merges, one follow-up commit is owed, listed in the PR #55 body (doc contradictions, test tightening); it needs a new contract, as it touches `docs/CONTRACTS-GUIDE.md`. Also awaiting approval: a contract-expiry proposal (expired contract → deny, plus renewal and worktree fields), made in that PR's session chat and written nowhere else. It must absorb `[NS-67]` (a) and (d), since both change what `check-contract.*` emits or reads.
+67. [NS-67] **Four pre-existing hook defects found in PR #55's review, unfixed.** (a) High: `PMB_CONTRACT_HARD_BLOCK=1` cannot block. Both twins print the scope warning to stdout before the deny JSON (`.sh` `echo`, `.ps1` `Write-Host`), so the deny is ignored; the ps1 runs first here. `SECURITY-GUARDRAILS.md` says the hook "exits 2" (it exits 0) and `HOOKS-GUIDE.md` says the call "is denied"; fix both and their `templates/` mirrors. (b) No pwsh hook command in `.claude/settings.json` passes `-NoProfile`; a profile that prints voids every deny. (c) Low: `delegation-depth-check.sh` expands its state file's `depth=` value inside `$(( ))`. (d) Reported by PR #55's session, not re-verified: desktop worktree sessions run PMB hooks with cwd = the main checkout, so they read main's contract and markers.
 
 ## Cross-Repo Write Boundary Gate — Governance Note
 

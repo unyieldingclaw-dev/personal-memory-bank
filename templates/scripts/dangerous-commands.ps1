@@ -4,9 +4,13 @@
 .DESCRIPTION
     Reads the Bash tool input JSON from stdin, extracts the command string,
     and enforces BLOCK / CONFIRM / WARN tier matching via simple substring and
-    regex checks. All output goes to stdout so messages are visible even when
-    stderr is suppressed. Fails open on a genuine read failure (empty stdin):
-    prints [HOOK ERROR] and exits 0. On a JSON-parse failure with non-empty
+    regex checks. All output is ONE JSON object on stdout: plain stdout from a
+    PreToolUse hook never reaches the model and is not shown in the visible
+    transcript (per Claude Code's docs; it only records it), so a deny uses
+    permissionDecision, a WARN uses systemMessage (user) + additionalContext
+    (model), and any text beside the object would void it. Fails open on a
+    genuine read failure: exits 0 (with a [HOOK ERROR] systemMessage if the
+    read itself threw). On a JSON-parse failure with non-empty
     stdin, falls back to matching tier patterns against the raw payload instead
     of exiting immediately -- see the WHY comment on the catch block below.
 
@@ -108,8 +112,8 @@ try {
         $cmd = $raw
         try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] dangerous-commands.ps1: JSON parse failed, fell back to raw-stdin matching: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
     } else {
-        Write-Host "[HOOK ERROR] dangerous-commands.ps1 failed unexpectedly."
-        Write-Host "Proceeding in fails-open mode."
+        [ordered]@{ systemMessage = "[HOOK ERROR] dangerous-commands.ps1 failed unexpectedly. Proceeding in fails-open mode." } |
+            ConvertTo-Json -Compress | Write-Output
         try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] dangerous-commands.ps1: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
         exit 0
     }
@@ -355,14 +359,32 @@ $warnPatterns = @(
     @{ pattern = "credentials.json"; reason = "credential file access" }                    # WHY: credential file — may be intentional (auth setup)
 )
 
+$warnReasons = @()
 foreach ($entry in $warnPatterns) {
     # Checks the de-escaped view too, [NS-40]: this loop tested $cmd alone, exactly like the sh
     # twin's warn(), so `id\_rsa` and `"id"_rsa` warned on neither shell. The -or keeps one if
     # body, so a command matching both views warns once -- this tier does not exit.
     if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or
         $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
-        Write-Host ($WARN_MSG -f $entry.reason)
+        $warnReasons += $entry.reason
     }
+}
+
+# WHY one JSON object, not a Write-Host line per match: a PreToolUse hook's plain stdout never
+# reaches the model and is not shown in the visible transcript (per Claude Code's docs; it only
+# records it) -- neither the user nor the model ever saw a WARN -- and stdout must be nothing but
+# one object, so every match shares it. systemMessage reaches the user per Claude
+# Code's docs (a headless run cannot show it); additionalContext the model (measured 2026-10-14,
+# main agent and subagent). The model-facing text omits "WARNING:" so each match still yields
+# exactly one. [ordered] keeps the keys in the sh twin's order, byte for byte.
+if ($warnReasons.Count -gt 0) {
+    [ordered]@{
+        systemMessage      = (($warnReasons | ForEach-Object { $WARN_MSG -f $_ }) -join ' ')
+        hookSpecificOutput = [ordered]@{
+            hookEventName     = "PreToolUse"
+            additionalContext = "dangerous-commands hook: this command matches $($warnReasons -join ', ') (WARN tier: surfaced, not blocked)."
+        }
+    } | ConvertTo-Json -Compress | Write-Output
 }
 
 exit 0
