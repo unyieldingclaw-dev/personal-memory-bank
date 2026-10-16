@@ -101,7 +101,8 @@ any row above 255.
 reverted): folding `$1` inside each matcher costs a `printf | tr` subshell per matcher *call* —
 about 25 per invocation, on a hook that runs on **every single Bash tool call**. Measured over 10
 runs of one benign command: **1.07s → 2.33s per invocation**. Folding the two subjects once instead
-costs two subshells total and measures at parity with the pre-fold baseline.
+costs two subshells total (three when the command holds a carriage return) and measures at
+parity with the pre-fold baseline.
 
 Both suites assert this structurally, so the fail-open trap is a red test rather than a silent
 hole: no matcher may match against an unfolded view, and no pattern argument may contain an
@@ -117,11 +118,11 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 
 **Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
 `timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
-out does not block the tool call: its output is discarded and the call proceeds, unless the entry
-sets `"onFailure": "block"` (Claude Code v2.1.295 or later). This hook's worst case, a ~50 KB
-command, is recorded at about 17.5 seconds in `standards/SECURITY-GUARDRAILS.md`, far inside the
-default. Whether to set `onFailure` is an open decision in
-`docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md`.
+out does not block the tool call: its output is discarded and the call continues through the
+normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
+later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default. Whether to set
+`onFailure` is an open decision in `docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md`.
 
 **Two bugs found and fixed (2026-07-02) that made this hook a near-total no-op:**
 

@@ -163,7 +163,10 @@ the config. These reach the same outcome and are deliberately not matched:
   **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
   costs about **17.5 seconds** in the PowerShell hook, which blocks the tool call for that whole
   time. It is quadratic now, so halving the 50,000-byte limit would quarter it; that trade has not
-  been made, and is recorded here rather than left for the next person to rediscover.
+  been made, and is recorded here rather than left for the next person to rediscover. A command
+  that also holds a carriage return pays one more pass, over the CR-deleted view (see below).
+  Measured on one machine on 2026-10-16, where the CR-free case took about 21 seconds, one CR
+  raised it to about 29.
 
   **The `-c` and `--no-gpg-sign` patterns are deliberately NOT bounded**, and this distinction is
   load-bearing. Each nests only one gap group and is quadratic at worst (**4.3s** at 50,000
@@ -215,7 +218,10 @@ clear. Three cases do still trip, and are accepted rather than chased:
   returns deleted, because Git Bash deletes a CR while parsing, so `git push --for`, CR, `ce` runs
   as a force push. It is added, not substituted, so it too can only add a match: PowerShell reads a
   lone CR as a statement break, and deleting CRs inside the de-escaped view itself glued words
-  together and dropped verdicts. A Bash command gets the same verdict whichever hook runs.
+  together and dropped verdicts. On these CR shapes a Bash command gets the same verdict
+  whichever hook runs. Accepted false positive: `git merge`, CR, then another word prompts in
+  both hooks. Git Bash deletes that CR and runs `git mergels`, but PowerShell reads it as a
+  statement break and runs a bare merge, and the two hooks keep one verdict.
 
 A mechanism that stripped `-m`/`--message`/`-S`/`--grep` payloads before matching was built for
 these and then withdrawn: making the hook's view of a command deliberately differ from what the
@@ -269,11 +275,11 @@ could not span the newline, and the PowerShell `iex` literals could not either.
     counts a `?` as one byte where the real character takes two to four, so more of a long gap fits
     a row's bound. Measured misses, one class: under a UTF-8 locale `grep -i` folds some non-ASCII
     letters to ASCII ones, U+017F (long s) to `s` and U+0131 (dotless i) to `i`, so an escaped one in
-    a guarded word prompts on the parsed path and not here. In every measured case git rejected
-    the word or failed on the value, so no signing change was lost. **Corrected 2026-10-14:**
-    before the decoding, a newline here was the two characters `\n`, and split pipes, continuation
-    lines, tab-separated forms and a bare trailing `git merge` all got no verdict (measured with
-    python3 off `PATH`).
+    a guarded word prompts on the parsed path and not here. In every measured case the shell or
+    git rejected the word, or git failed on the value, so no signing change was lost.
+    **Corrected 2026-10-14:** before the decoding, a newline here was the two characters `\n`, and
+    split pipes, continuation lines, tab-separated forms and a bare trailing `git merge` all got no
+    verdict (measured with python3 off `PATH`).
   - **No bash either:** the shipped hook wiring (`pwsh ... || bash ... || true`) runs no guard at
     all, and every command is allowed.
 

@@ -780,12 +780,14 @@ Describe "dangerous-commands.ps1 (JSON-parse-failure fallback)" {
     # `ab<CR>cd` reaches the command as `abcd`. So one CR inside a word walked past every tier on
     # both hooks, parsed path included, and `git merge`, CR, LF got no verdict here while Git Bash
     # ran a bare merge. The hook now also matches a CR-deleted copy of the de-escaped view; the
-    # de-escaped view itself keeps the CR (see the OPP-1 test below). These payloads are valid JSON,
-    # so they cover the parsed path; the truncated forms cover the fallback.
+    # de-escaped view itself keeps the CR (see the R2/OPP-1 test below). These payloads are valid
+    # JSON, so they cover the parsed path; the truncated forms cover the fallback.
     # WHY one row per matcher branch: the copy is wired into five call sites -- the BLOCK literal
     # and regex branches, the CONFIRM literal and regex branches, and the WARN loop -- and a test
     # that reaches only some of them leaves the others free to be dropped with the suite green
-    # (measured: three of the five went unpinned until these rows).
+    # (measured: three of the five went unpinned until these rows). The copy is built from the
+    # de-escaped view and has its space runs collapsed: `--for\rc\"e\"` needs the first, and
+    # `rm \r -rf` the second, since Git Bash drops a word made only of a CR (measured).
     It "matches a CR-deleted copy, as Git Bash's parser deletes a CR inside a word: <c>" -ForEach @(
             @{ c = 'r\rm -rf /tmp/x';                         want = "BLOCK:" }
             @{ c = 'git push --for\rce origin main';          want = "BLOCK:" }
@@ -795,6 +797,12 @@ Describe "dangerous-commands.ps1 (JSON-parse-failure fallback)" {
             @{ c = 'git commit --no-ver\rify -m x';           want = "CONFIRM REQUIRED:" }
             @{ c = 'git merge\r\necho done';                  want = "CONFIRM REQUIRED:" }
             @{ c = 'cat ~/.ssh/id_r\rsa';                     want = "WARNING:" }
+            @{ c = 'git mer\rge\necho done';                  want = "CONFIRM REQUIRED:" }
+            @{ c = 'echo a; git mer\rge';                     want = "CONFIRM REQUIRED:" }
+            @{ c = 'git \r merge main';                       want = "CONFIRM REQUIRED:" }
+            @{ c = 'rm \r -rf /tmp/x';                        want = "BLOCK:" }
+            @{ c = 'git push --for\rc\"e\" origin main';      want = "BLOCK:" }
+            @{ c = 'g\"it\" mer\rge main';                    want = "CONFIRM REQUIRED:" }
     ) {
         $p = '{"tool_name":"Bash","tool_input":{"command":"' + $c + '"'
         (Invoke-DangerousCommandsHook ($p + '}}')).Output | Should -Match $want -Because "parsed: $c"
@@ -818,8 +826,8 @@ Describe "dangerous-commands.ps1 (JSON-parse-failure fallback)" {
         }
     }
 
-    # WHY, OPP-1 (round-2 review): this hook judges the PowerShell tool too, and PowerShell reads a
-    # lone CR as a statement break -- measured with its parser, `x`, CR, `g"it" merge main` is two
+    # WHY, R2/OPP-1 (round-2 review): this hook judges the PowerShell tool too, and PowerShell reads
+    # a lone CR as a statement break -- measured with its parser, `x`, CR, `g"it" merge main` is two
     # statements, the second running git. A de-escaped view that only DELETED CRs glued the words
     # on either side together (`xgit`, `bashx`), so these lost the verdicts the CR-keeping view gave
     # them. Each must keep its verdict, on the parsed path and on the fallback. The Bash tool gets

@@ -91,10 +91,10 @@
 #     It is stricter where the C-locale pass counts a `?` as 1 byte and the real character as 2 to
 #     4. It is weaker where a UTF-8 locale's `grep -i` folds a real character to an ASCII letter --
 #     a class, not one character: U+017F (long s) matches `s` and U+0131 (dotless i) matches `i`,
-#     so `commit.gpg<U+017F>ign` prompts on the parsed path and not here. In every measured case git
-#     rejected the word or failed on the value, so the misses are false positives', not bypasses. A
-#     pair once written as `??` let 140 escaped emoji in a signing gap pass the {0,255} bound under
-#     a UTF-8 locale (measured). The .ps1 twin writes the real character, which is what its own
+#     so `commit.gpg<U+017F>ign` prompts on the parsed path and not here. In every measured case the
+#     shell or git rejected the word, or git failed on the value, so the misses are false
+#     positives', not bypasses. A pair once written as `??` let 140 escaped emoji in a signing gap
+#     pass the {0,255} bound under a UTF-8 locale (measured). The .ps1 twin writes the real character, which is what its own
 #     parsed path sees;
 #   - an UNESCAPED `"` -- a JSON string delimiter, never command text -- becomes a space, so the
 #     end of the command string reads as a word boundary, as the end of the extracted command does.
@@ -340,29 +340,6 @@ cmd=$(printf '%s' "$cmd" | awk '
 # accepted class as the documented quoted-invocation-as-text false positive below.
 cmd_loose=$(printf '%s' "$cmd" | tr -d '\\"'"'" | sed 's/  */ /g')
 
-# WHY a THIRD view with carriage returns deleted, added 2026-10-14: Git Bash deletes a CR while
-# parsing, even with igncr off (measured: `ab<CR>cd` reaches the command as `abcd`), so
-# `git push --for<CR>ce` runs as a force push. One CR inside a word walked past every tier, on both
-# hooks and both paths.
-# WHY in ADDITION rather than deleting CRs inside cmd_loose, as a first version did: deleting them
-# there glued the words on either side of a CR together, so `x`, CR, `g"it" merge` lost the CONFIRM
-# the CR-keeping view gave it. On Bash those were false positives, but the .ps1 twin judges the Bash
-# tool too whenever pwsh is present, and it keeps every verdict (it must: PowerShell reads a lone CR
-# as a statement break). Two policies made the verdict depend on which hook ran. An added view can
-# only add a match, so both hooks now give one verdict, by the rule every view here follows.
-# WHY computed only when the command holds a CR: otherwise this view equals cmd_loose and matching it
-# again finds nothing new, while each `$(...)` here is a subprocess on every Bash tool call. Left
-# empty, it matches no row: every case arm needs the pattern's text, and dc_grep is not given it.
-dc_nl='
-'
-dc_cr=$(printf '\r')
-# WHY a parameter expansion and not a `case`: a `case` on a raw view is what the completeness tests
-# forbid every matcher to do, and a top-level `case` would read to them as a matcher row.
-cmd_loose_nocr=""
-if [ "${cmd_loose#*"$dc_cr"}" != "$cmd_loose" ]; then
-    cmd_loose_nocr=$(printf '%s' "$cmd_loose" | tr -d '\r' | sed 's/  */ /g')
-fi
-
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
 }
@@ -380,12 +357,45 @@ if [ "$cmd_len" -gt "$DC_MAX_CMD" ]; then
     exit 0
 fi
 
-# WHY a lowered view of each of the two views above, hoisted here rather than folded per
-# matcher: POSIX `case` is case-SENSITIVE, and every corresponding site in the .ps1 twin uses
-# OrdinalIgnoreCase (literals) or RegexOptions.IgnoreCase (regexes). Four of the six matchers
-# below -- block(), block_boundary() (since replaced by block_regex() for [NS-38]), confirm(),
-# warn() -- used a bare `case` and so returned NO VERDICT AT ALL on a mixed-case payload the
-# .ps1 twin caught. Only confirm_regex() (grep -i) and
+# WHY a THIRD view with carriage returns deleted, added 2026-10-14: Git Bash deletes a CR while
+# parsing, even with igncr off (measured: `ab<CR>cd` reaches the command as `abcd`), so
+# `git push --for<CR>ce` runs as a force push. One CR inside a word walked past every tier, on both
+# hooks and both paths.
+# WHY in ADDITION rather than deleting CRs inside cmd_loose, as a first version did: deleting them
+# there glued the words on either side of a CR together, so `x`, CR, `g"it" merge` lost the CONFIRM
+# the CR-keeping view gave it. On Bash those were false positives, but the .ps1 twin judges the Bash
+# tool too whenever pwsh is present, and it keeps every verdict (it must: PowerShell reads a lone CR
+# as a statement break). Two policies made the verdict depend on which hook ran. An added view can
+# only add a match, so both hooks now give one verdict on CR shapes, by the rule every view here
+# follows.
+# WHY computed only when the command holds a CR: otherwise this view equals cmd_loose and matching it
+# again finds nothing new, while each `$(...)` here is a subprocess on every Bash tool call. Left
+# empty, it matches no row: every case arm needs the pattern's text, and dc_grep is not given it.
+# WHY after the length bound, and through a `case` in dc_has_cr(): the first version tested for a CR
+# with `${cmd_loose#*<CR>}` above the bound. bash runs that in time quadratic in the string's
+# length (measured on Git Bash: 0.35 s at 50K characters, 8.8 s at 200K), so an oversized command
+# could outlast the hook's timeout, and a timed-out hook does not block the call. A `case` glob is
+# linear (0.0012 s at 200K, measured). It sits in a helper because a `case` on a raw view is what
+# the completeness tests forbid every matcher to do.
+# dc_nl and dc_cr are also the trailing boundaries of confirm_boundary() below.
+dc_nl='
+'
+dc_cr=$(printf '\r')
+dc_has_cr() {
+    case "$1" in *"$dc_cr"*) return 0 ;; esac
+    return 1
+}
+cmd_loose_nocr=""
+if dc_has_cr "$cmd_loose"; then
+    cmd_loose_nocr=$(printf '%s' "$cmd_loose" | tr -d '\r' | sed 's/  */ /g')
+fi
+
+# WHY a lowered copy of each view above (the CR-deleted one only when it exists), hoisted here
+# rather than folded per matcher: POSIX `case` is case-SENSITIVE, and every corresponding site in
+# the .ps1 twin uses OrdinalIgnoreCase (literals) or RegexOptions.IgnoreCase (regexes). Four of
+# the six matchers below -- block(), block_boundary() (since replaced by block_regex() for
+# [NS-38]), confirm(), warn() -- used a bare `case` and so returned NO VERDICT AT ALL on a
+# mixed-case payload the .ps1 twin caught. Only confirm_regex() (grep -i) and
 # confirm_boundary() (which folded per call) already agreed. That is a live divergence across
 # three tiers, not a cosmetic one: SQL keywords are case-insensitive to the engine, so a
 # mixed-case drop executes exactly as the upper-case one does, and on the default
@@ -400,7 +410,7 @@ fi
 # makes, and the same accepted cost: at CONFIRM and WARN tier a false positive is a prompt, at
 # BLOCK tier it is a refusal. The word-boundary checks below are what keep that cost bounded.
 #
-# WHY hoisted: computing it once beside cmd_loose keeps every matcher reading the SAME pair, so
+# WHY hoisted: computing it once beside cmd_loose keeps every matcher reading the SAME views, so
 # "did this matcher fold?" is answerable by reading one line of the matcher instead of tracing
 # which of them recomputed it. confirm_boundary() used to recompute both per call.
 #
@@ -421,7 +431,7 @@ fi
 # adds a `printf | tr` subshell per matcher CALL, about 25 per invocation, and this hook runs on
 # every single Bash tool call. Measured on this machine over 10 runs of a benign command:
 # 1.07s -> 2.33s per invocation, a 2.2x regression paid by every command the operator ever runs.
-# Folding the two subjects once costs two subshells total.
+# Folding the subjects once costs two subshells total, three when the command holds a CR.
 #
 # THE TRAP THIS CREATES, and the guard for it: because the subjects are lower case, an UPPER-case
 # pattern can now never match anything -- silently, and FAIL-OPEN, which is the worst direction
@@ -665,7 +675,7 @@ confirm_boundary() {
     # WHY the mutation proof did not catch this: deleting cmd_loose turned the escape tests red,
     # which proves the MECHANISM works where it is wired -- it says nothing about whether every
     # matcher is wired to it. Coverage failures wear correctness clothing. The cheap guard is a
-    # COMPLETENESS invariant (enumerate every matcher, assert each references both views), which
+    # COMPLETENESS invariant (enumerate every matcher, assert each references every view), which
     # is a different tool from a discrimination check.
     # The two folded views this used to recompute per call are now hoisted beside cmd_loose --
     # see the cmd_lc note above. This function was the only one that folded, which is what made
@@ -716,7 +726,7 @@ warn() {
     # the same single-view limit and gets the same fix, so the two shells still agree.
     #
     # WHY `return` after a match, unlike the other matchers: warn() does NOT exit -- the
-    # command proceeds. Without the return, a command matching both views (most of them, since
+    # command proceeds. Without the return, a command matching several views (most of them, since
     # the loose view differs only when backslashes or quotes are present) would print the
     # warning twice.
     case "$cmd_lc" in

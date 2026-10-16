@@ -64,9 +64,10 @@
   Neither hook gave a verdict on it, with or without python3. Both hooks now also match a
   CR-deleted copy of their de-escaped view. It is added rather than substituted, so it can only add
   matches: PowerShell, which the ps1 hook also judges, reads a lone CR as a statement break, so
-  deleting CRs in place would glue words together. A Bash command gets the same verdict from
-  either hook. The ps1 hook skips the copy when the command has no CR, so its worst-case time is
-  unchanged.
+  deleting CRs in place would glue words together. On these CR shapes a Bash command gets the same
+  verdict from either hook. Both hooks skip the copy when the command has no CR, so a CR-free
+  command costs what it did; at the 50 KB bound, one with a CR costs the ps1 hook about 29 s
+  against about 21 s (measured).
 - **A pipe to a shell split across a newline got past the BLOCK tier on sh ([NS-38]).** A trailing
   `|` continues the command onto the next line, so `curl x |`, a newline, then `bash` runs as
   `curl x | bash`. `dangerous-commands.sh` matched pipe-to-interpreter with four literal rows,
@@ -94,7 +95,7 @@
   - Both passes still miss when either of those causes combines with a gap longer than 255 bytes.
     This is recorded in `standards/SECURITY-GUARDRAILS.md`.
 
-  Both sh views now go through one `grep` per pass, joined by NUL, so the second pass adds no net
+  The sh views now go through one `grep` per pass, joined by NUL, so the second pass adds no net
   grep calls. The new pipe row runs under `LC_ALL=C` only, so it matches the same bytes in every
   locale.
 - **CI now fails when the sh/ps1 parity checks cannot run.** The `mb-command-tests` job sets
@@ -105,9 +106,9 @@
   regex row. It now prompts, like the hook's other "cannot analyze" cases. That makes a grep with
   `-z`, such as GNU grep, a requirement of the sh hook. BusyBox grep rejects `-z` (measured), so on
   Alpine with bash but without pwsh every Bash command is refused, with `CONFIRM REQUIRED` unless a
-  literal BLOCK row matches it first. Without bash as well, the hook
-  wiring's `|| true` fallback runs no guard at all (measured). The deny message points to the sh
-  hook's full platform requirement in `standards/SECURITY-GUARDRAILS.md`.
+  literal BLOCK row matches it first. Without bash as well, the hook wiring's `|| true` fallback
+  runs no guard at all (measured). The deny message points to the sh hook's full platform
+  requirement in `standards/SECURITY-GUARDRAILS.md`.
 - **The signing rows' gap bound is 255, not 300, in both shells.** POSIX guarantees repetition
   bounds only up to 255 (`RE_DUP_MAX`), so a grep that supports `-z` but caps bounds there would
   reject `{0,300}` and, with the fail-closed rule above, deny every command. No such grep has been

@@ -98,7 +98,8 @@ any row above 255.
 
 **Why `$1` is not simply folded per call:** that costs a `printf | tr` subshell per matcher *call*,
 roughly 25 per invocation, on a hook that runs on every single Bash tool call — measured at
-1.07s → 2.33s per invocation. Folding the two subjects once costs two subshells total.
+1.07s → 2.33s per invocation. Folding the subjects once costs two subshells total, three when the
+command holds a carriage return.
 
 The shipped test suites assert this structurally, so the fail-open trap is a red test rather than a
 silent hole: no matcher may match against an unfolded view, and no pattern argument may contain an
@@ -114,10 +115,10 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 
 **Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
 `timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
-out does not block the tool call: its output is discarded and the call proceeds, unless the entry
-sets `"onFailure": "block"` (Claude Code v2.1.295 or later). This hook's worst case, a ~50 KB
-command, is recorded at about 17.5 seconds in `standards/SECURITY-GUARDRAILS.md`, far inside the
-default.
+out does not block the tool call: its output is discarded and the call continues through the
+normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
+later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default.
 
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 

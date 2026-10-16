@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-10-05
-last-reviewed: 2026-10-15
+last-reviewed: 2026-10-16
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -15,8 +15,9 @@ merge and are still open unless marked.
 
 **IDs.** `J2-1` and `C-7` are review-finding IDs the user supplied with the 2026-10-14 task. IDs
 from the reviews of item 1's fix carry a prefix naming the review, because the same short ID recurs
-across reviews: `R2/` and `R3/` are /code-review rounds 2 and 3 (2026-10-14), and `CHR/` is the
-/change-review that followed (so `CHR/J2-1` is not `J2-1`). None of those reports is in this repo;
+across reviews: `R2/` and `R3/` are /code-review rounds 2 and 3 (2026-10-14), `CHR/` is the
+/change-review that followed (so `CHR/J2-1` is not `J2-1`), and `R4/` is the /code-review of the
+follow-up commit (2026-10-15). Every ID carries its prefix. None of those reports is in this repo;
 each finding is described in full where it appears.
 
 **What decays here, and what to re-verify before relying on it:**
@@ -122,18 +123,40 @@ checked against it:
     verdict.
   - **CHR/J6-1:** nothing would catch a return to the quadratic `gsub` decoder. A timing test now
     runs 200K raw quotes against one quote and requires under 10 s of difference.
-  - **R3/PERF-1, PERF-2:** the ungated ps1 third view added about half again to the ~50 KB worst
-    case. It is now skipped when identical to the de-escaped view. Measured 2026-10-15, medians of
-    three interleaved runs on one machine, dense `git `: 19.5 s at `e3c2f43`, 28.8 s ungated
-    (`75f9d98`), 18.8 s gated; dense `git config `: 9.0, 13.6 and 9.2 s. So the recorded
-    worst-case figures stand.
-  - **R3/A-1, A-2, A-3, M-1, M-2, M-6, Security F2, C3-4:** the sh/ps1 CR divergence and the
-    comments that described it, resolved by the third view on sh (above).
-  - **R3/C3-1, M-4:** the fold-to-ASCII exception is a class (U+017F and U+0131, measured), and the
-    standard now lists the stand-in's stricter byte count as well.
-  - **R3/M-3, C3-2, C3-3, T-3, C3-5, M-5, M-7; CHR/J5-1, J2-2:** wording, in this file, the
-    standard, `CHANGELOG.md` and the test comments.
+  - **R3/PERF-1, R3/PERF-2:** the ungated ps1 third view added about half again to the ~50 KB
+    worst case. It is now skipped when identical to the de-escaped view. Measured 2026-10-15,
+    medians of three interleaved runs on one machine, dense `git `: 19.5 s at `e3c2f43`, 28.8 s
+    ungated (`75f9d98`), 18.8 s gated; dense `git config `: 9.0, 13.6 and 9.2 s. That holds for a
+    command without a CR only: one with a CR still pays the pass (R4/M-1, R4/F2, below).
+  - **R3/A-1, R3/A-2, R3/A-3, R3/M-1, R3/M-2, R3/M-6, R3/F2 (Security), R3/C3-4:** the sh/ps1 CR
+    divergence and the comments that described it, resolved by the third view on sh (above).
+  - **R3/C3-1, R3/M-4:** the fold-to-ASCII exception is a class (U+017F and U+0131, measured), and
+    the standard now lists the stand-in's stricter byte count as well.
+  - **R3/M-3, R3/C3-2, R3/C3-3, R3/T-3, R3/C3-5, R3/M-5, R3/M-7, CHR/J5-1, CHR/J2-2:** wording, in
+    this file, the standard, `CHANGELOG.md` and the test comments.
   - **R3/OPP3-2, CHR/J4-1, the hook timeout:** see the `onFailure` decision below.
+- **Round-4 review fixes, done 2026-10-16:**
+  - **R4/COR4-1, R4/S4-1, R4/F1:** the sh hook's first test for a CR, `${cmd_loose#*<CR>}`, was
+    quadratic in the command's length and ran before the length bound (measured on Git Bash: 0.35 s
+    at 50K characters, 8.8 s at 200K; whole hook 51 s at 400K). A command large enough to outlast
+    the hook's 600 s timeout would get no verdict, since a timed-out hook does not block the call.
+    Opposition rated it Medium: the Bash tool passes the command as one argument, which Linux caps
+    at about 128 KB, so the open route needed python3 missing and a payload padded past 1 MB. It is
+    now a `case` in `dc_has_cr()`, linear, after the bound. A 400K-character timing row pins that
+    nothing unbounded runs before the bound; it cannot tell a quadratic test placed after the bound
+    from a linear one (that mutant stays green), where the cost is under about a second.
+  - **R4/T-1, R4/T-2, R4/T-3:** three ways to break the CR-deleted view stayed green, each reopening
+    a Git Bash bypass: its `git merge` newline and end arms, its space collapse (`rm`, CR between
+    spaces, `-rf`: Git Bash drops a word made only of a CR), and building it from the faithful
+    view (a CR inside `--force` next to a quoted letter). Rows for each are now in both suites.
+  - **R4/A-2:** the sh structural count used `grep -c` (lines) and could agree with the copy
+    dropped; it now counts fixed-string occurrences and requires them to be non-zero.
+  - **R4/S4-2:** the ps1 gate compared with culture-aware `-cne`, which treats `ab` and `a`,
+    soft hyphen, `b` as equal (measured). It now compares ordinally.
+  - **R4/M-1, R4/F2, R4/A-5, R4/OPP-1:** worst-case figures restated per hook and path (see the
+    `onFailure` decision). **R4/M-2, R4/A-1, R4/M-3, R4/M-4, R4/A-3, R4/COR4-2, R4/COR4-3,
+    R4/COR4-4, R4/T-4, R4/A-4, R4/M-5:** wording, including the standard's accepted false positive
+    for `git merge`, CR, then another word.
 
 **Still open from item 1:**
 - **The merge row's trailing boundary is still narrow.** A bare `git merge` straight before `;`,
@@ -148,18 +171,22 @@ checked against it:
   Claude Code hooks reference on 2026-10-15: with no `timeout`, a command hook gets 600 s; a
   PreToolUse command hook that times out does not block the call (its output is discarded); and
   `"onFailure": "block"` (Claude Code v2.1.295 or later) blocks it instead, on a timeout, a hook
-  that cannot start, or an exit code other than 0 or 2. The worst case here, about 17.5 s, is far
-  inside 600 s, so no `timeout` was set. Setting `onFailure` would make the guard fail closed
-  fleet-wide and needs that Claude Code version on every adopter; note the `|| true` wiring already
-  turns a crash into exit 0, so it would mostly change the timeout case. Not decided.
+  that cannot start, an exit code other than 0 or 2, or invalid output. The measured worst cases,
+  all at the 50 KB bound, are far inside 600 s, so no `timeout` was set: the ps1 hook 19 to 21 s
+  on a CR-free command and about 29 s with one CR (one machine, 2026-10-15 and 2026-10-16). The
+  sh hook's CR test is now linear and after the bound, so its cost no longer grows past it.
+  Setting `onFailure` would make the guard fail closed fleet-wide and needs that Claude Code
+  version on every adopter; note the `|| true` wiring already turns a crash into exit 0, so it
+  would mostly change the timeout case. Not decided.
 - **ps1's parsed path keeps a NUL that every other path drops** (`r`, NUL, `m -rf` gets no verdict
   there). Whether a harness can deliver a NUL to bash at all is unverified, so this may be moot.
-  Related (R3 Security F1): decoding `\u0000` to nothing can remove a boundary the old raw view had
+  Related (R3/F1, Security): decoding `\u0000` to nothing can remove a boundary the old raw view had
   (`x`, NUL, `git config …` lost its CONFIRM on the fallback); PowerShell runs `x` there and Bash
   runs `xgit`, so only false positives were lost.
 - **The Pester suite writes to the repo's `.pmb-hook-errors.log`** (CHR/J3-2). Every fallback case
   logs a parse failure to the cwd-relative log, and `mb doctor` Check 16 then WARNs. The helper
-  should run the hook from a temp directory. Measured 2,485 lines in one worktree.
+  should run the hook from a temp directory. One worktree's log held 2,485 lines on 2026-10-15,
+  and it grows with every run.
 - **The python3-absent mode skips when its probe fails, not only when python3 cannot be hidden**
   (CHR/J4-2). A new tool dependency in the hook's early path would drop the whole mode locally
   instead of failing; CI sets `PMB_REQUIRE_PARITY=1` and would catch it.

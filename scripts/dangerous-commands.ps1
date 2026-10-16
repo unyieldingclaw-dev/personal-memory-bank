@@ -201,17 +201,21 @@ $cmdLoose = ($cmd -replace '[\\"'']', '') -replace ' +', ' '
 # pwsh is present. PowerShell reads a lone CR as a statement break (measured with its parser), so
 # `x`, CR, `g"it" merge main` runs git. A first version deleted CRs inside $cmdLoose itself; that
 # glued `x` to `git` and dropped verdicts the CR-keeping view gave, including a BLOCK, on the
-# PowerShell tool (review finding OPP-1). Keeping $cmdLoose as it was and matching this view IN
-# ADDITION can only add matches, which is the rule every view here follows. The sh twin does the
-# same (cmd_loose_nocr), so both hooks give the Bash tool one verdict.
+# PowerShell tool (round-2 review, finding OPP-1). Keeping $cmdLoose as it was and matching this
+# view IN ADDITION can only add matches, which is the rule every view here follows. The sh twin
+# does the same (cmd_loose_nocr), so both hooks give the Bash tool one verdict on CR shapes.
 #
 # WHY $DcNoCrDiffers gates every use: without a CR this view equals $cmdLoose, so matching it again
 # only repeats a pass that already failed. Measured on the ~50 KB worst case, dense `git `, it added
 # about half again (medians of three interleaved runs on one machine, 2026-10-15: 19.5 s at
 # e3c2f43, 28.8 s with the view ungated, 18.8 s gated). Skipping an identical string cannot change
-# a verdict.
+# a verdict. A command that does hold a CR still pays the extra pass; see the worst-case figures in
+# standards/SECURITY-GUARDRAILS.md.
+# WHY an ordinal comparison and not -cne: PowerShell's string operators compare by culture, and a
+# culture comparison ignores some code points (a soft hyphen compares equal to nothing, measured),
+# so two strings that differ could compare equal and skip a view that would have matched.
 $cmdLooseNoCr = ($cmdLoose -replace '\r', '') -replace ' +', ' '
-$DcNoCrDiffers = $cmdLooseNoCr -cne $cmdLoose
+$DcNoCrDiffers = -not [string]::Equals($cmdLooseNoCr, $cmdLoose, [System.StringComparison]::Ordinal)
 
 # WHY Singleline, added round 9 alongside the `.*` gaps: under `grep -z` the sh twin treats the
 # whole payload as ONE record, so its `.` matches a newline. .NET's `.` does NOT, unless
