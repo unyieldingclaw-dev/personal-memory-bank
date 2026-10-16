@@ -182,13 +182,15 @@ function Test-PmbDirectory([string]$Path) { return [System.IO.Directory]::Exists
 function Test-PmbLink([string]$Path) {
     try { return ($null -ne [System.IO.FileInfo]::new($Path).LinkTarget) } catch { return $false }
 }
-# `[ -f ] && [ ! -L ]`: a regular file -- not a link, directory, FIFO or device. WHY UnixMode on
-# Unix: .NET reports a FIFO or a device as an existing file, and opening a FIFO blocks.
+# `[ -f ] && [ ! -L ]`: a regular file -- not a link, directory, FIFO or device. WHY /usr/bin/test
+# on Unix: .NET reports a FIFO or a device as an existing file, and opening a FIFO blocks. Get-Item
+# cannot decide it (measured, pwsh 7.4.7 on Linux): a FIFO's UnixMode reads "-rw-r--r--", and the
+# provider turns '\' into '/', so a file named `sub\handoff.md` is not found. The catch covers strict
+# native-command error preferences (a nonzero exit throws) and a missing binary: both refuse.
 function Test-PmbRegularFile([string]$Path) {
     if ((Test-PmbLink $Path) -or -not [System.IO.File]::Exists($Path)) { return $false }
     if (-not $IsWindows) {
-        $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-        if ($null -eq $item -or "$($item.UnixMode)" -notlike '-*') { return $false }
+        try { & /usr/bin/test -f $Path; if ($LASTEXITCODE -ne 0) { return $false } } catch { return $false }
     }
     return $true
 }

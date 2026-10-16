@@ -1453,8 +1453,8 @@ if command -v pwsh >/dev/null 2>&1; then
     claim_parity() {
         local ns="$1" desc="$2" pid sid po so others want
         cp_i=$((cp_i + 1)); pid="sessZPCLM$cp_i"; sid="sessZSCLM$cp_i"
-        po="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=$pid pwsh -NoProfile -NonInteractive -File "$T/claims/scripts/pmb-journal.ps1" claim "$ns" </dev/null; echo "rc=$?")"
-        so="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=$sid bash "$J" claim "$ns" | grep 'also claimed')"
+        po="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=$pid tmo pwsh -NoProfile -NonInteractive -File "$T/claims/scripts/pmb-journal.ps1" claim "$ns" </dev/null; echo "rc=$?")"
+        so="$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=$sid tmo bash "$J" claim "$ns" | grep 'also claimed')"
         assert_contains "$so" " $pid" "the sh claim report lists the ps1 claimant: $desc"
         others="$(printf '%s\n' ${so#*session(s): } | grep -vx "$pid" | tr '\n' ' ' | sed 's/ $//')"
         want=""; [ -z "$others" ] || want="note: $ns is also claimed by live/idle session(s): $others"
@@ -1500,8 +1500,9 @@ if command -v pwsh >/dev/null 2>&1; then
     # show: byte-identical output and the same exit code.
     show_parity() {
         local d="$1" desc="$2"; shift 2
-        ( cd "$d" && bash "$J" show "$@" >"$T/ss.out" 2>"$T/ss.err"; echo $? > "$T/ss.rc" )
-        ( cd "$d" && pwsh -NoProfile -NonInteractive -File "$d/scripts/pmb-journal.ps1" show "$@" </dev/null >"$T/sp.out" 2>"$T/sp.err"; echo $? > "$T/sp.rc" )
+        # WHY tmo: these cases include a FIFO, and an unguarded open of one hangs the suite (it did, on CI).
+        ( cd "$d" && tmo bash "$J" show "$@" >"$T/ss.out" 2>"$T/ss.err"; echo $? > "$T/ss.rc" )
+        ( cd "$d" && tmo pwsh -NoProfile -NonInteractive -File "$d/scripts/pmb-journal.ps1" show "$@" </dev/null >"$T/sp.out" 2>"$T/sp.err"; echo $? > "$T/sp.rc" )
         assert_equals "rc=$(cat "$T/sp.rc") $(cksum < "$T/sp.out") $(cksum < "$T/sp.err")" "rc=$(cat "$T/ss.rc") $(cksum < "$T/ss.out") $(cksum < "$T/ss.err")" "ps1 and sh print byte-identical show output: $desc"
     }
     CLAUDE_CODE_SESSION_ID=sessCLAIM_A show_parity "$T/claims" "--own, with a stray file, a planted control character and a directory named like a record" --own
