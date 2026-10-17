@@ -189,24 +189,35 @@ pwsh's start-up cost — instead of patching each one. Everywhere this spec says
 Plans B and D should follow the same pattern for `sessions` and `snapshots` (user-approved
 2026-09-29).
 
-**Twin parity (amended 2026-10-14, Task 6 review; 2026-10-16, review of `cc5e51c`).** The two twins
-make the same decisions, return the same exit codes, and write the same bytes to `pmb/`. The one
-exception is a Linux or macOS host with no `test` binary, where the PowerShell twin's decisions and
-exit codes differ (Regular files, below). Their output differs only in these accepted
-ways: paths in messages take each shell's form (`C:/...` from .NET and git, `/c/...` or `/tmp/...`
-from Git Bash); an OS error inside a message is the platform's own text (.NET's, or the shell tool's),
-as is the error for a secret pattern that cannot be applied (a .NET regex error, not a grep exit
-code); the first usage line names `pmb-journal.ps1`; and `pwsh -File` drops an argument that is
-exactly `--%` (and splits one shaped `-name:value`), so such text goes through `--file`.
+**Twin parity (amended 2026-10-14, Task 6 review; 2026-10-16 and 2026-10-17, FIFO-hardening
+reviews).** The two twins are built to make the same decisions, return the same exit codes and
+write the same bytes to `pmb/`. The parity tests check this for the cases they cover; it is not
+proven in general. These are the differences known today:
+- **Text arguments under `pwsh -File`.** pwsh parses every argument before the PowerShell twin
+  sees it. It drops an argument that is exactly `--%`. On Linux, it turns invalid UTF-8 into
+  U+FFFD. An argument that starts with `-` it can split at a colon, drop, refuse to start on, or
+  turn into a flag the twin then obeys, such as `--file:<path>` or `--session:<id>`. As a result,
+  the PowerShell twin can record different text from the sh twin, or another file's
+  contents, or a secret the sh twin refuses. It can also refuse text the sh twin records. In every
+  case measured, the same text passed with `--file` gave both twins the same bytes and exit code.
+  The measurements used pwsh 7.4.7 and 7.6.6; the UTF-8 case used 7.4.7 only.
+- **Windows, with a Git Bash FIFO** (Regular files, below).
+- **A Linux or macOS host with neither `/usr/bin/test` nor `/bin/test`** (Regular files, below).
+- **Message text only.**
+  - Paths in messages take each shell's form: `C:/...` from .NET and git, `/c/...` or `/tmp/...`
+    from Git Bash.
+  - An OS error inside a message is the platform's own text, .NET's or the shell tool's. So is the
+    error for a secret pattern that cannot be applied: a .NET regex error, not a grep exit code.
+  - The first usage line names `pmb-journal.ps1`.
 
-**Regular files (amended 2026-10-16, reviews of `4738ad5` and `cc5e51c`).** Both twins refuse to
+**Regular files (amended 2026-10-16, Plan A and FIFO-hardening reviews).** Both twins refuse to
 open a FIFO or a device, since opening a FIFO blocks the hook. The sh twin uses its built-in
 `[ -f ]`. .NET reports a FIFO as an existing file, so on Linux and macOS the PowerShell twin runs
 the first of `/usr/bin/test` and `/bin/test` that exists, found once per process. Alpine ships
 only `/usr/bin/test`. Windows needs no binary. If neither exists, the twin throws rather than refusing
 every file. It throws the first time it checks a file that exists and is not a link; a missing
-file still reads as not regular, with no throw. Its behaviour then differs from the sh twin's (the
-parity exception above):
+file still reads as not regular, with no throw. Its behaviour then differs from the sh twin's (a
+known difference listed under Twin parity, above):
 - `show` of a session with at least one record prints its header, then the error, and exits 1;
 - `note --file` and `import-handoff` print the error and exit 1;
 - the claim report is skipped without a message, and the claim itself still exits 0;

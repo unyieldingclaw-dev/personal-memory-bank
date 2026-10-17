@@ -3,7 +3,8 @@
 #
 # Spec: docs/superpowers/specs/2026-09-26-multi-session-memory-design.md (sections 4.1-4.3).
 # This file is a PORT of scripts/pmb-journal.sh: the same commands, record names (except the random
-# suffix), bytes on disk, stdout/stderr text, exit codes and gate decisions. The WHY behind each rule
+# suffix), bytes on disk, stdout/stderr text, exit codes and gate decisions, except for the known
+# differences listed in the spec (section 4.1, "Twin parity"). The WHY behind each rule
 # is written once, in the sh twin, next to the function named in each comment below; the comments
 # here cover what is specific to PowerShell.
 #
@@ -15,10 +16,10 @@
 # pwsh (start-up alone is about a second, spec F19), and the sh twin is one file too. This dual-role
 # file is a deliberate exception to the repository's convention of a separate *_lib file.
 # WHY no param() block: declared parameters intercept `--flag` arguments (spec F18); with none,
-# every argument lands in $args untouched. pwsh -File still splits an argument shaped -name:value
-# in two and drops an argument that is exactly `--%` (measured, pwsh 7.6), so such text must be
-# passed with --file. Decisions and exit codes are the sh twin's; the accepted output-only
-# differences are listed in the spec (section 4.1, "Twin parity").
+# every argument lands in $args untouched by the script. pwsh -File itself still parses them first:
+# it can split, drop or refuse an argument that starts with '-', or turn it into a flag such as
+# --file:<path>; it drops `--%`; and on Linux it turns invalid UTF-8 into U+FFFD. Such text must be
+# passed with --file. The spec lists the known differences (section 4.1, "Twin parity").
 # WHY ASCII only: CI's PSScriptAnalyzer (PSUseBOMForUnicodeEncodedFile) fails a non-ASCII file
 # saved without a BOM; regex escapes stand in for the characters.
 #

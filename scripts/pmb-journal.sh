@@ -2,7 +2,8 @@
 # pmb-journal.sh — per-session journal for concurrent sessions working one repository.
 #
 # Spec: docs/superpowers/specs/2026-09-26-multi-session-memory-design.md (sections 4.1-4.3).
-# Twin: scripts/pmb-journal.ps1 — same commands, same on-disk layout, same limits.
+# Twin: scripts/pmb-journal.ps1 — same commands, same on-disk layout, same limits, except for the
+# known differences listed in the spec (section 4.1, "Twin parity").
 #
 # WHY a standalone script rather than an `mb` subcommand: `mb` runs MB_HOME's mb.ps1 (the main
 # checkout, on whatever branch it holds), prints an update notice that can make a 2 s network call,
