@@ -11,7 +11,7 @@
     (model), and any text beside the object would void it. Fails open on a
     genuine read failure: exits 0 (with a [HOOK ERROR] systemMessage if the
     read itself threw). On a JSON-parse failure with non-empty
-    stdin, falls back to matching tier patterns against the raw payload instead
+    stdin, falls back to matching tier patterns against the decoded payload instead
     of exiting immediately -- see the WHY comment on the catch block below.
 
     WHY hookSpecificOutput.permissionDecision, not exit code: top-level exit codes are
@@ -42,7 +42,7 @@ try {
     # not address TRUNCATION -- .pmb-hook-errors.log records JSON-parse failures of the form
     # "Unterminated string" and "Unexpected end when deserializing object" both before and after
     # this change, which means the payload sometimes arrives incomplete for a reason not
-    # diagnosed here. On that path the catch block below falls back to raw matching, and a BLOCK
+    # diagnosed here. On that path the catch block below falls back to decoded-payload matching, and a BLOCK
     # substring past the truncation point would not be seen. Open, not closed.
     # The sh twin is not affected, because bash hands piped bytes to the script unchanged and never
     # re-decodes them through a code page. (dangerous-commands.sh's round-8 comment is about a
@@ -99,18 +99,35 @@ try {
     # BLOCK/CONFIRM/WARN pattern has ever matched anything, regardless of exit code.
     $cmd = if ($data.tool_input.command) { [string]$data.tool_input.command } else { "" }
 } catch {
-    # WHY fall back to raw-stdin matching (not exit 0 immediately) on a JSON-parse
-    # failure: mirrors dangerous-commands.sh's identical fallback exactly — a real
-    # dangerous command's text is still present somewhere in the raw payload even when
-    # structured extraction fails, so raw matching never misses a true positive, it
-    # only risks occasional false ones. Exiting immediately here would silently
-    # disable the guardrail entirely on a parse error, the wrong direction for a
-    # safety gate. Only applies when $raw was actually captured (the IsNullOrWhiteSpace
-    # early-exit above already handles the genuine "nothing to check" case, which
-    # this catch block never reaches).
+    # WHY fall back to matching the whole payload (not exit 0 immediately) on a JSON-parse
+    # failure: exiting here would silently disable the guardrail on a parse error, the wrong
+    # direction for a safety gate. Its cost is that text in every other field, such as
+    # `description`, is matched too. Only applies when $raw was actually captured (the
+    # IsNullOrWhiteSpace early-exit above already handles the genuine "nothing to check" case,
+    # which this catch block never reaches).
+    #
+    # CORRECTED 2026-10-14: this comment used to say raw matching "never misses a true positive"
+    # and that it "mirrors dangerous-commands.sh's identical fallback exactly". Neither held. With
+    # JSON escapes still encoded, a newline was the two characters `\n`, so a split pipe, a
+    # continuation line, or a `git` row after a newline got no verdict -- and a bare `git merge`
+    # was followed by the closing `"`, not the end of string. The payload is now decoded first,
+    # as in the sh twin: escapes become their characters, `\u0000` becomes nothing, and an
+    # unescaped `"` (a string delimiter) becomes a space. One deliberate difference: a non-ASCII
+    # `\uXXXX` becomes the real character here, which is what this hook's own parsed path sees,
+    # where the sh twin writes `?`. And the trigger still differs: this hook has no python3
+    # dependency, so it falls back only when parsing fails, while the sh hook also falls back
+    # whenever python3 is missing.
     if ($raw) {
-        $cmd = $raw
-        try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] dangerous-commands.ps1: JSON parse failed, fell back to raw-stdin matching: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
+        $cmd = [regex]::Replace($raw, '\\(?:u([0-9A-Fa-f]{4})|(["\\/bfnrt]))|"', {
+            param($m)
+            if ($m.Value -eq '"') { ' ' }
+            elseif ($m.Groups[1].Success) {
+                $v = [Convert]::ToInt32($m.Groups[1].Value, 16)
+                if ($v -eq 0) { '' } else { [string][char]$v }
+            }
+            else { @{ '"' = '"'; '\' = '\'; '/' = '/'; b = "`b"; f = "`f"; n = "`n"; r = "`r"; t = "`t" }[$m.Groups[2].Value] }
+        })
+        try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] dangerous-commands.ps1: JSON parse failed, fell back to decoded-payload matching: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
     } else {
         [ordered]@{ systemMessage = "[HOOK ERROR] dangerous-commands.ps1 failed unexpectedly. Proceeding in fails-open mode." } |
             ConvertTo-Json -Compress | Write-Output
@@ -173,13 +190,36 @@ $cmd = $cmd -replace '[ \t]+', ' '
 #
 # WHY match both views rather than replacing the faithful one: this view is deliberately NOT
 # faithful -- it destroys information a real shell keeps. Matching it in ADDITION can only ever
-# ADD a match, never remove one, so the change is strictly fail-closed. Kept byte-identical in
-# intent with the sh twin's $cmd_loose; see dangerous-commands.sh for the full rationale.
+# ADD a match, never remove one, so the change is strictly fail-closed. Kept identical in intent
+# with the sh twin's $cmd_loose, carriage returns included; see dangerous-commands.sh for the full
+# rationale, and the CR-deleted view below.
 #
 # KNOWN COST, stated rather than hidden: stripping quotes creates matches a real shell would not
 # produce -- `echo "rm" "-rf"` collapses to `echo rm -rf` and now trips BLOCK. Same accepted
 # class as the documented quoted-invocation-as-text false positive.
 $cmdLoose = ($cmd -replace '[\\"'']', '') -replace ' +', ' '
+
+# WHY a THIRD view with carriage returns deleted, added 2026-10-14: this hook judges two shells that
+# treat a CR in opposite ways. Git Bash deletes a CR while parsing (measured), so `git push --for`,
+# CR, `ce` runs as a force push -- and this hook, not the sh twin, judges the Bash tool whenever
+# pwsh is present. PowerShell reads a lone CR as a statement break (measured with its parser), so
+# `x`, CR, `g"it" merge main` runs git. A first version deleted CRs inside $cmdLoose itself; that
+# glued `x` to `git` and dropped verdicts the CR-keeping view gave, including a BLOCK, on the
+# PowerShell tool (round-2 review, finding OPP-1). Keeping $cmdLoose as it was and matching this
+# view IN ADDITION can only add matches, which is the rule every view here follows. The sh twin
+# does the same (cmd_loose_nocr), so both hooks give the Bash tool one verdict on CR shapes.
+#
+# WHY $DcNoCrDiffers gates every use: without a CR this view equals $cmdLoose, so matching it again
+# only repeats a pass that already failed. Measured on the ~50 KB worst case, dense `git `, it added
+# about half again (medians of three interleaved runs on one machine, 2026-10-15: 19.5 s at
+# e3c2f43, 28.8 s with the view ungated, 18.8 s gated). Skipping an identical string cannot change
+# a verdict. A command that does hold a CR still pays the extra pass; see the worst-case figures in
+# standards/SECURITY-GUARDRAILS.md.
+# WHY an ordinal comparison and not -cne: PowerShell's string operators compare by culture, and a
+# culture comparison ignores some code points (a soft hyphen compares equal to nothing, measured),
+# so two strings that differ could compare equal and skip a view that would have matched.
+$cmdLooseNoCr = ($cmdLoose -replace '\r', '') -replace ' +', ' '
+$DcNoCrDiffers = -not [string]::Equals($cmdLooseNoCr, $cmdLoose, [System.StringComparison]::Ordinal)
 
 # WHY Singleline, added round 9 alongside the `.*` gaps: under `grep -z` the sh twin treats the
 # whole payload as ONE record, so its `.` matches a newline. .NET's `.` does NOT, unless
@@ -283,7 +323,7 @@ $blockPatterns = @(
 )
 
 foreach ($entry in $blockPatterns) {
-    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) }
+    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) -or ($DcNoCrDiffers -and [regex]::IsMatch($cmdLooseNoCr, $entry.pattern, $DcRegexOpts)) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or ($DcNoCrDiffers -and $cmdLooseNoCr.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) }
     if ($isMatch) {
         Deny ($BLOCK_MSG -f $entry.reason)
         exit 0
@@ -320,13 +360,13 @@ $confirmPatterns = @(
     @{ pattern = '(^|[^a-z])git (.*)--no-gpg-sign'; regex = $true; reason = "bypasses commit signing (local governance)" }
     # WHY regex, not a plain substring: "git merge" as a bare substring also matches
     # "git merge-base", a common, harmless read-only command — the character after
-    # "merge" there is "-", not a word boundary in the usual sense. Requiring
-    # space-or-end-of-string after "merge" excludes that case while still matching
+    # "merge" there is "-", not a word boundary in the usual sense. Requiring a space,
+    # a newline, a CR or the end of the string after "merge" excludes that case while still matching
     # "git merge <branch>", "git merge --no-ff <branch>", and bare "git merge". WHY a
     # literal space, not \s, on the trailing side: $cmd already had tabs normalized to
     # spaces before this pattern ever runs (see the blank-run collapse above), and
     # dangerous-commands.sh does the same normalization -- so both sides only ever need
-    # to check for a plain ASCII space here, with no \s-vs-[[:space:]] Unicode/locale
+    # to check for a plain ASCII space, a newline or a CR here, with no \s-vs-[[:space:]] Unicode/locale
     # ambiguity to keep in parity (an earlier version used \s, which -- unlike bash's
     # [[:space:]] under the C/POSIX locale -- also matches NBSP and other Unicode space
     # separators; that mismatch let an NBSP-substituted "git merge" silently bypass the
@@ -339,11 +379,19 @@ $confirmPatterns = @(
     # trigger CONFIRM. Requiring the character before "git" to be absent (start of
     # string) or not a letter closes that gap. Mirrors dangerous-commands.sh's
     # confirm_boundary() leading-boundary fix exactly, for sh/ps1 parity.
-    @{ pattern = '(^|[^a-zA-Z])git merge( |$)'; regex = $true; reason = "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier" } # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
+    # WHY `\n` on the trailing side, added 2026-10-14: newlines are not folded to spaces, and
+    # without Multiline `$` matches only at the end or before a FINAL newline, so `git merge`, a
+    # newline, then another command -- which runs a bare `git merge` -- got no verdict here or in
+    # the sh twin. WHY `\r` too: PowerShell reads a lone CR as a statement break (measured), so
+    # `git merge`, CR, `ls` on the PowerShell tool is a bare merge. On Git Bash, which deletes the
+    # CR, that one runs `git mergels`: an accepted false positive, kept so both hooks give one
+    # verdict. A CR before a space, a newline or the end is a true positive there, which the
+    # CR-deleted view catches as well.
+    @{ pattern = '(^|[^a-zA-Z])git merge( |\r|\n|$)'; regex = $true; reason = "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier" } # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
 )
 
 foreach ($entry in $confirmPatterns) {
-    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) }
+    $isMatch = if ($entry.regex) { [regex]::IsMatch($cmd, $entry.pattern, $DcRegexOpts) -or [regex]::IsMatch($cmdLoose, $entry.pattern, $DcRegexOpts) -or ($DcNoCrDiffers -and [regex]::IsMatch($cmdLooseNoCr, $entry.pattern, $DcRegexOpts)) } else { $cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or ($DcNoCrDiffers -and $cmdLooseNoCr.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) }
     if ($isMatch) {
         Deny ($CONFIRM_MSG -f $entry.reason)
         exit 0
@@ -363,9 +411,10 @@ $warnReasons = @()
 foreach ($entry in $warnPatterns) {
     # Checks the de-escaped view too, [NS-40]: this loop tested $cmd alone, exactly like the sh
     # twin's warn(), so `id\_rsa` and `"id"_rsa` warned on neither shell. The -or keeps one if
-    # body, so a command matching both views warns once -- this tier does not exit.
+    # body, so a command matching several views warns once -- this tier does not exit.
     if ($cmd.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or
-        $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $cmdLoose.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase) -or
+        ($DcNoCrDiffers -and $cmdLooseNoCr.Contains($entry.pattern, [System.StringComparison]::OrdinalIgnoreCase))) {
         $warnReasons += $entry.reason
     }
 }
