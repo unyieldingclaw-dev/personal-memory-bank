@@ -60,8 +60,12 @@
 input=$(cat 2>/dev/null)
 [ -z "$input" ] && exit 0
 
+# WHY escape: the reason is printed inside a JSON string. Unescaped, a `"` (the unresolved-root
+# message's cd "<repo>"), or a `\` or control character in an interpolated repository path, made
+# the whole output invalid JSON (measured 2026-10-19 on the unresolved-root message).
 deny() {
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
+    deny_reason=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$deny_reason"
 }
 
 # CLAIM-THEN-RESTORE. Two properties have to hold at once, and the obvious shapes each give
@@ -235,12 +239,19 @@ if ! cd "$root" 2>/dev/null; then
     exit 0
 fi
 
+# WHY name the root in the empty-diff denials: a command whose cd was not its first word
+# (`N=...; cd "<worktree>" && git push`) fell back to the hook's working directory, the main
+# checkout, whose diff was empty -- and the denial gave no hint which tree it had checked.
+# The cd form named here is the one the resolvers accept: quoted, first in the command, then &&
+# (_review-gate-classify.py CD_PREFIX). An unquoted cd falls back to the working directory again.
+root_hint="The gate checked $root: it takes the repository from a quoted cd \"<path>\" && chain at the very start of the command plus any git -C path, else from the hook's working directory. If that is the wrong tree, start the command with cd \"<repo>\" &&."
+
 case "$verdict" in
     COMMIT)
         expected=$(diff_hash HEAD)
         marker="$root/.claude/.code-review-ok"
         if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then
-            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself."
+            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself. $root_hint"
         elif actual=$(claim_marker "$marker"); then
             if [ "$actual" = "$expected" ]; then
                 drop_marker "$marker"
@@ -265,7 +276,7 @@ case "$verdict" in
         fi
         marker="$root/.claude/.change-review-ok"
         if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then
-            deny "Review gate: there is no diff to review (both origin/main...HEAD and HEAD produced an empty diff, or git diff failed). The hash of an empty diff is a public constant and cannot serve as proof of review."
+            deny "Review gate: there is no diff to review (both origin/main...HEAD and HEAD produced an empty diff, or git diff failed). The hash of an empty diff is a public constant and cannot serve as proof of review. $root_hint"
         elif actual=$(claim_marker "$marker"); then
             if [ "$actual" = "$expected" ]; then
                 drop_marker "$marker"
