@@ -18,7 +18,7 @@ lineage: []
 - **#57** adds the bash journal and its PowerShell twin, plus a journal-mode PreCompact gate: auto never
   blocks, and a manual compaction is blocked once. Inert until Plan C's flag PR (`[NS-68]`).
 - **Its first Linux CI run hung for about 2 h** on a planted FIFO. On pwsh 7.4.7, `Get-Item` reports a
-  FIFO's `UnixMode` as a regular file, and its provider rewrites `\` to `/`. Fixed in `4738ad5` with
+  FIFO's `UnixMode` as a regular file, and its provider rewrites `\` to `/`. Fixed in `4738ad5` (PR #57 branch; squashed into `d751b73`) with
   `/usr/bin/test -f`. The hardening follow-ups are PR #63.
 - **#62** records the 2026-09-27 lock-up in `docs/backlog/`. The dispositions of the four backlog items
   the C1 spec absorbed are set in this entry's commit.

@@ -11,7 +11,7 @@ related_plan: null
 **Status 2026-10-18: fixed in journal mode only.** PR #57 (`d751b73`) implements option (b) below for the
 journal-mode gate:
 - an automatic compaction is never blocked;
-- a manual `/compact` is blocked once, and an immediate repeat passes.
+- a manual `/compact` is blocked once, and an immediate repeat passes (the two environment blocks repeat until fixed).
 
 Journal mode stays off until Plan C's flag PR (`[NS-68]`). The legacy gate still blocks both triggers
 and still has this deadlock. The question below remains open for it.
@@ -40,22 +40,21 @@ For the legacy gate, pick one:
 - **(a) Recovery-only, as for Codex.** Drop the gate and add a `SessionStart(source=compact)`
   recovery hook. Codex has one; this repo's `.claude/settings.json` has none.
 - **(b) Block once.** Block the first `/compact` per `session_id`, pass any repeat with a warning, and
-  let `trigger=auto` pass with a warning. This is what journal mode does.
+  let `trigger=auto` pass with a warning. Journal mode does this, except that auto passes without a warning.
 
 Per U12, a blocked automatic compaction never reaches the model, so for the model the auto path is a
 silent trap under any gate that blocks it.
 
 Choosing (a) reverses recorded policy for Claude Code. Start from `grep -rln PreCompact` outside
-`docs/archive`, `docs/backlog`, `docs/superpowers` and `CHANGELOG.md`. On 2026-10-18 that named:
+`docs/archive`, `docs/backlog`, `docs/superpowers` and `CHANGELOG.md`. On 2026-10-18 that named, among others (docs and settings only; scripts and tests omitted):
 - `CLAUDE.md` (Context Compaction Recovery) and `templates/CLAUDE.md`;
 - `AGENTS.md` and `templates/AGENTS.md`;
-- `standards/MEMORY-BANK.md`;
+- `standards/MEMORY-BANK.md` and `templates/standards/MEMORY-BANK.md`;
 - `docs/HOOKS-GUIDE.md` and `templates/docs/HOOKS-GUIDE.md`;
 - `docs/CURSOR-VS-CLAUDE.md` and `docs/QUICK-REFERENCE.md`;
-- `templates/handoff.md`;
 - both `settings.json` copies.
 
 Update `[NS-34]` too.
 
-Whichever wins, emit the reason as JSON on stdout. That form is measured to reach the user with the
+Whichever wins, emit the reason as JSON on stdout. That form is measured (CLI and headless, spec U12; desktop unmeasured, Plan B) to reach the user with the
 current wiring; stderr is not.
