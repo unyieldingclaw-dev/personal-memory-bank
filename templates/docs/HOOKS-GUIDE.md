@@ -93,17 +93,15 @@ the caller's locale and then under `LC_ALL=C`, because each alone misses a bypas
 counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
 row inherits its matcher's locale rule, which can change what it matches.
 
-**Platform requirement (sh hook): a grep with `-z`, such as GNU grep.** The regex rows run on every
-command, and a grep that cannot evaluate them makes the hook refuse rather than pass. BusyBox grep
-rejects `-z` (measured), so on Alpine with bash but without pwsh every Bash command prompts. Without
-bash as well, the hook wiring's `|| true` fallback runs no guard at all. Install PowerShell, or
-bash with GNU grep, there. Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
+**Platform requirement (sh hook):** stated once, with what each missing piece costs, in
+`standards/SECURITY-GUARDRAILS.md` under "Platform requirement (sh hook)". Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
 a grep that supports `-z` but caps bounds there can still compile every row. The test suite fails on
 any row above 255.
 
 **Why `$1` is not simply folded per call:** that costs a `printf | tr` subshell per matcher *call*,
 roughly 25 per invocation, on a hook that runs on every single Bash tool call — measured at
-1.07s → 2.33s per invocation. Folding the two subjects once costs two subshells total.
+1.07s → 2.33s per invocation. Folding the subjects once costs two subshells total, three when the
+command holds a carriage return.
 
 The shipped test suites assert this structurally, so the fail-open trap is a red test rather than a
 silent hole: no matcher may match against an unfolded view, and no pattern argument may contain an
@@ -116,6 +114,13 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 { "matcher": "Bash",       "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
 { "matcher": "PowerShell", "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true" }
 ```
+
+**Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
+`timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
+out does not block the tool call: its output is discarded and the call continues through the
+normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
+later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default.
 
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
