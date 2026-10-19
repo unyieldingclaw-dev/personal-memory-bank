@@ -679,6 +679,11 @@ rm -rf "$TMPDIR_CROOT"
 echo ""
 echo "--- commit gate: reviewed changes left unstaged are refused (OPP6-1) ---"
 TMPDIR_PARTIAL="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-partial)"
+# Stop if mktemp failed: an empty path makes every `git -C "$TMPDIR_PARTIAL"` below act on the
+# current directory, normally the checkout running this suite, and partial_reset's
+# `reset --hard base` would then discard its uncommitted work. This covers only this fixture:
+# the earlier fixtures' mktemp calls are still unguarded and run first.
+[ -n "$TMPDIR_PARTIAL" ] && [ -d "$TMPDIR_PARTIAL" ] || { echo "FATAL: mktemp -d failed for TMPDIR_PARTIAL" >&2; exit 1; }
 git -C "$TMPDIR_PARTIAL" init -q -b main
 git -C "$TMPDIR_PARTIAL" config user.email "test@example.com"
 git -C "$TMPDIR_PARTIAL" config user.name "Test"

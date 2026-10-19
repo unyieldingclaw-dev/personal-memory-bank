@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+- **Stage before committing, in a command of its own.** The commit review gate now refuses while
+  any tracked change is unstaged when it runs. So `git add X && git commit` in one command, and
+  `git commit -a` or `-am`, are refused whenever that leaves a tracked change unstaged at hook
+  time, even after an approved `/code-review`: the gate runs before either stages anything. The
+  marker survives the refusal; stage, then commit. Why, and what the gate still does not cover:
+  see "The commit review gate approved commits that held only part of the reviewed change" under
+  Fixed.
+
 ### Fixed
 - **The commit review gate approved commits that held only part of the reviewed change.** The
   marker binds a hash of `git diff HEAD`, the working tree, but a commit records the index, so a
@@ -16,8 +25,9 @@
   first. A chained `git add` and `git commit -a` both act after the hook, so both are refused
   while tracked changes are unstaged. Not covered yet: commits that name paths, `--amend`,
   `--patch`, a chained command that edits or stages files before its commit, and
-  `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` in the command's environment. New rows in `tests/test-review-reminders.sh` cover both shells,
-  including the merge case. `docs/HOOKS-GUIDE.md` no longer says a mismatched marker is consumed.
+  `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` in the command's environment. New rows in
+  `tests/test-review-reminders.sh` cover both shells, including the merge case.
+  `docs/HOOKS-GUIDE.md` no longer says a mismatched marker is consumed.
 - **No WARN from a `PreToolUse` hook ever reached you or Claude.** Claude Code passes such a hook's
   plain stdout to neither: it only records it (debug log, session file), and its docs say it is
   not shown in the visible transcript. Measured 2026-10-14 with headless `claude -p`: in the main
