@@ -100,12 +100,14 @@ try {
     $cmd = if ($data.tool_input.command) { [string]$data.tool_input.command } else { "" }
 } catch {
     # WHY fall back to raw-stdin matching (not exit 0 immediately) on a JSON-parse
-    # failure: mirrors dangerous-commands.sh's identical fallback exactly — a real
+    # failure: same reasoning as dangerous-commands.sh's fallback (which also falls back
+    # when python3 is missing; this one falls back only on a parse failure) — a real
     # dangerous command's text is still present somewhere in the raw payload even when
-    # structured extraction fails, so raw matching never misses a true positive, it
-    # only risks occasional false ones. Exiting immediately here would silently
-    # disable the guardrail entirely on a parse error, the wrong direction for a
-    # safety gate. Only applies when $raw was actually captured (the IsNullOrWhiteSpace
+    # structured extraction fails, so raw matching still finds one written plainly,
+    # though it can miss one whose separators are JSON-escaped (a tab arrives as the two
+    # characters `\t`), and it risks occasional false positives. Exiting immediately here
+    # would silently disable the guardrail entirely on a parse error, the wrong direction
+    # for a safety gate. Only applies when $raw was actually captured (the IsNullOrWhiteSpace
     # early-exit above already handles the genuine "nothing to check" case, which
     # this catch block never reaches).
     if ($raw) {
@@ -280,6 +282,19 @@ $blockPatterns = @(
     # regexes are a strict superset of them. Adding `\b` would have narrowed the tier.
     @{ pattern = '\|\s*Invoke-Expression'; regex = $true; reason = "command piped to Invoke-Expression (PS code execution)" }   # WHY: pipe-to-iex is the PS equivalent of pipe-to-bash
     @{ pattern = '\|\s*iex';               regex = $true; reason = "command piped to iex (PS eval shorthand)" }                # WHY: iex is the common alias for Invoke-Expression
+    # WHY three STRUCTURAL rows beside the literals above: they match reordered, split and
+    # abbreviated forms the literals miss (`git push origin main --force`, `rm -r -f x`), and the
+    # shipped `Bash(git *)` allow rule approves a force push or a `!` git alias before Claude Code's
+    # auto-mode classifier sees it. See dangerous-commands.sh for the rationale, the measurements,
+    # the accepted false positives and the known gaps. Same regexes as the sh twin, except that the
+    # segment class is spelled `[^;&|\x00-\x1F\x7F]` -- .NET has no [:cntrl:] -- for the same bytes.
+    # Gaps are bounded {0,255} and flag-letter runs {0,32} because this engine backtracks; which of
+    # those bounds the measurements actually need, and the figures, are in the sh twin.
+    # Here `rm` is also Remove-Item's alias, so the rm row reads `rm -r -fo x` and `rm x -Recurse -Force`
+    # too. The row needs the word `rm`, so other Remove-Item spellings are not matched by it.
+    @{ pattern = '(^|[^a-z0-9_-])rm(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255} )?(-(-|[a-z]{0,32})r[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]{0,32})f|-(-|[a-z]{0,32})f[^;&|\x00-\x1F\x7F]{0,255} -(-|[a-z]{0,32})r|-[a-z]{0,32}(r[a-z]{0,32}f|f[a-z]{0,32}r))'; regex = $true; reason = "irreversible recursive deletion (rm with recursive and force flags, in any order)" }
+    @{ pattern = '(^|[^a-z])git(\.exe)? ([^;&|\x00-\x1F\x7F]{0,255}([^;&|\x00-\x1F\x7Fh]|[^;&|\x00-\x1F\x7Fs]h|[^;&|\x00-\x1F\x7Fa]sh|[^;&|\x00-\x1F\x7Ft]ash|[^;&|\x00-\x1F\x7Fs]tash|[^;&|\x00-\x1F\x7F ]stash) |[^;&|\x00-\x1F\x7F]{0,255}=)?push( [^;&|\x00-\x1F\x7F]{0,255})? (--force|--mir|-[a-z0-9]{0,32}f|\+[^ \x00-\x1F\x7F])'; regex = $true; reason = "force push (--force, --mirror or -f in any position, or a +refspec)" }
+    @{ pattern = 'alias\.[a-z0-9_.-]+(=| +)!|(^|[^a-z0-9_-])[gmn]?awk .{0,255}([^.a-z0-9_]system ?\(|\|&? ?getline)'; regex = $true; reason = "arbitrary command execution through a tool's own arguments (git alias !cmd, awk system() or cmd | getline)" }
 )
 
 foreach ($entry in $blockPatterns) {
