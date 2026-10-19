@@ -188,10 +188,11 @@ function Test-PmbLink([string]$Path) {
 # blocks. Get-Item cannot decide it (measured, pwsh 7.4.7 on Linux): a FIFO's UnixMode reads
 # "-rw-r--r--", and the provider turns '\' into '/', so a file named `sub\handoff.md` is not found.
 # The binary is the first of PmbFileTestPaths that exists, found on the first call (Alpine ships
-# only /usr/bin/test). With none, this throws rather than refusing every file, which would skip
-# every record and refuse every --file as if it were not a regular file. What each caller then does
-# is listed in spec 4.1, "Regular files". WHY a loop and not @(...)[0]: under a profile's
-# Set-StrictMode, indexing an empty array throws its own error first, and this message is lost.
+# only /usr/bin/test). With none, or with one that cannot be run, this throws rather than refusing
+# every file, which would skip every record and refuse every --file as if it were not a regular
+# file. What each caller then does is listed in spec 4.1, "Regular files". WHY a loop and not
+# @(...)[0]: under a profile's Set-StrictMode, indexing an empty array throws its own error first,
+# and this message is lost.
 # WHY the two preferences are set here: a profile can set them, and
 # $PSNativeCommandUseErrorActionPreference makes test's nonzero exit an error (a throw under Stop,
 # a message on stderr otherwise), while Legacy argument passing splits a path that holds a '"'.
@@ -773,10 +774,12 @@ function Get-PmbGateIdentity([string]$Payload) {
     return [pscustomobject]@{ Sid = $sid; From = $from; Trigger = $trigger }
 }
 
-# One probe write into DIR/tmp: $null when it worked, else the OS error.
+# One probe write into DIR/tmp: $null when it worked, else the OS error. WHY a random name and
+# CreateNew: as with mktemp in pmb_gate_env, an existing file is never opened, so a FIFO planted at a
+# predictable probe name cannot block the hook.
 function Get-PmbProbeError([string]$Dir) {
-    $probe = "$Dir/tmp/.probe.$PID"
-    try { ([System.IO.File]::Open($probe, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)).Dispose() }
+    $probe = "$Dir/tmp/.probe.$PID.$([System.IO.Path]::GetRandomFileName())"
+    try { ([System.IO.File]::Open($probe, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)).Dispose() }
     catch { return (Get-PmbErrorText $_) }
     try { [System.IO.File]::Delete($probe) } catch { Write-Verbose 'probe not removed' }
     return $null

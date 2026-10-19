@@ -613,9 +613,10 @@ else
     rm -f "$PO/20260101T000000Z-000801-note-abcdef.md"
     skip_fifo "the reader FIFO cases are not run"
 fi
-# Every other file the twins open by name, as a FIFO: opening one blocks, so each call runs under
-# `tmo` and a regression fails as rc=124 instead of hanging. The writer touches a heartbeat without
-# opening it; the claim report and both file arguments must refuse a FIFO before opening it.
+# More files the twins use by name, each as a FIFO: opening one blocks, so each call runs under `tmo`
+# and a regression fails as rc=124 instead of hanging. The writer touches a heartbeat without opening
+# it and does not open an existing start sentinel; the claim report and both file arguments must
+# refuse a FIFO before opening it. The gate's probe file is tested with the gate.
 mkdir -p "$T/fifo"
 if have_fifo "$T/fifo/body.txt"; then
     out="$(cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessFIFO_01 tmo bash "$J" note --file "$T/fifo/body.txt" 2>&1; echo "rc=$?")"
@@ -641,6 +642,14 @@ if have_fifo "$T/fifo/body.txt"; then
     # WHY removed at once: every later claim report in this fixture reads every live session's meta,
     # and most of those calls run without `tmo`, so a regressed reader would hang the suite there.
     rm -f "$PM/meta"
+    # The start sentinel, which the first write creates: an entry of any type at `started` means the
+    # session has started, so a FIFO there is not opened and no start marker is published (as the ps1
+    # twin decides).
+    PSF="$(pmbdir "$T/claims")/sessions/sessFIFO_06"
+    mkdir -p "$PSF" && mkfifo "$PSF/started"
+    assert_equals "$(cd "$T/claims" && CLAUDE_CODE_SESSION_ID=sessFIFO_06 tmo bash "$J" note 'a note in a session whose start sentinel is a FIFO' >/dev/null 2>&1; echo $?)" "0" "a note in a session whose start sentinel is a FIFO does not block"
+    assert_equals "$(ls "$PSF/r" | grep -c -- '-start-')" "0" "a start sentinel that is a FIFO counts as started: no start marker"
+    assert_equals "$(ls "$PSF/r" | grep -c -- '-note-')" "1" "a start sentinel that is a FIFO: the note is still recorded"
 else
     skip_fifo "the file-argument, heartbeat and meta FIFO cases are not run"
 fi
@@ -1033,6 +1042,17 @@ if have_fifo "$G/sessions/sessGBFIFO1/gate-blocked"; then
     assert_contains "$(cat "$T/gate.err")" "cannot record the block" "gate-blocked that is a FIFO fails open through the block-recording check"
 else
     skip_fifo "the gate-blocked FIFO case is not run"
+fi
+# The probe's own file, on a manual /compact: a FIFO at a name the probe opens would block the hook.
+# WHY `exec`: it keeps the PID, so the FIFO sits at `.probe.<pid>`, the name the probe once used.
+( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessPRFIFO1 bash "$J" note 'a note so the manual gate passes once its probe has run' ) >/dev/null
+if have_fifo "$T/fifo/probe-cap"; then
+    out="$(cd "$T/gate" && payload sessPRFIFO1 | CLAUDE_CODE_SESSION_ID=sessPRFIFO1 tmo sh -c 'mkfifo "$1/tmp/.probe.$$" && exec bash "$2" gate' _ "$G" "$J" 2>&1; echo "rc=$?")"
+    assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=0" "a FIFO at the probe's PID name: the gate does not hang, and passes"
+    assert_equals "$(ls -A "$G/tmp" | grep -c '^\.probe\.')" "1" "the probe removes its own file and leaves the planted FIFO"
+    rm -f "$G"/tmp/.probe.*
+else
+    skip_fifo "the probe-file FIFO case is not run"
 fi
 mkdir -p "$G/sessions" && printf 'x\n' > "$G/sessions/sessFILE_001"
 assert_equals "$(gcode "$T/gate" sessFILE_001)" "0" "a session path that is a file: fail open"
@@ -1964,6 +1984,11 @@ sessions-file=0'
         # its own error, which would replace this message.
         out="$(tpdot "$T/on" "Set-StrictMode -Version Latest; \$script:PmbFileTestPaths = @('/nonexistent/pmb-test-a'); \$script:PmbFileTest = \$null; try { [void](Test-PmbRegularFile '$T/fifo/rf-empty'); Write-PmbOut 'no-throw' } catch { Write-PmbOut \$_.Exception.Message }" 2>&1)"
         assert_contains "$out" "no test binary" "ps1 regular-file check names the missing test binary under Set-StrictMode too"
+        # A test binary that exists but cannot be run throws too, as spec 4.1 says, rather than
+        # refusing every file.
+        printf '#!/nonexistent/pmb-interp\n' > "$T/fifo/stub-broken"; chmod +x "$T/fifo/stub-broken"
+        out="$(tpdot "$T/on" "\$script:PmbFileTestPaths = @('$T/fifo/stub-broken'); \$script:PmbFileTest = \$null; try { Write-PmbOut ([string](Test-PmbRegularFile '$T/fifo/rf-empty')) } catch { Write-PmbOut 'threw' }" 2>&1)"
+        assert_equals "$out" "threw" "ps1 regular-file check throws when the test binary exists but cannot be run"
         # The gate, in each twin: a FIFO named gate-blocked is neither read nor written, so it fails open.
         for tw in sh ps1; do
             sid="sessGBFIFO_$tw"
@@ -1974,6 +1999,16 @@ sessions-file=0'
             assert_equals "$out" "rc=0" "$tw: gate-blocked that is a FIFO: no block, and the gate does not hang"
             assert_contains "$(cat "$T/gbf.err")" "cannot record the block" "$tw: gate-blocked that is a FIFO fails open through the block-recording check"
         done
+        # The sh section's start-sentinel and probe-file FIFOs, given to the ps1 twin.
+        PG="$(pmbdir "$T/pgtext")"
+        mkdir -p "$PG/sessions/sessSTFIFO2" && mkfifo "$PG/sessions/sessSTFIFO2/started"
+        assert_equals "$(cd "$T/pgtext" && CLAUDE_CODE_SESSION_ID=sessSTFIFO2 tmo pwsh -NoProfile -NonInteractive -File scripts/pmb-journal.ps1 note 'a ps1 note in a session whose start sentinel is a FIFO' </dev/null >/dev/null 2>&1; echo $?)" "0" "ps1: a note in a session whose start sentinel is a FIFO does not block"
+        assert_equals "$(ls "$PG/sessions/sessSTFIFO2/r" | grep -c -- '-start-')" "0" "ps1: a start sentinel that is a FIFO counts as started: no start marker"
+        ( cd "$T/pgtext" && CLAUDE_CODE_SESSION_ID=sessPRFIFO2 bash "$J" note 'a note so the manual gate passes once its probe has run' ) >/dev/null
+        out="$(cd "$T/pgtext" && payload sessPRFIFO2 | CLAUDE_CODE_SESSION_ID=sessPRFIFO2 tmo sh -c 'mkfifo "$1/tmp/.probe.$$" && exec pwsh -NoProfile -NonInteractive -File scripts/pmb-journal.ps1 gate' _ "$PG" 2>&1; echo "rc=$?")"
+        assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=0" "ps1: a FIFO at the probe's PID name: the gate does not hang, and passes"
+        assert_equals "$(ls -A "$PG/tmp" | grep -c '^\.probe\.')" "1" "ps1: the probe removes its own file and leaves the planted FIFO"
+        rm -f "$PG"/tmp/.probe.*
         # The sh section's file-argument, heartbeat and meta FIFOs, given to the ps1 twin.
         same_refusal "$T/on" sessFIFO_01 "note --file of a FIFO" note --file ../fifo/body.txt
         same_refusal "$T/on" - "import-handoff of a FIFO" import-handoff ../fifo/handoff.md
