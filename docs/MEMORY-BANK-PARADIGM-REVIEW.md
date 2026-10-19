@@ -681,6 +681,28 @@ so this section is condensed to the durable facts rather than repeated.
   `[OK]`; wrong in code, here, and `activeContext.md`, now fixed in all three. Seen on ACR (1.1.1);
   `pre-push-check.*` is TEMPLATE_OWNED, so landing this branch ships the fix. `[NS-25]` hit twelve.
 
+## 2026-10-19 — External interview: agent environment over additional process
+
+**Source:** User-supplied transcript of an interview with Matt (creator of “Grill Me” and “Teach”), reviewed 2026-10-19. Practitioner testimony, not independent validation of PMB.
+
+**Observations (attributed to the interviewee)**
+
+- Agents need explicit human intent and constraints; model capability alone does not supply these.
+- Primary sources and attribution matter when teaching or recovering facts.
+- In his own project, large evolving specs correlated with worsening code; he reports better results after focusing on code quality and executable verification. This is anecdotal, not a general disproof of specs.
+- “Grill Me” interviews can surface omitted requirements; they are not evidence for a mandatory PMB stage.
+- Better runtime/test environments can reduce dependence on high model effort; no measured PMB savings were presented.
+- Multi-agent long-term stewardship remains an unresolved problem.
+
+**PMB interpretation and disposition**
+
+1. Reinforces the existing purpose: provide bounded, attributable context. Implementation facts should be checked against code, tests, configuration and runtime observations; this is evaluative guidance, not a newly enforced authority rule.
+2. **No new feature approved.** Do not add `mb clarify`, an interview gate, or autonomous memory governance without an observed PMB failure and a testable remedy.
+3. **Pilot candidate question, not a new pass/fail threshold:** Does correct context retrieval reduce re-explanation or factual drift on bounded fresh-session tasks? Can acceptable results be achieved at lower model effort? Only test where doing so does not invalidate the predeclared pilot design.
+4. **Next sequence:** verify current repo/memory truth; make only required baseline corrections; preserve security and review gates; run the bounded pilot before expanding functionality.
+
+**Evidence boundary:** These ideas are compatible with the earlier paradigm review but do not measure PMB. Do not promote an interview opinion into a binding project decision.
+
 ## Sources
 
 - Claude Code — *How Claude remembers your project*: https://code.claude.com/docs/en/memory
