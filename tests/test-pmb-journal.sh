@@ -78,8 +78,8 @@ pmbdir() { printf '%s/pmb' "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" 
 jr() { local d="$1"; shift; ( cd "$d" && bash "$J" "$@" ); }                  # run, keep output
 jcode() { local d="$1"; shift; ( cd "$d" && bash "$J" "$@" >/dev/null 2>&1; echo $? ); }
 # skip_links WHAT — the loud SKIP for a case that needs a link this machine cannot make (Git Bash on
-# Windows without Developer Mode). WHY a switch: PMB_REQUIRE_SYMLINKS=1, set wherever CI can make links,
-# turns the skip into a failure, so a lost link fixture cannot pass silently (C6.8).
+# Windows without Developer Mode). WHY a switch: PMB_REQUIRE_SYMLINKS=1, set in CI (its Linux runner
+# makes links), turns the skip into a failure, so a lost link fixture cannot pass silently (C6.8).
 skip_links() {
     echo "  SKIP: symbolic links cannot be created here; $1"
     if [ "${PMB_REQUIRE_SYMLINKS:-0}" = "1" ]; then
