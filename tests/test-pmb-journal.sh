@@ -1076,10 +1076,11 @@ if have_fifo "$T/fifo/probe-cap"; then
 else
     skip_fifo "the probe-file FIFO case is not run"
 fi
-# The probe needs no mktemp, as the ps1 twin's needs no external tool: on a host without it, a manual
-# /compact is decided the same way by both twins. WHY a PATH of links: mktemp cannot be uninstalled for
-# a test, so the gate runs on a PATH holding every other command (nm_ = no-mktemp; the first PATH entry
-# with a name wins). Linux and macOS only: Git Bash without Developer Mode makes no links (skip_links).
+# The probe needs no mktemp, as the ps1 twin's needs no external tool: on a host without it, both twins
+# still probe, so the first manual /compact is decided the same way. Later ones can differ, because the
+# sh twin's compact marker is written through mktemp. WHY a PATH of links: mktemp cannot be uninstalled
+# for a test, so the gate runs on a PATH holding every other command (nm_ = no-mktemp; the first PATH
+# entry with a name wins). Linux and macOS only: Git Bash without Developer Mode makes no links.
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) echo "  SKIP: the no-mktemp gate case runs on Linux and macOS only" ;;
     *)
@@ -1095,8 +1096,28 @@ case "$(uname -s)" in
         assert_equals "$(PATH="$T/nomktemp" bash -c 'command -v mktemp || echo none')" "none" "the no-mktemp PATH has no mktemp (fixture check)"
         ( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessNOMKT1 bash "$J" note 'a note so the manual gate passes once its probe has run' ) >/dev/null
         out="$(cd "$T/gate" && payload sessNOMKT1 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT1 tmo bash "$J" gate 2>"$T/nomk.err"; echo "rc=$?")"
-        assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=0" "no mktemp, manual /compact with a record: the probe still runs and the gate passes"
+        assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=0" "no mktemp, manual /compact with a record: the gate passes"
         assert_equals "$(cat "$T/nomk.err")" "" "no mktemp: the gate prints nothing on stderr"
+        # WHY an unwritable tmp/ as well: with a writable one, a gate that silently skipped its probe
+        # without mktemp would pass the two assertions above too. Both twins must still block.
+        make_repo "$T/nomkgate" on
+        # One session per twin, so nothing the sh call records can decide the ps1 one.
+        for sid in sessNOMKT2 sessNOMKT3; do
+            ( cd "$T/nomkgate" && CLAUDE_CODE_SESSION_ID=$sid bash "$J" note 'a note, so only the probe can block this manual gate' ) >/dev/null
+        done
+        NMP="$(pmbdir "$T/nomkgate")"
+        rmdir "$NMP/tmp" && printf 'not a dir\n' > "$NMP/tmp"
+        assert_equals "$([ -f "$NMP/tmp" ] && echo file || echo not-file)" "file" "the no-mktemp block case: pmb/tmp is a file (fixture check)"
+        out="$(cd "$T/nomkgate" && payload sessNOMKT2 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT2 PMB_GATE_PROBE_DELAY=0 tmo bash "$J" gate 2>/dev/null; echo "rc=$?")"
+        assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=2" "no mktemp, pmb/tmp not writable: the sh gate still probes and blocks"
+        assert_contains "$out" "cannot write to" "no mktemp, pmb/tmp not writable: the sh block names the unwritable tmp/"
+        if command -v pwsh >/dev/null 2>&1; then
+            out="$(cd "$T/nomkgate" && payload sessNOMKT3 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT3 PMB_GATE_PROBE_DELAY=0 tmo pwsh -NoProfile -NonInteractive -File scripts/pmb-journal.ps1 gate 2>/dev/null; echo "rc=$?")"
+            assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=2" "no mktemp, pmb/tmp not writable: the ps1 gate blocks as the sh gate does"
+            assert_contains "$out" "cannot write to" "no mktemp, pmb/tmp not writable: the ps1 block names the unwritable tmp/"
+        else
+            echo "  SKIP: pwsh is not installed; the ps1 half of the no-mktemp block case is not run (PMB_REQUIRE_PARITY=1 makes a missing pwsh fatal below)"
+        fi
         ;;
 esac
 mkdir -p "$G/sessions" && printf 'x\n' > "$G/sessions/sessFILE_001"

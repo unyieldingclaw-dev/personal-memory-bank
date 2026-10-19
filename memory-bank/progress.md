@@ -13,6 +13,13 @@ lineage: []
 
 # Progress
 
+## 2026-10-19 — PR #65 merged (`0b67d9d`): no FIFO hang at `started` or the gate probe
+
+- Detail: `0b67d9d`'s message. It joins both branch commits, so it says the sh probe used `mktemp`, then
+  dropped it. `main` never used `mktemp`: a fixed `.probe.$$` became a per-attempt name opened with `noclobber`.
+- The spec is at 793 of 800 lines; #69's body says merging #69 makes it 800.
+- What still gates the flag PR: `[NS-68]`.
+
 ## 2026-10-19 — PR #63 merged (`d3f87f8`): FIFO-safe journal gate, ps1 regular-file check
 
 - What changed is in `d3f87f8`'s message. Carry-overs, and what still gates the flag PR: `[NS-68]`.
