@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-10-05
-last-reviewed: 2026-10-16
+last-reviewed: 2026-10-18
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -16,8 +16,10 @@ merge and are still open unless marked.
 **IDs.** `J2-1` and `C-7` are review-finding IDs the user supplied with the 2026-10-14 task. IDs
 from the reviews of item 1's fix carry a prefix naming the review, because the same short ID recurs
 across reviews: `R2/` and `R3/` are /code-review rounds 2 and 3 (2026-10-14), `CHR/` is the
-/change-review that followed (so `CHR/J2-1` is not `J2-1`), and `R4/` is the /code-review of the
-follow-up commit (2026-10-15). Every ID carries its prefix. None of those reports is in this repo;
+/change-review that followed (so `CHR/J2-1` is not `J2-1`), `R4/` is the /code-review of the
+follow-up commit (2026-10-15), `R5/` and `R6/` are the /code-reviews of the round-4 fixes and of
+the merge of `main` (2026-10-16), and `CHR2/` is the /change-review of the whole branch that
+followed (2026-10-16). Every ID carries its prefix. None of those reports is in this repo;
 each finding is described in full where it appears.
 
 **What decays here, and what to re-verify before relying on it:**
@@ -25,6 +27,7 @@ each finding is described in full where it appears.
   2026-10-14. PRs here are squash-merged, so once it merges the branch name stops resolving: find
   the fix by the CHANGELOG entry headed "Without python3, the sh dangerous-commands hook missed".
   Its review follow-ups were written on 2026-10-15 on `claude/dc-round3-followups`, stacked on it.
+  That branch carries both and is PR #64.
 - **Line numbers in items 2 to 4 are from `ab2dbfe`** and drift with any edit. `ab2dbfe` is NOT in
   `main`'s history, because PR #52 was squash-merged as `e3c2f43`. It is still reachable from the
   PR's head ref: run `git fetch origin refs/pull/52/head`, then `git show ab2dbfe:<path>`.
@@ -153,10 +156,13 @@ checked against it:
     dropped; it now counts fixed-string occurrences and requires them to be non-zero.
   - **R4/S4-2:** the ps1 gate compared with culture-aware `-cne`, which treats `ab` and `a`,
     soft hyphen, `b` as equal (measured). It now compares ordinally.
-  - **R4/M-1, R4/F2, R4/A-5, R4/OPP-1:** worst-case figures restated per hook and path (see the
-    `onFailure` decision). **R4/M-2, R4/A-1, R4/M-3, R4/M-4, R4/A-3, R4/COR4-2, R4/COR4-3,
-    R4/COR4-4, R4/T-4, R4/A-4, R4/M-5:** wording, including the standard's accepted false positive
-    for `git merge`, CR, then another word.
+  - **R4/M-1, R4/F2, R4/A-5, R4/OPP-1:** worst-case figures restated in the standard,
+    `CHANGELOG.md` and the `onFailure` decision below. **Only partly done:** the sh hook's own
+    table, a Pester comment and `docs/HOOKS-GUIDE.md` still give older or rounder figures
+    (R5/COR5-1, R5/COR5-2, under "Still open"). **R4/M-2, R4/A-1, R4/M-3, R4/M-4, R4/A-3, R4/COR4-2,
+    R4/COR4-3, R4/COR4-4, R4/T-4, R4/A-4, R4/M-5:** wording, including the standard's accepted false
+    positive for `git merge`, CR, then another word (still too broad: R5/COR5-6, under "Still
+    open").
 
 **Still open from item 1:**
 - **The merge row's trailing boundary is still narrow.** A bare `git merge` straight before `;`,
@@ -208,12 +214,74 @@ checked against it:
 - **Cross-shell cases go through two separate per-shell lists, not `assert_parity`.** The suite's
   own parity block exists to catch a sh/ps1 divergence on one payload; the parsed-path CR and
   newline-boundary cases could feed it, and nothing yet asserts the two hooks agree on them.
+  **CHR2/C-1:** that matters most for the CR shapes, because "a Bash command gets the same verdict
+  from either hook" is the stated outcome of the third view. It held on 33 CR shapes run through
+  both hooks (0 divergences, 2026-10-16), but two hand-kept tables are all that hold it. Feed
+  `git push --for`, CR, `ce`; `curl x | ba`, CR, `sh`; `git merge`, CR, `ls`; `git`, CR, `merge
+  main`; and `cat ~/.ssh/id_r`, CR, `sa` through `assert_parity`, which CI enforces.
 - **The decoder's rules and the CR and newline rationale are restated in five to seven places**
   (hook comments, standard, CHANGELOG, this file, both test files). One copy had already drifted
   in review. Pointing the others at the sh hook's comment would cut the copies.
 - **The shipped standard names PMB's open "no external dependencies" question.**
   `standards/SECURITY-GUARDRAILS.md` ships to adopters, who never see PMB's decision and keep the
   "open" wording once it is settled. Track it in PMB's own memory bank instead.
+- **The worst-case figures disagree across shipped files** (R5/COR5-1, R5/COR5-2, R5/P5-1,
+  CHR2/M-1). For one quantity, the ps1 hook's cost on a ~50 KB command:
+  - the sh hook's WHOLE-HOOK worst-case comment still calls `17.55s` "the real number to reason
+    about" and has no CR case;
+  - the standard's "Residual cost" paragraph says about 17.5 s, then about 21 s CR-free and 29 s
+    with one CR, in the same paragraph;
+  - a comment in `tests/dangerous-commands.Tests.ps1` says ~17.5 s;
+  - `docs/HOOKS-GUIDE.md` (and its template) says "under 30 seconds".
+  Five measured runs of the gated code with one CR took 27.2, 29.0, 30.8, 30.9 and 34.3 s on one
+  machine (R4 and R5, 2026-10-15 and 2026-10-16), so "under 30" is false for three of them, and the
+  "about 29" in the standard, the CHANGELOG and the `onFailure` decision above quotes one round. One
+  CR-free run took 22.2 s, outside "19 to 21 s". Point every copy at one stated range, or at the
+  standard, and add the CR case to the sh table.
+- **R5/COR5-4:** this file says a quadratic CR test placed after the bound costs "under about a
+  second" (item 1, round-4 fixes); two round-4 measurements of the expansion alone at 50K
+  characters were 1.16 s and 1.2 s. The 400K whole-hook figure is 51 s here and 47 s in the
+  test comment.
+- **A duplicated WARN on a CR-bearing escaped filename would ship green** (R6/T6-2, Medium).
+  Deleting the `return` in the sh `warn()` arm for the de-escaped view makes `cat ~/.ssh/id\_rsa
+  x`, CR, `y` emit the WARN twice in both `systemMessage` and the model-facing text, and every
+  suite stays green: the one-notice count test feeds only CR-free commands, so the CR-deleted
+  view is empty and that `return` is never needed. Add that command to the count loop in
+  `tests/test-dangerous-commands.sh` and to the parity payloads in
+  `tests/test-hook-warn-output.sh`; either kills the mutant.
+- **The fallback decoder replaced the raw view instead of adding one** (R6/SEC-1). On malformed
+  JSON only, `main`'s raw fallback matched shapes the decoder now misses: `git push --forc""e`,
+  and a token split by an escaped backslash then a quote. Valid JSON always puts `:` or `,` between
+  string delimiters, and Claude Code does not emit those payloads; the valid-JSON losses (a form
+  feed or line feed inside a word) were false positives. It is still the one place the "views only
+  add matches" rule does not hold. Accept it and say so in the fallback comment, or keep the raw
+  payload as an extra view on the fallback path.
+- **R5/COR5-6:** the standard's accepted false positive, "`git merge`, CR, then another word", is
+  too broad. Only a CR followed by a letter is a false positive (Git Bash runs `git mergels`); a CR
+  then a space then `ls` runs `git merge ls`, a true positive. It also names `mergels` without
+  introducing `ls`.
+- **Smaller test and wording gaps:**
+  - R6/T6-1, R6/C-2: the comment above the one-WARNING count test says `warn()` has "two case
+    arms" that return "after printing". It has three, and each records.
+  - R6/T6-3: the CR-only WARN rows in `tests/test-hook-warn-output.sh` assert `systemMessage` and
+    the keys but not `additionalContext`, so a dropped `dc_warn_list` is caught only by the parity
+    block, which does not run without pwsh.
+  - R6/T6-4: the only mirror check diffs the sh hook against `templates/`; nothing compares the
+    ps1 pair, which the merge of `main` resolved by hand in both copies.
+  - CHR2/A-1, first found as CHR/J3-1: the deny message, the `dc_grep` comment,
+    `docs/HOOKS-GUIDE.md` and `CHANGELOG.md` point at the standard's "Platform requirement (sh
+    hook)" heading, and no test pins it.
+  - CHR2/M-1: `docs/HOOKS-GUIDE.md` says "folding the two subjects once" costs two subshells,
+    "three when the command holds a carriage return"; with the CR-deleted view there are three
+    subjects.
+- **The two timing tests guard only on Git Bash** (CHR2/T-1). The decoder's quadratic `gsub` was
+  measured on Git Bash's gawk; the mawk tried on Ubuntu showed no such cost, and CI installs no
+  gawk, so that guard likely cannot fail there. The 400K row was measured on Git Bash only. Both
+  print SKIPPED without `EPOCHREALTIME`, and `PMB_REQUIRE_PARITY` does not make that fatal. State
+  them as local-only, or install gawk in CI and make the skip fatal under the flag.
+- **CHR2/S-1:** item 1's per-round fix log now cites about 40 finding IDs whose reports are not in
+  this repo and repeats the commit messages and `CHANGELOG.md`. After PR #64 merges, collapse it to
+  the "Still open" list and a pointer to the CHANGELOG entry.
 
 ## 2. Tests that do not discriminate, or never run in CI
 
