@@ -80,7 +80,8 @@ Everything else goes to Appendix A, together with the incident that would bring 
   non-live session stay listed until triage marks them promoted.
 - **S6 — Honest budget.** The ratchet counts cap A, and the PR that introduces it must pay for it.
 - **S7 — Tier 1.**
-  - Bash, PowerShell and git only; no python3 in new code.
+  - Bash, PowerShell and git only; no python3 in new code. One exception: on Linux and macOS the
+    PowerShell twin also needs the system `test` binary (§4.1, regular files).
   - Claude Code gets hooks; Cursor and Codex follow a documented manual convention.
   - Opting in is one committed flag, with no per-machine install.
 
@@ -188,13 +189,47 @@ pwsh's start-up cost — instead of patching each one. Everywhere this spec says
 Plans B and D should follow the same pattern for `sessions` and `snapshots` (user-approved
 2026-09-29).
 
-**Twin parity (amended 2026-10-14, Task 6 review).** The two twins make the same decisions, return
-the same exit codes, and write the same bytes to `pmb/`. Their output differs only in these accepted
-ways: paths in messages take each shell's form (`C:/...` from .NET and git, `/c/...` or `/tmp/...`
-from Git Bash); an OS error inside a message is the platform's own text (.NET's, or the shell tool's),
-as is the error for a secret pattern that cannot be applied (a .NET regex error, not a grep exit
-code); the first usage line names `pmb-journal.ps1`; and `pwsh -File` drops an argument that is
-exactly `--%` (and splits one shaped `-name:value`), so such text goes through `--file`.
+**Twin parity (amended 2026-10-14, Task 6 review; 2026-10-16 and 2026-10-17, FIFO-hardening
+reviews).** The two twins are built to make the same decisions, return the same exit codes and
+write the same bytes to `pmb/`. The parity tests check this for the cases they cover; it is not
+proven in general. These are the differences known today:
+- **Text arguments under `pwsh -File`.** pwsh parses every argument before the PowerShell twin
+  sees it. It drops an argument that is exactly `--%`. On Linux, it turns invalid UTF-8 into
+  U+FFFD. An argument that starts with `-` it can split at a colon, drop, refuse to start on, or
+  turn into a flag the twin then obeys, such as `--file:<path>` or `--session:<id>`. As a result,
+  the PowerShell twin can record different text from the sh twin, or another file's
+  contents, or a secret the sh twin refuses. It can also refuse text the sh twin records. In every
+  case measured, the same text passed with `--file` gave both twins the same bytes and exit code.
+  The measurements used pwsh 7.4.7 and 7.6.6; the UTF-8 case used 7.4.7 only.
+- **Windows, with a Git Bash FIFO** (Regular files, below).
+- **A Linux or macOS host with neither `/usr/bin/test` nor `/bin/test`** (Regular files, below).
+- **Message text only.**
+  - Paths in messages take each shell's form: `C:/...` from .NET and git, `/c/...` or `/tmp/...`
+    from Git Bash.
+  - An OS error inside a message is the platform's own text, .NET's or the shell tool's. So is the
+    error for a secret pattern that cannot be applied: a .NET regex error, not a grep exit code.
+  - The first usage line names `pmb-journal.ps1`.
+
+**Regular files (amended 2026-10-16, Plan A and FIFO-hardening reviews).** Both twins refuse to
+open a FIFO or a device, since opening a FIFO blocks the hook. The sh twin uses its built-in
+`[ -f ]`. .NET reports a FIFO as an existing file, so on Linux and macOS the PowerShell twin runs
+the first of `/usr/bin/test` and `/bin/test` that exists, found once per process. Alpine ships
+only `/usr/bin/test`. Windows needs no binary. If neither exists, the twin throws rather than refusing
+every file. It throws the first time it checks a file that exists and is not a link; a missing
+file still reads as not regular, with no throw. Its behaviour then differs from the sh twin's (a
+known difference listed under Twin parity, above):
+- `show` of a session with at least one record prints its header, then the error, and exits 1;
+- `note --file` and `import-handoff` print the error and exit 1;
+- the claim report is skipped without a message, and the claim itself still exits 0;
+- the gate fails open on every compaction that reads a record or `gate-blocked`. Run as the hook,
+  it prints `[HOOK ERROR]` on stdout and logs the error to `.pmb-hook-errors.log`. Run as
+  `pmb-journal.ps1 gate`, it warns on stderr.
+
+When a FIFO or other non-regular file sits at `gate-blocked`, it is neither read nor written, so the
+block cannot be recorded and the gate fails open (§4.3). Both twins check the file and then open it,
+so a FIFO swapped in between the two can still block the hook; S3 puts such same-user writes out of
+scope. On Windows, pwsh sees a Git Bash FIFO only as a `<name>.lnk` file. macOS is not exercised by
+CI.
 
 **Inert without this code.** A branch, or an adopter, that lacks `scripts/pmb-journal.sh`
 runs today's behaviour:
