@@ -163,7 +163,10 @@ the config. These reach the same outcome and are deliberately not matched:
   **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
   costs about **17.5 seconds** in the PowerShell hook, which blocks the tool call for that whole
   time. It is quadratic now, so halving the 50,000-byte limit would quarter it; that trade has not
-  been made, and is recorded here rather than left for the next person to rediscover.
+  been made, and is recorded here rather than left for the next person to rediscover. A command
+  that also holds a carriage return pays one more pass, over the CR-deleted view (see below).
+  Measured on one machine on 2026-10-16, where the CR-free case took about 21 seconds, one CR
+  raised it to about 29.
 
   **The `-c` and `--no-gpg-sign` patterns are deliberately NOT bounded**, and this distinction is
   load-bearing. Each nests only one gap group and is quadratic at worst (**4.3s** at 50,000
@@ -211,6 +214,14 @@ clear. Three cases do still trip, and are accepted rather than chased:
   false` really does disable signing. Both were live, unprompted bypasses. The cost is that
   `echo "rm" "-rf"` now collapses to `echo rm -rf` and trips BLOCK. The extra view can only ever
   *add* a match, never remove one, so the error direction is refusal rather than silence.
+  **(added 2026-10-14)** Both hooks also match a third view, the de-escaped one with carriage
+  returns deleted, because Git Bash deletes a CR while parsing, so `git push --for`, CR, `ce` runs
+  as a force push. It is added, not substituted, so it too can only add a match: PowerShell reads a
+  lone CR as a statement break, and deleting CRs inside the de-escaped view itself glued words
+  together and dropped verdicts. On these CR shapes a Bash command gets the same verdict
+  whichever hook runs. Accepted false positive: `git merge`, CR, then another word prompts in
+  both hooks. Git Bash deletes that CR and runs `git mergels`, but PowerShell reads it as a
+  statement break and runs a bare merge, and the two hooks keep one verdict.
 
 A mechanism that stripped `-m`/`--message`/`-S`/`--grep` payloads before matching was built for
 these and then withdrawn: making the hook's view of a command deliberately differ from what the
@@ -238,18 +249,39 @@ could not span the newline, and the PowerShell `iex` literals could not either.
   - a comment line between the pipe and the interpreter, which a real shell skips;
   - an interpreter reached through another word: `| sudo sh`, `| env bash`, `| /bin/bash`;
   - any interpreter other than bash and sh: `| zsh`, `| dash`, `| python`, and so on;
-  - a PowerShell inline block comment (`|<#…#>iex`) or backtick escape (``i`ex``);
-  - the raw-payload fallback used when the JSON cannot be parsed, where a newline is the two
-    characters `\n`.
+  - a PowerShell inline block comment (`|<#…#>iex`) or backtick escape (``i`ex``).
 - **Not covered by the PowerShell hook only:** a digit or `_` straight after the interpreter name.
   Its `\b` boundary counts those as part of the word, so `| bash5` and `| bash_x` are refused by the
   sh hook but not the PowerShell one. This predates the change.
-- **Platform requirement (sh hook):** a grep that supports `-z`, such as GNU grep. The regex rows run
-  on every command, and a grep that cannot evaluate them is refused rather than trusted. Measured on
-  Alpine, which ships BusyBox grep and no pwsh: with bash installed, every Bash command prompts,
-  because BusyBox grep rejects `-z`. Without bash, the shipped hook wiring
-  (`pwsh ... || bash ... || true`) runs no guard at all, and every command is allowed. Install
-  PowerShell, or bash with GNU grep, there. With bash installed, the deny message names the same fix.
+- **Platform requirement (sh hook):** **pwsh, or bash plus a grep that supports `-z` (such as GNU
+  grep).** Without one of those, the hook refuses every Bash command or runs no guard at all.
+  **python3 is also expected:** without it the hook still guards, but less precisely. This is the one
+  full statement of the requirement; the hook's deny message, `docs/HOOKS-GUIDE.md` and the
+  changelog point here rather than restate it. A stock Alpine image has none of these. python3 is
+  an external dependency, which sits uneasily with PMB's "no external dependencies" constraint;
+  that question is open, and this bullet records the dependency as it stands without settling it.
+  What each missing piece costs:
+  - **No grep with `-z`:** the regex rows run on every command, and a grep that cannot evaluate them
+    is refused rather than trusted. So every Bash command is refused: with `CONFIRM REQUIRED`,
+    unless a literal BLOCK row, which runs first, matches it. Measured on Alpine with bash, BusyBox
+    grep and no pwsh.
+  - **No python3, or a python3 that fails:** the hook cannot extract `tool_input.command`, so it
+    matches the whole payload, with its JSON escapes decoded first. In a well-formed payload the
+    decoded command sits intact and bounded by spaces, so a row that matches it still matches, with
+    the exceptions below. The one substitution, `?` for each non-ASCII character written as a `\u`
+    escape, is never a space to any sh row, and neither is the real character. The costs are extra
+    refusals: text in another field, such as `description`, can trigger a row, and a payload over
+    the length bound is refused. The substitution is also stricter in one way: the `LC_ALL=C` pass
+    counts a `?` as one byte where the real character takes two to four, so more of a long gap fits
+    a row's bound. Measured misses, one class: under a UTF-8 locale `grep -i` folds some non-ASCII
+    letters to ASCII ones, U+017F (long s) to `s` and U+0131 (dotless i) to `i`, so an escaped one in
+    a guarded word prompts on the parsed path and not here. In every measured case the shell or
+    git rejected the word, or git failed on the value, so no signing change was lost.
+    **Corrected 2026-10-14:** before the decoding, a newline here was the two characters `\n`, and
+    split pipes, continuation lines, tab-separated forms and a bare trailing `git merge` all got no
+    verdict (measured with python3 off `PATH`).
+  - **No bash either:** the shipped hook wiring (`pwsh ... || bash ... || true`) runs no guard at
+    all, and every command is allowed.
 
 ### Database Operations
 
