@@ -2064,10 +2064,10 @@ sessions-file=0'
             fi
         done
     done
-    # E7.1: pwsh -File alters some arguments before the script runs (split at a colon, dropped), and
-    # Linux turns invalid UTF-8 into U+FFFD. The sh twin sees them as given, so the PowerShell twin must
-    # refuse them, never store other text. Measured shapes: spec section 4.1, "Twin parity".
-    # altered DESC SID ARGS... -- ps1 refuses ARGS as altered (exit 1, the message) and writes nothing.
+    # Arguments pwsh alters (spec section 4.1, "Twin parity", first bullet): pwsh -File splits a dash-led
+    # argument at a colon and drops `--%` and a trailing `-x:`, and Linux turns invalid UTF-8 into U+FFFD.
+    # The sh twin sees them as given, so the PowerShell twin must refuse them, never store other text.
+    # altered DESC SID ARGS... — ps1 refuses ARGS as altered (exit 1, the message) and writes nothing.
     altered() {
         local desc="$1" sid="$2" before p; shift 2
         before="$(files_under "$(pmbdir "$T/on")")"
@@ -2076,7 +2076,9 @@ sessions-file=0'
         assert_contains "$p" "pwsh changed the arguments before the script saw them" "ps1 names the alteration: $desc"
         assert_equals "$(files_under "$(pmbdir "$T/on")")" "$before" "ps1 writes nothing for an altered argument: $desc"
     }
-    long='and a body that is long enough to be a record'
+    # rcof OUT — the exit code from the "rc=N" line that ends OUT.
+    rcof() { printf '%s' "${1##*rc=}"; }
+    lbody='and a body that is long enough to be a record'
     altered "a dash-led argument with a colon (split)" sessALT0001 note '- Done: wrote the migration and its tests'
     s="$(twin_run sh "$T/on" sessALT0002 note '- Done: wrote the migration and its tests')"
     assert_equals "${s%%|*}" "rc=0" "sh records a dash-led argument with a colon"
@@ -2089,12 +2091,12 @@ sessions-file=0'
     s="$(twin_run sh "$T/on" sessALT0006 note '--file:../utf8.txt')"
     assert_equals "${s%%|*}" "rc=0" "sh records --file:<path> as text"
     assert_equals "$(grep -cF -- '--file:../utf8.txt' "$(newest "$T/on" sessALT0006)")" "1" "sh stores --file:<path> literally, not the file"
-    altered "--session:<id> with no session id set (pwsh makes it the flag)" - note '--session:sessINJECT01' "$long"
+    altered "--session:<id> with no session id set (pwsh makes it the flag)" - note '--session:sessINJECT01' "$lbody"
     assert_equals "$(ls -1 "$(pmbdir "$T/on")/sessions" | grep -c '^sessINJECT01$')" "0" "ps1 creates no session from --session:<id>"
-    altered "a trailing -x: (dropped)" sessALT0007 note "$long" '-x:'
-    altered "--% between words (dropped)" sessALT0007 note 'a body' '--%' "$long"
-    altered "a leading en dash, which pwsh reads as a dash (split)" sessALT0007 note "$(printf '\342\200\223')x:y $long"
-    altered "-x: as the --session value" sessALT0007 note --session '-abcdefgh:' "$long"
+    altered "a trailing -x: (dropped)" sessALT0007 note "$lbody" '-x:'
+    altered "--% between words (dropped)" sessALT0007 note 'a body' '--%' "$lbody"
+    altered "a leading en dash, which pwsh reads as a dash (split)" sessALT0007 note "$(printf '\342\200\223')x:y $lbody"
+    altered "-x: as the --session value" sessALT0007 note --session '-abcdefgh:' "$lbody"
     for c in "show --own -x:" "import-handoff --% ../h.md"; do   # $c unquoted: each case is a command line
         altered "$c" sessALT0007 $c
         assert_equals "$(twin_run sh "$T/on" sessALT0007 $c | cut -d'|' -f1)" "rc=1" "sh refuses it too: $c"
@@ -2102,47 +2104,77 @@ sessions-file=0'
     # A first word pwsh drops or splits is no command, so both twins print usage.
     for w in '--%' '-x:'; do
         before="$(files_under "$(pmbdir "$T/on")")"
-        s="$(twin_run sh "$T/on" sessALT0008 "$w" note "$long")"; p="$(twin_run ps1 "$T/on" sessALT0008 "$w" note "$long")"
+        s="$(twin_run sh "$T/on" sessALT0008 "$w" note "$lbody")"; p="$(twin_run ps1 "$T/on" sessALT0008 "$w" note "$lbody")"
         assert_equals "${p//pmb-journal.ps1/pmb-journal.sh}" "$s" "ps1 and sh print the same usage for a first word pwsh drops or splits: $w"
         assert_equals "${p%%|*}" "rc=1" "ps1 exits 1 for a first word pwsh drops or splits: $w"
         assert_equals "$(files_under "$(pmbdir "$T/on")")" "$before" "neither twin writes anything for a first word pwsh drops or splits: $w"
     done
-    # pwsh -Command re-parses the words (here $x expands to nothing): ps1 refuses; sh has no such mode.
-    out="$( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessALT0010 pwsh -NoProfile -NonInteractive -Command "$(pnat "$T/on/scripts/pmb-journal.ps1")" note 'the price is $x today' "$long" </dev/null 2>&1; echo "rc=$?" )"
-    assert_contains "$out" "rc=1" "ps1 refuses arguments pwsh -Command re-parsed"
-    assert_contains "$out" "pwsh changed the arguments before the script saw them" "ps1 names a -Command re-parse"
+    # pwsh -Command re-parses the words: ps1 refuses; sh has no such mode. The second case keeps the
+    # number of words and changes one ($PSHOME expands to a path), so a count alone cannot catch it.
+    pcmd() { ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessALT0010 pwsh -NoProfile -NonInteractive -Command "$(pnat "$T/on/scripts/pmb-journal.ps1")" "$@" </dev/null 2>&1; echo "rc=$?" ); }
+    out="$(pcmd note 'the price is $x today' "$lbody")"
+    assert_equals "$(rcof "$out")" "1" "ps1 refuses arguments pwsh -Command re-parsed into more words"
+    assert_contains "$out" "pwsh changed the arguments before the script saw them" "ps1 names a -Command re-parse into more words"
+    out="$(pcmd note '$PSHOME' 'tail')"
+    assert_equals "$(rcof "$out")" "1" "ps1 refuses a word pwsh -Command expanded in place"
+    assert_contains "$out" "pwsh changed the arguments before the script saw them" "ps1 names a word pwsh -Command expanded in place"
     # Dash-led text that pwsh passes intact is stored by both twins, byte for byte.
     pair dashitem note '- an item with no colon, which pwsh passes intact to the script'
-    pair dashx note '-x' "then text: $long"
+    pair dashx note '-x' "then text: $lbody"
+    pair endash note "$(printf '\342\200\223') an en-dash item with no colon, which pwsh passes intact"
     # U+FFFD: pwsh's stand-in for bytes that are not valid UTF-8, so ps1 cannot tell it from them.
-    p="$(twin_run ps1 "$T/on" sessALT0011 note "a U+FFFD $(printf '\357\277\275') $long")"
+    p="$(twin_run ps1 "$T/on" sessALT0011 note "a U+FFFD $(printf '\357\277\275') $lbody")"
     assert_equals "${p%%|*}" "rc=1" "ps1 refuses an argument that holds U+FFFD"
     assert_contains "$p" "holds U+FFFD" "ps1 names U+FFFD"
     case "$(uname -s)" in
-        MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Git Bash hands pwsh.exe an invalid byte as another, valid character (spec 4.1); the U+FFFD case runs on Linux and macOS" ;;
-        *)  p="$(twin_run ps1 "$T/on" sessALT0012 note "a bad $(printf '\377') byte $long")"
+        MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Git Bash hands pwsh.exe an invalid byte as another, valid character (spec 4.1); the invalid-byte case runs on Linux" ;;
+        *)  p="$(twin_run ps1 "$T/on" sessALT0012 note "a bad $(printf '\377') byte $lbody")"
             assert_equals "${p%%|*}" "rc=1" "ps1 refuses an argument with a byte that is not valid UTF-8"
             assert_contains "$p" "holds U+FFFD" "ps1 refuses invalid UTF-8 as U+FFFD"
-            assert_contains "$(twin_run sh "$T/on" sessALT0012 note "a bad $(printf '\377') byte $long")" "not valid UTF-8" "sh refuses the same argument as invalid UTF-8" ;;
+            assert_contains "$(twin_run sh "$T/on" sessALT0012 note "a bad $(printf '\377') byte $lbody")" "not valid UTF-8" "sh refuses the same argument as invalid UTF-8" ;;
     esac
-    # Without the original command line (an in-process call), ps1 refuses every dash-led argument, and
-    # a --% or trailing -x: left in the command line of whatever started pwsh.
+    # Without the original command line (an in-process call), ps1 refuses a dash-led argument other than
+    # the command's flags, and refuses when the process command line holds `--%` or a dash-led word with
+    # a colon: those are what a split or a drop leaves behind.
     fb() { CLAUDE_CODE_SESSION_ID=sessFALL001 pdot "$T/on" "exit (Invoke-PmbMain @($1) \$null)" 2>&1; echo "rc=$?"; }
-    out="$(fb "'note', '- Done wrote it, $long'")"
-    assert_contains "$out" "rc=1" "ps1 without the original arguments refuses a dash-led argument"
-    assert_contains "$out" "an argument starts with a dash" "ps1 without the original arguments names the dash"
-    assert_contains "$(fb "'note', ([string][char]0x2013 + 'x $long')")" "rc=1" "ps1 without the original arguments refuses a leading en dash"
-    assert_contains "$(fb "'note', ('a lone ' + [char]0xD800 + ' surrogate $long')")" "holds U+FFFD" "ps1 refuses a lone surrogate"
-    assert_contains "$(fb "'note', '--session', 'sessFALL001', 'a plain body $long'")" "rc=0" "ps1 without the original arguments accepts --session and plain text"
-    assert_contains "$(fb "'show', '--all', '--own'")" "rc=0" "ps1 without the original arguments accepts show --all --own"
-    printf "& '%s' note 'a plain body %s'\nexit \$LASTEXITCODE\n" "$(pnat "$T/on/scripts/pmb-journal.ps1")" "$long" > "$T/wrap.ps1"
-    wr() { ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessFALL002 pwsh -NoProfile -NonInteractive -File "$T/wrap.ps1" "$@" </dev/null 2>&1; echo "rc=$?" ); }
-    assert_contains "$(wr)" "rc=0" "ps1 called by another script records plain text"
-    for w in '--%' '-x:'; do
-        out="$(wr "$w")"
-        assert_contains "$out" "rc=1" "ps1 called by another script refuses when pwsh dropped $w from its command line"
-        assert_contains "$out" "an argument starts with a dash" "ps1 called by another script names the dropped $w"
+    dropped='pwsh may have split or dropped an argument that starts with a dash'
+    out="$(fb "'note', '- Done wrote it, $lbody'")"
+    assert_equals "$(rcof "$out")" "1" "ps1 without the original arguments refuses a dash-led argument"
+    assert_contains "$out" "$dropped" "ps1 without the original arguments names the dash"
+    out="$(fb "'note', ([string][char]0x2013 + 'x $lbody')")"
+    assert_equals "$(rcof "$out")" "1" "ps1 without the original arguments refuses a leading en dash"
+    assert_contains "$out" "$dropped" "ps1 without the original arguments names the en dash"
+    assert_contains "$(fb "'note', ('a lone ' + [char]0xD800 + ' surrogate $lbody')")" "holds U+FFFD" "ps1 refuses a lone surrogate"
+    printf '# Handoff\n\nIn-flight state from the fallback test, worth one journal record.\n' > "$T/on/handoff-fb.md"
+    for c in "'note', '--session', 'sessFALL001', 'a plain body $lbody'" "'note', '--file', '../utf8.txt'" "'show', '--all', '--own'" "'show', '--own', '--session', 'sessFALL001'" "'import-handoff', 'handoff-fb.md'"; do
+        assert_equals "$(rcof "$(fb "$c")")" "0" "ps1 without the original arguments accepts its own flags: $c"
     done
+    # Called by another script: wrap.ps1 runs one fixed note; wrapargs.ps1 passes on its own arguments,
+    # which pwsh already split (`--file:x` reaches the journal as the flag `--file` and `x`).
+    printf "& '%s' note 'a plain body %s'\nexit \$LASTEXITCODE\n" "$(pnat "$T/on/scripts/pmb-journal.ps1")" "$lbody" > "$T/wrap.ps1"
+    printf "& '%s' @args\nexit \$LASTEXITCODE\n" "$(pnat "$T/on/scripts/pmb-journal.ps1")" > "$T/wrapargs.ps1"
+    wr() { local w="$1"; shift; ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessFALL002 pwsh -NoProfile -NonInteractive -File "$T/$w.ps1" "$@" </dev/null 2>&1; echo "rc=$?" ); }
+    assert_equals "$(rcof "$(wr wrap)")" "0" "ps1 called by another script records plain text"
+    assert_equals "$(rcof "$(wr wrapargs note "a plain body passed on $lbody")")" "0" "ps1 called by another script records text passed on"
+    for c in 'wrap|--%' 'wrap|-x:' 'wrapargs|note|--file:../utf8.txt' 'wrapargs|note|--session:sessINJECT02|a body'; do
+        IFS='|' read -ra a <<< "$c"
+        before="$(files_under "$(pmbdir "$T/on")")"
+        out="$(wr "${a[@]}")"
+        assert_equals "$(rcof "$out")" "1" "ps1 called by another script refuses: ${c//|/ }"
+        assert_contains "$out" "$dropped" "ps1 called by another script names what pwsh dropped or split: ${c//|/ }"
+        assert_equals "$(files_under "$(pmbdir "$T/on")")" "$before" "ps1 called by another script writes nothing: ${c//|/ }"
+    done
+    # Windows opens `pmb-journal.ps1.` as the script, and $PSCommandPath drops the dot, so the original
+    # arguments must still be found under that spelling.
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            tdot() { ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessALT0013 pwsh -NoProfile -NonInteractive -File "$T/on/scripts/pmb-journal.ps1." "$@" </dev/null 2>&1; echo "rc=$?" ); }
+            out="$(tdot note '--file:../utf8.txt')"
+            assert_equals "$(rcof "$out")" "1" "ps1 started as pmb-journal.ps1. refuses --file:<path>"
+            assert_contains "$out" "pwsh changed the arguments before the script saw them" "ps1 started as pmb-journal.ps1. still finds its original arguments"
+            assert_equals "$(rcof "$(tdot note "a plain body $lbody")")" "0" "ps1 started as pmb-journal.ps1. records plain text" ;;
+        *)  echo "  SKIP: only Windows opens pmb-journal.ps1. as the script; the trailing-dot case runs there" ;;
+    esac
 
     # A6.6: the same kinds, and the same usage apart from the script's own name.
     sh_kinds="$(sed -n 's/^PMB_KINDS=" \(.*\) "$/\1/p' "$J")"

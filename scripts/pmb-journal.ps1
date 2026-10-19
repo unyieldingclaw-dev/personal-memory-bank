@@ -18,8 +18,8 @@
 # WHY no param() block: declared parameters intercept `--flag` arguments (spec F18); with none,
 # every argument lands in $args untouched by the script. pwsh -File itself still parses them first
 # and can alter them (see Get-PmbArgProblem), so the CLI refuses any argument it cannot show
-# arrived intact, and such text goes through --file. The spec lists the known differences
-# (section 4.1, "Twin parity").
+# arrived intact, and any that holds U+FFFD or a lone surrogate; such text goes through --file.
+# The spec lists the known differences (section 4.1, "Twin parity").
 # WHY ASCII only: CI's PSScriptAnalyzer (PSUseBOMForUnicodeEncodedFile) fails a non-ASCII file
 # saved without a BOM; regex escapes stand in for the characters.
 #
@@ -913,24 +913,37 @@ function Invoke-PmbGate([string]$Payload) {
 
 # No sh counterpart: the sh twin receives its arguments exactly as given.
 # WHY: pwsh -File alters some arguments before the script sees them (measured, pwsh 7.4 and 7.6). An
-# argument that starts with a dash (-, or U+2013, U+2014 or U+2015, which pwsh reads as one) is split
-# at its first colon, so `--file:x` becomes a real --file and `- password: v` loses the colon that a
-# secret pattern needs; a trailing `-x:` and every `--%` vanish; and on Linux bytes that are not valid
-# UTF-8 arrive as U+FFFD. [Environment]::GetCommandLineArgs() keeps the original, so ps1 refuses on
-# any difference instead of storing other text than the sh twin would.
-$script:PmbAltered = 'pwsh changed the arguments before the script saw them (it splits one that starts with a dash at a colon, drops --% and a trailing -x:, and re-parses under -Command); run it with pwsh -File and pass such text with --file <path>'
-$script:PmbDashArg = 'an argument starts with a dash, and pwsh may have split or dropped arguments; pass such text with --file <path>'
-$script:PmbFffdArg = 'an argument holds U+FFFD, which pwsh puts in place of bytes that are not valid UTF-8, or a lone surrogate; pass such text with --file <path>'
+# argument that starts with a dash (-, or U+2013, U+2014 or U+2015, which pwsh reads as one) and
+# holds a colon is split there, so `--file:x` becomes a real --file and `- password: v` loses the
+# colon that a secret pattern needs; a trailing `-x:` and every `--%` vanish. The process command line
+# ([Environment]::GetCommandLineArgs()) still holds them as given, so ps1 refuses on any difference
+# instead of storing other text than the sh twin would. It cannot help with bytes that are not valid
+# UTF-8: on Linux both views carry U+FFFD in their place, so U+FFFD is refused on its own.
+$script:PmbArgAltered = 'pwsh changed the arguments before the script saw them; run it with pwsh -File and pass such text with --file <path>'
+$script:PmbArgDash    = 'pwsh may have split or dropped an argument that starts with a dash; pass such text with --file <path>'
+$script:PmbArgFffd    = 'an argument holds U+FFFD (what pwsh puts in place of bytes that are not valid UTF-8) or a lone surrogate; pass such text with --file <path>'
+# A regex prefix: the four characters pwsh reads as a dash, built from char codes to keep this file ASCII.
+$script:PmbDashLed    = '^[-' + [char]0x2013 + [char]0x2014 + [char]0x2015 + ']'
 
-# The arguments after this script's own path in the process command line, or $null when the script
-# was not started by name (dot-sourced, `&` from another script, one -Command string). WHY the file
-# name taken from $PSCommandPath: it is the path pwsh was given, so a link under another name matches.
+# The text after the last / or \, without trailing dots and spaces. WHY the trim: Windows opens
+# `pmb-journal.ps1.` and `pmb-journal.ps1 ` as the script, and $PSCommandPath drops them (measured,
+# pwsh 7.6); elsewhere they are part of the name on both sides, so trimming both keeps them equal.
+function Get-PmbLeafName([string]$Path) {
+    return $Path.Substring($Path.LastIndexOfAny([char[]]@('/', '\')) + 1).TrimEnd('.', ' ')
+}
+
+# The arguments after the FIRST command-line element whose file name is this script's, or $null when
+# none is (dot-sourced, `&` from a script started under another name, one -Command string). A nested
+# `&` call inside a process that was itself started as this script gets that process's arguments,
+# which can only cause a refusal, never other text. WHY the name from $PSCommandPath: it is the path
+# pwsh was given, so a link under another name matches. WHY `return ,`: an empty list must stay an
+# empty array; unrolled, it would become $null, which means "no original".
 function Get-PmbOriginalArg {
     try {
-        $name = $PSCommandPath.Substring($PSCommandPath.LastIndexOfAny([char[]]@('/', '\')) + 1)
+        $name = Get-PmbLeafName $PSCommandPath
         $cl = [Environment]::GetCommandLineArgs()
         for ($i = 1; $i -lt $cl.Count; $i++) {
-            if ($cl[$i].Substring($cl[$i].LastIndexOfAny([char[]]@('/', '\')) + 1) -ine $name) { continue }
+            if ((Get-PmbLeafName $cl[$i]) -ine $name) { continue }
             if ($i + 1 -ge $cl.Count) { return , [string[]]@() }
             return , [string[]]$cl[($i + 1)..($cl.Count - 1)]
         }
@@ -938,28 +951,33 @@ function Get-PmbOriginalArg {
     return $null
 }
 
-# The reason to refuse REST (the arguments after the command word), or ''. ORIGINAL is the whole
-# original argument list, or $null when it is unknown.
+# The reason to refuse REST (the arguments after the command word), or $null, in one of two modes.
+# With ORIGINAL (Get-PmbOriginalArg's list, command word first, hence the +1), any difference from
+# REST is refused. Without it, two checks stand in. An argument of REST that starts with a dash,
+# other than the command's own flags, is refused: the first piece of a split starts with one. And the
+# whole process command line is searched for `--%` and for a dash-led word that holds a colon, which
+# a split or a drop leaves there even when the piece that reached REST is a flag (`--file:x` arrives
+# as `--file` `x`). In both modes U+FFFD and lone surrogates are refused.
+# WHY these flag words: they are the ones Write-PmbEntry and Show-PmbJournal parse, which pwsh passes
+# intact when they hold no colon. A flag added to either parser must be added here.
 function Get-PmbArgProblem([string]$Cmd, [string[]]$Rest, $Original) {
     if ($null -ne $Original) {
         $same = $Original.Count -eq $Rest.Count + 1
         for ($i = 0; $same -and $i -lt $Rest.Count; $i++) { if ($Original[$i + 1] -cne $Rest[$i]) { $same = $false } }
-        if (-not $same) { return $script:PmbAltered }
+        if (-not $same) { return $script:PmbArgAltered }
     } else {
-        # WHY refuse every dash-led argument here: without the original, a split or a dropped argument
-        # cannot be seen, but the first piece of a split still starts with a dash. The command line of
-        # whatever started pwsh is checked for the two shapes that vanish without a trace.
         $flags = @('--session', '--file')
-        if ($Cmd -ceq 'show') { $flags = @('--all', '--session', '--own') } elseif ($Cmd -ceq 'import-handoff') { $flags = @() }
-        foreach ($a in $Rest) { if ($flags -cnotcontains $a -and $a -cmatch '^[-\u2013\u2014\u2015]') { return $script:PmbDashArg } }
+        if ($Cmd -ceq 'show') { $flags = @('--all', '--session', '--own') }
+        elseif ($Cmd -ceq 'import-handoff') { $flags = @() }
+        foreach ($a in $Rest) { if ($flags -cnotcontains $a -and $a -cmatch $script:PmbDashLed) { return $script:PmbArgDash } }
         try { $cl = [Environment]::GetCommandLineArgs() } catch { $cl = @() }
-        foreach ($a in $cl) { if ($a -ceq '--%' -or $a -cmatch '^[-\u2013\u2014\u2015][^:]*:\z') { return $script:PmbDashArg } }
+        foreach ($a in $cl) { if ($a -ceq '--%' -or $a -cmatch ($script:PmbDashLed + '[^:]*:')) { return $script:PmbArgDash } }
     }
     foreach ($a in $Rest) {
-        if ($a.Contains([char]0xFFFD)) { return $script:PmbFffdArg }
-        try { [void]$script:PmbUtf8Strict.GetByteCount($a) } catch { return $script:PmbFffdArg }
+        if ($a.Contains([char]0xFFFD)) { return $script:PmbArgFffd }
+        try { [void]$script:PmbUtf8Strict.GetByteCount($a) } catch { return $script:PmbArgFffd }
     }
-    return ''
+    return $null
 }
 
 # Returns the exit code ALONE: every line of text goes through Write-PmbOut/Write-PmbErr. ORIGINAL is
@@ -975,7 +993,9 @@ function Invoke-PmbMain([string[]]$Argv, $Original = $null) {
     }
     try {
         # WHY usage when the first words differ: pwsh alters only a word that starts with a dash and holds
-        # a colon, or `--%`, and no command is shaped so, so the sh twin prints usage for that word.
+        # a colon, or `--%`, and no command is shaped so, so the sh twin prints usage for that word. The
+        # gate is dispatched before this check (it must fail open, and it reads no arguments), so
+        # `--% gate` runs the gate where the sh twin prints usage (spec section 4.1).
         if ($null -ne $Original) {
             $ocmd = 'help'
             if ($Original.Count -gt 0 -and $Original[0]) { $ocmd = $Original[0] }
