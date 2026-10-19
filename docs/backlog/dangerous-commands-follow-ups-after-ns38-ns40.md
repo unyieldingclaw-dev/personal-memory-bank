@@ -44,7 +44,9 @@ each finding is described in full where it appears.
 "Without python3, the sh dangerous-commands hook missed" and the two after it, headed "`git merge`
 followed by a newline got no CONFIRM" and "On Git Bash, a carriage return inside a word". The
 per-round fix log that stood here, citing about 50 review findings it closed, was collapsed on
-2026-10-19 (CHR2/S-1); it is still in this file at `0e05a6b`.
+2026-10-19 (CHR2/S-1). It is the only record of which finding each closed ID was, and of `J2-1`
+and the `R2/` and `R4/` IDs, none of which appears below any more: read it with `git show
+0e05a6b:docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md`.
 
 **Still open from item 1:**
 - **The merge row's trailing boundary is still narrow.** A bare `git merge` straight before `;`,
@@ -105,20 +107,24 @@ per-round fix log that stood here, citing about 50 review findings it closed, wa
 - **Cross-shell cases go through two separate per-shell lists, not `assert_parity`.** The suite's
   own parity block (`assert_parity` in `tests/test-dangerous-commands.sh`) exists to catch a sh/ps1
   divergence on one payload; the parsed-path CR and newline-boundary cases could feed it, and
-  nothing yet asserts the two hooks agree on them. **CHR2/C-1:** that matters most for the CR
+  nothing yet asserts the two hooks agree on their BLOCK and CONFIRM verdicts. **CHR2/C-1:** that
+  matters most for the CR
   shapes, because "a Bash command gets the same verdict from either hook" is the stated outcome of
   the third view. It held on 33 CR shapes run through both hooks (0 divergences, 2026-10-16), but
   two hand-kept tables are all that hold it. Feed these through `assert_parity`, which CI
   enforces, with the verdict each got from both hooks (Git Bash and pwsh, python3 present,
   2026-10-19): `git push --for`, CR, `ce` and `curl x | ba`, CR, `sh` (block); `git merge`, CR,
   `ls` and `git`, space, CR, space, `merge main` (confirm). Keep the spaces in the last one:
-  `git`, CR, `merge main` gets no verdict from either hook. `cat ~/.ssh/id_r`, CR, `sa` is WARN-tier, which
-  `assert_parity` cannot check: its `pass` arm asserts only that neither CONFIRM nor BLOCK fired,
-  so it stays green with the WARN dropped. Pin that one through the parity block in
-  `tests/test-hook-warn-output.sh`, or give `assert_parity` a WARN arm.
-- **The decoder's rules and the CR and newline rationale are restated in five to seven places**
-  (hook comments, standard, CHANGELOG, this file, both test files). One copy had already drifted
-  in review. Pointing the others at the sh hook's comment would cut the copies.
+  `git`, CR, `merge main` gets no verdict from either hook. The WARN-tier CR shape, `cat
+  ~/.ssh/id_r`, CR, `sa`, is already pinned: `tests/test-hook-warn-output.sh` byte-compares both
+  hooks' output on it (`P_CR`, `P_CR_TWO`) in its cross-shell parity block, which CI runs under
+  `PMB_REQUIRE_PARITY=1`. `assert_parity` could not take it, since its `pass` arm asserts only
+  that neither CONFIRM nor BLOCK fired; a WARN arm would be needed only for more WARN shapes.
+- **The decoder's rules and the CR and newline rationale are restated in four to six places**
+  (the comments in `scripts/dangerous-commands.sh` and `.ps1`, `standards/SECURITY-GUARDRAILS.md`,
+  `CHANGELOG.md`, `tests/test-dangerous-commands.sh`, `tests/dangerous-commands.Tests.ps1`). One
+  copy had already drifted in review. Pointing the others at the sh hook's comment would cut the
+  copies.
 - **The shipped standard names PMB's open "no external dependencies" question.**
   `standards/SECURITY-GUARDRAILS.md` ships to adopters, who never see PMB's decision and keep the
   "open" wording once it is settled. Track it in PMB's own memory bank instead.
@@ -137,10 +143,13 @@ per-round fix log that stood here, citing about 50 review findings it closed, wa
   CR-free run took 22.2 s, outside "19 to 21 s". Point every copy at one stated range, or at the
   standard, and add the CR case to the sh table.
 - **R5/COR5-4:** the comment above the 400K timing row in `tests/test-dangerous-commands.sh` says
-  a quadratic CR test placed after the bound costs "under about a second" (item 1's fix log, now
-  collapsed, said the same). The round-4 measurements of that expansion alone at 50K characters
-  ranged from 0.35 s to 1.2 s (0.35, 1.16 and 1.2 s). The 400K whole-hook figure was 51 s in that
-  log and is 47 s in the test comment.
+  that row stays green on a quadratic CR test placed after the bound because the difference is
+  "under about a second". The figure is low: round-4 measurements of that expansion alone at 50K
+  characters were 0.35, 1.16 and 1.2 s. The comment also leaves the main reason implicit: the 400K
+  row stops at the length bound (`DC_MAX_CMD` in `scripts/dangerous-commands.sh`), so it never
+  reaches code after the bound at any cost; the sub-second figure only explains why a row under
+  the bound would not catch the mutant either. The 400K whole-hook figure is 47 s in that comment
+  and was 51 s in round 4 (the fix log at `0e05a6b`).
 - **A duplicated WARN on a CR-bearing escaped filename would ship green** (R6/T6-2, Medium).
   Deleting the `return` in the sh `warn()` arm for the de-escaped view makes `cat ~/.ssh/id\_rsa
   x`, CR, `y` emit the WARN twice in both `systemMessage` and the model-facing text, and every
@@ -157,11 +166,18 @@ per-round fix log that stood here, citing about 50 review findings it closed, wa
   `scripts/dangerous-commands.sh`, or keep the raw
   payload as an extra view on the fallback path.
 - **R5/COR5-6:** the accepted false positive in `standards/SECURITY-GUARDRAILS.md` (and its
-  template), "`git merge`, CR, then another word", is too broad. Only a CR followed directly by any
-  other character is a false positive (Git Bash deletes the CR, so `git merge`, CR, `ls` runs `git
-  mergels`); a CR followed by a space, a newline or the end is a true positive (`git merge`, CR, a
-  space, then `ls` runs `git merge ls`). The comments on the merge row in both hooks already state
-  it that way. The standard also names `mergels` without introducing `ls`.
+  template), "`git merge`, CR, then another word", is too broad. Only a CR followed directly by a
+  character that continues the word is a false positive (Git Bash deletes the CR, so `git merge`,
+  CR, `ls` runs `git mergels`). A CR followed by a space, a tab, a newline, the end, or a shell
+  separator such as `;`, `&&` or `|` is a true positive, because Git Bash still splits or
+  separates there and runs a bare merge (measured 2026-10-19 on Git Bash; both hooks CONFIRM each
+  of these). The merge-row comments in both hooks (`confirm_boundary()` in
+  `scripts/dangerous-commands.sh`, the `git merge` row in `scripts/dangerous-commands.ps1`) need
+  the same fix: they list only a space, a newline or the end as true positives, and the sh comment
+  says the CR arm decides a verdict alone "only when another character follows the CR". Before
+  `;`, `&&` or `|` it decides alone too, because the CR-deleted view gives `git merge;…`, the
+  narrow-boundary gap in the first entry above. The standard also names `mergels` without
+  introducing `ls`.
 - **Smaller test and wording gaps:**
   - R6/T6-1, R6/C-2: the comment above the one-WARNING count test in
     `tests/test-dangerous-commands.sh` says `warn()` has "two case arms" that return "after
@@ -171,12 +187,12 @@ per-round fix log that stood here, citing about 50 review findings it closed, wa
     block, which does not run without pwsh.
   - CHR2/A-1, first found as CHR/J3-1: the deny message and the `dc_grep` comment in
     `scripts/dangerous-commands.sh`, `docs/HOOKS-GUIDE.md` and `CHANGELOG.md` point at the
-    standard's "Platform requirement (sh hook)" heading, and no test pins it. It matters to
+    standard's bold "Platform requirement (sh hook)" label, and no test pins it. It matters to
     adopters because the two files update differently: `scripts/mb.sh` upgrade overwrites the
     hooks (TEMPLATE_OWNED) but only creates `standards/SECURITY-GUARDRAILS.md` when it is missing
-    (ADVISORY_CREATE), so an adopter with an older standard gets the new deny message pointing at
-    a heading their copy lacks. `scripts/mb.ps1` overwrites both, so the gap is on the sh upgrade
-    path.
+    (ADVISORY_CREATE); when the file exists and differs, it prints a diff and asks for a manual
+    review. So an adopter with an older standard gets the new deny message pointing at a label
+    their copy lacks. `scripts/mb.ps1` overwrites both, so the gap is on the sh upgrade path.
   - CHR2/M-1: `docs/HOOKS-GUIDE.md` says "folding the two subjects once" costs two subshells,
     "three when the command holds a carriage return"; with the CR-deleted view there are three
     subjects.
@@ -184,11 +200,12 @@ per-round fix log that stood here, citing about 50 review findings it closed, wa
   `tests/test-dangerous-commands.sh`. The decoder's quadratic `gsub` was measured on Git Bash's
   gawk; the mawk tried on Ubuntu showed no such cost, and CI installs no gawk, so that guard likely
   cannot fail there. The 400K row calls `invoke_hook`, so with python3 present (CI included) it
-  times only the parsed path, never the fallback. Its quadratic CR test was measured on Git Bash
-  only: whether that row can fail on Linux is unmeasured, not shown to be local-only. Both print
-  SKIPPED without `EPOCHREALTIME`, and `PMB_REQUIRE_PARITY` does not make that fatal. Measure the
-  400K row's mutant on Linux before stating either test as local-only, or install gawk in CI and
-  make the skip fatal under the flag.
+  times only the parsed path, never the fallback. The mutant it guards, a quadratic CR test before
+  the bound, was measured on Git Bash only: whether that row can fail on Linux is unmeasured, not
+  shown to be local-only. Both print SKIPPED without `EPOCHREALTIME`, and `PMB_REQUIRE_PARITY`
+  does not make that fatal. Measure both mutants on the CI runner's awk and bash (and on gawk)
+  before stating either test as local-only or installing gawk in CI; then make the skip fatal
+  under the flag.
 
 ## 2. Tests that do not discriminate, or never run in CI
 
@@ -204,8 +221,9 @@ per-round fix log that stood here, citing about 50 review findings it closed, wa
   Turkish locale exists, and the Ubuntu CI runner has none. Run `locale-gen tr_TR.UTF-8` in the
   `mb-command-tests` job of `.github/workflows/pmb-health.yml`, or make that skip fatal under a
   flag, as `PMB_REQUIRE_PARITY` does for pwsh.
-- **The 250-character `-C` figure is not pinned.** Assert in both suites that a 250-character path
-  prompts and a 251-character path does not.
+- **The 250-character `-C` figure is not pinned.** Assert in both suites
+  (`tests/test-dangerous-commands.sh`, `tests/dangerous-commands.Tests.ps1`) that a 250-character
+  path prompts and a 251-character path does not.
 - **Only the opening words of the deny message are asserted.** Its remedy text, in
   `scripts/dangerous-commands.sh`, is not (read).
 
