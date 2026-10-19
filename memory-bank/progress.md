@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-10-18
+last-reviewed: 2026-10-19
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -13,10 +13,24 @@ lineage: []
 
 # Progress
 
+## 2026-10-19 — PR #63 merged (`d3f87f8`): FIFO-safe journal gate, ps1 regular-file check
+
+- **Both twins** treat a non-regular `gate-blocked` as unrecordable and fail open without opening it;
+  a FIFO there used to hang the gate (rc=124 under `timeout`). The ps1 `Test-PmbRegularFile` pins its
+  native-command preferences locally, resolves `/usr/bin/test` then `/bin/test` once, and (off Windows)
+  throws if neither exists.
+- **Spec §4.1 "Twin parity"** now states parity as intent plus measured differences: `pwsh -File` can
+  split, drop or obey a dash-led argument or refuse to start, and it drops `--%`. Text passed with
+  `--file` matched in every measured case.
+- **CI:** every job has `timeout-minutes` (MB Command Tests 30, the rest 10), and the test job sets
+  `PMB_REQUIRE_FIFO=1`. Carry-overs, and what still gates the flag PR: `[NS-68]`.
+
 ## 2026-10-18 — C1 Plan A merged (#57, `d751b73`); PreCompact lock-up recorded (#62, `e38620f`)
 
 - **#57** adds the bash journal and its PowerShell twin, plus a journal-mode PreCompact gate: auto never
-  blocks, and a manual compaction is blocked once. Inert until Plan C's flag PR (`[NS-68]`).
+  blocks; a manual one with no new qualifying record is blocked once and passes on repeat (any
+  compaction re-arms it), and its two environment blocks repeat until fixed. Inert until Plan C's
+  flag PR (`[NS-68]`).
 - **Its first Linux CI run hung for about 2 h** on a planted FIFO. On pwsh 7.4.7, `Get-Item` reports a
   FIFO's `UnixMode` as a regular file, and its provider rewrites `\` to `/`. Fixed in `4738ad5` (PR #57 branch; squashed into `d751b73`) with
   `/usr/bin/test -f`. The hardening follow-ups are PR #63.
