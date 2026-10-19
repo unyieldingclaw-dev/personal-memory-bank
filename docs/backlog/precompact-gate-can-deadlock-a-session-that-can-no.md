@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-09-27
-last-reviewed: 2026-10-18
+last-reviewed: 2026-10-19
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -11,7 +11,7 @@ related_plan: null
 **Status 2026-10-18: fixed in journal mode only.** PR #57 (`d751b73`) implements option (b) below for the
 journal-mode gate:
 - an automatic compaction is never blocked;
-- a manual `/compact` is blocked once, and an immediate repeat passes (the two environment blocks repeat until fixed).
+- a manual `/compact` with no new qualifying record is blocked once, and an immediate repeat passes (the two environment blocks repeat until fixed).
 
 Journal mode stays off until Plan C's flag PR (`[NS-68]`). The legacy gate still blocks both triggers
 and still has this deadlock. The question below remains open for it.
@@ -45,8 +45,10 @@ For the legacy gate, pick one:
 Per U12, a blocked automatic compaction never reaches the model, so for the model the auto path is a
 silent trap under any gate that blocks it.
 
-Choosing (a) reverses recorded policy for Claude Code. Start from `grep -rln PreCompact` outside
-`docs/archive`, `docs/backlog`, `docs/superpowers` and `CHANGELOG.md`. On 2026-10-18 that named, among others (docs and settings only; scripts and tests omitted):
+Choosing (a) reverses recorded policy for Claude Code. Start from the tracked files, via
+`git grep -l PreCompact -- . ':!docs/archive' ':!docs/backlog' ':!docs/superpowers' ':!CHANGELOG.md'`.
+At `7a43f78` (2026-10-19) that named (docs and settings only; scripts, tests and
+`memory-bank/` omitted):
 - `CLAUDE.md` (Context Compaction Recovery) and `templates/CLAUDE.md`;
 - `AGENTS.md` and `templates/AGENTS.md`;
 - `standards/MEMORY-BANK.md` and `templates/standards/MEMORY-BANK.md`;

@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-10-18
+last-reviewed: 2026-10-19
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -13,10 +13,17 @@ lineage: []
 
 # Progress
 
+## 2026-10-19 — PR #63 merged (`d3f87f8`): FIFO-safe journal gate, ps1 regular-file check
+
+- What changed is in `d3f87f8`'s message. Carry-overs, and what still gates the flag PR: `[NS-68]`.
+- Funded by moving `[NS-25]` verbatim to `docs/archive/`; that saves bytes, not lines.
+
 ## 2026-10-18 — C1 Plan A merged (#57, `d751b73`); PreCompact lock-up recorded (#62, `e38620f`)
 
 - **#57** adds the bash journal and its PowerShell twin, plus a journal-mode PreCompact gate: auto never
-  blocks, and a manual compaction is blocked once. Inert until Plan C's flag PR (`[NS-68]`).
+  blocks; a manual one with no new qualifying record is blocked once and passes on repeat (any
+  compaction re-arms it), and its two environment blocks repeat until fixed. Inert until Plan C's
+  flag PR (`[NS-68]`).
 - **Its first Linux CI run hung for about 2 h** on a planted FIFO. On pwsh 7.4.7, `Get-Item` reports a
   FIFO's `UnixMode` as a regular file, and its provider rewrites `\` to `/`. Fixed in `4738ad5` (PR #57 branch; squashed into `d751b73`) with
   `/usr/bin/test -f`. The hardening follow-ups are PR #63.
