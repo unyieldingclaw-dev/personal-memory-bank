@@ -194,20 +194,20 @@ reviews; 2026-10-18 and 2026-10-19, argument-alteration reviews).** The two twin
 the same decisions, return the same exit codes and write the same bytes to `pmb/`. The parity tests
 check this for the cases they cover; it is not proven in general. These are the differences known today:
 - **Text arguments under pwsh.** Under `-File` and `-CommandWithArgs` pwsh parses every argument
-  before the PowerShell twin sees it. An argument that starts with a dash (`-`, or U+2013-U+2015)
-  can be split at a colon, dropped, or turned into a flag such as `--file:<path>`; `--%` is dropped;
-  on Linux, invalid UTF-8 becomes U+FFFD; `pwsh -Command` re-parses them. For a record, `show` and
-  `import-handoff`, the PowerShell twin reads its arguments only when it finds its own path on the
-  process command line and the words after it equal them, and refuses U+FFFD and a lone surrogate.
-  Elsewhere (a wrapper, `-CommandWithArgs`, an in-process call such as Claude Code's PowerShell tool
-  makes) it refuses them all, pointing at the sh twin from Bash and at `pwsh -File` with `--file`
-  from PowerShell. So it refuses some text the sh twin records; where the parity tests reach, it
-  records no other text. `--% gate` runs the gate, where the sh twin prints usage. Out of reach:
-  pwsh exits 1 on an argument such as `-:x` before any script runs; a pwsh script relaunching the
-  twin with its own, altered arguments; a PowerShell caller, whose native call drops even a quoted
-  `--%`; and a Git Bash caller on Windows, which rewrites them before pwsh starts (a POSIX path
-  becomes `C:/Program Files/Git/...`, invalid UTF-8 other valid characters), so the twin can record
-  a path, or invalid UTF-8 the sh twin refuses, in another form. Measured with pwsh 7.4.7, 7.6.6.
+  before the PowerShell twin sees it: a dash-led one (`-`, U+2013-U+2015) can be split at a colon,
+  dropped, or turned into a flag such as `--file:<path>`; `--%` is dropped; on Linux invalid UTF-8
+  becomes U+FFFD; `-Command` re-parses them. The twin reads arguments for a record, `show` or
+  `import-handoff` only when it finds its own file name on the process command line and the words
+  after it equal them, compared ordinally; it refuses U+FFFD and lone surrogates. Elsewhere (a
+  wrapper, `-CommandWithArgs`, an in-process call such as Claude Code's PowerShell tool makes) it
+  refuses every such call unless the caller plants decoy words, pointing at the sh twin from Bash
+  and at `pwsh -File` with `--file` from PowerShell; `gate`, `mode`, `start` and `help` still run,
+  so `--% start` runs there where the sh twin prints usage, as `--% gate` does everywhere. So it
+  refuses some text the sh twin records; where the parity tests reach, it records no other text. Out
+  of reach: pwsh exits 1 on an argument such as `-:x` before any script runs; a pwsh script
+  relaunching the twin with altered arguments; a PowerShell caller, whose native call drops even a
+  quoted `--%` and the quoting after it; a Git Bash caller on Windows, which rewrites them before
+  pwsh starts, so a path or invalid UTF-8 is stored in another form. Measured: pwsh 7.4.7, 7.6.6.
 - **Windows, with a Git Bash FIFO** (Regular files, below).
 - **A Linux or macOS host with neither `/usr/bin/test` nor `/bin/test`**, or whose binary cannot
   be run (Regular files, below).
