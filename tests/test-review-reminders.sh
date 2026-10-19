@@ -669,7 +669,7 @@ git -C "$TMPDIR_EMPTY" add file.txt
 git -C "$TMPDIR_EMPTY" commit -q -m "initial"
 root_empty=$(git -C "$TMPDIR_EMPTY" rev-parse --show-toplevel)
 # The fragments avoid quotes, apostrophes and <>&, which the two twins' JSON encoders may escape differently.
-hint_tail="else a cd that starts the command, else the hook"
+hint_tail="plus any git -C path, else from the hook"
 resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_EMPTY" "git commit -m empty")
 assert_contains "$resp" "no diff to review" "review-reminders.sh denies an empty-diff commit (fixture check)"
 assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.sh's empty-diff commit denial names the root it checked"
@@ -708,6 +708,18 @@ if [ -n "$PY" ]; then
   assert_contains "$resp" "repository root could not be resolved" "review-reminders.sh denies when no repository resolves (fixture check)"
   assert_contains "$(printf '%s' "$resp" | json_reason)" 'prefix it with cd "<repo>" &&' "review-reminders.sh's unresolved-root denial is valid JSON and keeps its quoted cd"
   rm -rf "$TMPDIR_NOREPO"
+  # WHY parse the JSON here: the remedy the empty-diff hint gives must be the quoted cd the
+  # resolvers accept (an unquoted one falls back to the working directory and is denied again),
+  # and the quotes are encoded differently by the two twins, so only the decoded reason compares.
+  # The hint must not name --git-dir/--work-tree either: both twins deny those before any root.
+  reason=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_EMPTY" "git commit -m empty" | json_reason)
+  assert_contains "$reason" 'start the command with cd "<repo>" &&' "review-reminders.sh's empty-diff denial advises the quoted cd the resolvers accept"
+  assert_not_contains "$reason" 'git-dir' "review-reminders.sh's empty-diff denial does not offer --git-dir as a root source"
+  if command -v pwsh >/dev/null 2>&1; then
+    reason=$(invoke_hook_ps1_from "$TMPDIR_EMPTY" "git commit -m empty" | json_reason)
+    assert_contains "$reason" 'start the command with cd "<repo>" &&' "review-reminders.ps1's empty-diff denial advises the quoted cd the resolvers accept"
+    assert_not_contains "$reason" 'git-dir' "review-reminders.ps1's empty-diff denial does not offer --git-dir as a root source"
+  fi
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Windows forbids quotes in file names; the quoted-root JSON case runs on Linux and macOS only" ;;
     *)

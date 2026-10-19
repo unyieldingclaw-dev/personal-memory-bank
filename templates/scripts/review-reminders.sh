@@ -242,7 +242,9 @@ fi
 # WHY name the root in the empty-diff denials: a command whose cd was not its first word
 # (`N=...; cd "<worktree>" && git push`) fell back to the hook's working directory, the main
 # checkout, whose diff was empty -- and the denial gave no hint which tree it had checked.
-root_hint="The gate checked $root: it takes the repository from the command's explicit -C/--git-dir/--work-tree path, else a cd that starts the command, else the hook's working directory. If that is the wrong tree, start the command with cd <repo> &&."
+# The cd form named here is the one the resolvers accept: quoted, first in the command, then &&
+# (_review-gate-classify.py CD_PREFIX). An unquoted cd falls back to the working directory again.
+root_hint="The gate checked $root: it takes the repository from a quoted cd \"<path>\" && chain at the very start of the command plus any git -C path, else from the hook's working directory. If that is the wrong tree, start the command with cd \"<repo>\" &&."
 
 case "$verdict" in
     COMMIT)
