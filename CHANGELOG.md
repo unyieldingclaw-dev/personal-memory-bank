@@ -120,6 +120,10 @@
 - **CI now fails when the sh/ps1 parity checks cannot run.** The `mb-command-tests` job sets
   `PMB_REQUIRE_PARITY=1`, so if pwsh ever disappears from the runner, the cross-shell checks fail
   instead of silently skipping.
+- **CI now fails when the journal's symbolic-link tests cannot run.** The same job now sets
+  `PMB_REQUIRE_SYMLINKS=1`. The switch already existed in `tests/test-pmb-journal.sh`, but no
+  workflow set it, so a link fixture that stopped working (the writers' link refusals, a
+  dangling-link start sentinel, the gate's link checks) skipped instead of failing.
 - **The sh regex rows now prompt when `grep` fails.** `grep` exits 2 when it cannot evaluate a
   pattern, and inside an `if` that read as "no match", which would have silently disabled every
   regex row. It now prompts, like the hook's other "cannot analyze" cases. That makes a grep with
