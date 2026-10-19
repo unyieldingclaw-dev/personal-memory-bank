@@ -50,34 +50,13 @@ Plugins are configured in `~/.claude/settings.json` under `enabledPlugins`.
 
 **Rule of thumb:** 3 plugins max. More plugins = more context loaded per session = slower, more expensive.
 
+### External skill-library guidance for PMB
 
-### Skill-library design: mine patterns before installing catalogs
+An external skill catalog (including Anthropic's Small Business library) is **not** a recommended PMB dependency merely because its skill architecture is interesting. PMB's plugin recommendations should remain focused on actual project-memory and review needs.
 
-Anthropic's public Small Business plugin is a useful architecture reference, but PMB does **not**
-recommend installing its 44-skill catalog by default. Most of those workflows are business-domain
-specific and would expand routing surface without helping normal software-project memory work.
+Before recommending another skill to a PMB user, verify that it solves a concrete PMB task, that its description does not collide with existing PMB commands or installed skills, and that the client's actual routing works on both intended and neighboring requests. Treat new skills as optional until demonstrated; do not copy an entire external catalog or repeat shared security policy inside every skill.
 
-When evaluating any external skill library, prefer to mine these mechanisms:
-
-1. **Utility vs orchestrator:** utilities do one bounded job; orchestrators select/order utilities
-   and merge their outputs. Use orchestration only when the input genuinely varies or several
-   bounded steps must be composed.
-2. **Collision-free descriptions:** each skill description should say what it owns and where it
-   stops. If two skills trigger on the same ordinary request, add a boundary/precedence rule rather
-   than relying on model intuition.
-3. **Behavior-first authoring:** build reusable workflows from a real completed task where possible;
-   preserve user corrections, separate fixed/variable/judgment elements, and replay on a known-good
-   case before trusting the skill.
-4. **Progressive detail:** keep routing metadata concise and move detailed procedure/reference
-   material behind the skill so it loads only when relevant.
-5. **One owner for shared policy:** do not duplicate style, security, authority, or output rules
-   across every skill.
-6. **Lifecycle discipline:** measure use and overlap; consolidate or retire skills that add routing
-   noise without recurring value.
-
-**Cost rule:** a "helpful" skill that routes incorrectly and causes a restart is more expensive than
-a slightly longer correct skill. Optimize for cost per successfully completed task, not minimum
-instruction length.
+General skill-architecture research belongs in [Harness Engineering](https://github.com/unyieldingclaw-dev/harness-engineering) rather than PMB's permanent `memory-bank/systemPatterns.md`.
 
 ### Installing Plugins
 
