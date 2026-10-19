@@ -1,8 +1,9 @@
 # [NS-47] External Survey 2026-08-31 (Codex, ai-that-works, OmniRoute) — Full Entry
 
 Moved from `memory-bank/activeContext.md` 2026-10-19 to fund that day's memory-bank update (the
-PR #64 and #72 record) under the startup-context ratchet. The live `[NS-47]` keeps the headline and
-points here for findings (a)–(e). Other documents that cite `[NS-47]`(d) mean (d) below.
+record of PRs #64, #72, #69, #74 and #75) under the startup-context ratchet. The live `[NS-47]`
+keeps the headline and points here for findings (a)–(e). Other documents that cite `[NS-47]`(d)
+mean (d) below.
 
 The entry below is the whole line exactly as it stood at `9bd619b`. To check it, compare it with
 `git show 9bd619b:memory-bank/activeContext.md | grep -F '47. [NS-47] '`, which prints that one line.

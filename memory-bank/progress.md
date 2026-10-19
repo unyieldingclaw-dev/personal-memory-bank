@@ -15,10 +15,11 @@ lineage: []
 
 ## 2026-10-19 — PRs #64, #72, #69, #74 and #75 merged
 
-- #64 (`0e05a6b`): both dangerous-commands hooks decode the payload fallback and also match a CR-deleted view. Left open: `[NS-38]`.
-- #72 (`5301460`): tests for #65's T-A and O-1.
-- #69 (`9c9b739`): the ps1 journal refuses arguments pwsh may have altered. Then #74 (`b35f22b`) freed 25 spec lines (800 → 775), and #75 (`c10cd87`) set `PMB_REQUIRE_SYMLINKS` in CI.
-- What gates the flag PR: `[NS-68]`.
+- #64 (`0e05a6b`): both dangerous-commands hooks decode the payload fallback and also match a CR-deleted view. Its follow-ups: `[NS-38]`'s backlog file.
+- #72 (`5301460`): #65's T-A test and O-1 comment.
+- #69 (`9c9b739`): the ps1 journal refuses arguments pwsh may have altered.
+- #74 (`b35f22b`) freed 25 spec lines (800 → 775); #75 (`c10cd87`) set `PMB_REQUIRE_SYMLINKS` in CI.
+- What gates the flag PR: `[NS-68]`. Funded by moving `[NS-47]` verbatim to `docs/archive/`.
 
 ## 2026-10-19 — PR #65 merged (`0b67d9d`): no FIFO hang at `started` or the gate probe
 
