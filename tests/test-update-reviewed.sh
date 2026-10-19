@@ -239,4 +239,12 @@ else
   echo "--- update-reviewed.ps1 tests: SKIPPED (pwsh and/or cygpath not installed on this machine) ---"
 fi
 
+# WHY here, outside the cygpath-gated cases: the Windows workflow runs this file against
+# scripts/, so a fix that reaches scripts/update-reviewed.sh but not its templates/ copy
+# would pass there while shipping the old bug to every installed repo.
+echo ""
+echo "--- mirror parity: scripts/ vs templates/scripts/ ---"
+diff -q "$REPO_ROOT/scripts/update-reviewed.sh" "$REPO_ROOT/templates/scripts/update-reviewed.sh" >/dev/null 2>&1
+assert_exit_zero "$?" "scripts/update-reviewed.sh and its templates/ mirror are byte-identical"
+
 print_summary
