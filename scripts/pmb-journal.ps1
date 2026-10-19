@@ -775,8 +775,8 @@ function Get-PmbGateIdentity([string]$Payload) {
 }
 
 # One probe write into DIR/tmp: $null when it worked, else the OS error. WHY a random name and
-# CreateNew: as with mktemp in pmb_gate_env, an existing file is never opened, so a FIFO planted at a
-# predictable probe name cannot block the hook.
+# CreateNew: an existing file is never opened, so a FIFO planted at a predictable probe name cannot
+# block the hook (pmb_gate_env draws a random name for each attempt too).
 function Get-PmbProbeError([string]$Dir) {
     $probe = "$Dir/tmp/.probe.$PID.$([System.IO.Path]::GetRandomFileName())"
     try { ([System.IO.File]::Open($probe, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)).Dispose() }

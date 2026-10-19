@@ -211,8 +211,8 @@ proven in general. These are the differences known today:
     error for a secret pattern that cannot be applied: a .NET regex error, not a grep exit code.
   - The first usage line names `pmb-journal.ps1`.
 
-**Regular files (amended 2026-10-16, Plan A and FIFO-hardening reviews; 2026-10-18, its
-change-review).** Both twins refuse to open a FIFO or a device, since opening a FIFO blocks the hook.
+**Regular files (amended 2026-10-16, Plan A and FIFO-hardening reviews; 2026-10-18 and -19, reviews
+of #63 and #65).** Both twins refuse to open a FIFO or a device, since opening a FIFO blocks the hook.
 Before reading a file, the sh twin uses its built-in `[ -f ]`. .NET reports a FIFO as an existing
 file, so on Linux and macOS the PowerShell twin runs the first of `/usr/bin/test` and `/bin/test`
 that exists, found once per process. Alpine ships only `/usr/bin/test`. Windows needs no binary. If
@@ -230,11 +230,11 @@ difference listed under Twin parity, above):
 When a FIFO or other non-regular file sits at `gate-blocked`, it is neither read nor written, so the
 block cannot be recorded and the gate fails open (§4.3). The first write creates `started` only when
 nothing is at that name (an entry of any type means the session started; sh's `noclobber` alone
-would open a FIFO), and the gate's probe creates its file in `tmp/` under a fresh random name, so a
-FIFO planted at either name blocks neither. The twins test a name before they open it (both
-`gate-blocked`, and the sh twin `started`), so a FIFO swapped in between the two can still block;
-S3 puts such same-user writes out of scope. On Windows, pwsh sees a Git Bash FIFO only as a
-`<name>.lnk` file. macOS is not exercised by CI.
+would open a FIFO), and the gate's probe creates its file in `tmp/` under a fresh random name. On
+Linux, a FIFO at `started` or at the probe's old name `.probe.<pid>` hangs neither twin (tested).
+Names are tested before they are opened (e.g. records, `gate-blocked`, and in the sh twin
+`started`), so a FIFO swapped in between can still block; S3 puts such same-user writes out of
+scope. On Windows, pwsh sees a Git Bash FIFO only as a `<name>.lnk` file. macOS is not in CI.
 
 **Inert without this code.** A branch, or an adopter, that lacks `scripts/pmb-journal.sh`
 runs today's behaviour:

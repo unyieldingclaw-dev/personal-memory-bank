@@ -660,8 +660,10 @@ pmb_gate_identify() {
 # pmb_gate_env DIR SID — the two environment conditions that block a manual /compact (spec section
 # 4.3): DIR exists but is not a directory, or a probe write into DIR/tmp fails PMB_GATE_PROBES times.
 # Returns the block's status on either, else 0. Each block reports the path and the OS error.
-# WHY mktemp: it creates a new file under a random name and never opens an existing one, so a FIFO
-# planted at a predictable probe name cannot block the hook.
+# WHY a new random name for each attempt: noclobber opens an existing FIFO, so a FIFO planted at a
+# predictable probe name would block the hook; one at a name drawn per attempt needs a same-user race
+# (spec S3). WHY not mktemp: the gate would then need a tool the ps1 twin does not, and the twins
+# would decide differently on a host without it.
 pmb_gate_env() {
     local dir="$1" sid="$2" i p err=""
     if [ -e "$dir" ] && [ ! -d "$dir" ]; then
@@ -672,8 +674,8 @@ pmb_gate_env() {
     fi
     mkdir -p "$dir/tmp" 2>/dev/null
     for ((i = 1; i <= PMB_GATE_PROBES; i++)); do
-        if p=$(mktemp "$dir/tmp/.probe.$$.XXXXXX" 2>&1); then rm -f "$p"; return 0; fi
-        err=$p
+        p="$dir/tmp/.probe.$$.$RANDOM$RANDOM"
+        if err=$( ( set -o noclobber; : > "$p" ) 2>&1 ); then rm -f "$p"; return 0; fi
         [ "$i" -lt "$PMB_GATE_PROBES" ] && sleep "$PMB_GATE_PROBE_DELAY"
     done
     pmb_gate_block "$sid" env "cannot write to $dir/tmp (tried $PMB_GATE_PROBES times: ${err:-unknown error}). Fix: restore write access to $dir/tmp."
