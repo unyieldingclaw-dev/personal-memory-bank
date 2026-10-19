@@ -678,7 +678,14 @@ rm -rf "$TMPDIR_CROOT"
 # and could not tell this guard from any other.
 echo ""
 echo "--- commit gate: reviewed changes left unstaged are refused (OPP6-1) ---"
-TMPDIR_PARTIAL="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-partial)"
+TMPDIR_PARTIAL="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-partial)" || {
+  echo "FAIL: could not create isolated partial-commit test directory" >&2
+  exit 1
+}
+if [ -z "$TMPDIR_PARTIAL" ] || [ ! -d "$TMPDIR_PARTIAL" ]; then
+  echo "FAIL: partial-commit test directory is missing; refusing git reset" >&2
+  exit 1
+fi
 git -C "$TMPDIR_PARTIAL" init -q -b main
 git -C "$TMPDIR_PARTIAL" config user.email "test@example.com"
 git -C "$TMPDIR_PARTIAL" config user.name "Test"
