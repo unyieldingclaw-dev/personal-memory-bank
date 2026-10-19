@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- Agent-driven commits now require all tracked reviewed changes to be staged in a **separate
+  command** before committing. `git commit -a` and a chained `git add && git commit` are refused
+  while tracked changes remain unstaged at hook time. This is intentional to keep the review
+  marker aligned with what a normal commit would record.
+
 ### Fixed
 - **The commit review gate approved commits that held only part of the reviewed change.** The
   marker binds a hash of `git diff HEAD`, the working tree, but a commit records the index, so a
