@@ -2,7 +2,8 @@
 # pmb-journal.sh — per-session journal for concurrent sessions working one repository.
 #
 # Spec: docs/superpowers/specs/2026-09-26-multi-session-memory-design.md (sections 4.1-4.3).
-# Twin: scripts/pmb-journal.ps1 — same commands, same on-disk layout, same limits.
+# Twin: scripts/pmb-journal.ps1 — same commands, same on-disk layout, same limits, except for the
+# known differences listed in the spec (section 4.1, "Twin parity").
 #
 # WHY a standalone script rather than an `mb` subcommand: `mb` runs MB_HOME's mb.ps1 (the main
 # checkout, on whatever branch it holds), prints an update notice that can make a 2 s network call,
@@ -726,8 +727,11 @@ pmb_gate_once() {
     fi
     # WHY fail open when the block cannot be recorded: gate-blocked is what lets the repeated
     # /compact pass, so a block that cannot write it would repeat forever -- the deadlock the
-    # once-only rule exists to prevent.
-    if ! { mkdir -p "$sdir" && [ ! -L "$sdir/gate-blocked" ] && printf '%s\n' "$marker" > "$sdir/gate-blocked"; } 2>/dev/null; then
+    # once-only rule exists to prevent. An existing gate-blocked that is not a regular file (a FIFO,
+    # whose open blocks the hook, or a device) cannot record it either, and is never opened.
+    if ! { mkdir -p "$sdir" && [ ! -L "$sdir/gate-blocked" ] \
+           && { [ ! -e "$sdir/gate-blocked" ] || [ -f "$sdir/gate-blocked" ]; } \
+           && printf '%s\n' "$marker" > "$sdir/gate-blocked"; } 2>/dev/null; then
         printf 'pmb-journal gate: cannot record the block in %s/gate-blocked; allowing (fail-open)\n' "$sdir" >&2
         return 0
     fi
