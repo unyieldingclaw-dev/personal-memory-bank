@@ -746,47 +746,22 @@ Details are in `rev5-full-design.md`.
 
 **Full review of revision 6 (two fresh reviewers).**
 - **Premises and buildability: Request Changes.** One blocking finding and six High ones. The blocking
-  one: this repository's `mb.sh` is not shipped to adopters. The High ones:
-  - no writer for `end`;
-  - untracked directories not captured;
-  - command-guard forms missed;
-  - the pwsh latency budget;
-  - the main checkout invisible;
-  - the ratchet's baseline side;
-  - the flag read falling back to the index.
+  one: this repository's `mb.sh` is not shipped to adopters. The High ones: no writer for `end`;
+  untracked directories not captured; command-guard forms missed; the pwsh latency budget; the main
+  checkout invisible; the ratchet's baseline side; the flag read falling back to the index.
 - **Security: Request Changes.** It raised two Critical claims:
   - "`git add -f` can stage snapshots" — **false** (F13, author's probe);
   - "session ids can be forged" — **true, but pre-existing in kind**, so S3 was restated honestly rather
     than claiming a boundary.
 
-  Its High and Medium findings were all accepted:
-  - restore containment;
-  - `stash pop`, `gc --prune`, `reflog expire` and `branch -D`;
-  - the fetch-refspec guard;
-  - case-insensitive secret matching;
-  - field validation;
-  - a minimum gate body length;
-  - the exfiltration caveat.
+  Its High and Medium findings were all accepted: restore containment; `stash pop`, `gc --prune`,
+  `reflog expire` and `branch -D`; the fetch-refspec guard; case-insensitive secret matching; field
+  validation; a minimum gate body length; the exfiltration caveat.
 
 **The author re-verified by command:** F13, F17, F23, and the CONFIRM deny semantics.
 
-**How the findings map into revision 7:**
-- **Scope and inertness:** §4.1, M6, A12.
-- **`end` writer:** §4.2.
-- **`--untracked-files=all`:** §4.4b.
-- **Command-guard table:** §4.4a; the `origin/*` rule was cut.
-- **Summary script:** now bash-first (§4.2).
-- **Main-checkout move:** §5.
-- **Ratchet baseline:** §4.7.
-- **Flag guard against an empty SHA:** §4.1.
-- **Co-tenancy notice:** reworded (§4.2).
-- **Instructions:** they now ship in the flag PR (§4.7).
-- **Cursor limits:** §10.
-- **`mb.sh` internals:** §4.1.
-- **Record details:** `--file`, seq, meta file, `start` writer, NS-id grammar.
-- **Restore:** new target only, plus a `list` command.
-- **Cap overflow:** skips the largest files first.
-- **Summary:** ASCII only.
+**How the findings map into revision 7:** a list of section pointers, cut 2026-10-19 for the 800-line
+CI cap. It is kept verbatim in this file at `d751b73`.
 
 **Revision 7 has not been reviewed.** This repository's own record warns that folding reviewer
 suggestions in round after round manufactures new defects. Revision 7's text is therefore checked at
