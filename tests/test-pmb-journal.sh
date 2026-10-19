@@ -1110,11 +1110,13 @@ case "$(uname -s)" in
         assert_equals "$([ -f "$NMP/tmp" ] && echo file || echo not-file)" "file" "the no-mktemp block case: pmb/tmp is a file (fixture check)"
         out="$(cd "$T/nomkgate" && payload sessNOMKT2 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT2 PMB_GATE_PROBE_DELAY=0 tmo bash "$J" gate 2>/dev/null; echo "rc=$?")"
         assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=2" "no mktemp, pmb/tmp not writable: the sh gate still probes and blocks"
-        assert_contains "$out" "cannot write to" "no mktemp, pmb/tmp not writable: the sh block names the unwritable tmp/"
+        # WHY `(tried` and not just `.*/tmp`: the message ends "Fix: restore write access to $dir/tmp",
+        # so an unanchored `.*/tmp` still matches through that tail when the first path is dropped.
+        assert_contains "$out" "cannot write to .*/tmp (tried" "no mktemp, pmb/tmp not writable: the sh block names the unwritable tmp/"
         if command -v pwsh >/dev/null 2>&1; then
             out="$(cd "$T/nomkgate" && payload sessNOMKT3 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT3 PMB_GATE_PROBE_DELAY=0 tmo pwsh -NoProfile -NonInteractive -File scripts/pmb-journal.ps1 gate 2>/dev/null; echo "rc=$?")"
             assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=2" "no mktemp, pmb/tmp not writable: the ps1 gate blocks as the sh gate does"
-            assert_contains "$out" "cannot write to" "no mktemp, pmb/tmp not writable: the ps1 block names the unwritable tmp/"
+            assert_contains "$out" "cannot write to .*/tmp (tried" "no mktemp, pmb/tmp not writable: the ps1 block names the unwritable tmp/"
         else
             echo "  SKIP: pwsh is not installed; the ps1 half of the no-mktemp block case is not run (PMB_REQUIRE_PARITY=1 makes a missing pwsh fatal below)"
         fi
