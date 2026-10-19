@@ -52,9 +52,15 @@ and the `R2/` and `R4/` IDs, none of which appears below any more: read it with 
 - **The merge row's trailing boundary is still narrow.** A bare `git merge` straight before `;`,
   `&&`, `|`, `>` or `)` gets no verdict on either shell, with python3 present (measured 2026-10-14:
   `git merge;echo hi`, `git merge&&echo hi`, `(git merge)`, `git merge|cat`, `git merge>log`). A
-  shell ends the word at each of these. Widening the boundary to shell metacharacters is the fix,
-  in `confirm_boundary()` in `scripts/dangerous-commands.sh` and the `git merge` row of
-  `scripts/dangerous-commands.ps1`.
+  shell ends the word at each of these. **Wider than that list (found 2026-10-19):** `git merge`
+  straight before `<`, a single `&`, `${IFS}`, `$(…)` or a backtick gets no verdict either (measured
+  on Git Bash with python3 present, both hooks). Git Bash splits the word at each of these too:
+  `<` and `&` are metacharacters, while `${IFS}`, `$(…)` and a backtick are unquoted expansions,
+  which split when their result starts with a blank (measured: `a${IFS}b`, `a$(printf " b")` and
+  the backtick form each reach `printf "[%s]"` as two words). So widening the boundary to shell
+  metacharacters is not enough on its own: the fix, in `confirm_boundary()` in
+  `scripts/dangerous-commands.sh` and the `git merge` row of `scripts/dangerous-commands.ps1`,
+  must also treat `$` and a backtick as a boundary.
 - **The sh fallback decodes before the length bound, so its cost is unbounded by it**
   (`scripts/dangerous-commands.sh`). Measured by
   the Performance review: about 1.6 to 1.9 s per MB of escape-dense payload, linear, fallback
@@ -177,7 +183,12 @@ and the `R2/` and `R4/` IDs, none of which appears below any more: read it with 
   says the CR arm decides a verdict alone "only when another character follows the CR". Before
   `;`, `&&` or `|` it decides alone too, because the CR-deleted view gives `git merge;…`, the
   narrow-boundary gap in the first entry above. The standard also names `mergels` without
-  introducing `ls`.
+  introducing `ls`. **Not yet the right class (found 2026-10-19):** "a character that continues
+  the word" still misfiles `$` and a backtick. A CR followed by `${IFS}ls` or by a backtick
+  expansion is a true positive, because the expansion splits the word (see the first entry above),
+  and both hooks CONFIRM these today only because their CR arm fires whatever follows the CR
+  (measured on Git Bash, both hooks). Settle the class against the first entry's boundary set
+  before writing it into the standard or the hook comments; do not copy this entry's wording.
 - **Smaller test and wording gaps:**
   - R6/T6-1, R6/C-2: the comment above the one-WARNING count test in
     `tests/test-dangerous-commands.sh` says `warn()` has "two case arms" that return "after
