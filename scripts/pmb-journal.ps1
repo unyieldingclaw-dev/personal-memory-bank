@@ -3,7 +3,8 @@
 #
 # Spec: docs/superpowers/specs/2026-09-26-multi-session-memory-design.md (sections 4.1-4.3).
 # This file is a PORT of scripts/pmb-journal.sh: the same commands, record names (except the random
-# suffix), bytes on disk, stdout/stderr text, exit codes and gate decisions. The WHY behind each rule
+# suffix), bytes on disk, stdout/stderr text, exit codes and gate decisions, except for the known
+# differences listed in the spec (section 4.1, "Twin parity"). The WHY behind each rule
 # is written once, in the sh twin, next to the function named in each comment below; the comments
 # here cover what is specific to PowerShell.
 #
@@ -15,10 +16,10 @@
 # pwsh (start-up alone is about a second, spec F19), and the sh twin is one file too. This dual-role
 # file is a deliberate exception to the repository's convention of a separate *_lib file.
 # WHY no param() block: declared parameters intercept `--flag` arguments (spec F18); with none,
-# every argument lands in $args untouched. pwsh -File still splits an argument shaped -name:value
-# in two and drops an argument that is exactly `--%` (measured, pwsh 7.6), so such text must be
-# passed with --file. Decisions and exit codes are the sh twin's; the accepted output-only
-# differences are listed in the spec (section 4.1, "Twin parity").
+# every argument lands in $args untouched by the script. pwsh -File itself still parses them first:
+# it can split, drop or refuse an argument that starts with '-', or turn it into a flag such as
+# --file:<path>; it drops `--%`; and on Linux it turns invalid UTF-8 into U+FFFD. Such text must be
+# passed with --file. The spec lists the known differences (section 4.1, "Twin parity").
 # WHY ASCII only: CI's PSScriptAnalyzer (PSUseBOMForUnicodeEncodedFile) fails a non-ASCII file
 # saved without a BOM; regex escapes stand in for the characters.
 #
@@ -182,17 +183,31 @@ function Test-PmbDirectory([string]$Path) { return [System.IO.Directory]::Exists
 function Test-PmbLink([string]$Path) {
     try { return ($null -ne [System.IO.FileInfo]::new($Path).LinkTarget) } catch { return $false }
 }
-# `[ -f ] && [ ! -L ]`: a regular file -- not a link, directory, FIFO or device. WHY /usr/bin/test
-# on Unix: .NET reports a FIFO or a device as an existing file, and opening a FIFO blocks. Get-Item
-# cannot decide it (measured, pwsh 7.4.7 on Linux): a FIFO's UnixMode reads "-rw-r--r--", and the
-# provider turns '\' into '/', so a file named `sub\handoff.md` is not found. The catch covers strict
-# native-command error preferences (a nonzero exit throws) and a missing binary: both refuse.
+# `[ -f ] && [ ! -L ]`: a regular file -- not a link, directory, FIFO or device. WHY the external
+# test binary on Unix: .NET reports a FIFO or a device as an existing file, and opening a FIFO
+# blocks. Get-Item cannot decide it (measured, pwsh 7.4.7 on Linux): a FIFO's UnixMode reads
+# "-rw-r--r--", and the provider turns '\' into '/', so a file named `sub\handoff.md` is not found.
+# The binary is the first of PmbFileTestPaths that exists, found on the first call (Alpine ships
+# only /usr/bin/test). With none, this throws rather than refusing every file, which would skip
+# every record and refuse every --file as if it were not a regular file. What each caller then does
+# is listed in spec 4.1, "Regular files". WHY a loop and not @(...)[0]: under a profile's
+# Set-StrictMode, indexing an empty array throws its own error first, and this message is lost.
+# WHY the two preferences are set here: a profile can set them, and
+# $PSNativeCommandUseErrorActionPreference makes test's nonzero exit an error (a throw under Stop,
+# a message on stderr otherwise), while Legacy argument passing splits a path that holds a '"'.
+$script:PmbFileTestPaths = @('/usr/bin/test', '/bin/test')
+$script:PmbFileTest = $null
 function Test-PmbRegularFile([string]$Path) {
     if ((Test-PmbLink $Path) -or -not [System.IO.File]::Exists($Path)) { return $false }
-    if (-not $IsWindows) {
-        try { & /usr/bin/test -f $Path; if ($LASTEXITCODE -ne 0) { return $false } } catch { return $false }
+    if ($IsWindows) { return $true }
+    if (-not $script:PmbFileTest) {
+        foreach ($c in $script:PmbFileTestPaths) { if ([System.IO.File]::Exists($c)) { $script:PmbFileTest = $c; break } }
+        if (-not $script:PmbFileTest) { throw ('pmb-journal: no test binary at {0}; cannot tell a regular file from a FIFO' -f ($script:PmbFileTestPaths -join ' or ')) }
     }
-    return $true
+    $PSNativeCommandUseErrorActionPreference = $false
+    $PSNativeCommandArgumentPassing = 'Standard'
+    & $script:PmbFileTest -f $Path
+    return ($LASTEXITCODE -eq 0)
 }
 
 # Read ONLY through the remote-tracking ref's SHA (spec F15/F16/F17): empty SHA means off. A leading
@@ -828,7 +843,7 @@ function Get-PmbGateNewest([string]$Sdir) {
 function Invoke-PmbGateOnce([string]$Sdir, [string]$Sid, [int]$Marker, [string]$From) {
     $gb = "$Sdir/gate-blocked"
     $last = ''
-    if ([System.IO.File]::Exists($gb) -and -not (Test-PmbLink $gb)) {
+    if (Test-PmbRegularFile $gb) {
         # `IFS= read -r -n 16`: at most 16 bytes, up to the first LF.
         try {
             $fs = [System.IO.File]::Open($gb, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
@@ -851,6 +866,7 @@ function Invoke-PmbGateOnce([string]$Sdir, [string]$Sid, [int]$Marker, [string]$
     try {
         [void][System.IO.Directory]::CreateDirectory($Sdir)
         if (Test-PmbLink $gb) { throw 'gate-blocked is a link' }
+        if ([System.IO.File]::Exists($gb) -and -not (Test-PmbRegularFile $gb)) { throw 'gate-blocked is not a regular file' }
         [System.IO.File]::WriteAllBytes($gb, $script:PmbRaw.GetBytes("$Marker`n"))
     } catch {
         Write-PmbErr ('pmb-journal gate: cannot record the block in {0}/gate-blocked; allowing (fail-open)' -f $Sdir)
