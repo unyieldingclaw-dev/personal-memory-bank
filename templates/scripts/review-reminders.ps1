@@ -189,13 +189,17 @@ function Complete-ReviewGateMarkerClaim {
 }
 
 $emptyDiffSha = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+# WHY name the root in the empty-diff denials: a command whose cd was not its first word
+# (`N=...; cd "<worktree>" && git push`) fell back to the hook's working directory, the main
+# checkout, whose diff was empty -- and the denial gave no hint which tree it had checked.
+$rootHint = "The gate checked ${root}: it takes the repository from the command's explicit -C/--git-dir/--work-tree path, else a cd that starts the command, else the hook's working directory. If that is the wrong tree, start the command with cd <repo> &&."
 
 switch ($verdict) {
     'COMMIT' {
         $expected = Get-CommitDiffHash
         $marker = Join-Path $root '.claude/.code-review-ok'
         if (-not $expected -or $expected -eq $emptyDiffSha) {
-            Deny 'Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review.'
+            Deny "Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review. $rootHint"
             break
         }
         $claim = Move-ReviewGateMarkerToClaim $marker
@@ -215,7 +219,7 @@ switch ($verdict) {
         $expected = Get-PushDiffHash
         $marker = Join-Path $root '.claude/.change-review-ok'
         if (-not $expected -or $expected -eq $emptyDiffSha) {
-            Deny 'Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review.'
+            Deny "Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review. $rootHint"
             break
         }
         $claim = Move-ReviewGateMarkerToClaim $marker
