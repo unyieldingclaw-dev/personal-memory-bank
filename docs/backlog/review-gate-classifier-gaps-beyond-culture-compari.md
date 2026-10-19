@@ -44,15 +44,27 @@ Both classifiers apply bash quoting rules, and PowerShell's rules differ:
     placed after the host.
   - pwsh: `pwsh -comm "..."` and `pwsh --command "..."` (prefix and double-dash forms; both ran).
   - git: `git -c help.autocorrect=immediate comit` (inferred from the measured `staus` case).
+- **Launcher switch spellings the twins do not model** (the opposition review measured that they run;
+  both twins give NONE for `git commit -m x` behind each, measured):
+  - pwsh on Windows: `pwsh /c "..."` and `pwsh /command "..."`;
+  - pwsh with an en or em dash: `pwsh <U+2013>c "..."` and `pwsh <U+2014>Command "..."`;
+  - cmd with the command attached to the switch: `cmd /cgit commit -m x`;
+  - cmd under Git Bash: `cmd //c git commit -m x` (MSYS turns `//c` into `/c`).
 
 ## Python only (the sh hook)
 
 - Python's `\s` includes U+001C..U+001F, while .NET's and bash's do not. So `git -c a.b=c<U+001C>x commit`
   is NONE in py and COMMIT in ps1. Pinned as a known difference.
-- The wrapper check is `t.strip() in WRAPPERS`, with no basename and no case folding. So `/usr/bin/env git commit`
+- The wrapper check is `t.strip('"\'') in WRAPPERS`, with no basename and no case folding. So `/usr/bin/env git commit`
   and `ENV git commit` are NONE in py and COMMIT in ps1 (measured).
 
 ## Other enforcement scripts
 
 - `scripts/check-contract.ps1:105` uses `$targetFile.StartsWith($pattern)` (culture), and `:111` uses
   `-like`. Both compare paths taken from tool input. Whether that is exploitable is untested.
+- The classifier's two callers still compare with culture `-eq`/`-ne`. Against fixed verdict tokens
+  this is harmless: `scripts/review-reminders.ps1:87-92` and `scripts/review-reminders-post.ps1:27,63`.
+  Against SHAs read from files or git it is untested: `review-reminders.ps1:197,204,217,224` (204
+  and 224 compare the review marker's content with the expected SHA) and
+  `review-reminders-post.ps1:72,74`. Whoever can write the marker can write the exact SHA, so no
+  gain for an attacker is known.
