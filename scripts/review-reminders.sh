@@ -241,6 +241,22 @@ case "$verdict" in
         marker="$root/.claude/.code-review-ok"
         if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then
             deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself."
+        elif ! git diff --quiet --no-ext-diff --no-textconv 2>/dev/null; then
+            # The marker binds `git diff HEAD` (working tree vs HEAD), but a commit records the
+            # INDEX, so with part of the reviewed change left unstaged both hashes still match and
+            # the marker would certify content the commit does not contain (OPP6-1). Requiring
+            # index == working tree for tracked files, at hook time, closes that; it cannot see
+            # what a chained command does after this hook returns.
+            # Checked here rather than hashing `git diff --cached HEAD` instead: this hook runs
+            # before `git commit -a` stages anything, so a cached hash would let a partly-staged
+            # -a commit carry unreviewed changes. The price is that `-a` over unstaged changes is
+            # refused too. --no-ext-diff/--no-textconv: a textconv filter, or an external diff
+            # driver with diff.trustExitCode, can report "no difference" for an index and working
+            # tree whose bytes differ (measured with git 2.55: both made --quiet exit 0). Any non-zero
+            # exit, including a git error, refuses. Runs before the claim, so a refusal leaves the
+            # marker for the retry.
+            # (Comment inside the branch: tests/mutate.py anchors on the deny-then-elif lines.)
+            deny "Review gate: tracked changes are unstaged (or git diff failed), so this commit would not contain everything the review marker certifies. Stage every reviewed change in a separate command first -- this hook runs before any git add chained into the same command, and before git commit -a stages anything -- then commit. If part of the change should stay out of this commit, move it out of the working tree (for example a WIP commit on another branch) and re-run /code-review on what remains."
         elif actual=$(claim_marker "$marker"); then
             if [ "$actual" = "$expected" ]; then
                 drop_marker "$marker"

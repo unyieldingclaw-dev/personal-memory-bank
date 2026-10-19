@@ -198,6 +198,15 @@ switch ($verdict) {
             Deny 'Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review.'
             break
         }
+        # A commit records the INDEX, but the marker binds `git diff HEAD`, so a reviewed change
+        # left partly unstaged would still match (OPP6-1). See review-reminders.sh for why this
+        # is a refusal rather than a `git diff --cached HEAD` hash, and why --no-ext-diff and
+        # --no-textconv. Before the claim, so a refusal leaves the marker for the retry.
+        git diff --quiet --no-ext-diff --no-textconv 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Deny 'Review gate: tracked changes are unstaged (or git diff failed), so this commit would not contain everything the review marker certifies. Stage every reviewed change in a separate command first -- this hook runs before any git add chained into the same command, and before git commit -a stages anything -- then commit. If part of the change should stay out of this commit, move it out of the working tree (for example a WIP commit on another branch) and re-run /code-review on what remains.'
+            break
+        }
         $claim = Move-ReviewGateMarkerToClaim $marker
         if ($null -eq $claim) {
             Deny 'Run /code-review before committing -- it writes a diff-bound review-ok marker this hook checks.'
