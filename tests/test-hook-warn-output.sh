@@ -134,6 +134,28 @@ for t in $TWINS; do
     assert_equals "$(field "$s" keys)" "hookSpecificOutput,systemMessage" "$t: merged object's top-level keys are exact"
 done
 
+# ── dangerous-commands: a WARN found only through the CR-deleted view ──────────────────────
+# WHY: the hooks also match a copy of the de-escaped view with carriage returns deleted (Git Bash
+# deletes a CR while parsing, so `id_r`, CR, `sa` reads `id_rsa`). That copy's WARN arm was written
+# on a branch that still printed plain WARNING lines, and merging it with this file's JSON emitter
+# kept the plain line with no conflict. No other test noticed: every WARN check outside this file
+# matches the text `WARNING:`, which the JSON carries too. So a CR-only WARN must be exactly one
+# object, alone and beside another row, and identical across the twins (parity block below).
+echo ""
+echo "--- dangerous-commands: a WARN found only through the CR-deleted view is one object ---"
+HW_CR=$(printf '\r')
+P_CR=$(payload_bash "cat ~/.ssh/id_r${HW_CR}sa")
+P_CR_TWO=$(payload_bash "cat ~/.ssh/id_r${HW_CR}sa server.pem")
+for t in $TWINS; do
+    s=$(shape "$(run_hook "$t" dangerous-commands "$TMPDIR_HW/dc" "$P_CR")")
+    assert_equals "$(printf '%s' "$s" | head -1)" "OBJ" "$t: a CR-only WARN is exactly one JSON object"
+    assert_equals "$(field "$s" sys)" "WARNING: SSH private key access. Proceeding." "$t: a CR-only WARN's systemMessage is exactly its WARNING line"
+    assert_equals "$(field "$s" keys)" "hookSpecificOutput,systemMessage" "$t: a CR-only WARN's top-level keys are exact"
+    s=$(shape "$(run_hook "$t" dangerous-commands "$TMPDIR_HW/dc" "$P_CR_TWO")")
+    assert_equals "$(printf '%s' "$s" | head -1)" "OBJ" "$t: a CR-only WARN beside another row is still one JSON object"
+    assert_equals "$(field "$s" sys)" "WARNING: SSH private key access. Proceeding. WARNING: certificate or key file access. Proceeding." "$t: the CR-only WARN and the other row share one systemMessage"
+done
+
 # ── dangerous-commands: silent and deny paths are unchanged ─────────────────────────────────
 echo ""
 echo "--- dangerous-commands: a benign command is silent; a BLOCK with a WARN filename is deny only ---"
@@ -224,7 +246,8 @@ if [ "$HAVE_PWSH" -eq 1 ]; then
     echo ""
     echo "--- cross-shell parity ---"
     for p in "$P_ONE" "$P_TWO" "$(payload_bash 'cat server.pem')" \
-             "$(payload_bash 'cat .env.production')" "$(payload_bash 'cat credentials.json')"; do
+             "$(payload_bash 'cat .env.production')" "$(payload_bash 'cat credentials.json')" \
+             "$P_CR" "$P_CR_TWO"; do
         assert_equals "$(run_hook ps1 dangerous-commands "$TMPDIR_HW/dc" "$p")" \
                       "$(run_hook sh dangerous-commands "$TMPDIR_HW/dc" "$p")" "dangerous-commands twins emit identical bytes: $p"
     done
