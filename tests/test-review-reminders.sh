@@ -834,5 +834,103 @@ for shell_kind in $partial_shells; do
 done
 partial_reset
 rm -rf "$TMPDIR_PARTIAL"
+# ── empty-diff denial names the root it checked ───────────────────────────────────────────
+# WHY: a command whose cd was not its first word fell back to the hook's working directory,
+# found an empty diff there, and was denied with nothing saying which tree had been checked.
+echo ""
+echo "--- empty-diff denial names the resolved root and how it was chosen ---"
+TMPDIR_EMPTY="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-empty)"
+git -C "$TMPDIR_EMPTY" init -q -b main
+git -C "$TMPDIR_EMPTY" config user.email "test@example.com"
+git -C "$TMPDIR_EMPTY" config user.name "Test"
+echo "clean" > "$TMPDIR_EMPTY/file.txt"
+git -C "$TMPDIR_EMPTY" add file.txt
+git -C "$TMPDIR_EMPTY" commit -q -m "initial"
+root_empty=$(git -C "$TMPDIR_EMPTY" rev-parse --show-toplevel)
+# The fragments avoid quotes, apostrophes and <>&, which the two twins' JSON encoders may escape differently.
+hint_tail="plus any git -C path, else from the hook"
+resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_EMPTY" "git commit -m empty")
+assert_contains "$resp" "no diff to review" "review-reminders.sh denies an empty-diff commit (fixture check)"
+assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.sh's empty-diff commit denial names the root it checked"
+assert_contains "$resp" "$hint_tail" "review-reminders.sh's empty-diff commit denial says how the root was chosen"
+resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_EMPTY" "git push origin main")
+assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.sh's empty-diff push denial names the root it checked"
+assert_contains "$resp" "$hint_tail" "review-reminders.sh's empty-diff push denial says how the root was chosen"
+if command -v pwsh >/dev/null 2>&1; then
+  resp=$(invoke_hook_ps1_from "$TMPDIR_EMPTY" "git commit -m empty")
+  assert_contains "$resp" "no diff to review" "review-reminders.ps1 denies an empty-diff commit (fixture check)"
+  assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.ps1's empty-diff commit denial names the root it checked"
+  assert_contains "$resp" "$hint_tail" "review-reminders.ps1's empty-diff commit denial says how the root was chosen"
+  resp=$(invoke_hook_ps1_from "$TMPDIR_EMPTY" "git push origin main")
+  assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.ps1's empty-diff push denial names the root it checked"
+  assert_contains "$resp" "$hint_tail" "review-reminders.ps1's empty-diff push denial says how the root was chosen"
+else
+  echo "  SKIP: pwsh is not installed; the ps1 half of the empty-diff root message is not run"
+fi
+
+# ── deny output stays valid JSON when the reason carries quotes or backslashes ────────────
+# WHY: review-reminders.sh printed the reason into a JSON string unescaped, so the unresolved-root
+# denial (which quotes cd "<repo>") was invalid JSON, and so would be any denial naming a
+# repository path that contains a quote or a backslash.
+echo ""
+echo "--- deny output is valid JSON ---"
+PY=""
+for py in python3 python; do
+  if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import json' >/dev/null 2>&1; then PY="$py"; break; fi
+done
+json_reason() {
+  "$PY" -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["permissionDecisionReason"])' 2>/dev/null
+}
+if [ -n "$PY" ]; then
+  TMPDIR_NOREPO="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-norepo)"
+  resp=$(GIT_CEILING_DIRECTORIES="$(dirname "$TMPDIR_NOREPO")" invoke_hook_from "review-reminders.sh" "$TMPDIR_NOREPO" "git commit -m x")
+  assert_contains "$resp" "repository root could not be resolved" "review-reminders.sh denies when no repository resolves (fixture check)"
+  assert_contains "$(printf '%s' "$resp" | json_reason)" 'prefix it with cd "<repo>" &&' "review-reminders.sh's unresolved-root denial is valid JSON and keeps its quoted cd"
+  rm -rf "$TMPDIR_NOREPO"
+  # WHY parse the JSON here: the remedy the empty-diff hint gives must be the quoted cd the
+  # resolvers accept (an unquoted one falls back to the working directory and is denied again),
+  # and the quotes are encoded differently by the two twins, so only the decoded reason compares.
+  # The hint must not name --git-dir/--work-tree either: both twins deny those before any root.
+  reason=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_EMPTY" "git commit -m empty" | json_reason)
+  assert_contains "$reason" 'start the command with cd "<repo>" &&' "review-reminders.sh's empty-diff denial advises the quoted cd the resolvers accept"
+  assert_not_contains "$reason" 'git-dir' "review-reminders.sh's empty-diff denial does not offer --git-dir as a root source"
+  if command -v pwsh >/dev/null 2>&1; then
+    reason=$(invoke_hook_ps1_from "$TMPDIR_EMPTY" "git commit -m empty" | json_reason)
+    assert_contains "$reason" 'start the command with cd "<repo>" &&' "review-reminders.ps1's empty-diff denial advises the quoted cd the resolvers accept"
+    assert_not_contains "$reason" 'git-dir' "review-reminders.ps1's empty-diff denial does not offer --git-dir as a root source"
+  fi
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Windows forbids quotes in file names; the quoted-root JSON case runs on Linux and macOS only" ;;
+    *)
+      QROOT="$TMPDIR_EMPTY/q\"b\\s"
+      git init -q -b main "$QROOT"
+      git -C "$QROOT" config user.email "test@example.com"
+      git -C "$QROOT" config user.name "Test"
+      echo "clean" > "$QROOT/file.txt"
+      git -C "$QROOT" add file.txt
+      git -C "$QROOT" commit -q -m "initial"
+      resp=$(invoke_hook_from "review-reminders.sh" "$QROOT" "git commit -m empty")
+      assert_contains "$resp" "no diff to review" "review-reminders.sh denies the empty-diff commit in a quoted-name repo (fixture check)"
+      assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $QROOT:")" "1" "review-reminders.sh's denial naming a root with a quote and a backslash is valid JSON and keeps the path intact"
+      # WHY a quote-only path for ps1: pwsh on Linux reads the `\` in its working directory as a
+      # path separator, so it resolves no root there at all and denies with the unresolved-root
+      # message instead (measured 2026-10-19; it fails closed).
+      if command -v pwsh >/dev/null 2>&1; then
+        QROOT_PS1="$TMPDIR_EMPTY/q\"ps1"
+        git init -q -b main "$QROOT_PS1"
+        git -C "$QROOT_PS1" config user.email "test@example.com"
+        git -C "$QROOT_PS1" config user.name "Test"
+        echo "clean" > "$QROOT_PS1/file.txt"
+        git -C "$QROOT_PS1" add file.txt
+        git -C "$QROOT_PS1" commit -q -m "initial"
+        resp=$(invoke_hook_ps1_from "$QROOT_PS1" "git commit -m empty")
+        assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $QROOT_PS1:")" "1" "review-reminders.ps1's denial naming a root with a quote is valid JSON and keeps the path intact"
+      fi
+      ;;
+  esac
+else
+  echo "  SKIP: no python3/python to parse JSON; the deny-output JSON cases are not run"
+fi
+rm -rf "$TMPDIR_EMPTY"
 
 print_summary

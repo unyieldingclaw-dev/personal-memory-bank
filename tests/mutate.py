@@ -71,7 +71,7 @@ MUTATIONS = [
      'HOLE D: missing lib denies (was ALLOW)'),
 
     ('empty-diff-rejected', 'scripts/review-reminders.sh',
-     'if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then\n            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself."\n        elif',
+     'if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then\n            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself. $root_hint"\n        elif',
      'if [ -z "$expected" ]; then\n            deny "no diff"\n        elif',
      'HOLE C: empty-diff constant denied (was ALLOW)'),
 

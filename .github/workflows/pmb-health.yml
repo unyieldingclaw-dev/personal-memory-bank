@@ -666,11 +666,15 @@ jobs:
       # into a red build instead of a green one that no longer checks the shell Windows runs first.
       #
       # WHY PMB_REQUIRE_FIFO: the same, for test-pmb-journal.sh's FIFO cases (mkfifo and timeout).
+      #
+      # WHY PMB_REQUIRE_SYMLINKS: the same, for test-pmb-journal.sh's symbolic-link cases -- the
+      # writers' link refusals, a dangling-link start sentinel, the gate's link checks.
       - name: Run mb command tests
         shell: bash
         env:
           PMB_REQUIRE_PARITY: "1"
           PMB_REQUIRE_FIFO: "1"
+          PMB_REQUIRE_SYMLINKS: "1"
         run: bash tests/run.sh
 
   powershell-lint:
