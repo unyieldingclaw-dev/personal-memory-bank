@@ -16,10 +16,10 @@
 # pwsh (start-up alone is about a second, spec F19), and the sh twin is one file too. This dual-role
 # file is a deliberate exception to the repository's convention of a separate *_lib file.
 # WHY no param() block: declared parameters intercept `--flag` arguments (spec F18); with none,
-# every argument lands in $args untouched by the script. pwsh -File itself still parses them first:
-# it can split, drop or refuse an argument that starts with '-', or turn it into a flag such as
-# --file:<path>; it drops `--%`; and on Linux it turns invalid UTF-8 into U+FFFD. Such text must be
-# passed with --file. The spec lists the known differences (section 4.1, "Twin parity").
+# every argument lands in $args untouched by the script. pwsh -File itself still parses them first
+# and can alter them (see Get-PmbArgProblem), so the CLI refuses any argument it cannot show
+# arrived intact, and such text goes through --file. The spec lists the known differences
+# (section 4.1, "Twin parity").
 # WHY ASCII only: CI's PSScriptAnalyzer (PSUseBOMForUnicodeEncodedFile) fails a non-ASCII file
 # saved without a BOM; regex escapes stand in for the characters.
 #
@@ -911,8 +911,60 @@ function Invoke-PmbGate([string]$Payload) {
 
 # ---- CLI ---------------------------------------------------------------------------------------
 
-# Returns the exit code ALONE: every line of text goes through Write-PmbOut/Write-PmbErr.
-function Invoke-PmbMain([string[]]$Argv) {
+# No sh counterpart: the sh twin receives its arguments exactly as given.
+# WHY: pwsh -File alters some arguments before the script sees them (measured, pwsh 7.4 and 7.6). An
+# argument that starts with a dash (-, or U+2013, U+2014 or U+2015, which pwsh reads as one) is split
+# at its first colon, so `--file:x` becomes a real --file and `- password: v` loses the colon that a
+# secret pattern needs; a trailing `-x:` and every `--%` vanish; and on Linux bytes that are not valid
+# UTF-8 arrive as U+FFFD. [Environment]::GetCommandLineArgs() keeps the original, so ps1 refuses on
+# any difference instead of storing other text than the sh twin would.
+$script:PmbAltered = 'pwsh changed the arguments before the script saw them (it splits one that starts with a dash at a colon, drops --% and a trailing -x:, and re-parses under -Command); run it with pwsh -File and pass such text with --file <path>'
+$script:PmbDashArg = 'an argument starts with a dash, and pwsh may have split or dropped arguments; pass such text with --file <path>'
+$script:PmbFffdArg = 'an argument holds U+FFFD, which pwsh puts in place of bytes that are not valid UTF-8, or a lone surrogate; pass such text with --file <path>'
+
+# The arguments after this script's own path in the process command line, or $null when the script
+# was not started by name (dot-sourced, `&` from another script, one -Command string). WHY the file
+# name taken from $PSCommandPath: it is the path pwsh was given, so a link under another name matches.
+function Get-PmbOriginalArg {
+    try {
+        $name = $PSCommandPath.Substring($PSCommandPath.LastIndexOfAny([char[]]@('/', '\')) + 1)
+        $cl = [Environment]::GetCommandLineArgs()
+        for ($i = 1; $i -lt $cl.Count; $i++) {
+            if ($cl[$i].Substring($cl[$i].LastIndexOfAny([char[]]@('/', '\')) + 1) -ine $name) { continue }
+            if ($i + 1 -ge $cl.Count) { return , [string[]]@() }
+            return , [string[]]$cl[($i + 1)..($cl.Count - 1)]
+        }
+    } catch { Write-Verbose 'original arguments not read' }
+    return $null
+}
+
+# The reason to refuse REST (the arguments after the command word), or ''. ORIGINAL is the whole
+# original argument list, or $null when it is unknown.
+function Get-PmbArgProblem([string]$Cmd, [string[]]$Rest, $Original) {
+    if ($null -ne $Original) {
+        $same = $Original.Count -eq $Rest.Count + 1
+        for ($i = 0; $same -and $i -lt $Rest.Count; $i++) { if ($Original[$i + 1] -cne $Rest[$i]) { $same = $false } }
+        if (-not $same) { return $script:PmbAltered }
+    } else {
+        # WHY refuse every dash-led argument here: without the original, a split or a dropped argument
+        # cannot be seen, but the first piece of a split still starts with a dash. The command line of
+        # whatever started pwsh is checked for the two shapes that vanish without a trace.
+        $flags = @('--session', '--file')
+        if ($Cmd -ceq 'show') { $flags = @('--all', '--session', '--own') } elseif ($Cmd -ceq 'import-handoff') { $flags = @() }
+        foreach ($a in $Rest) { if ($flags -cnotcontains $a -and $a -cmatch '^[-\u2013\u2014\u2015]') { return $script:PmbDashArg } }
+        try { $cl = [Environment]::GetCommandLineArgs() } catch { $cl = @() }
+        foreach ($a in $cl) { if ($a -ceq '--%' -or $a -cmatch '^[-\u2013\u2014\u2015][^:]*:\z') { return $script:PmbDashArg } }
+    }
+    foreach ($a in $Rest) {
+        if ($a.Contains([char]0xFFFD)) { return $script:PmbFffdArg }
+        try { [void]$script:PmbUtf8Strict.GetByteCount($a) } catch { return $script:PmbFffdArg }
+    }
+    return ''
+}
+
+# Returns the exit code ALONE: every line of text goes through Write-PmbOut/Write-PmbErr. ORIGINAL is
+# the process's own argument list (Get-PmbOriginalArg), or $null.
+function Invoke-PmbMain([string[]]$Argv, $Original = $null) {
     $cmd = 'help'
     if ($Argv.Count -gt 0 -and $Argv[0]) { $cmd = $Argv[0] }
     $rest = [string[]]@()
@@ -922,12 +974,23 @@ function Invoke-PmbMain([string[]]$Argv) {
         catch { Write-PmbErr ('pmb-journal gate: {0}; allowing (fail-open)' -f (Get-PmbErrorText $_)); return 0 }
     }
     try {
+        # WHY usage when the first words differ: pwsh alters only a word that starts with a dash and holds
+        # a colon, or `--%`, and no command is shaped so, so the sh twin prints usage for that word.
+        if ($null -ne $Original) {
+            $ocmd = 'help'
+            if ($Original.Count -gt 0 -and $Original[0]) { $ocmd = $Original[0] }
+            if ($ocmd -cne $cmd) { Write-PmbErr $script:PmbUsage; return 1 }
+        }
         if ($cmd -ceq 'mode') { if (Test-PmbFlagOn) { return 0 } else { return 1 } }
         if ($cmd -ceq 'start') {
             $b = [byte[]]::new(16)
             [System.Security.Cryptography.RandomNumberGenerator]::Fill($b)
             Write-PmbOut ([System.Convert]::ToHexString($b).ToLowerInvariant())
             return 0
+        }
+        if ($cmd -ceq 'show' -or $cmd -ceq 'import-handoff' -or $script:PmbKinds -ccontains $cmd) {
+            $problem = Get-PmbArgProblem $cmd $rest $Original
+            if ($problem) { throw "pmb-journal: refused: $problem" }
         }
         if ($cmd -ceq 'show') { Show-PmbJournal $rest; return 0 }
         if ($cmd -ceq 'import-handoff') { Import-PmbHandoff $rest; return 0 }
@@ -947,7 +1010,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     if (-not [Console]::IsOutputRedirected) {
         try { $pmbOldEncoding = [Console]::OutputEncoding; [Console]::OutputEncoding = $script:PmbUtf8 } catch { $pmbOldEncoding = $null }
     }
-    try { $pmbCode = Invoke-PmbMain $args }
+    try { $pmbCode = Invoke-PmbMain $args (Get-PmbOriginalArg) }
     finally { if ($null -ne $pmbOldEncoding) { try { [Console]::OutputEncoding = $pmbOldEncoding } catch { Write-Verbose 'console encoding not restored' } } }
     exit $pmbCode
 }

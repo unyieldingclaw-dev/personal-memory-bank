@@ -190,17 +190,22 @@ Plans B and D should follow the same pattern for `sessions` and `snapshots` (use
 2026-09-29).
 
 **Twin parity (amended 2026-10-14, Task 6 review; 2026-10-16 and 2026-10-17, FIFO-hardening
-reviews).** The two twins are built to make the same decisions, return the same exit codes and
-write the same bytes to `pmb/`. The parity tests check this for the cases they cover; it is not
-proven in general. These are the differences known today:
+reviews; 2026-10-18, E7.1).** The two twins are built to make the same decisions, return the same
+exit codes and write the same bytes to `pmb/`. The parity tests check this for the cases they
+cover; it is not proven in general. These are the differences known today:
 - **Text arguments under `pwsh -File`.** pwsh parses every argument before the PowerShell twin
-  sees it. It drops an argument that is exactly `--%`. On Linux, it turns invalid UTF-8 into
-  U+FFFD. An argument that starts with `-` it can split at a colon, drop, refuse to start on, or
-  turn into a flag the twin then obeys, such as `--file:<path>` or `--session:<id>`. As a result,
-  the PowerShell twin can record different text from the sh twin, or another file's
-  contents, or a secret the sh twin refuses. It can also refuse text the sh twin records. In every
-  case measured, the same text passed with `--file` gave both twins the same bytes and exit code.
-  The measurements used pwsh 7.4.7 and 7.6.6; the UTF-8 case used 7.4.7 only.
+  sees it. An argument that starts with a dash (`-`, or U+2013-U+2015) can be split at a colon,
+  dropped, or turned into a flag such as `--file:<path>`; `--%` is dropped; on Linux, invalid
+  UTF-8 becomes U+FFFD; `pwsh -Command` re-parses them. The PowerShell twin compares its arguments
+  with the process command line and refuses any difference, and refuses U+FFFD; called from
+  another script, where it cannot see the original, it refuses every dash-led argument. So it
+  refuses some text the sh twin records; in the cases the parity tests cover, it records no other
+  text. In every case measured, `--file` gave both twins the same bytes. Out of its reach: pwsh
+  exits 1 before the script runs on an argument such as `-:x`, whatever the command; and a Git
+  Bash caller on Windows rewrites arguments before pwsh starts (a POSIX path becomes
+  `C:/Program Files/Git/...`; invalid UTF-8 can become other, valid characters), so there the twin
+  can record a path, or invalid UTF-8 the sh twin refuses, in another form. Measured with pwsh
+  7.4.7 and 7.6.6.
 - **Windows, with a Git Bash FIFO** (Regular files, below).
 - **A Linux or macOS host with neither `/usr/bin/test` nor `/bin/test`** (Regular files, below).
 - **Message text only.**
