@@ -87,7 +87,10 @@
 
 input=$(cat 2>/dev/null)
 if [ -z "$input" ]; then
-    printf "[HOOK ERROR] dangerous-commands.sh: could not read stdin.\nProceeding in fails-open mode.\n"
+    # WHY systemMessage JSON, not plain text: a PreToolUse hook's plain stdout never reaches the
+    # model and is not shown in the visible transcript (per Claude Code's docs), so the fails-open
+    # notice reached no one. systemMessage is shown to the user.
+    printf '{"systemMessage":"[HOOK ERROR] dangerous-commands.sh: could not read stdin. Proceeding in fails-open mode."}\n'
     exit 0
 fi
 
@@ -602,17 +605,24 @@ warn() {
     #
     # WHY `return` after a match, unlike the other matchers: warn() does NOT exit -- the
     # command proceeds. Without the return, a command matching both views (most of them, since
-    # the loose view differs only when backslashes or quotes are present) would print the
+    # the loose view differs only when backslashes or quotes are present) would record the
     # warning twice.
+    #
+    # WHY record here and emit once at the end of the file, not print per row: stdout must be
+    # nothing but ONE JSON object, so two matching rows must share one object. Inline rather than
+    # a helper function, because the escape-parity test treats every top-level function in this
+    # file as a matcher that must have rows.
     case "$cmd_lc" in
         *"$1"*)
-            printf "WARNING: %s. Proceeding.\n" "$2"
+            dc_warn_sys="${dc_warn_sys:+$dc_warn_sys }WARNING: $2. Proceeding."
+            dc_warn_list="${dc_warn_list:+$dc_warn_list, }$2"
             return
             ;;
     esac
     case "$cmd_loose_lc" in
         *"$1"*)
-            printf "WARNING: %s. Proceeding.\n" "$2"
+            dc_warn_sys="${dc_warn_sys:+$dc_warn_sys }WARNING: $2. Proceeding."
+            dc_warn_list="${dc_warn_list:+$dc_warn_list, }$2"
             return
             ;;
     esac
@@ -757,9 +767,25 @@ confirm_regex "(^|[^a-z])git (.*)--no-gpg-sign" "bypasses commit signing (local 
 confirm_boundary "git merge" "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier"  # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
 
 # WARN: credential/secrets access — legitimate workflows exist, surface the access only
-warn "id_rsa"           "SSH private key access"                # WHY: SSH private key — may be intentional (key setup)
+dc_warn_sys=""; dc_warn_list=""  # filled by warn(), emitted once below
+warn "id_rsa"          "SSH private key access"                # WHY: SSH private key — may be intentional (key setup)
 warn ".pem"             "certificate or key file access"        # WHY: cert/key files — may be intentional (TLS mgmt)
 warn ".env.production"  "production secrets file"               # WHY: production secrets — surface access, don't block
 warn "credentials.json" "credential file access"                # WHY: credential file — may be intentional (auth setup)
+
+# WHY JSON, not the plain "WARNING:" lines this tier used to print: a PreToolUse hook's plain
+# stdout never reaches the model and is not shown in the visible transcript (per Claude Code's
+# docs; it only records it) -- neither the user nor the model ever saw a WARN.
+# systemMessage reaches the user per Claude Code's docs (a headless run cannot show it);
+# additionalContext reaches the model (measured 2026-10-14, main agent and subagent). The
+# model-facing text omits the "WARNING:" token so each match still yields exactly one, which the
+# existing one-notice-per-match tests count.
+# WHY no JSON escaping: every value is a reason literal from the warn rows above. A future reason
+# containing `"` or `\` would emit invalid JSON here -- tests/test-hook-warn-output.sh catches it
+# by byte-comparing this output with the .ps1 twin, whose ConvertTo-Json escapes properly.
+if [ -n "${dc_warn_sys:-}" ]; then
+    printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' \
+        "$dc_warn_sys" "dangerous-commands hook: this command matches $dc_warn_list (WARN tier: surfaced, not blocked)."
+fi
 
 exit 0
