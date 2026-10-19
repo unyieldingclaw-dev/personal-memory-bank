@@ -15,15 +15,8 @@ lineage: []
 
 ## 2026-10-19 — PR #63 merged (`d3f87f8`): FIFO-safe journal gate, ps1 regular-file check
 
-- **Both twins** treat a non-regular `gate-blocked` as unrecordable and fail open without opening it;
-  a FIFO there used to hang the gate (rc=124 under `timeout`). The ps1 `Test-PmbRegularFile` pins its
-  native-command preferences locally, resolves `/usr/bin/test` then `/bin/test` once, and (off Windows)
-  throws if neither exists.
-- **Spec §4.1 "Twin parity"** now states parity as intent plus measured differences: `pwsh -File` can
-  split, drop or obey a dash-led argument or refuse to start, and it drops `--%`. Text passed with
-  `--file` matched in every measured case.
-- **CI:** every job has `timeout-minutes` (MB Command Tests 30, the rest 10), and the test job sets
-  `PMB_REQUIRE_FIFO=1`. Carry-overs, and what still gates the flag PR: `[NS-68]`.
+- What changed is in `d3f87f8`'s message. Carry-overs, and what still gates the flag PR: `[NS-68]`.
+- Funded by moving `[NS-25]` verbatim to `docs/archive/`; that saves bytes, not lines.
 
 ## 2026-10-18 — C1 Plan A merged (#57, `d751b73`); PreCompact lock-up recorded (#62, `e38620f`)
 
