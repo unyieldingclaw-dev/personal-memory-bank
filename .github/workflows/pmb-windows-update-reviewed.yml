@@ -1,0 +1,37 @@
+# Run the existing Windows-specific PostToolUse regression cases on a real Windows host.
+# The Ubuntu suite skips these tests when cygpath/cmd are absent.
+name: PMB Windows Hook Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/update-reviewed.sh'
+      - 'templates/scripts/update-reviewed.sh'
+      - 'tests/test-update-reviewed.sh'
+      - '.github/workflows/pmb-windows-update-reviewed.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  update-reviewed-windows:
+    name: Windows update-reviewed regression
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Run native-pipe and path regressions in Git Bash
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Refuse missing prerequisites: otherwise the test suite deliberately SKIPs
+          # the two cases that this workflow is supposed to prove.
+          for bin in cygpath cmd perl python3 pwsh; do
+            command -v "$bin" >/dev/null || { echo "Missing Windows test prerequisite: $bin" >&2; exit 1; }
+          done
+          bash tests/test-update-reviewed.sh | tee windows-update-reviewed.log
+          grep -F 'PASS: update-reviewed.sh: perl received a forward-slash path, so its temp file lands beside the target' windows-update-reviewed.log
+          grep -F 'PASS: update-reviewed.sh: a native Windows pipe on stdin still updates last-reviewed to today' windows-update-reviewed.log
