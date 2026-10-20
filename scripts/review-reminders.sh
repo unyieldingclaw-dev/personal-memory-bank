@@ -266,8 +266,9 @@ case "$verdict" in
             # tree whose bytes differ (measured with git 2.55: both made --quiet exit 0). Any non-zero
             # exit, including a git error, refuses. Runs before the claim, so a refusal leaves the
             # marker for the retry.
-            # (Comment inside the branch: tests/mutate.py anchors on the deny-then-elif lines.)
-            deny "Review gate: tracked changes are unstaged (or git diff failed), so this commit would not contain everything the review marker certifies. Stage every reviewed change in a separate command first -- this hook runs before any git add chained into the same command, and before git commit -a stages anything -- then commit. If part of the change should stay out of this commit, move it out of the working tree (for example a WIP commit on another branch) and re-run /code-review on what remains."
+            # Put comments below this elif, never above it: tests/mutate.py anchors on the
+            # empty-diff deny being directly followed by this elif.
+            deny "Review gate: tracked changes are unstaged (or git diff failed), so this commit would not contain everything the review marker certifies. Stage every reviewed change in a separate command first -- this hook runs before any git add chained into the same command, and before git commit -a stages anything -- then commit. To keep part of the change out of this commit (whole files only), set it aside with a tagged stash: git stash push -m <unique-tag> -- <paths>, re-run /code-review on what remains, and commit. Then restore it with git stash apply <sha> (the SHA from git stash list --format='%H %gs') and drop that entry by its current stash@{n}. The stash stack is shared across worktrees, so never use a bare git stash pop. $root_hint"
         elif actual=$(claim_marker "$marker"); then
             if [ "$actual" = "$expected" ]; then
                 drop_marker "$marker"

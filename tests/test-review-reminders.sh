@@ -734,12 +734,37 @@ for shell_kind in $partial_shells; do
   partial_marker
   resp=$(partial_gate "$shell_kind" "git commit -m partial")
   assert_contains "$resp" "$PARTIAL_REASON" "$hook refuses a commit whose reviewed diff is only partly staged"
+  # "Stage every reviewed change" is advice about one tree, so the denial names it.
+  assert_contains "$resp" "The gate checked $(git -C "$TMPDIR_PARTIAL" rev-parse --show-toplevel):" "$hook's unstaged-changes denial names the root it checked"
+  # A WIP commit is gated like any other, so the only way out an agent can take is a tagged stash.
+  assert_contains "$resp" "git stash push -m" "$hook's unstaged-changes denial offers a tagged stash"
+  assert_contains "$resp" "git stash list --format=" "$hook's unstaged-changes denial says how to find the stash entry's SHA"
+  assert_contains "$resp" "git stash apply" "$hook's unstaged-changes denial restores by apply, not pop"
+  assert_not_contains "$resp" "WIP commit" "$hook's unstaged-changes denial no longer offers a gated WIP commit"
   assert_file_exists "$PARTIAL_MARKER" "$hook leaves the marker unconsumed when refusing a partly-staged commit"
 
   git -C "$TMPDIR_PARTIAL" add b.txt
   resp=$(partial_gate "$shell_kind" "git commit -m complete")
   assert_not_contains "$resp" '"permissionDecision":"deny"' "$hook allows the same commit once every reviewed change is staged"
   assert_file_not_exists "$PARTIAL_MARKER" "$hook consumes the marker on the allowed, fully-staged commit"
+
+  # The denial's own escape hatch, end to end: set one file aside in a tagged stash, review what
+  # remains, and the gate must allow the commit. Then restore by SHA and drop. The fixture is its
+  # own repository, so its stash stack is not the shared one the advice warns about.
+  partial_reset
+  printf 'a2\n' >> "$TMPDIR_PARTIAL/a.txt"
+  printf 'b2\n' >> "$TMPDIR_PARTIAL/b.txt"
+  git -C "$TMPDIR_PARTIAL" stash push -q -m "rr-e2e-$shell_kind" -- b.txt
+  git -C "$TMPDIR_PARTIAL" add a.txt
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m part")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "$hook allows the commit once the excluded file is set aside in a tagged stash"
+  assert_file_not_exists "$PARTIAL_MARKER" "$hook consumes the marker on the stash-assisted commit"
+  stash_sha=$(git -C "$TMPDIR_PARTIAL" stash list --format='%H %gs' | awk -v t="rr-e2e-$shell_kind" '$0 ~ t {print $1; exit}')
+  git -C "$TMPDIR_PARTIAL" stash apply -q "$stash_sha"
+  assert_contains "$(cat "$TMPDIR_PARTIAL/b.txt")" "b2" "the stash entry found by its tag restores the excluded file"
+  git -C "$TMPDIR_PARTIAL" stash drop -q "$(git -C "$TMPDIR_PARTIAL" stash list --format='%gd %gs' | awk -v t="rr-e2e-$shell_kind" '$0 ~ t {print $1; exit}')"
+  assert_equals "$(git -C "$TMPDIR_PARTIAL" stash list | wc -l | tr -d ' ')" "0" "dropping by the tag-matched index leaves the fixture's stash stack empty"
 
   # Nothing staged at all: also the state a chained `git add X && git commit` presents, because
   # this hook runs before the chained add does. The refusal is the documented cost of the fix.

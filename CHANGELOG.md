@@ -25,7 +25,9 @@
   first. A chained `git add` and `git commit -a` both act after the hook, so both are refused
   while tracked changes are unstaged. Not covered yet: commits that name paths, `--amend`,
   `--patch`, a chained command that edits or stages files before its commit, and
-  `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` in the command's environment. New rows in
+  `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` in the command's environment, and content a textconv
+  filter or external diff driver hides from the reviewed diff itself: the marker still hashes
+  plain `git diff HEAD`, so the two flags guard only the staging check. New rows in
   `tests/test-review-reminders.sh` cover both shells, including the merge case.
   `docs/HOOKS-GUIDE.md` no longer says a mismatched marker is consumed.
 - **No WARN from a `PreToolUse` hook ever reached you or Claude.** Claude Code passes such a hook's
