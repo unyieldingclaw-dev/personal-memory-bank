@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-10-19
+last-reviewed: 2026-10-20
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,14 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-10-20 — PRs #59 (`5c6f8e4`) and #71 (`2c4088f`) merged
+
+- **#59:** `update-reviewed.sh` bash fallback: no file loss on a backslash Windows path, stdin read under a
+  native pipe (SQA #25/#26). Its advisory, paths-filtered Windows CI workflow must not become a required check.
+- **#71 (OPP6-1):** the commit gate refuses while any tracked change is unstaged (marker hashes the working
+  tree, a commit records the index; near-miss 2026-10-16). Stage in a separate command; `git commit -a` is
+  refused. Outside-pushed `1be7055c`, `e2b52866` retired by an `-s ours` merge. Follow-ups: `[NS-69]`.
 
 ## 2026-10-19 — PRs #64, #72, #69, #74 and #75 merged
 
@@ -82,14 +90,8 @@ lineage: []
 
 ## 2026-10-04 — PR #47 merged (`19931dc`); `fix/ns19` rebased onto it
 
-- `fix/ns19-plan-workflow-template` was rebased onto `437d3c1` and `19931dc`, and on 10-05 onto
-  `07e3bd2` (#51). Its `progress.md` and `CHANGELOG.md` conflicts were resolved by date order
-  and by keeping both entries. Its hash citations now name the branch, because a rebase and a
-  squash merge both rewrite hashes.
-- The stale root `handoff.md` (2026-09-25) has landed except for two things: its Codex-sandbox ACR
-  note, carried by PR #48 (still open), and the open decision to track or ignore `.agents/` and
-  `.codex/`. PR #48 tracks only 1 of the 9 `.agents/` files. Delete it only once both have a
-  durable home, and with user confirmation.
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`. Still open: root
+`handoff.md` waits on PR #48 and the track-or-ignore decision for `.agents/`/`.codex/`.
 
 ## 2026-09-30 — PR #49 merged (`584a8e4`); two review-gate escapes open
 
@@ -99,9 +101,7 @@ lineage: []
 
 ## 2026-09-26 — [NS-19] plan workflow fixed; diff-only standards reversed by fleet data
 
-- Pre-approval adversarial review of "make `mb.ps1` diff-only for `standards/`": 7 of 8 adopter repos hold the
-  same OLD shipped blobs (e.g. `CODE-REVIEW.md` `8b9d06c1` in 3 repos, spot-checked), so the harm is stale
-  standards, not lost edits. Diff-only deferred to a design (overwrite only on a known shipped version).
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`.
 
 ## Relocated 2026-09-21 → 2026-09-25 — three sections moved verbatim 2026-10-05
 
