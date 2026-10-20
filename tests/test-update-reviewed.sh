@@ -246,5 +246,8 @@ echo ""
 echo "--- mirror parity: scripts/ vs templates/scripts/ ---"
 diff -q "$REPO_ROOT/scripts/update-reviewed.sh" "$REPO_ROOT/templates/scripts/update-reviewed.sh" >/dev/null 2>&1
 assert_exit_zero "$?" "scripts/update-reviewed.sh and its templates/ mirror are byte-identical"
+# The .ps1 is the primary hook on Windows (settings.json runs it first), so its mirror matters as much.
+diff -q "$REPO_ROOT/scripts/update-reviewed.ps1" "$REPO_ROOT/templates/scripts/update-reviewed.ps1" >/dev/null 2>&1
+assert_exit_zero "$?" "scripts/update-reviewed.ps1 and its templates/ mirror are byte-identical"
 
 print_summary

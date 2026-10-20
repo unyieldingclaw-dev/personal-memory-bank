@@ -44,7 +44,8 @@ if [[ "$NORMALIZED" != */memory-bank/* ]]; then exit 0; fi
 # on '/', so a backslash-only Windows path puts the temp file in the cwd. Cygwin perl unlinks
 # the original before renaming the temp over it, so when the cwd is on another drive the rename
 # fails and the file is lost. One path also keeps the -f check, the grep and the edit on the same
-# file. Trade-off: a POSIX filename containing a literal backslash is now skipped, not updated.
+# file. Trade-off: a POSIX filename containing a literal backslash is now looked up by its slash
+# form, so the file at that path (a different file) is stamped if it exists, else skipped.
 FILE_PATH="$NORMALIZED"
 
 if [ ! -f "$FILE_PATH" ]; then exit 0; fi

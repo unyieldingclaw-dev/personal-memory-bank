@@ -23,6 +23,10 @@ jobs:
   update-reviewed-windows:
     name: Windows update-reviewed regression
     runs-on: windows-2025
+    # WHY: GitHub's default is 6 hours and cmd.exe/pwsh could hang. Recent runs took 18-21 s
+    # (runs 39324783880, 39334703272, 39335277016, 39340874241); 10 min matches pmb-health.yml's
+    # budget for jobs that run under 2 minutes.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
