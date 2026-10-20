@@ -20,6 +20,10 @@ related_plan: null
 - **Item 12:** policy. The repo is pinned with `-R`, and only `--squash` or `--merge` with
   `--match-head-commit` are accepted.
 
+**Owed after merge, from the main checkout only:** `memory-bank/activeContext.md:58` still says
+the agent never runs `gh pr merge`, and `[NS-65]` still lists merge-gate work as future. Both
+must be updated there; worktree sessions may not edit `memory-bank/`.
+
 It overrode this item's "Blocked" ordering, with the user's approval. The escape-spelling fix
 stays open in its own item, and the spec's §7 explains why it is not a prerequisite. The text
 below is the original proposal, kept as history.

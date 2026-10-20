@@ -1,23 +1,21 @@
 # Merge gate: let the agent merge on the user's per-PR click
 
-**Status:** proposal, revision 4. Design approved by the user at revision 3. **G0 passed on
-2026-10-20** (§3). The task contract is not yet approved.
-- Revision 4 applies a third Opposition pass, run against revision 3 and contract v1, whose verdict
-  was Request Changes. §10 maps its findings.
-- No hook, test, or doc outside this file changes until the contract is approved.
-- It changes an enforcement boundary, so it needs Opus, a task contract, and a full `/code-review`
-  and `/change-review`.
+**Status:** implemented, revision 4, on branch `claude/merge-gate-user-approval-870329` (its own
+PR, not part of #71). The user approved the design at revision 3 and the task contract on
+2026-10-20. G0 passed in the desktop app (§3). G1, G2 and G3 (§9) are still to run, and only after
+`main` in the main checkout carries this code (§7).
 
-**This ships as its own branch and PR** (`claude/merge-gate-user-approval-870329`). It is not part
-of PR #71, which has merged. Implementation starts **now** on current `origin/main`, and it is laid
-out to stay clear of the still-open PRs #78 and #79 (§8).
+**Review history**, every finding checked against the repo before it was folded in (§10 maps each
+one to the change it caused):
+- **Revision 2:** an Opposition pass (Opus), Request Changes with blocking B1 and B2, plus a
+  security-reviewer pass (Sonnet) with HIGH-1 to HIGH-5.
+- **Revision 3:** an Opposition re-review of revision 2, Approve with conditions, all applied.
+- **Revision 4:** a third Opposition pass on revision 3 and contract v1, Request Changes, all
+  applied.
+- **Implementation:** `/code-review` Approve. Its non-blocking doc findings are corrected in this
+  revision: the crash-path wording, §7's worktree claim, and the §5.3 audit-field order.
 
-**Revision 2** folds in an adversarial review run on 2026-10-20:
-- an Opposition pass (Opus), verdict **Request Changes**, with blocking findings B1 and B2;
-- a security-reviewer pass (Sonnet), with HIGH-1 to HIGH-5.
-
-Every finding was checked against the repo before it was folded in. §10 maps each finding to the
-change it caused.
+**Line numbers in §1 describe the code before this change**, at `origin/main` `25515a2`.
 
 It **supersedes the open question in** `docs/backlog/replace-the-gh-pr-merge-deny-with-a-forced-permiss.md`
 (Option B there). That item says it is blocked until
@@ -260,14 +258,15 @@ Evaluated top to bottom; the first match wins.
 | A `PermissionRequest` hook is configured in user, project or local settings (§5.5) | deny, generic message |
 | Any of those settings files allows a merge-capable prefix (§5.5) | deny, generic message |
 | Any of those settings files exists but is unreadable or malformed | deny, generic message |
+| The raw command fails the §5.1 full match | deny, and print the canonical form |
+| Otherwise | **ask** |
 
 **The "generic message"** is "Merge gate precondition failed. Ask the user to check this checkout's
 Claude settings." It names no file and no rule. A message naming the file that holds a
 merge-capable allow rule would point the agent straight at the silent route (third Opposition
-pass, S3). The specific cause goes to stderr only, which the agent does not see on an
-exit-0 JSON decision. That claim is checked in the §9 tests.
-| The raw command fails the §5.1 full match | deny, and print the canonical form |
-| Otherwise | **ask** |
+pass, S3). The helper writes the specific cause to its stderr. Both hook wirings discard stderr
+(`2>/dev/null`), so the cause is visible only when the helper is run by hand. The §9 tests check
+that the JSON names neither the file nor the rule.
 
 The ask's `permissionDecisionReason` is built only from the validated match:
 
@@ -277,12 +276,13 @@ The ask's `permissionDecisionReason` is built only from the validated match:
 - **Output:** the shell twin writes one JSON object through the same escaping as `deny()`; the
   PowerShell twin uses `ConvertTo-Json`. Both then `exit 0`, so the `|| bash` fallback never fires
   after a decision has been printed.
-- **Audit:** on every ask, the hook appends `ts, repo, N, sha, permission_mode` to
-  `.claude/merge-asks.log`, which is ignored by `*.log` at `.gitignore:54`.
+- **Audit:** on every ask, the hook appends a tab-separated line, `ts, permission_mode, repo, N,
+  sha`, to `.claude/merge-asks.log`. That file is ignored by `*.log` at `.gitignore:54`.
   - The hook writes it **after** printing the decision, and ignores any failure.
   - It records asks, not the user's answers.
   - The agent can write to it, so it is not tamper-evident.
-  - Each worktree keeps its own copy.
+  - It lives under the project directory the hook resolves (`CLAUDE_PROJECT_DIR`, else the hook's
+    working directory). That directory may be the main checkout, not the worktree (§7).
   - It is a convenience. GitHub's "merged by" event is the authoritative record.
 
 ### 5.4 The description field (Opposition S3)
@@ -414,10 +414,20 @@ The backlog asked that a crash on the merge path deny. A deny cannot be had chea
   - Record that worktrees **do** carry that file, which corrects the backlog's line 186. Measured
     2026-10-20: 29 of 38 worktrees have one.
   - The rule text stays in the untracked artifacts directory, not here.
+- **Hooks in a worktree session run the main checkout's scripts.** This was observed on
+  2026-10-20, twice, by the implementing session and by the `/code-review` Opposition pass. A
+  merge-shaped command run from this branch's worktree drew the *old* deny text, even with a
+  quoted `cd` to the worktree.
+  - **So the new gate is live only once the main checkout is on a `main` that contains it.** G1
+    must run then, because from a worktree before that it tests the old hook.
+  - **The helper then most likely reads the main checkout's settings**, not the worktree's. Which
+    directory `CLAUDE_PROJECT_DIR` names in a worktree session is unmeasured.
 - **Between the merge of this PR and P1:**
-  - In a checkout that holds such a rule, the §5.5 check denies every merge.
-  - In the 9 worktrees with no `settings.local.json`, a canonical merge **asks**. That still needs
-    the user's click, so it is not a zero-click route.
+  - The main checkout's `settings.local.json` held 8 merge-capable rules on 2026-10-20, measured
+    with the helper's own `merge_capable`. If the inference above holds, every merge is therefore
+    denied by the §5.5 check, in every session, until P1. That is safe, and revision 4's claim
+    that worktrees without their own `settings.local.json` would ask is withdrawn.
+  - **Not measured:** which settings the permission engine itself applies in a worktree session.
   - **The procedural rule:** no real merge through the agent (G3) until P1 is done.
 - **P1 does not close every zero-click route.** §5.5's residuals (the git alias, test and npm
   scripts) stay as they are today.
