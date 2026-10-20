@@ -174,6 +174,22 @@
   examples, and matchers are counted exactly, so a skipped or unpaired row fails the test. Checked
   by mutation: pointing any one matcher's de-escaped branch back at the plain view turns the test
   red on that matcher's rows.
+- **`update-reviewed.sh` could delete a memory-bank file on Windows.** It handed perl the raw
+  `tool_input` path. With a backslash-only path, `perl -i` cannot split out the directory, so it
+  writes its temp file in the cwd. Cygwin perl then unlinks the original before renaming the temp
+  over it. When the cwd and the file are on different drives the rename fails and `|| true` hides
+  it. Seen on Side-Quest-Atlas's windows-2025 CI (cwd on D:, files on C:). The hook now uses the
+  forward-slash path it already computed for its memory-bank filter. A new test uses a `perl` shim
+  to catch the backslash argument on a single-drive box. Only the bash fallback was affected; the
+  shipped `settings.json` runs `update-reviewed.ps1` first. Trade-off: on POSIX a filename
+  containing a literal backslash is now looked up by its slash form, so the hook stamps the
+  (different) file at the slash-form path if it exists and skips otherwise. A new advisory Windows CI workflow
+  (`pmb-windows-update-reviewed.yml`) runs these cases on a real Windows host.
+- **`update-reviewed.sh` did nothing when launched by a native Windows process.** It read
+  `cat /dev/stdin`. When Claude Code launches Git Bash, fd 0 is a native pipe that
+  `/dev/stdin` cannot reopen by path (ENOENT), so the payload came back empty and the hook exited
+  0 without updating. It now reads fd 0 with plain `cat`, as every other shell hook already does.
+  A new test runs the hook through a cmd.exe native pipe. Ported from Side-Quest-Atlas d18a02f.
 - **`mb commit`'s subworktree check was wrong three ways, in both runtimes.** It compared
   `--git-common-dir` against `$PWD/.git`.
   - Inside an absorbed git submodule, whose `.git` is a gitlink *file*, it said "You are in a git
