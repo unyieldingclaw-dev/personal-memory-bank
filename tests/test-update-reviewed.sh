@@ -125,6 +125,91 @@ to_win_path() {
     fi
 }
 
+# ── backslash (cygpath -w) path reaches perl as a forward-slash path ────────────────────────
+# WHY a perl shim rather than checking the file: perl -i places its temp file by splitting the
+# path on '/', so a backslash-only path puts the temp file in the cwd, and Cygwin perl unlinks
+# the original before renaming the temp over it. When the cwd is on another drive the rename
+# fails and the file is gone (SQA's windows-2025 CI: cwd on D:, files on C:). On a single-drive
+# box the rename succeeds and the file still updates, so only the argument perl receives
+# discriminates the fixed hook from the broken one here.
+if command -v cygpath >/dev/null 2>&1; then
+  echo ""
+  echo "--- a backslash Windows path is handed to perl with forward slashes, and the file is updated ---"
+  TMPDIR_WIN="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-win)"
+  CLEANUP_DIRS+=("$TMPDIR_WIN")
+  mkdir -p "$TMPDIR_WIN/memory-bank" "$TMPDIR_WIN/shim" "$TMPDIR_WIN/cwd"
+  make_reviewed_file "$TMPDIR_WIN" "activeContext.md" "$OLD_DATE"
+  REAL_PERL=$(command -v perl)
+  PERL_ARG_LOG="$TMPDIR_WIN/perl-last-arg"
+  printf '#!/usr/bin/env bash\nprintf "%%s" "${@: -1}" > "%s"\nexec "%s" "$@"\n' \
+    "$PERL_ARG_LOG" "$REAL_PERL" > "$TMPDIR_WIN/shim/perl"
+  chmod +x "$TMPDIR_WIN/shim/perl"
+  WIN_PATH=$(cygpath -w "$TMPDIR_WIN/memory-bank/activeContext.md" | sed 's/\\/\\\\/g')
+  (
+    cd "$TMPDIR_WIN/cwd" || exit 1
+    printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$WIN_PATH" \
+      | PATH="$TMPDIR_WIN/shim:$PATH" bash "$REPO_ROOT/scripts/update-reviewed.sh" 2>/dev/null
+  )
+  # WHY case and not assert_not_contains: that helper greps, and a lone '\' pattern is a grep
+  # error (exit 2), which assert_not_contains would count as "not found" -- a false PASS.
+  if [ ! -f "$PERL_ARG_LOG" ]; then
+    echo "  FAIL: update-reviewed.sh: the perl shim never ran, so the hook exited before the edit"
+    FAIL=$((FAIL + 1))
+  else
+    perl_arg=$(cat "$PERL_ARG_LOG")
+    case "$perl_arg" in
+      *\\*)
+        echo "  FAIL: update-reviewed.sh: perl received a backslash path, so perl -i puts its temp file in the cwd: $perl_arg"
+        FAIL=$((FAIL + 1)) ;;
+      *)
+        echo "  PASS: update-reviewed.sh: perl received a forward-slash path, so its temp file lands beside the target"
+        PASS=$((PASS + 1)) ;;
+    esac
+  fi
+  if [ ! -f "$TMPDIR_WIN/memory-bank/activeContext.md" ]; then
+    echo "  FAIL: update-reviewed.sh: file missing after the hook ran on a backslash Windows path"
+    FAIL=$((FAIL + 1))
+  else
+    content=$(cat "$TMPDIR_WIN/memory-bank/activeContext.md")
+    assert_contains "$content" "last-reviewed: $TODAY" "update-reviewed.sh: a backslash Windows path still updates last-reviewed to today"
+  fi
+else
+  echo ""
+  echo "--- backslash Windows path test: SKIPPED (cygpath not installed on this machine) ---"
+fi
+
+# ── stdin is a native Windows pipe, the way Claude Code launches hooks ──────────────────────
+# WHY cmd.exe: every `printf | bash` above hands the hook an MSYS pipe. Claude Code is a native
+# process, so the hook really gets a native pipe, and under one /dev/stdin -> /proc/self/fd/0 ->
+# pipe:[0] cannot be reopened by path: `cat /dev/stdin` fails (ENOENT), `|| true` swallows it,
+# and the hook exits 0 without updating. cmd's `|` builds a native pipe with no python/node.
+# WHY a .cmd file: cmd's quoting of paths with spaces is fragile through MSYS argument
+# conversion; a batch file sidesteps it. Ported from Side-Quest-Atlas d18a02f.
+if command -v cygpath >/dev/null 2>&1 && command -v cmd >/dev/null 2>&1; then
+  echo ""
+  echo "--- a native Windows pipe on stdin still updates last-reviewed ---"
+  TMPDIR_PIPE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-pipe)"
+  CLEANUP_DIRS+=("$TMPDIR_PIPE")
+  mkdir -p "$TMPDIR_PIPE/memory-bank"
+  make_reviewed_file "$TMPDIR_PIPE" "activeContext.md" "$OLD_DATE"
+  WIN_PATH_PIPE=$(cygpath -w "$TMPDIR_PIPE/memory-bank/activeContext.md" | sed 's/\\/\\\\/g')
+  printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$WIN_PATH_PIPE" > "$TMPDIR_PIPE/payload.json"
+  printf '@type "%s" | "%s" "%s"\r\n' "$(cygpath -w "$TMPDIR_PIPE/payload.json")" \
+    "$(cygpath -w "$(command -v bash)")" "$(cygpath -w "$REPO_ROOT/scripts/update-reviewed.sh")" \
+    > "$TMPDIR_PIPE/run.cmd"
+  cmd //c "$(cygpath -w "$TMPDIR_PIPE/run.cmd")" >/dev/null 2>&1
+  if [ ! -f "$TMPDIR_PIPE/memory-bank/activeContext.md" ]; then
+    echo "  FAIL: update-reviewed.sh: file missing after the hook ran from a native Windows pipe"
+    FAIL=$((FAIL + 1))
+  else
+    content=$(cat "$TMPDIR_PIPE/memory-bank/activeContext.md")
+    assert_contains "$content" "last-reviewed: $TODAY" "update-reviewed.sh: a native Windows pipe on stdin still updates last-reviewed to today"
+  fi
+else
+  echo ""
+  echo "--- native Windows pipe test: SKIPPED (cygpath and/or cmd not installed on this machine) ---"
+fi
+
 if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
   echo ""
   echo "--- cross-shell parity: update-reviewed.ps1 nested payload updates last-reviewed ---"
@@ -153,5 +238,16 @@ else
   echo ""
   echo "--- update-reviewed.ps1 tests: SKIPPED (pwsh and/or cygpath not installed on this machine) ---"
 fi
+
+# WHY here, outside the cygpath-gated cases: the Windows workflow runs this file against
+# scripts/, so a fix that reaches scripts/update-reviewed.sh but not its templates/ copy
+# would pass there while shipping the old bug to every installed repo.
+echo ""
+echo "--- mirror parity: scripts/ vs templates/scripts/ ---"
+diff -q "$REPO_ROOT/scripts/update-reviewed.sh" "$REPO_ROOT/templates/scripts/update-reviewed.sh" >/dev/null 2>&1
+assert_exit_zero "$?" "scripts/update-reviewed.sh and its templates/ mirror are byte-identical"
+# The .ps1 is the primary hook on Windows (settings.json runs it first), so its mirror matters as much.
+diff -q "$REPO_ROOT/scripts/update-reviewed.ps1" "$REPO_ROOT/templates/scripts/update-reviewed.ps1" >/dev/null 2>&1
+assert_exit_zero "$?" "scripts/update-reviewed.ps1 and its templates/ mirror are byte-identical"
 
 print_summary
