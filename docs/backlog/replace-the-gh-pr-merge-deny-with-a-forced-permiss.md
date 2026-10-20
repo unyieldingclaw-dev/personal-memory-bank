@@ -1,12 +1,28 @@
 ---
-status: open
+status: resolved
 created: 2026-09-22
-last-reviewed: 2026-09-25
+last-reviewed: 2026-10-20
 staleness-threshold: 90d
 related_plan: null
 ---
 
 # Replace the gh pr merge deny with a forced permission prompt
+
+**RESOLVED 2026-10-20 — Option B shipped, hardened.** The design is
+`docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`. That spec answers the
+"must be measured" list below:
+- **Item 1:** in-app, auto mode, gate G0 passed.
+- **Items 2 and 3:** subagents and headless runs are denied.
+- **Item 4:** `PermissionRequest` hooks and merge-capable allow rules make the hook deny.
+- **Item 5:** the prompt shows the command, the hook's reason and the agent's description, so
+  the description is pinned to a fixed string.
+- **Items 6 and 9:** crash path, parity and tests.
+- **Item 12:** policy. The repo is pinned with `-R`, and only `--squash` or `--merge` with
+  `--match-head-commit` are accepted.
+
+It overrode this item's "Blocked" ordering, with the user's approval. The escape-spelling fix
+stays open in its own item, and the spec's §7 explains why it is not a prerequisite. The text
+below is the original proposal, kept as history.
 
 **This is a proposal. It is not approved, and it must be fully vetted before any design work starts.**
 - **Origin.** The user raised it on 2026-09-22, after PR #45 was merged by hand from a command a

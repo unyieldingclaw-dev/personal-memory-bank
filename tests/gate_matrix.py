@@ -127,6 +127,10 @@ def run_hook(cmd, tool='Bash'):
         except Exception:
             pass
         return 'DENY', reason
+    # A merge can now be put to the user. Reported separately so that a regression from ask to
+    # no decision -- which reads as ALLOW here -- cannot pass a check expecting ASK.
+    if '"permissionDecision":"ask"' in out:
+        return 'ASK', ''
     return 'ALLOW', ''
 
 
