@@ -90,8 +90,8 @@ lineage: []
 
 ## 2026-10-04 — PR #47 merged (`19931dc`); `fix/ns19` rebased onto it
 
-Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`. Still open: root
-`handoff.md` waits on PR #48 and the track-or-ignore decision for `.agents/`/`.codex/`.
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`. Still open: PR #48
+and the track-or-ignore decision for `.agents/`/`.codex/`.
 
 ## 2026-09-30 — PR #49 merged (`584a8e4`); two review-gate escapes open
 
