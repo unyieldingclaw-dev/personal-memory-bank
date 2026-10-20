@@ -75,6 +75,16 @@ MUTATIONS = [
      'if [ -z "$expected" ]; then\n            deny "no diff"\n        elif',
      'HOLE C: empty-diff constant denied (was ALLOW)'),
 
+    # Remove the index == working tree check: a partly-staged commit with a matching marker
+    # is allowed again (OPP6-1). empty-diff-rejected's anchor above ends in the next line's
+    # `elif`, so nothing (a comment included) may sit between the empty-diff deny and this
+    # elif in the hook. A missing anchor is reported below with the same STILL GREEN label as
+    # a surviving mutant.
+    ('commit-index-matches-worktree', 'scripts/review-reminders.sh',
+     '        elif ! git diff --quiet --no-ext-diff --no-textconv 2>/dev/null; then',
+     '        elif false; then',
+     'OPP6-1: partly-staged commit denied'),
+
     # Consume on the mismatch path instead of restoring -- i.e. the original burn-on-denial
     # behaviour. The stale-marker row must notice the marker is gone.
     ('mismatch-restores-marker', 'scripts/review-reminders.sh',

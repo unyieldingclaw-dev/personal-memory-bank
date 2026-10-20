@@ -2,7 +2,34 @@
 
 ## [Unreleased]
 
+### Changed
+- **Stage before committing, in a command of its own.** The commit review gate now refuses while
+  any tracked change is unstaged when it runs. So `git add X && git commit` in one command, and
+  `git commit -a` or `-am`, are refused whenever that leaves a tracked change unstaged at hook
+  time, even after an approved `/code-review`: the gate runs before either stages anything. The
+  marker survives the refusal; stage, then commit. Why, and what the gate still does not cover:
+  see "The commit review gate approved commits that held only part of the reviewed change" under
+  Fixed.
+
 ### Fixed
+- **The commit review gate approved commits that held only part of the reviewed change.** The
+  marker binds a hash of `git diff HEAD`, the working tree, but a commit records the index, so a
+  change left partly unstaged still matched. On 2026-10-16 a merge finished with `git add` on only
+  its conflicted path nearly committed without new test rows in a file that had not conflicted.
+  The commit gate (both twins and their `templates/` copies) now also refuses while
+  `git diff --quiet --no-ext-diff --no-textconv` fails, and leaves the marker in place for the
+  retry. The flags stop a textconv filter or an exit-code-trusted external diff driver from hiding
+  a difference. The review commands are unchanged and still hash `git diff HEAD`. Hashing the
+  staged diff instead was rejected: the hook runs before `git commit -a` stages anything, so a
+  partly-staged `-a` commit would have carried unreviewed changes. Cost: stage in its own command
+  first. A chained `git add` and `git commit -a` both act after the hook, so both are refused
+  while tracked changes are unstaged. Not covered yet: commits that name paths, `--amend`,
+  `--patch`, a chained command that edits or stages files before its commit, and
+  `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` in the command's environment, and content a textconv
+  filter or external diff driver hides from the reviewed diff itself: the marker still hashes
+  plain `git diff HEAD`, so the two flags guard only the staging check. New rows in
+  `tests/test-review-reminders.sh` cover both shells, including the merge case.
+  `docs/HOOKS-GUIDE.md` no longer says a mismatched marker is consumed.
 - **No WARN from a `PreToolUse` hook ever reached you or Claude.** Claude Code passes such a hook's
   plain stdout to neither: it only records it (debug log, session file), and its docs say it is
   not shown in the visible transcript. Measured 2026-10-14 with headless `claude -p`: in the main
