@@ -2,7 +2,53 @@
 
 ## [Unreleased]
 
+### Changed
+- **Stage before committing, in a command of its own.** The commit review gate now refuses while
+  any tracked change is unstaged when it runs. So `git add X && git commit` in one command, and
+  `git commit -a` or `-am`, are refused whenever that leaves a tracked change unstaged at hook
+  time, even after an approved `/code-review`: the gate runs before either stages anything. The
+  marker survives the refusal; stage, then commit. Why, and what the gate still does not cover:
+  see "The commit review gate approved commits that held only part of the reviewed change" under
+  Fixed.
+
 ### Fixed
+- **The commit review gate approved commits that held only part of the reviewed change.** The
+  marker binds a hash of `git diff HEAD`, the working tree, but a commit records the index, so a
+  change left partly unstaged still matched. On 2026-10-16 a merge finished with `git add` on only
+  its conflicted path nearly committed without new test rows in a file that had not conflicted.
+  The commit gate (both twins and their `templates/` copies) now also refuses while
+  `git diff --quiet --no-ext-diff --no-textconv` fails, and leaves the marker in place for the
+  retry. The flags stop a textconv filter or an exit-code-trusted external diff driver from hiding
+  a difference. The review commands are unchanged and still hash `git diff HEAD`. Hashing the
+  staged diff instead was rejected: the hook runs before `git commit -a` stages anything, so a
+  partly-staged `-a` commit would have carried unreviewed changes. Cost: stage in its own command
+  first. A chained `git add` and `git commit -a` both act after the hook, so both are refused
+  while tracked changes are unstaged. Not covered yet: commits that name paths, `--amend`,
+  `--patch`, a chained command that edits or stages files before its commit, and
+  `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` in the command's environment, and content a textconv
+  filter or external diff driver hides from the reviewed diff itself: the marker still hashes
+  plain `git diff HEAD`, so the two flags guard only the staging check. New rows in
+  `tests/test-review-reminders.sh` cover both shells, including the merge case.
+  `docs/HOOKS-GUIDE.md` no longer says a mismatched marker is consumed.
+- **No WARN from a `PreToolUse` hook ever reached you or Claude.** Claude Code passes such a hook's
+  plain stdout to neither: it only records it (debug log, session file), and its docs say it is
+  not shown in the visible transcript. Measured 2026-10-14 with headless `claude -p`: in the main
+  agent, a JSON `additionalContext` note reached the model while a plain-text note on the same tool
+  call did not; a separate run showed the JSON note reaching a subagent too. That `systemMessage`
+  reaches you rests on Claude Code's docs, since a headless run cannot show it. Each of these hooks
+  now prints at most one JSON object (both twins and their `templates/` copies):
+  - `dangerous-commands` WARN (secrets-file access): `systemMessage` for you plus
+    `additionalContext` for Claude, with every match in one object. Its fails-open notice is a
+    `systemMessage`.
+  - `warn-stale-review-marker`: `additionalContext` only. It is advice for the agent and fires on
+    every edit while a marker exists. Now that the model reads it, it says to tell the user, no
+    longer to "consider committing/pushing first".
+  - `delegation-depth-check`: `systemMessage` only, so an agent mid-review is not nudged to drop
+    reviewers. Its message no longer says "this session": the counter is per checkout.
+
+  BLOCK and CONFIRM output is unchanged. New `tests/test-hook-warn-output.sh` checks that stdout is
+  exactly one object (or empty) and that the twins agree. The Contract Scope Check still prints
+  plain text; tracked in `docs/backlog/check-contract-output-is-plain-stdout.md`.
 - **The pre-push hook silently accepted every memory-bank edit.** Check 7 ran `mb doctor`, which
   rewrites `.pmb-checksums` at the end of every run, so an edit made outside mb tools was reported
   once, by the run that then erased it. New `mb doctor --check` (both runtimes) runs the same
@@ -42,6 +88,32 @@
   both call plan drafts gitignored scratch files, and `mb doctor` reports a tracked one as an
   ERROR, but the entry existed only in PMB's own `.gitignore`. `mb init` and `mb upgrade` now add
   it in both runtimes, and a test asserts the bash and PowerShell entry lists stay identical.
+- **Without python3, the sh dangerous-commands hook missed newline and tab forms.** When python3
+  is missing or fails, the hook matches the whole JSON payload, and it matched that payload with
+  its escapes still encoded: a newline was the two characters `\n`. So, measured with python3 off
+  `PATH`, none of these got a verdict, though each is refused or prompted with python3: a pipe to
+  `bash` split across a newline or a tab, a backslash-continued `git push --force` or signing
+  change, a tab-separated signing key, and any signing or `git merge` row straight after a newline
+  (`git fetch`, a newline, then `git merge main`). A bare `git merge` at the end of the command was
+  missed too, because the closing quote followed it. The hook now decodes the payload's escapes
+  before matching, and reads the string delimiters as spaces. `dangerous-commands.ps1` falls back
+  only when parsing fails, and now decodes the same way, except that it writes a non-ASCII escape as
+  the real character where the sh hook writes `?`. The sh hook's platform requirement is now
+  stated once, under "Platform requirement (sh hook)" in `standards/SECURITY-GUARDRAILS.md`, and the
+  deny message and `docs/HOOKS-GUIDE.md` point there.
+- **`git merge` followed by a newline got no CONFIRM, in both shells.** The row's trailing boundary
+  was a space or the end of the command, so `git merge`, a newline, then another command ran a bare
+  merge with no prompt. A newline now counts as a boundary too, and so does a CR, which PowerShell
+  reads as a statement break.
+- **On Git Bash, a carriage return inside a word got past every tier, in both hooks.** Git Bash
+  deletes a CR while parsing (measured), so `git push --for`, a CR, then `ce` runs as a force push.
+  Neither hook gave a verdict on it, with or without python3. Both hooks now also match a
+  CR-deleted copy of their de-escaped view. It is added rather than substituted, so it can only add
+  matches: PowerShell, which the ps1 hook also judges, reads a lone CR as a statement break, so
+  deleting CRs in place would glue words together. On these CR shapes a Bash command gets the same
+  verdict from either hook. Both hooks skip the copy when the command has no CR, so a CR-free
+  command costs what it did; at the 50 KB bound, one with a CR costs the ps1 hook about 29 s
+  against about 21 s (measured).
 - **A pipe to a shell split across a newline got past the BLOCK tier on sh ([NS-38]).** A trailing
   `|` continues the command onto the next line, so `curl x |`, a newline, then `bash` runs as
   `curl x | bash`. `dangerous-commands.sh` matched pipe-to-interpreter with four literal rows,
@@ -69,19 +141,24 @@
   - Both passes still miss when either of those causes combines with a gap longer than 255 bytes.
     This is recorded in `standards/SECURITY-GUARDRAILS.md`.
 
-  Both sh views now go through one `grep` per pass, joined by NUL, so the second pass adds no net
+  The sh views now go through one `grep` per pass, joined by NUL, so the second pass adds no net
   grep calls. The new pipe row runs under `LC_ALL=C` only, so it matches the same bytes in every
   locale.
 - **CI now fails when the sh/ps1 parity checks cannot run.** The `mb-command-tests` job sets
   `PMB_REQUIRE_PARITY=1`, so if pwsh ever disappears from the runner, the cross-shell checks fail
   instead of silently skipping.
+- **CI now fails when the journal's symbolic-link tests cannot run.** The same job now sets
+  `PMB_REQUIRE_SYMLINKS=1`. The switch already existed in `tests/test-pmb-journal.sh`, but no
+  workflow set it, so a link fixture that stopped working (the writers' link refusals, a
+  dangling-link start sentinel, the gate's link checks) skipped instead of failing.
 - **The sh regex rows now prompt when `grep` fails.** `grep` exits 2 when it cannot evaluate a
   pattern, and inside an `if` that read as "no match", which would have silently disabled every
   regex row. It now prompts, like the hook's other "cannot analyze" cases. That makes a grep with
   `-z`, such as GNU grep, a requirement of the sh hook. BusyBox grep rejects `-z` (measured), so on
-  Alpine with bash but without pwsh every Bash command prompts. Without bash as well, the hook
-  wiring's `|| true` fallback runs no guard at all (measured). The deny message says to install GNU
-  grep or PowerShell.
+  Alpine with bash but without pwsh every Bash command is refused, with `CONFIRM REQUIRED` unless a
+  literal BLOCK row matches it first. Without bash as well, the hook wiring's `|| true` fallback
+  runs no guard at all (measured). The deny message points to the sh hook's full platform
+  requirement in `standards/SECURITY-GUARDRAILS.md`.
 - **The signing rows' gap bound is 255, not 300, in both shells.** POSIX guarantees repetition
   bounds only up to 255 (`RE_DUP_MAX`), so a grep that supports `-z` but caps bounds there would
   reject `{0,300}` and, with the fail-closed rule above, deny every command. No such grep has been
@@ -97,6 +174,22 @@
   examples, and matchers are counted exactly, so a skipped or unpaired row fails the test. Checked
   by mutation: pointing any one matcher's de-escaped branch back at the plain view turns the test
   red on that matcher's rows.
+- **`update-reviewed.sh` could delete a memory-bank file on Windows.** It handed perl the raw
+  `tool_input` path. With a backslash-only path, `perl -i` cannot split out the directory, so it
+  writes its temp file in the cwd. Cygwin perl then unlinks the original before renaming the temp
+  over it. When the cwd and the file are on different drives the rename fails and `|| true` hides
+  it. Seen on Side-Quest-Atlas's windows-2025 CI (cwd on D:, files on C:). The hook now uses the
+  forward-slash path it already computed for its memory-bank filter. A new test uses a `perl` shim
+  to catch the backslash argument on a single-drive box. Only the bash fallback was affected; the
+  shipped `settings.json` runs `update-reviewed.ps1` first. Trade-off: on POSIX a filename
+  containing a literal backslash is now looked up by its slash form, so the hook stamps the
+  (different) file at the slash-form path if it exists and skips otherwise. A new advisory Windows CI workflow
+  (`pmb-windows-update-reviewed.yml`) runs these cases on a real Windows host.
+- **`update-reviewed.sh` did nothing when launched by a native Windows process.** It read
+  `cat /dev/stdin`. When Claude Code launches Git Bash, fd 0 is a native pipe that
+  `/dev/stdin` cannot reopen by path (ENOENT), so the payload came back empty and the hook exited
+  0 without updating. It now reads fd 0 with plain `cat`, as every other shell hook already does.
+  A new test runs the hook through a cmd.exe native pipe. Ported from Side-Quest-Atlas d18a02f.
 - **`mb commit`'s subworktree check was wrong three ways, in both runtimes.** It compared
   `--git-common-dir` against `$PWD/.git`.
   - Inside an absorbed git submodule, whose `.git` is a gitlink *file*, it said "You are in a git

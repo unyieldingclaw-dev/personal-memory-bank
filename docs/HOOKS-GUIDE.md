@@ -40,6 +40,8 @@ Hooks are one layer in a four-layer enforcement stack. Understanding which layer
 
 Configured in `.claude/settings.json`:
 
+**How a `PreToolUse` hook is heard.** Plain text a `PreToolUse` hook prints never reaches Claude (measured), and Claude Code's docs say it is not shown in the visible transcript — it is only recorded (debug log, session file). So each hook prints at most ONE JSON object: `permissionDecision: "deny"` to block, top-level `systemMessage` for you, `hookSpecificOutput.additionalContext` for Claude. Any text beside that object makes Claude Code ignore it. The Contract Scope Check (§3) still prints plain text, so its warning is currently not seen.
+
 ### 1. Dangerous-Command Blocker (`PreToolUse` — Bash + PowerShell tools)
 
 Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
@@ -64,7 +66,7 @@ positives and for what the gate deliberately does not cover (`GIT_CONFIG_*` env 
 **WARN** (4 patterns — exits 0, surfaces access alert):
 `id_rsa` · `.pem` · `.env.production` · `credentials.json`
 
-If BLOCK or CONFIRM is triggered, the tool call is denied before it executes. WARN surfaces the access as advisory text and lets the command proceed.
+If BLOCK or CONFIRM is triggered, the tool call is denied before it executes. WARN surfaces the access — a `systemMessage` for you and `additionalContext` for Claude, all matches in one object — and lets the command proceed.
 
 #### Matching is case-insensitive — and in `.sh`, **patterns must be written in lower case**
 
@@ -92,11 +94,8 @@ the caller's locale and then under `LC_ALL=C`, because each alone misses a bypas
 counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
 row inherits its matcher's locale rule, which can change what it matches.
 
-**Platform requirement (sh hook): a grep with `-z`, such as GNU grep.** The regex rows run on every
-command, and a grep that cannot evaluate them makes the hook refuse rather than pass. BusyBox grep
-rejects `-z` (measured), so on Alpine with bash but without pwsh every Bash command prompts. Without
-bash as well, the hook wiring's `|| true` fallback runs no guard at all. Install PowerShell, or
-bash with GNU grep, there. Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
+**Platform requirement (sh hook):** stated once, with what each missing piece costs, in
+`standards/SECURITY-GUARDRAILS.md` under "Platform requirement (sh hook)". Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
 a grep that supports `-z` but caps bounds there can still compile every row. The test suite fails on
 any row above 255.
 
@@ -104,7 +103,8 @@ any row above 255.
 reverted): folding `$1` inside each matcher costs a `printf | tr` subshell per matcher *call* —
 about 25 per invocation, on a hook that runs on **every single Bash tool call**. Measured over 10
 runs of one benign command: **1.07s → 2.33s per invocation**. Folding the two subjects once instead
-costs two subshells total and measures at parity with the pre-fold baseline.
+costs two subshells total (three when the command holds a carriage return) and measures at
+parity with the pre-fold baseline.
 
 Both suites assert this structurally, so the fail-open trap is a red test rather than a silent
 hole: no matcher may match against an unfolded view, and no pattern argument may contain an
@@ -117,6 +117,14 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 { "matcher": "Bash",       "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
 { "matcher": "PowerShell", "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true" }
 ```
+
+**Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
+`timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
+out does not block the tool call: its output is discarded and the call continues through the
+normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
+later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default. Whether to set
+`onFailure` is an open decision in `docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md`.
 
 **Two bugs found and fixed (2026-07-02) that made this hook a near-total no-op:**
 
@@ -136,7 +144,7 @@ The Stop hook is excluded from `templates/.claude/settings.json` because it caus
 Checks whether a file being written is within the scope declared in the active task contract (`.claude/contracts/active-task.json`). Implemented in `scripts/check-contract.ps1` and `scripts/check-contract.sh`.
 
 - **No contract / inactive contract:** exits 0 silently.
-- **Out-of-scope write (default):** prints a warning and exits 0. Claude sees it and should pause.
+- **Out-of-scope write (default):** prints a warning and exits 0. The warning is plain text, so it currently reaches neither you nor Claude (see "How a `PreToolUse` hook is heard" above; tracked in `docs/backlog/check-contract-output-is-plain-stdout.md`).
 - **Out-of-scope write (hard-block mode):** the tool call is denied when `PMB_CONTRACT_HARD_BLOCK=1` is set in the `env` block of `.claude/settings.json`.
 
 Set `PMB_CONTRACT_HARD_BLOCK=1` for sessions where scope discipline is critical. See `standards/SECURITY-GUARDRAILS.md` for the full env-block example.
@@ -216,7 +224,7 @@ checklist.
 
 ### 6. Agent Spawn-Volume Advisory (`PreToolUse` — Agent tool)
 
-Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and emits a WARN once it exceeds the budget in `standards/PERFORMANCE-BUDGET.md` (default: ≤6 spawns per rolling 2-hour window). Always exits 0 — advisory, never blocking. Implemented in `scripts/delegation-depth-check.ps1` and `scripts/delegation-depth-check.sh`.
+Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and emits a WARN once it exceeds the budget in `standards/PERFORMANCE-BUDGET.md` (default: ≤6 spawns, counted per checkout and reset only after 2 hours with no spawn). The WARN is a `systemMessage` only — shown to you, deliberately not to Claude, so an agent mid-review is not nudged to drop reviewers. Always exits 0 — advisory, never blocking. Implemented in `scripts/delegation-depth-check.ps1` and `scripts/delegation-depth-check.sh`.
 
 **It does not measure nesting depth, despite the name.** There is no `PostToolUse:Agent` event, so a hook cannot tell a returned agent from a running one — six parallel agents and a six-deep chain are indistinguishable to it. The file name, state file and internal variable still say "depth" for compatibility; the semantics have only ever been a spawn count. This entry described it as nesting depth, with a ≤1 default, until 2026-09-03; the shipped scripts had used 6 since `5c0e8c9`.
 
@@ -235,7 +243,9 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 
 **Why a hash, not an empty marker:** an empty marker is trivially fakeable with `touch` — anyone, or a rushed agent, can satisfy the gate without reviewing anything. Binding the marker to a hash of the exact diff means it only authorizes committing/pushing that specific diff; if the working tree changes after the review, the hash no longer matches and the gate re-engages. The hook recomputes the same hash fresh and compares it to the marker's stored value before allowing the commit/push through.
 
-**Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps — if the source doesn't exist, the rename simply fails, collapsing "does it exist" and "claim it" into one filesystem operation. The marker is consumed (renamed away and deleted) whether or not its hash matches — a stale marker from a diff that has since changed doesn't linger; a fresh review is required either way.
+**A commit must be fully staged (added 2026-10-19):** the hash covers `git diff HEAD`, which is the working tree, but a commit records the index, so a commit holding only part of the reviewed change would still match. The commit gate therefore also refuses, before claiming the marker, while any tracked change is unstaged (`git diff --quiet --no-ext-diff --no-textconv` fails; the two flags stop a textconv filter or an exit-code-trusted external diff driver from hiding a difference). Stage in a command of its own before committing: the hook runs before a chained `git add X && git commit` stages anything, and before `git commit -a` does, so both are refused whenever tracked changes are unstaged. The check holds at hook time only. Not covered yet: commits that name paths (`git commit <path>`, `--only`), `--amend`, `--patch`, a chained command that edits or stages files before its `git commit`, `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` set in the command's environment, and content a textconv filter or external diff driver hides from the reviewed diff itself (the marker still hashes plain `git diff HEAD`, so the two flags guard only the staging check).
+
+**Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps — if the source doesn't exist, the rename simply fails, collapsing "does it exist" and "claim it" into one filesystem operation. Only the path that allows the command consumes the marker: on a hash mismatch it is renamed back unconsumed, so a denial by this gate never burns an earned review (a later hook or a declined permission prompt can still burn it, because the allowing path has already consumed the marker; see the claim-then-restore comment in `review-reminders.sh`).
 
 **Two significant fixes (2026-07-02), found via a real, unauthorized commit going through untouched:**
 
@@ -258,7 +268,7 @@ On detected failure, the hook recomputes the diff hash fresh (a failed commit/pu
 
 Warns, before an edit happens, if a review-gate marker (`.claude/.code-review-ok` or `.claude/.change-review-ok`) currently exists and is about to be invalidated by that edit. Any tracked-file change alters `git diff HEAD`/`origin/main...HEAD`, which silently invalidates the marker's bound hash — without this hook, the only place that notices is the Review Gate above, at the moment of the *next* commit/push attempt, which can be many edits later.
 
-Warn-only, no `permissionDecision` — the actual enforcement already exists and is airtight (the Review Gate recomputes the hash fresh at commit/push time and denies on any mismatch; a stale marker is already rejected the same as a missing one). This hook adds zero new safety; it only surfaces, before the edit, what would otherwise only be discovered after a failed commit attempt. Matches the Contract Scope Check's established warn-only pattern (plain message, exit 0, no permission decision).
+Warn-only, no `permissionDecision` — the actual enforcement already exists and is airtight (the Review Gate recomputes the hash fresh at commit/push time and denies on any mismatch; a stale marker is already rejected the same as a missing one). This hook adds zero new safety; it only surfaces, before the edit, what would otherwise only be discovered after a failed commit attempt. The notice is `additionalContext` only — advice for Claude, not a message for you, since it fires on every edit while a marker exists.
 
 Does not inspect the edited file or delete the marker — presence alone is the entire condition, and marker deletion stays the sole responsibility of the Review Gate's `consume_marker()` (an atomic `mv`, avoiding a second writer to the same security-relevant file). Implemented in `scripts/warn-stale-review-marker.ps1` and `scripts/warn-stale-review-marker.sh`.
 

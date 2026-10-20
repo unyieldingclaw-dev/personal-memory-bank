@@ -6,6 +6,14 @@
 # A handoff.md dated TODAY bypasses both; a stale one does not (see the bypass block below).
 # Exits 2 to block compaction; exits 0 to allow. Fails open on errors.
 
+# Journal mode -- docs/superpowers/specs/2026-09-26-multi-session-memory-design.md section 4.3.
+# When this repository has opted in (.pmb-features on refs/remotes/origin/main) AND this branch
+# carries scripts/pmb-journal.sh, the gate checks this session's own journal instead of the files
+# below. An adopter or an older branch lacks the script, so it keeps today's behaviour unchanged.
+if [ -f scripts/pmb-journal.sh ] && bash scripts/pmb-journal.sh mode >/dev/null 2>&1; then
+    exec bash scripts/pmb-journal.sh gate
+fi
+
 today=$(date +%Y-%m-%d)
 
 BLOCK_REASONS=()

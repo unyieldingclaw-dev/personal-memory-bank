@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-10-13
+last-reviewed: 2026-10-19
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,37 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-10-19 — PR #65 merged (`0b67d9d`): no FIFO hang at `started` or the gate probe
+
+- Detail: `0b67d9d`'s message. It joins both branch commits, so it says the sh probe used `mktemp`, then
+  dropped it. `main` never used `mktemp`: a fixed `.probe.$$` became a per-attempt name opened with `noclobber`.
+- The spec is at 793 of 800 lines; #69's body says merging #69 makes it 800.
+- What still gates the flag PR: `[NS-68]`.
+
+## 2026-10-19 — PR #63 merged (`d3f87f8`): FIFO-safe journal gate, ps1 regular-file check
+
+- What changed is in `d3f87f8`'s message. Carry-overs, and what still gates the flag PR: `[NS-68]`.
+- Funded by moving `[NS-25]` verbatim to `docs/archive/`; that saves bytes, not lines.
+
+## 2026-10-18 — C1 Plan A merged (#57, `d751b73`); PreCompact lock-up recorded (#62, `e38620f`)
+
+- **#57** adds the bash journal and its PowerShell twin, plus a journal-mode PreCompact gate: auto never
+  blocks; a manual one with no new qualifying record is blocked once and passes on repeat (any
+  compaction re-arms it), and its two environment blocks repeat until fixed. Inert until Plan C's
+  flag PR (`[NS-68]`).
+- **Its first Linux CI run hung for about 2 h** on a planted FIFO. On pwsh 7.4.7, `Get-Item` reports a
+  FIFO's `UnixMode` as a regular file, and its provider rewrites `\` to `/`. Fixed in `4738ad5` (PR #57 branch; squashed into `d751b73`) with
+  `/usr/bin/test -f`. The hardening follow-ups are PR #63.
+- **#62** records the 2026-09-27 lock-up in `docs/backlog/`. The dispositions of the four backlog items
+  the C1 spec absorbed are set in this entry's commit.
+
+## 2026-10-14 — PR #55 opened (WARN-tier hooks → JSON); its review's findings recorded
+
+- PR #55 got `/code-review` Approve and `/change-review` Approve with conditions in its worktree,
+  and is open for the user to merge (`[NS-66]`). Its review found four pre-existing hook defects, now `[NS-67]`.
+- Recorded from the main checkout, since a worktree may not edit `memory-bank/`. Funded by moving
+  "Earlier Work" out verbatim; see its stub below.
 
 ## 2026-10-13 — Memory-bank reconciliation committed after an 8-day pause
 
@@ -417,33 +448,12 @@ there, so a citation to any of them still resolves:
 - 📌 ACR drifted 2 versions behind PMB and ran a 13-task feature under stale governance hooks before
   it was caught; still unfixed. Current state: `activeContext.md`'s `[NS-14]`.
 
-## Earlier Work (2026-07-02 through 2026-08-10) — condensed, full detail archived
+## Relocated 2026-07-02 → 2026-08-10 — "Earlier Work", moved verbatim 2026-10-14
 
-- **2026-07-16 through 2026-08-05 — Review-gate mechanism evolution**: self-attestation fix (marker-write
-  moved into the last dispatched review subagent), a false-positive fix in `review-reminders.sh`'s
-  command matching, the confirm-step redesign (durable `docs/review-log/` + user-confirmed marker write),
-  a worktree-root-resolution fix (closed a real denial-from-inside-a-worktree bug), a hook-lib dedup
-  (`_review-gate-lib.sh`/`.ps1`), and the confirm-step's first live whole-branch review (found and fixed
-  one real Blocking finding). Full detail: `docs/archive/progress-2026-07-review-gate-evolution.md`.
-- **2026-07-02 through 2026-07-13 — Repo governance, CI hardening, branch protection**: `mb upgrade`
-  slash-command auto-discovery fixes, 4 pre-existing CI failures closed (SAST config, 2 false-positive
-  greps, PowerShell lint), CI hardening across 3 downstream repos, branch protection rolled out to 5
-  public repos, a real hash byte-mismatch bug fixed (bash vs. PowerShell diverged on trailing-newline
-  handling), the cross-repo write boundary hook built after a real incident (this session wrote into
-  another repo's working directory without checking ownership), and the review-flow fleet audit (found
-  real enforcement in only 2 of 11 repos). Full detail:
-  `docs/archive/progress-2026-07-repo-governance-and-ci.md`.
-- **2026-07-14, 2026-07-23 — `mb backlog` Task 1 + mb update-notifier**: `mb backlog`'s Task 1 shipped
-  with two real Critical/High security bugs found and fixed (path traversal, sed-delimiter injection);
-  Tasks 2-5 not started (`[NS-0]`). The update-notifier shipped clean, but the same session produced an
-  authorization-drift incident (a "what do you suggest" non-answer treated as merge approval) that
-  produced the "What Counts as Approval" rule. Full detail:
-  `docs/archive/progress-2026-07-mb-backlog-and-notifier.md`.
-- **2026-08-08, 2026-08-10 — Concurrent session claims + memory-bank freshness hook**: session-claims
-  shipped (13 tasks + 5 post-review fixes, including one found only by a final whole-branch review after
-  every individual task had already passed its own two-stage review); the freshness-hook spec was
-  designed and committed but not yet implemented (`[NS-13]`). Full detail:
-  `docs/archive/progress-2026-08-freshness-and-session-claims.md`.
+Moved to `docs/archive/progress-2026-07-02-to-08-10-earlier-work.md` **verbatim** to fund the
+PR #55 delta under the ratchet. Delta and citation check: that file's header.
+
+- **Earlier Work (2026-07-02 through 2026-08-10) — condensed, full detail archived**
 
 ## Backlog
 

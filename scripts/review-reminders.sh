@@ -60,8 +60,12 @@
 input=$(cat 2>/dev/null)
 [ -z "$input" ] && exit 0
 
+# WHY escape: the reason is printed inside a JSON string. Unescaped, a `"` (the unresolved-root
+# message's cd "<repo>"), or a `\` or control character in an interpolated repository path, made
+# the whole output invalid JSON (measured 2026-10-19 on the unresolved-root message).
 deny() {
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
+    deny_reason=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$deny_reason"
 }
 
 # CLAIM-THEN-RESTORE. Two properties have to hold at once, and the obvious shapes each give
@@ -235,12 +239,36 @@ if ! cd "$root" 2>/dev/null; then
     exit 0
 fi
 
+# WHY name the root in the empty-diff denials: a command whose cd was not its first word
+# (`N=...; cd "<worktree>" && git push`) fell back to the hook's working directory, the main
+# checkout, whose diff was empty -- and the denial gave no hint which tree it had checked.
+# The cd form named here is the one the resolvers accept: quoted, first in the command, then &&
+# (_review-gate-classify.py CD_PREFIX). An unquoted cd falls back to the working directory again.
+root_hint="The gate checked $root: it takes the repository from a quoted cd \"<path>\" && chain at the very start of the command plus any git -C path, else from the hook's working directory. If that is the wrong tree, start the command with cd \"<repo>\" &&."
+
 case "$verdict" in
     COMMIT)
         expected=$(diff_hash HEAD)
         marker="$root/.claude/.code-review-ok"
         if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then
-            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself."
+            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself. $root_hint"
+        elif ! git diff --quiet --no-ext-diff --no-textconv 2>/dev/null; then
+            # The marker binds `git diff HEAD` (working tree vs HEAD), but a commit records the
+            # INDEX, so with part of the reviewed change left unstaged both hashes still match and
+            # the marker would certify content the commit does not contain (OPP6-1). Requiring
+            # index == working tree for tracked files, at hook time, closes that; it cannot see
+            # what a chained command does after this hook returns.
+            # Checked here rather than hashing `git diff --cached HEAD` instead: this hook runs
+            # before `git commit -a` stages anything, so a cached hash would let a partly-staged
+            # -a commit carry unreviewed changes. The price is that `-a` over unstaged changes is
+            # refused too. --no-ext-diff/--no-textconv: a textconv filter, or an external diff
+            # driver with diff.trustExitCode, can report "no difference" for an index and working
+            # tree whose bytes differ (measured with git 2.55: both made --quiet exit 0). Any non-zero
+            # exit, including a git error, refuses. Runs before the claim, so a refusal leaves the
+            # marker for the retry.
+            # Put comments below this elif, never above it: tests/mutate.py anchors on the
+            # empty-diff deny being directly followed by this elif.
+            deny "Review gate: tracked changes are unstaged (or git diff failed), so this commit would not contain everything the review marker certifies. Stage every reviewed change in a separate command first -- this hook runs before any git add chained into the same command, and before git commit -a stages anything -- then commit. To keep part of the change out of this commit (whole files only), set it aside with a tagged stash: git stash push -m <unique-tag> -- <paths>, re-run /code-review on what remains, and commit. Then restore it with git stash apply <sha> (the SHA from git stash list --format='%H %gs') and drop that entry by its current stash@{n}. The stash stack is shared across worktrees, so never use a bare git stash pop. $root_hint"
         elif actual=$(claim_marker "$marker"); then
             if [ "$actual" = "$expected" ]; then
                 drop_marker "$marker"
@@ -265,7 +293,7 @@ case "$verdict" in
         fi
         marker="$root/.claude/.change-review-ok"
         if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then
-            deny "Review gate: there is no diff to review (both origin/main...HEAD and HEAD produced an empty diff, or git diff failed). The hash of an empty diff is a public constant and cannot serve as proof of review."
+            deny "Review gate: there is no diff to review (both origin/main...HEAD and HEAD produced an empty diff, or git diff failed). The hash of an empty diff is a public constant and cannot serve as proof of review. $root_hint"
         elif actual=$(claim_marker "$marker"); then
             if [ "$actual" = "$expected" ]; then
                 drop_marker "$marker"
