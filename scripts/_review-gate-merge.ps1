@@ -25,7 +25,7 @@ function Get-MergeGateProperty {
     [pscustomobject]@{ Present = $true; Value = $prop[0].Value }
 }
 
-function New-MergeGateDeny {
+function Get-MergeGateDenial {
     param([string]$Reason, [string]$Cause)
     [pscustomobject]@{ Decision = 'DENY'; Reason = $Reason; Audit = $null; Cause = $Cause }
 }
@@ -44,7 +44,7 @@ function Test-MergeGateCapableRule {
     return ($body.Contains('*') -and $body -match $interp)
 }
 
-function Get-MergeGateSettingsFiles {
+function Get-MergeGateSettingsFile {
     param([string]$ProjectDir)
     $config = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }
     @(
@@ -59,37 +59,37 @@ function Get-ReviewGateMergeDecision {
 
     $payload = $Raw | ConvertFrom-Json -ErrorAction Stop
     if ($payload -isnot [System.Management.Automation.PSCustomObject]) {
-        return New-MergeGateDeny $script:MergeGateGenericDeny 'payload is not a JSON object'
+        return Get-MergeGateDenial $script:MergeGateGenericDeny 'payload is not a JSON object'
     }
     if ((Get-MergeGateProperty $payload 'agent_id').Present) {
-        return New-MergeGateDeny 'Subagents never merge pull requests. Ask the user, in the main conversation.'
+        return Get-MergeGateDenial 'Subagents never merge pull requests. Ask the user, in the main conversation.'
     }
     $mode = (Get-MergeGateProperty $payload 'permission_mode').Value
     if ($mode -isnot [string] -or -not ($script:MergeGateModes -ccontains $mode)) {
-        return New-MergeGateDeny 'Merges are only put to the user in default, acceptEdits or auto mode; this session cannot show a prompt for it. Merge in the GitHub UI instead.'
+        return Get-MergeGateDenial 'Merges are only put to the user in default, acceptEdits or auto mode; this session cannot show a prompt for it. Merge in the GitHub UI instead.'
     }
     if ((Test-Path Env:GH_HOST) -or (Test-Path Env:GH_REPO)) {
-        return New-MergeGateDeny $script:MergeGateGenericDeny 'GH_HOST or GH_REPO is set in the hook environment'
+        return Get-MergeGateDenial $script:MergeGateGenericDeny 'GH_HOST or GH_REPO is set in the hook environment'
     }
 
-    foreach ($path in (Get-MergeGateSettingsFiles $ProjectDir)) {
+    foreach ($path in (Get-MergeGateSettingsFile $ProjectDir)) {
         if (-not (Test-Path -LiteralPath $path)) { continue }
         try {
             $data = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         } catch {
-            return New-MergeGateDeny $script:MergeGateGenericDeny "unreadable or malformed settings: $path"
+            return Get-MergeGateDenial $script:MergeGateGenericDeny "unreadable or malformed settings: $path"
         }
         if ($data -isnot [System.Management.Automation.PSCustomObject]) {
-            return New-MergeGateDeny $script:MergeGateGenericDeny "settings is not a JSON object: $path"
+            return Get-MergeGateDenial $script:MergeGateGenericDeny "settings is not a JSON object: $path"
         }
         $hooks = (Get-MergeGateProperty $data 'hooks').Value
         if ($null -ne $hooks) {
             if ($hooks -isnot [System.Management.Automation.PSCustomObject]) {
-                return New-MergeGateDeny $script:MergeGateGenericDeny "hooks is not an object: $path"
+                return Get-MergeGateDenial $script:MergeGateGenericDeny "hooks is not an object: $path"
             }
             $pr = (Get-MergeGateProperty $hooks 'PermissionRequest').Value
             if ($null -ne $pr -and -not ($pr -is [System.Array] -and $pr.Count -eq 0)) {
-                return New-MergeGateDeny $script:MergeGateGenericDeny "PermissionRequest hook configured: $path"
+                return Get-MergeGateDenial $script:MergeGateGenericDeny "PermissionRequest hook configured: $path"
             }
         }
         $perms = (Get-MergeGateProperty $data 'permissions').Value
@@ -98,12 +98,12 @@ function Get-ReviewGateMergeDecision {
         $allow = $null
         if ($perms -is [System.Management.Automation.PSCustomObject]) { $allow = (Get-MergeGateProperty $perms 'allow').Value }
         if ($null -ne $allow -and $allow -isnot [System.Array]) {
-            return New-MergeGateDeny $script:MergeGateGenericDeny "permissions.allow is not a list: $path"
+            return Get-MergeGateDenial $script:MergeGateGenericDeny "permissions.allow is not a list: $path"
         }
         foreach ($rule in @($allow)) {
             if ($null -eq $rule) { continue }
             if ($rule -isnot [string] -or (Test-MergeGateCapableRule $rule)) {
-                return New-MergeGateDeny $script:MergeGateGenericDeny "merge-capable allow rule in: $path"
+                return Get-MergeGateDenial $script:MergeGateGenericDeny "merge-capable allow rule in: $path"
             }
         }
     }
@@ -112,28 +112,28 @@ function Get-ReviewGateMergeDecision {
     try {
         $config = Get-Content -LiteralPath (Join-Path (Join-Path $ProjectDir '.claude') 'merge-gate.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     } catch {
-        return New-MergeGateDeny 'Merge gate is not configured: .claude/merge-gate.json is missing or malformed, so no repository is allowed. Merge in the GitHub UI instead.'
+        return Get-MergeGateDenial 'Merge gate is not configured: .claude/merge-gate.json is missing or malformed, so no repository is allowed. Merge in the GitHub UI instead.'
     }
     $repos = (Get-MergeGateProperty $config 'repos').Value
-    if ($repos -isnot [System.Array] -or $repos.Count -eq 0) { return New-MergeGateDeny $notConfigured }
+    if ($repos -isnot [System.Array] -or $repos.Count -eq 0) { return Get-MergeGateDenial $notConfigured }
     foreach ($r in $repos) {
-        if ($r -isnot [string] -or $r -cnotmatch '\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z') { return New-MergeGateDeny $notConfigured }
+        if ($r -isnot [string] -or $r -cnotmatch '\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z') { return Get-MergeGateDenial $notConfigured }
     }
 
     $toolInput = (Get-MergeGateProperty $payload 'tool_input').Value
     if ($toolInput -isnot [System.Management.Automation.PSCustomObject]) {
-        return New-MergeGateDeny $script:MergeGateGenericDeny 'payload has no tool_input object'
+        return Get-MergeGateDenial $script:MergeGateGenericDeny 'payload has no tool_input object'
     }
     $command = (Get-MergeGateProperty $toolInput 'command').Value
     $alt = ($repos | ForEach-Object { [regex]::Escape($_) }) -join '|'
     $canonical = "\Agh pr merge (?<n>[1-9][0-9]{0,8}) -R (?<repo>$alt) (?<method>--squash|--merge) --match-head-commit (?<sha>[0-9a-f]{40})\z"
     if ($command -isnot [string] -or $command -cnotmatch $canonical) {
-        return New-MergeGateDeny ("This agent merges a pull request only in exactly this form, with nothing before or after it: gh pr merge <N> -R " + $repos[0] + " --squash --match-head-commit <full 40-hex head SHA> (or --merge in place of --squash). Use the PR number and head SHA the user asked for.")
+        return Get-MergeGateDenial ("This agent merges a pull request only in exactly this form, with nothing before or after it: gh pr merge <N> -R " + $repos[0] + " --squash --match-head-commit <full 40-hex head SHA> (or --merge in place of --squash). Use the PR number and head SHA the user asked for.")
     }
     $m = $Matches
     $desc = Get-MergeGateProperty $toolInput 'description'
     if ($desc.Present -and -not ($desc.Value -is [string] -and $desc.Value -ceq $script:MergeGateDescription)) {
-        return New-MergeGateDeny ('Set the tool description to exactly "' + $script:MergeGateDescription + '", or omit it. The prompt shows it, so it must not describe the merge in the agent''s own words.')
+        return Get-MergeGateDenial ('Set the tool description to exactly "' + $script:MergeGateDescription + '", or omit it. The prompt shows it, so it must not describe the merge in the agent''s own words.')
     }
 
     $method = if ($m['method'] -ceq '--squash') { 'squash' } else { 'merge commit' }

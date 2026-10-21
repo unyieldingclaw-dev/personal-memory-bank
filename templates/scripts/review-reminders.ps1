@@ -114,7 +114,11 @@ if ($verdict -eq 'MERGE') {
             Add-Content -LiteralPath (Join-Path (Join-Path $projectDir '.claude') 'merge-asks.log') `
                 -Value ("{0}`t{1}" -f (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'), $mergeDecision.Audit) `
                 -ErrorAction Stop
-        } catch { }
+        } catch {
+            # Swallowed on purpose: the decision is already printed, and a throw escaping here would
+            # exit non-zero, run the bash fallback and print a second JSON object (no decision).
+            $null = $_
+        }
     } elseif ($null -ne $mergeDecision -and $mergeDecision.Decision -ceq 'DENY' -and $mergeDecision.Reason) {
         if ($mergeDecision.Cause) { [Console]::Error.WriteLine("merge gate: $($mergeDecision.Cause)") }
         Deny $mergeDecision.Reason
