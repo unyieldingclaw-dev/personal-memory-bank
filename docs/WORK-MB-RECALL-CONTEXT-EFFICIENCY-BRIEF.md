@@ -13,7 +13,7 @@ The relevant idea from ai-memory is **selective access to canonical memory, with
 But Work-MB is meaningfully different from personal PMB:
 
 1. **Non-specialist authors:** people using an assistant may not notice that omitted context would have changed its answer or prevented a bad change. An index pointing to a rule is not equivalent to actually loading/enforcing that rule.
-2. **Mandatory standards:** a standard imposed on a team cannot rely solely on one individual's willingness or ability to follow advisory \`CLAUDE.md\` text. Enforceable rules need actual managed policy, hooks, CI or comparable controls, verified in the deployment.
+2. **Mandatory standards:** a standard imposed on a team cannot rely solely on one individual's willingness or ability to follow advisory `CLAUDE.md` text. Enforceable rules need actual managed policy, hooks, CI or comparable controls, verified in the deployment.
 3. **Multi-author/tool variation:** Windows/macOS/Linux, PowerShell/bash, different harnesses, managed configurations, multiple repositories and worktrees introduce sources of drift personal PMB cannot validate for Work-MB.
 
 **Default stance for Work-MB:** keep mandatory policy immediately available or mechanically enforced, consider tiering *explanatory/task/historical* material first, and justify any further reduction by measured correctness and adherence. This may lead to **less aggressive** compression than personal PMB.
@@ -44,13 +44,13 @@ Classify content by both axes, **independently**:
 | Historical reasoning, superseded design, closed issues | On-demand evidence with date, scope and current-status label | Repeating rejected solutions or elevating stale decisions |
 | Work journal / handoff / transient execution state | Explicit scoped continuation, only when applicable; never authoritative task priority | Unrelated session consumes baton; corrupted continuation |
 
-Do **not** copy ai-memory's informal precedence chain into Work-MB as-is. Workplace/managed policy can be non-overridable. Verify the effective precedence separately for platform-managed rules, organizational standards, repository policy, current authorized user requests and historical content. A user request must not be treated as overriding higher-level organizational controls.
+Do **not** copy ai-memory's informal precedence chain into Work-MB as-is. Workplace/managed policy can be non-overridable. Verify the effective precedence separately for platform-managed rules, organizational standards, repository policy, current authorized user requests and historical content. A user request must not be treated as overriding higher-level organizational controls. A downstream CI check may guard merge or release, but **does not** prevent a prior irreversible action, credential disclosure, or unauthorized external call; use an enforcement point that precedes the protected effect and sits outside the constrained agent's writable scope.
 
 **Invariant:** an archived journal entry can explain *what happened* but cannot supersede a currently binding standard. An individual user's cross-project preference cannot be promoted automatically into a team requirement.
 
 ## Step 2 — Build a Work-MB-specific recall + enforcement evaluation **before compression**
 
-Develop a small, reviewable, sanitized corpus from real Work-MB behavior, with gold evidence and expected answer/action/abstention:
+Develop a small, reviewable, sanitized corpus from real Work-MB behavior, with gold evidence and expected answer/action/abstention. **Do not export or rephrase proprietary workplace details into the public PMB/HE repositories;** keep all raw fixtures, logs and enterprise environment measurements in the authorized Work-MB workspace. If a permitted sanitized public example cannot be produced, publish only the abstract methodology:
 
 - Required policy/guardrail questions where the right action is to block or request approval.
 - Repository-specific workflow and mandatory review/CI checks.
@@ -68,7 +68,7 @@ Use separate **development/calibration** and **held-out evaluation** question se
 
 **CANDIDATE:** A bounded, deterministic initial brief + targeted evidence retrieval, **with the same effective mandatory policy protections**. Prototype in a disposable fixture environment; no production startup change.
 
-Hold model, tasks, tool access, runtime environment and revision fixed between arms wherever possible. Explicitly record differences that cannot be fixed.
+Hold model, **effort/reasoning level**, client/harness version, tasks, tool access, runtime environment, policy installation and source revision fixed between arms wherever possible. Explicitly record differences that cannot be fixed. Compare an actual installed host: shell fixture parity cannot establish policy enforcement at runtime.
 
 ### Metrics (report individually; don't hide in a single score)
 
@@ -81,6 +81,8 @@ Record baseline variance. Set mandatory non-bypass/non-fabrication requirements 
 
 ### Tests that must demonstrably fail on planted defects
 
+Treat a test as sensitive only if it fails **for the intended protected-property violation**. A malformed test environment that makes every run fail does not establish an adequate oracle. Preserve the known-bad variant and the independent expected result.
+
 - Hide an applicable mandatory rule from brief **and** enforcement: test must catch the missed rule/action.
 - Replace an authoritative current decision with an older historical one: test must catch wrong precedence.
 - Remove a detail pointer, archive result, or retrieval keyword: relevant question must detect the lost evidence.
@@ -91,7 +93,7 @@ Do not "green" the evaluator by making the candidate the source of gold answers.
 
 ## Step 3 — Decide whether and where a bounded brief is justified
 
-Only if Step 2 demonstrates a measurable problem worth addressing:
+Only if Step 2 demonstrates a measurable problem worth addressing. Start with a **scope-limited, reversible experiment**; any changes to mandatory standard dissemination require an authorized policy owner and actual enforcement evidence, not merely a test author or research approval:
 
 - First reduce **actual duplication and write rate**, not just context readings. A dense, frequently rewritten live file may be a write-discipline issue.
 - Favor a deterministic, generated *view* of authoritative Markdown. If it has an index or cache, it is **rebuildable and disposable**; no secondary editable source of policy truth.
@@ -131,6 +133,6 @@ Require explicit approval for the selected option and for any policy, startup, c
 ## Source caveats
 
 - PMB's own [retrieval baseline](RETRIEVAL-BASELINE-2026-09-09.md) counts pointer visibility without actual observed fetch; its n=16 does **not** prove a failed retrieval. Work-MB must measure its own tasks.
-- PMB's older [index/detail design](superpowers/specs/2026-09-18-memory-bank-index-detail-design.md) concerns personal PMB's \`activeContext.md\` and its size/format. It is prior art, **not** evidence that the design fits Work-MB's rules.
+- PMB's older [index/detail design](superpowers/specs/2026-09-18-memory-bank-index-detail-design.md) concerns personal PMB's `activeContext.md` and its size/format. It is prior art, **not** evidence that the design fits Work-MB's rules.
 - ai-memory's self-published [3.1.2 benchmark](https://github.com/akitaonrails/ai-memory/blob/1c86aebc14addccc7ac875913d565c681bfa4a50/docs/benchmarks/longmemeval-s-3.1.2-release.md) measures retrieval, not real enterprise policy adherence. Do not import its percentages as Work-MB thresholds.
 - Neither PMB review inspected the live Work-MB deployment in this research pass. All Work-MB-specific proposed implementation details remain **conditional** until verified locally.
