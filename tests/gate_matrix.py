@@ -197,6 +197,9 @@ assert git('status', '--porcelain') == '', 'baseline commit did not produce a cl
 DIRTY_FILE = os.path.join(ROOT, 'README.md')
 with open(DIRTY_FILE, 'a') as fh:
     fh.write('\n<!-- gate matrix: a real tracked modification to review -->\n')
+# STAGED, too: the commit gate refuses while tracked changes are unstaged (OPP6-1, row 9b), so an
+# unstaged DIRTY_FILE would turn every allow row into that refusal instead of the one it tests.
+subprocess.run(['git', 'add', 'README.md'], cwd=ROOT, capture_output=True, check=True)
 
 clear(MARKER, PMARKER)
 if os.path.exists(PRESHA):
@@ -274,6 +277,7 @@ subprocess.run(['git', 'commit', '-qm', 'initial'], cwd=target, capture_output=T
 os.makedirs(os.path.join(target, '.claude'))
 with open(os.path.join(target, 'file.txt'), 'a') as fh:
     fh.write('target change\n')
+subprocess.run(['git', 'add', 'file.txt'], cwd=target, capture_output=True, check=True)
 
 set_marker(MARKER, real_hash('HEAD'))
 target_rel = os.path.relpath(target, ROOT)
@@ -304,7 +308,9 @@ check('presha records reviewed hash', True, line.split()[-1] == h if line else F
 # 8. HOLE C: on a CLEAN tree the expected hash degenerates to the public empty-diff
 # constant, which anyone can write into the marker. Revert the tracked modification rather
 # than stashing -- stashing would revert the fix under test along with it.
-subprocess.run(['git', 'checkout', '--', 'README.md'], cwd=ROOT, capture_output=True)
+# `checkout HEAD --`, not `checkout --`: the latter restores from the index, where the staged
+# modification would survive and leave the tree dirty.
+subprocess.run(['git', 'checkout', 'HEAD', '--', 'README.md'], cwd=ROOT, capture_output=True)
 assert git('status', '--porcelain') == '', 'tree must be clean for the empty-diff row'
 assert real_hash('HEAD') == EMPTY_SHA, 'clean tree must hash to the empty-diff constant'
 set_marker(MARKER, EMPTY_SHA)
@@ -312,6 +318,7 @@ d, r = run_hook('git %s --amend --no-edit' % V)
 check('HOLE C: empty-diff constant denied (was ALLOW)', 'DENY', d, r[:70])
 with open(DIRTY_FILE, 'a') as fh:
     fh.write('\n<!-- gate matrix: restored modification -->\n')
+subprocess.run(['git', 'add', 'README.md'], cwd=ROOT, capture_output=True, check=True)
 
 # 8b. PostToolUse must use the same classifier as PreToolUse: prose must not consume
 # recovery state, while the global-option form must be reconciled.
@@ -347,6 +354,18 @@ set_marker(MARKER, h)
 d, _ = run_hook('git %s -m x' % V)
 check('HOLE B: matching marker allows', 'ALLOW', d)
 check('HOLE B: matching marker consumed', False, os.path.exists(MARKER))
+
+# 9b. OPP6-1: the marker binds `git diff HEAD` (working tree) but a commit records the index, so a
+# reviewed change left partly unstaged must be refused even though its marker matches -- and the
+# refusal must leave that marker in place for the retry once everything is staged.
+with open(DIRTY_FILE, 'a') as fh:
+    fh.write('\n<!-- gate matrix: reviewed but left unstaged -->\n')
+set_marker(MARKER, real_hash('HEAD'))
+d, r = run_hook('git %s -m x' % V)
+check('OPP6-1: partly-staged commit denied', 'DENY', d, r[:60])
+check('OPP6-1: partly-staged denial keeps marker', True, os.path.exists(MARKER))
+subprocess.run(['git', 'add', 'README.md'], cwd=ROOT, capture_output=True, check=True)
+clear(MARKER)
 
 # 10. merge is refused unconditionally, with no marker and no lib needed
 shutil.move(LIB, LIB + '.hidden')
