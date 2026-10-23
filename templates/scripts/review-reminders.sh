@@ -1,21 +1,23 @@
 #!/usr/bin/env sh
 # PreToolUse hook — blocks git commit/push until the matching review slash command has run,
-# and unconditionally blocks `gh pr merge` outright. /code-review writes
-# .claude/.code-review-ok on an Approve verdict; /change-review writes .claude/.change-review-ok
-# when no finding is Blocking. Each marker authorizes exactly one commit or push attempt for a
-# SPECIFIC diff -- see below.
+# and puts `gh pr merge` to the user as a permission prompt in one canonical form only.
+# /code-review writes .claude/.code-review-ok on an Approve verdict; /change-review writes
+# .claude/.change-review-ok when no finding is Blocking. Each marker authorizes exactly one
+# commit or push attempt for a SPECIFIC diff -- see below.
 #
-# WHY `gh pr merge` gets an unconditional deny instead of a third diff-bound marker: by the
+# WHY a merge gets a permission prompt ("ask") instead of a third diff-bound marker: by the
 # time a PR is mergeable, its diff already passed the commit gate, the push gate, and (per
-# branch protection's required-status-checks with strict:true) CI on the current head -- a
-# third hash gate here would mostly re-verify what's already verified, while adding real
-# fragility (PR-number/--repo parsing, a `gh pr diff` API call inside a hook). The actual gap
-# at merge time isn't diff integrity, it's authorization: merging changes shared history and
-# should never happen without the user deciding to do it in that moment, and a hash can't
-# encode "the user meant this right now." This hook can only ever see commands *this agent*
-# runs -- the user's own terminal is invisible to it -- so an unconditional deny is both
-# correct and total: if this hook fires at all, it's the agent trying to merge, never the
-# user, so there is no legitimate case to allow through.
+# branch protection's required-status-checks with strict:true) CI on the current head. The
+# gap at merge time isn't diff integrity, it's authorization -- the user deciding, in that
+# moment, to merge that PR -- and no marker the agent can write encodes that. The harness's
+# own Allow/Deny prompt is the one per-action approval the agent cannot forge. This replaced
+# an unconditional deny on 2026-10-20, which forced the user to run every merge in a terminal
+# and was never total anyway (escape spellings: docs/backlog/merge-gate-misses-gh-global-
+# flags-graphql-and-powe.md). Measured in the desktop app in auto mode before shipping: the
+# ask stopped for the user's click every time. _review-gate-merge.py decides; only one exact,
+# repo-pinned form with --match-head-commit is ever asked, from the main agent, in a mode
+# that can show a prompt. Everything else still denies. Spec, threat model and the residuals
+# it accepts: docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md.
 #
 # WHY the marker holds a SHA-256 hash of the reviewed diff, not an empty file: an empty
 # marker is trivially fakeable with `touch` -- anyone (or a rushed agent) can satisfy the
@@ -126,6 +128,7 @@ classify_payload() {
 
 verdict=$(classify_payload)
 classifier_rc=$?
+verdict_source=classifier
 
 # WHY a fallback rather than exiting 0: a payload we cannot classify is not evidence the call
 # is safe. python3 absent, the classifier missing, or genuinely malformed JSON all land here.
@@ -150,6 +153,7 @@ if [ -z "$verdict" ]; then
     # `tr` is POSIX and needs no python3 -- which matters here specifically, because this whole
     # branch exists for the case where python3 or the classifier is unavailable. A fallback that
     # depended on the thing it is falling back from would be no fallback at all.
+    verdict_source=fallback
     lower=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')
     fallback_count=0
     fallback_verdict=NONE
@@ -168,9 +172,29 @@ if [ "$verdict" = MULTI ]; then
     exit 0
 fi
 
-# A merge needs no root and no marker -- it is refused unconditionally.
+# A merge needs no root and no marker. It is put to the user as a permission prompt only when
+# _review-gate-merge.py answers ASK; anything else -- a fallback verdict, a missing helper, no
+# python3, a crash -- denies. See the WHY at the top of this file.
 if [ "$verdict" = MERGE ]; then
-    deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run the merge command yourself."
+    merge_decision=""
+    if [ "$verdict_source" = classifier ] && [ -f "$(dirname "$0")/_review-gate-merge.py" ]; then
+        merge_decision=$(printf '%s' "$input" | python3 "$(dirname "$0")/_review-gate-merge.py" 2>/dev/null)
+    fi
+    merge_verdict=$(printf '%s\n' "$merge_decision" | sed -n 1p | tr -d '\r')
+    merge_reason=$(printf '%s\n' "$merge_decision" | sed -n 2p | tr -d '\r')
+    if [ "$merge_verdict" = ASK ]; then
+        ask_reason=$(printf '%s' "$merge_reason" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')
+        printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}\n' "$ask_reason"
+        # Written after the decision, and allowed to fail: a convenience record of what was
+        # asked, not of the user's answer. GitHub's "merged by" is the authoritative record.
+        merge_audit=$(printf '%s\n' "$merge_decision" | sed -n 3p | tr -d '\r')
+        printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$merge_audit" \
+            >> "${CLAUDE_PROJECT_DIR:-.}/.claude/merge-asks.log" 2>/dev/null || true
+    elif [ "$merge_verdict" = DENY ] && [ -n "$merge_reason" ]; then
+        deny "$merge_reason"
+    else
+        deny "This agent merges a pull request only after the merge gate has checked it, and the check could not run here (no classifier verdict, python3 or scripts/_review-gate-merge.py unavailable). Merge in the GitHub UI instead."
+    fi
     exit 0
 fi
 
@@ -307,6 +331,11 @@ case "$verdict" in
         else
             deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
         fi
+        ;;
+    *)
+        # A verdict this hook does not know -- a newer classifier beside an older hook, or
+        # garbage -- must not fall through to exit 0, which is allow.
+        deny "Review gate: unrecognised classifier verdict, so this command cannot be checked. The hook and scripts/_review-gate-classify.py are probably from different versions; run mb upgrade from the main worktree."
         ;;
 esac
 exit 0

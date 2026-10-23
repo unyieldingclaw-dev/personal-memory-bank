@@ -708,6 +708,7 @@ invoke_init() {
                   review-reminders-post.sh review-reminders-post.ps1 \
                   _review-gate-lib.sh _review-gate-lib.ps1 \
                   _review-gate-classify.py _review-gate-classify.ps1 \
+                  _review-gate-merge.py _review-gate-merge.ps1 \
                   warn-stale-review-marker.sh warn-stale-review-marker.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
@@ -2147,6 +2148,8 @@ invoke_upgrade() {
         "scripts/_review-gate-lib.ps1"
         "scripts/_review-gate-classify.py"
         "scripts/_review-gate-classify.ps1"
+        "scripts/_review-gate-merge.py"
+        "scripts/_review-gate-merge.ps1"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
         # Review helper, not a hook. Bash-only ON PURPOSE: it works by extracting check bodies out
