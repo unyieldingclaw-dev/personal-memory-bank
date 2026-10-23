@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Changed
+- **The agent can merge a pull request when the user clicks Allow.** `gh pr merge` was denied
+  unconditionally. The review gate now returns `"ask"` (Claude Code's Allow/Deny prompt) for exactly
+  `gh pr merge <N> -R <owner/repo> --squash|--merge --match-head-commit <40-hex SHA>`, from the main
+  agent in default/acceptEdits/auto mode, and denies every other form, a subagent, other modes, and
+  settings that could approve a merge without a prompt. **Opt-in:** list the repo in a new
+  `.claude/merge-gate.json`, or every merge stays denied. New TEMPLATE_OWNED helpers
+  `scripts/_review-gate-merge.py`/`.ps1`; a missing or crashing helper denies, but a crash of the
+  hook process itself still gives no decision, as before. Unknown classifier verdicts now deny.
+  PMB-only `permissions` add ask/deny rules adopters do not get. Details: `docs/HOOKS-GUIDE.md`
+  (Review Gate) and `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`.
 - **Stage before committing, in a command of its own.** The commit review gate now refuses while
   any tracked change is unstaged when it runs. So `git add X && git commit` in one command, and
   `git commit -a` or `-am`, are refused whenever that leaves a tracked change unstaged at hook

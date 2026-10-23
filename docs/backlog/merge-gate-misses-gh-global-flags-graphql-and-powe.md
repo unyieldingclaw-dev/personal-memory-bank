@@ -343,8 +343,19 @@ contract, and a full `/code-review` and `/change-review`.
 
 ## Related
 
-`docs/backlog/replace-the-gh-pr-merge-deny-with-a-forced-permiss.md` proposes loosening this same
-gate and must not proceed before this fix.
+`docs/backlog/replace-the-gh-pr-merge-deny-with-a-forced-permiss.md` proposed loosening this same
+gate, and said it must not proceed before this fix.
+- **That ordering was overridden on 2026-10-20, with the user's approval.** The canonical form now
+  gets a permission prompt (`docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`).
+  That change widens none of the escapes in this item, because they are classified as not-a-merge
+  either way.
+- **This item stays open.** Two more routes were found while designing that change:
+  - **The desktop app's auto-merge tool**, `mcp__ccd_pr__set_auto_merge`. It is not a Bash call,
+    so no review-gate hook sees it. PMB's settings now deny it.
+  - **A git alias that shells out**, `git -c alias.x='!gh pr merge …' x`. It classifies as
+    `NONE` (measured 2026-10-20), and it may match `Bash(git *)`.
+- **Correction to "Which checkout matters" above.** Linked worktrees **do** carry their own
+  `settings.local.json`: 29 of 38 on this machine on 2026-10-20.
 
 This file owns, and that one does not restate: how the classifiers match, the measured table, the
 auto-mode observation, the adopter reach, and the branch-protection settings. That item does carry
