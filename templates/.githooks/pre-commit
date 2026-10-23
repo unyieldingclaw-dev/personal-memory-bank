@@ -125,7 +125,8 @@ if [ -f .githooks/format-check ]; then
     fi
     if [ "$(git write-tree)" != "$fc_tree_before" ]; then
       mb_refuse "the format check (.githooks/format-check) changed the staged files, so the checks above no longer cover them." "" \
-        "Review what is staged now (git diff --cached) and commit again; the checks then run on it."
+        "After a plain git commit, review what is staged now (git diff --cached) and commit again; the checks then run on it.
+After git commit -a or git commit -- <path>, git has discarded what the script staged; only its edits on disk remain (git status)."
     fi
   fi
 fi

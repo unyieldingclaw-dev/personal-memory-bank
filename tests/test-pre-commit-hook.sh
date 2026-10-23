@@ -379,6 +379,7 @@ fc_install "$R"
 echo messy > "$R/new.json"; git -C "$R" add new.json
 FC_EXTRA='echo tidy > new.json && git add new.json'; try_commit "$R"; FC_EXTRA=
 assert_exit_nonzero "$RC" "fixer re-stages its fix: first commit refused"
+assert_contains "$OUT" "changed the staged files" "fixer re-stages its fix: refusal says the index changed"
 try_commit "$R"
 assert_equals "$RC" "0" "fixer re-stages its fix: commit again succeeds on the fixed content"
 assert_equals "$(git -C "$R" show HEAD:new.json)" "tidy" "fixer re-stages its fix: the fixed content is what was committed"
@@ -391,10 +392,12 @@ fc_install "$R"
 echo staged > "$R/staged.json"; git -C "$R" add staged.json
 echo edit >> "$R/code.txt"
 try_commit "$R" -- code.txt
+assert_equals "$RC" "0" "commit -- code.txt: commit allowed"
 assert_equals "$(fc_got)" "code.txt" "commit -- code.txt: only code.txt, not the other staged file"
 rm -f "$FC_LOG"
 echo edit2 >> "$R/code.txt"
 try_commit "$R" -a
+assert_equals "$RC" "0" "commit -a: commit allowed"
 assert_equals "$(fc_got)" "$(printf '%s\n' code.txt staged.json)" "commit -a: tracked edit plus the staged file"
 
 echo ""
