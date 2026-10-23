@@ -13,6 +13,17 @@ lineage: []
 
 # Progress
 
+## 2026-10-23 — PR #81 merged: the merge deny became a user-clicked permission prompt
+
+- Detail and open items (G1-G3, unpushed `327c6c2`): `[NS-65]` in `activeContext.md`; spec
+  `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`.
+
+## 2026-10-20 — PRs #77 (`1b086c7`) and #58 (`25515a2`) merged
+
+- **#77:** the review gate's empty-diff denial now names the root it checked (`review-reminders` sh/ps1 + templates
+  mirrors); J5-1 path pinned in `tests/test-review-reminders.sh`. Merged 2026-10-19.
+- **#58:** `docs/CLAUDE-CODE-PLUGINS.md` limits external skill-library guidance to actual plugin choices.
+
 ## 2026-10-20 — PRs #59 (`5c6f8e4`) and #71 (`2c4088f`) merged
 
 - **#59:** `update-reviewed.sh` bash fallback: no file loss on a backslash Windows path, stdin read under a
@@ -55,28 +66,15 @@ lineage: []
 
 ## 2026-10-14 — PR #55 opened (WARN-tier hooks → JSON); its review's findings recorded
 
-- PR #55 got `/code-review` Approve and `/change-review` Approve with conditions in its worktree,
-  and is open for the user to merge (`[NS-66]`). Its review found four pre-existing hook defects, now `[NS-67]`.
-- Recorded from the main checkout, since a worktree may not edit `memory-bank/`. Funded by moving
-  "Earlier Work" out verbatim; see its stub below.
+Moved verbatim to `docs/archive/progress-2026-10-13-and-10-14-reconciliation-and-pr55.md`.
 
 ## 2026-10-13 — Memory-bank reconciliation committed after an 8-day pause
 
-- `/code-review` passed (Opus Approve) once the session resumed. A wiped scratchpad was handled by
-  re-deriving every reviewed figure, so the diff was proven unchanged before Step 5.
-- The merge-gate order is now in [NS-65] (user decision). The archive header's reproducer now cites
-  `3cadb06`; its `47,109` range was true only of the uncommitted working file.
+Moved verbatim to `docs/archive/progress-2026-10-13-and-10-14-reconciliation-and-pr55.md`.
 
 ## 2026-10-05 — PRs #51 (`07e3bd2`) and #53 (`3cadb06`, [NS-19]) merged
 
-- **#53:** `/change-review` approved it with conditions. The CHANGELOG `mb plan promote` entry
-  blamed `awk`; the shipped bug was `sed -i`. Corrected here. Its parity and test gaps are listed
-  in the PR #53 body.
-- **A reviewer subagent ran `git commit` inside a script file**, which the PreToolUse gate cannot
-  see. It targeted a scratch repo, and the reflog was clean.
-  `docs/backlog/review-gate-is-bypassed-by-a-git-verb-held-in-a-va.md` already measured that case.
-- **`mb verify-integrity` flagged all five files** against a PowerShell-written baseline, which
-  holds uppercase hashes. That is [NS-36], live.
+Moved verbatim to `docs/archive/progress-2026-10-05-prs-51-and-53.md`.
 
 ## 2026-10-04 — `mb doctor --check` and pre-push Check 7 (PR #51)
 
