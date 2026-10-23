@@ -12,8 +12,13 @@ one to the change it caused):
 - **Revision 3:** an Opposition re-review of revision 2, Approve with conditions, all applied.
 - **Revision 4:** a third Opposition pass on revision 3 and contract v1, Request Changes, all
   applied.
-- **Implementation:** `/code-review` Approve. Its non-blocking doc findings are corrected in this
-  revision: the crash-path wording, §7's worktree claim, and the §5.3 audit-field order.
+- **Implementation:** `/code-review` Approve. Its first non-blocking doc findings were corrected:
+  that a hook-process crash still gives no decision, §7's worktree claim, and the §5.3 audit-field
+  order. The second round found the ask-rule backstop still stated as fact and "both shells" wrong
+  for the PowerShell matcher; the follow-up (branch `merge-gate-followup`) corrects those.
+- **Follow-up:** the non-blocking test and hardening findings of both `/code-review` rounds and
+  `/change-review`: allow rules also matched as wildcards (§5.5), the twins' JSON and regex
+  divergences aligned (§5.1, §5.3), `GH_CONFIG_DIR` denied (§5.1), and the tests in §9.
 
 **Line numbers in §1 describe the code before this change**, at `origin/main` `25515a2`.
 
@@ -204,6 +209,15 @@ match:
     can change.
   - The allowed `owner/repo` comes from a tracked file, so adopters set their own; for PMB it is
     the value shown above.
+  - **The agent can edit that file**, like any file in the project. Adding a repo widens which
+    repo a prompt may name, and the prompt still names it, so the user's click still decides. It
+    is a convenience allowlist, not an authorization boundary.
+  - **Its size is capped**, because the allow-rule check probes every rule with every listed repo
+    (§5.5), so the list sets that check's cost. At most 10 repos, each part at most 100
+    characters; a longer list denies as not configured. Uncapped, 10,000 repos took 42.6 s against
+    388 rule entries, which were this machine's 194 rules read twice, from the main checkout and
+    from a worktree holding the same files (measured by the follow-up's first `/code-review`
+    Opposition pass, 2026-10-21).
   - Flag order is fixed. Exactly one space separates tokens, with no quotes.
 - **Character rules:**
   - Printable ASCII only. No `\r`, `\n`, `;&|()$`<>#"'\{}`, and no `=`.
@@ -222,7 +236,21 @@ match:
   form costs nothing, and the deny prints the exact form to use. One consequence to expect: this
   repo's sessions habitually lead commands with `cd "<repo>" &&`. A merge led that way is denied,
   and with `-R` the `cd` is not needed.
-- **The hook denies if `GH_HOST` or `GH_REPO` is set in its own environment.**
+- **The hook denies if `GH_HOST`, `GH_REPO` or `GH_CONFIG_DIR` is set in its own environment.**
+  - `GH_CONFIG_DIR` names the gh config whose hosts decide where an unprefixed `-R owner/repo`
+    resolves. Measured 2026-10-21 with gh 2.102.0: a config listing only `ghe.invalid` sent
+    `gh pr view 1 -R cli/cli` to that host.
+  - **Out of scope:** `GH_TOKEN` and `GH_ENTERPRISE_TOKEN`. They change which account merges, not
+    which PR in which repo, and the prompt makes no claim about the account. Denying them would
+    also deny every merge for a user who keeps `GH_TOKEN` set.
+  - **Residual, not denied:** `XDG_CONFIG_HOME`, `AppData` on Windows, and `HOME`. When
+    `GH_CONFIG_DIR` is unset, gh looks for its config under them, in that order (`gh help
+    environment`, gh 2.102.0), so each can retarget `-R` the same way. `HOME` is set everywhere
+    and `AppData` in every Windows session, so denying them would deny every merge;
+    `XDG_CONFIG_HOME` is set on many Linux desktops, and denying it would deny every merge on
+    those. Editing the default gh config has the same effect with no variable at all, and the
+    hook cannot see that either.
+    Retargeting also needs credentials on the other host and the same `owner/repo` there.
 - **Out of scope for the canonical form:** `--admin`, `--auto`, `--delete-branch`, `--rebase`,
   body and subject flags, branch or URL selectors, and `cd` prefixes. Every one of them is denied.
 
@@ -254,12 +282,25 @@ Evaluated top to bottom; the first match wins.
 | `MULTI` | deny |
 | The top-level key `agent_id` is **present** in the parsed payload, whatever its value | deny: "subagents never merge" |
 | `permission_mode` (parsed, exact match) is not in {`default`, `acceptEdits`, `auto`} | deny |
-| `GH_HOST` or `GH_REPO` is set in the hook's environment | deny |
+| `GH_HOST`, `GH_REPO` or `GH_CONFIG_DIR` is set in the hook's environment | deny, generic message |
+| `.claude/merge-gate.json` is missing, unreadable or not strict JSON | deny: "not configured … missing or malformed" |
+| It is not an object whose `repos` is a non-empty list of `owner/repo` strings | deny: "not configured … must list repos" |
 | A `PermissionRequest` hook is configured in user, project or local settings (§5.5) | deny, generic message |
-| Any of those settings files allows a merge-capable prefix (§5.5) | deny, generic message |
-| Any of those settings files exists but is unreadable or malformed | deny, generic message |
+| Any of those settings files has a merge-capable allow rule (§5.5) | deny, generic message |
+| Any of those settings files exists but is unreadable, not strict JSON, or not an object | deny, generic message |
 | The raw command fails the §5.1 full match | deny, and print the canonical form |
+| `tool_input.description` is present and not exactly the fixed string (§5.4) | deny, and print the string |
 | Otherwise | **ask** |
+
+The allowlist is read before the settings files because the allow-rule check probes each rule
+with the allowlisted repos (§5.5). **"Strict JSON"** means RFC 8259 in both twins: no comments,
+trailing commas, `NaN`/`Infinity`, single quotes or bare keys. PowerShell 7's `ConvertFrom-Json`
+accepts all of those, and Python's `json` accepts `NaN` (measured 2026-10-21), so the twins used
+to disagree. A one-element JSON array used to read as the object inside it in the PowerShell twin.
+**Known residual:** a settings file with two keys that differ only in case (`permissions` and
+`Permissions`) is denied by the PowerShell twin, whose `ConvertFrom-Json` refuses it. The Python
+twin reads the exact-case key. The divergence costs at most a needless deny in the PowerShell
+twin.
 
 **The "generic message"** is "Merge gate precondition failed. Ask the user to check this checkout's
 Claude settings." It names no file and no rule. A message naming the file that holds a
@@ -279,6 +320,7 @@ The ask's `permissionDecisionReason` is built only from the validated match:
 - **Audit:** on every ask, the hook appends a tab-separated line, `ts, permission_mode, repo, N,
   sha`, to `.claude/merge-asks.log`. That file is ignored by `*.log` at `.gitignore:54`.
   - The hook writes it **after** printing the decision, and ignores any failure.
+  - Both twins end the line with LF, so one file can hold lines from either.
   - It records asks, not the user's answers.
   - The agent can write to it, so it is not tamper-evident.
   - It lives under the project directory the hook resolves (`CLAUDE_PROJECT_DIR`, else the hook's
@@ -312,7 +354,55 @@ allow becomes a zero-click merge path.
     overrides a hook's ask. Denying these shapes makes the question moot, which is cheaper than
     measuring it;
   - `Bash(*)` or `PowerShell(*)`;
-  - wildcard interpreter one-liners (python, node, pwsh `-c`/`-e`/`-Command` forms).
+  - wildcard interpreter one-liners (python, node, pwsh `-c`/`-e`/`-Command` forms);
+  - **any rule that matches a merge as a wildcard pattern.** Each rule is also matched the way
+    Claude Code matches it (`*` is any run of characters, a trailing `:*` means ` *`) against
+    fixed probes. The probes are the canonical form with `--squash` and with `--merge`, the REST
+    route and `gh -R <repo> pr merge`, for each allowlisted repo, plus `gh pr merge 1 --squash`.
+    That catches `gh pr m*`, `g*` or `*merge*`, which no shape names. The shapes stay, because
+    they catch what no fixed probe can, such as an exact `gh pr merge <N> …` rule.
+  - **What neither catches:** a rule with a wildcard ahead of a PR number or SHA the probes do
+    not use, such as `gh pr m* 77*` or `*pr merge 77*`. A rule that pins the number after a
+    literal `gh pr merge`, such as `gh pr merge 77*`, is caught by its shape. Whether Claude
+    Code's legacy `X:*` also matches a bare `X` is unmeasured; the matcher reads it only as `X *`.
+  - **What runs this check at all:** only a command the classifier labels a merge. A spelling it
+    labels `NONE`, such as `gh -R <repo> pr merge` or `gh --repo <repo> pr merge`, never reaches
+    the helper, so an allow rule for it is the escape-spelling gap in §1, not something this check
+    can close. An uppercase `GH`, `gh.exe` and a path-prefixed `/usr/bin/gh` do classify as a
+    merge, in both twins (measured 2026-10-23), so the canonical check sees and denies them.
+  - **Its cost is limited except by file size, and it fails closed at its limits.** A hook that
+    outruns its timeout gives no decision, and the settings are writable by the agent. A regex
+    glob (`*` as `.*`) backtracked exponentially: 10 stars took 23 s (measured 2026-10-21). So
+    the wildcard matcher is a greedy one with a single backtrack point, at worst rule length ×
+    probe length, and both twins share three limits: a 200,000-step budget over the whole check,
+    after which a rule counts as merge-capable; a rule length of 4,096 (UTF-16 units in
+    PowerShell, code points in Python; see below), above which a rule counts as merge-capable
+    unread; and the repo cap in §5.1. Whitespace is stripped with a plain
+    character-set strip, because a regex strip was quadratic in rule length: 33 ms per
+    4,092-character rule in the Python twin and 6.4 ms in the PowerShell one (measured
+    2026-10-23), with no cap on the number of rules. The file size itself is not capped, so
+    nothing fails closed on it; what remains grows linearly with it. This machine's real settings,
+    194 rules at the time, used about 1,085 steps (`/code-review` round 2, 2026-10-22).
+  - **None of this stops an agent that can write a settings file.** The same write can set
+    `disableAllHooks` (a documented Claude Code setting, not exercised here) and remove the whole
+    hook layer. The limits guard against accidents, such as
+    a "don't ask again" rule, and against a hook that stalls; they are not a defence against a
+    hostile settings writer.
+  - **Both twins read a rule alike, with two known differences, both toward deny.** Whitespace,
+    word boundaries and case are spelled out instead of `\s`, `\b` and case-insensitive matching.
+    Python's `\s` also holds `\x1c`-`\x1f`, and case folding of the Kelvin sign and the long s
+    differs between the engines (measured 2026-10-21). Both twins fold ASCII letters only, and
+    otherwise compare case-exactly and ordinally.
+    - The PowerShell twin uses `[string]::Equals(…, Ordinal)`, never `-ceq` or `-ccontains`.
+      Those are culture-aware: they treated a settings key, mode or description with U+200B
+      appended as equal to the real one, so a decoy key placed first hid the real one from that
+      twin only (measured 2026-10-23).
+    - The known differences, measured 2026-10-23, are left as they are and have no fixture. The
+      rule-length cap counts UTF-16 code units in PowerShell and code points in Python, so a rule
+      of characters outside the Basic Multilingual Plane reaches it sooner in PowerShell. And
+      `ConvertFrom-Json` turns a date-like rule such as `2026-01-01T00:00:00` into a `DateTime`,
+      which PowerShell then counts as merge-capable for not being a string. In each, PowerShell
+      denies where Python asks.
   - **Why this is a per-merge check:** P1 (§7) is a one-time cleanup, and clicking "don't ask
     again" on any ordinary `gh api` read writes such a rule back. Worktrees also inherit the file.
   - The exact prefix list lives in the hook and its tests, not in this public spec.
@@ -329,13 +419,20 @@ allow becomes a zero-click merge path.
       `npx *` can execute arbitrary code.
     - The escape-spelling fix and a later rule audit own these routes. P1 does not close them.
   - a plugin `PermissionRequest` hook, until the doctor follow-up lands;
-  - settings sources the hook does not read: managed or policy settings, `--settings`/SDK-supplied
-    settings, and a non-default `CLAUDE_CONFIG_DIR`;
+  - settings sources the hook does not read: managed or policy settings, and
+    `--settings`/SDK-supplied settings. The user settings file is read from `CLAUDE_CONFIG_DIR`
+    when the hook's environment sets it, else from `~/.claude`. If Claude Code reads user settings
+    from somewhere the hook's environment does not point at, the hook checks the wrong file;
+    whether that can happen is unmeasured;
   - `GH_HOST` set in the Bash tool's own shell (an env file or a profile), which the hook's
     environment check cannot see. That risk is low while only github.com is authenticated;
   - a `gh` function, alias or earlier-on-PATH binary in the user's shell. That would run under an
     approval for the canonical text. Planting one means writing outside the project, which prompts
     in default mode.
+- **Residuals recorded where they arise**, not repeated in the list above: the gh config
+  retarget through `XDG_CONFIG_HOME`, `AppData` or `HOME` (§5.1), a wildcard rule that pins a PR
+  number the probes do not use, an agent that writes a settings file, and the two twin
+  differences in reading a rule (all three earlier in §5.5).
 
 ### 5.6 App and MCP merge routes (Opposition S7)
 
@@ -371,6 +468,9 @@ The backlog asked that a crash on the merge path deny. A deny cannot be had chea
   `PowerShell(gh pr merge:*)` to the tracked `.claude/settings.json`.
 - A crash then **prompts without the hook's checks** (subagent, mode, form). It does not run
   silently.
+- **Only for `gh pr merge` spellings.** The classifier also labels the REST route
+  (`gh api … /pulls/N/merge`) a merge, and no ask rule matches it, so a crash on that route still
+  gives no decision.
 - **This is a deviation from the backlog.** Adopters do not get the rules, because `mb upgrade`
   owns `permissions`, [NS-50](a). For them a crash still means no decision.
 - **The docs' claim that an ask rule prompts even in auto mode is unmeasured here.** G1 adds a
@@ -500,14 +600,40 @@ file. It runs against both twins and covers:
   - `agent_id` present: as null, as `""`, and as an id.
   - `permission_mode` set to `bypassPermissions`, `dontAsk` or `plan`, or missing.
   - Look-alike JSON text inside the command does not spoof the mode or `agent_id`.
+  - A `permission_mode` or `description` with U+200B appended denies, and so does a decoy
+    `command` key with U+200B appended, placed before the real one.
 - **Environment and settings:**
-  - `GH_REPO` or `GH_HOST` set in the environment.
+  - `GH_REPO`, `GH_HOST` or `GH_CONFIG_DIR` set in the environment.
   - A fixture settings file with a `PermissionRequest` hook.
-  - A fixture with each merge-capable allow prefix.
-  - A malformed settings file.
+  - A fixture with each merge-capable allow prefix, and with rules caught only as wildcards.
+  - One merge-capable rule in each of the user, project and local settings files.
+  - Rules with Unicode or `\x1c` whitespace, and an ASCII-case variant, denied in both twins; a
+    long-s look-alike still asks.
+  - A malformed settings file, and each non-strict JSON form (comment, trailing comma, `NaN`,
+    single quotes, a one-element array).
   - An unreadable settings file.
+  - A decoy key with U+200B appended, placed before the real `permissions`, `allow`, `hooks` or
+    `PermissionRequest` key, denies; a decoy `repos` key in `merge-gate.json` does not replace
+    the allowlist; and `Bash(*` + U+200B + `)` and `Bash(:*` + U+200B + `)` rules ask. All in both
+    twins.
+- **Bounds:** a 15-star rule is answered in under 30 s by both twins together. A file of 3,000
+  whitespace-padded `Read` rules is answered by each twin, timed on its own, in under 8 s; the
+  old regex strip would take about 99 s in the Python twin and 19 s in the PowerShell one. Each
+  twin runs under `timeout 60` where timeout(1) exists, so a regression fails its row instead of
+  hanging the suite. An over-long rule, 600 rules that
+  exhaust the step budget, more than 10 repos, and an over-long owner each deny; 50 of the same
+  rules still ask. The strip's character set and the whitespace class are checked to be the same
+  set, in both twins.
+- **Matcher paths:** `Bash(g*:*)` needs the trailing `:*` reading, `Bash(gh pr m*e 1 --squash*)`
+  the trailing-star loop, and `Bash(* --merge --match-head-commit*)` the `--merge` probe; each
+  denies, in both twins.
+- **Twin output:** every case asserts exit 0 in both twins, and selected deny rows assert which
+  check denied, by a substring of the reason. The generic message is shared by every §5.5
+  precondition, so its substring cannot tell them apart. The audit line is checked in both twins
+  as one line with every field anchored, and as bytes: the last byte is LF and there is no CR.
 - **Canonical check failures:**
-  - a forced exception inside the check denies;
+  - a helper that crashes denies, at the hook level ("merge helper crashes"). The helper's own
+    exception-to-deny handler has no fixture that forces an exception inside it;
   - an allowlisted value containing `.` does not match `x`;
   - an allowlisted value that fails `owner/repo` validation denies.
 - **Description:** a custom `description` denies. An absent one, or the exact fixed string, gives
@@ -527,13 +653,32 @@ file. It runs against both twins and covers:
 Other suites:
 - **`tests/merge-gate.Tests.ps1`** (new, CI-run by Pester): the same fixture table, run against the
   PowerShell helper.
-- **Targeted existing suites:** `test-mb-init.sh`, `test-mb-upgrade.sh` and
-  `test-mirror-parity.sh`. They prove the helpers ship through all five `mb` lists and that the
-  hook wiring is unchanged.
-- **`tests/gate_matrix.py`:** add an `ASK` outcome to `run_hook()`, whose current `ALLOW` default
-  would hide a regression from ask to allow. It is only ever run through `mutate.py`, on a copy.
+- **Targeted existing suites:** `test-mb-init.sh`, `test-mb-upgrade.sh`, `mb-setup.Tests.ps1` and
+  `test-mirror-parity.sh`. The first three assert that both helpers exist after `mb init` (bash
+  and PowerShell) and after `mb upgrade` (bash), which covers three of the five `mb` lists:
+  `mb.sh`'s init list and TEMPLATE_OWNED, and `mb.ps1`'s init list. **Not exercised by any test:**
+  `mb.ps1`'s governance-missing list and its TEMPLATE_OWNED. `test-mirror-parity.sh` checks that
+  the hook wiring is unchanged.
+- **`tests/test-review-gate-lib-presence.sh`:** the shared presence check (`mb.sh` doctor and CI)
+  reports each missing helper. `mb.ps1`'s doctor carries the same two checks inline.
+- **`tests/gate_matrix.py`:** `run_hook()` reports an `ASK` outcome, whose absence would let a
+  regression from ask to no decision read as `ALLOW`. Row 10a puts the canonical form through the
+  bash hook with its own project and config directories and expects `ASK`. The matrix is only
+  ever run on a throwaway copy.
 
-**Mutations to prove:** each of these must turn a test red.
+**Mutations to prove:** each of these must turn a test red. `tests/mutate-merge-gate.sh` applies
+them to a temporary copy of `scripts/`, in both twins where the guard exists in both, and exits 1
+on any survivor. It is run by hand, not by `tests/run.sh`. Its KILLED means the harness's own
+fixture changed decision, which approximates, not proves, a red suite row. Beyond the list below
+it also covers the fallback-verdict guard, `GH_CONFIG_DIR`, the project settings file, the
+wildcard probes (all of them, and the `--merge` one alone), the matcher's trailing `:*` reading
+and trailing-star loop, the step budget, the rule-length and repo-count caps, ASCII folding, whitespace
+stripping (rule edges, body edges, trailing), strict JSON (`NaN` in Python; comments and
+`-NoEnumerate` in PowerShell), the PowerShell audit line's LF, and the PowerShell twin's ordinal
+comparisons of keys, mode, description and both halves of the bare-star body (`*` and `:*`),
+each reverted to `-ceq` or `-ccontains`. **Not covered:** the helper's own exception-to-deny
+handler (below), for want of a way to force an exception inside it; and the ordinal comparison of
+the merge method, whose input the canonical regex has already limited to `--squash` or `--merge`.
 - ask changed to allow;
 - the `agent_id` check removed;
 - the mode check removed;
@@ -541,7 +686,7 @@ Other suites:
 - `\z` changed to `$`, in PowerShell;
 - the allow-rule check removed;
 - `re.escape` removed;
-- the exception-to-deny handler removed;
+- the exception-to-deny handler removed (not in the harness: see above);
 - the case-sensitive match changed to a case-insensitive one;
 - the repo allowlist removed;
 - relaxing the full match, for example by adding `.*` at its end. The implementation has no
@@ -568,7 +713,7 @@ Run the targeted suites in both shells. Do not run `tests/run.sh`, which is not 
 | Opp S2: G1 could not prove auto mode | §3: G0 in the app before implementation; headless auto ran as `default` |
 | Opp S3: agent-written description | §3 G0 step 4; §5.4 |
 | Opp S4: `PermissionRequest` resolvers | §5.5 |
-| Opp S5: mobile and Remote Control | §3 G0 step 7 |
+| Opp S5: mobile and Remote Control | §3 G0 step 7, which was not run: mobile approval stays unverified |
 | Opp S7: auto-merge tool | §5.6: denied, as of revision 4 by a `permissions.deny` rule |
 | Opp N1: auto-merge inert on PMB | §1 and §7 reworded |
 | Opp N2: bypass row overreach | §5.8 reworded |
@@ -592,7 +737,7 @@ four spec conditions, and G0 then passed.
 | S2: P1 does not remove every zero-click route; allow rules versus the hook's ask | §5.5: residuals stated (git alias, test and npm scripts); `gh pr` / `gh pr merge` rule shapes denied; `git *` deliberately excluded |
 | S3: the deny message names the silent route | §5.3 generic message; §9 test |
 | S4: the deferral rationale contradicted §5.5 | §5.5 plugin residual stated with a measurement; §11 says follow-up |
-| S5: "denies every merge until P1" is false in 9 worktrees | §7 corrected; G3 after P1 is procedural |
+| S5: "denies every merge until P1" is false in 9 worktrees | §7 corrected, then corrected again after implementation: worktree sessions run the main checkout's hooks, so the claim about those 9 worktrees is withdrawn; G3 after P1 is procedural |
 | S6: helper-missing and ask-rule crash path unmeasured | §5.2 skew cases; §9 helper-missing tests; G1(b) |
 | Nits: stale §5.8; header against contract; #78 shares `run.sh` and `CHANGELOG`; NS-50 in PMB; G0 never clicked Allow | all reworded (§5.7, §5.8, §8, §9 G3) |
 
