@@ -78,17 +78,21 @@ with open(sys.argv[1], "w", encoding="utf-8") as f:
 }
 
 # run_sh / run_ps1 <payload-file> [scripts-dir]  -> hook stdout (stderr dropped, as in production)
+# LIMIT, when a row sets it, prefixes the hook with `timeout N`, so a hang fails that row (exit 124)
+# instead of stalling the suite. Empty where timeout(1) is missing (stock macOS).
 run_sh() {
   local dir="${2:-$REPO_ROOT/scripts}"
   (cd "$PROJ" && env -u GH_HOST -u GH_REPO -u GH_CONFIG_DIR CLAUDE_PROJECT_DIR="$(native "$PROJ")" \
-     CLAUDE_CONFIG_DIR="$(native "$CFG")" ${EXTRA_ENV:-} bash "$dir/review-reminders.sh" < "$1" 2>/dev/null)
+     CLAUDE_CONFIG_DIR="$(native "$CFG")" ${EXTRA_ENV:-} ${LIMIT:-} bash "$dir/review-reminders.sh" < "$1" 2>/dev/null)
 }
 run_ps1() {
   local dir="${2:-$REPO_ROOT/scripts}"
   (cd "$PROJ" && env -u GH_HOST -u GH_REPO -u GH_CONFIG_DIR CLAUDE_PROJECT_DIR="$(native "$PROJ")" \
-     CLAUDE_CONFIG_DIR="$(native "$CFG")" ${EXTRA_ENV:-} \
+     CLAUDE_CONFIG_DIR="$(native "$CFG")" ${EXTRA_ENV:-} ${LIMIT:-} \
      pwsh -NoProfile -NonInteractive -File "$(native "$dir/review-reminders.ps1")" < "$1" 2>/dev/null)
 }
+TIMEOUT=""
+command -v timeout >/dev/null 2>&1 && TIMEOUT="timeout"
 
 # expect <ask|deny|none> <label> <payload-file> [scripts-dir] [reason-substring] -- runs BOTH twins.
 # Every outcome must also exit 0: a non-zero exit after a printed decision would run the wiring's
@@ -229,12 +233,14 @@ for target in "$CFG/settings.json" "$PROJ/.claude/settings.json" "$LOCAL"; do
 done
 
 # The first rows are rule shapes; from 'Bash(gh pr m*)' on they are caught by matching each rule
-# as a wildcard pattern against the merge spellings, as Claude Code would.
+# as a wildcard pattern against the merge spellings, as Claude Code would. The last three need,
+# in turn, the matcher's trailing :* reading, its trailing-star loop, and the --merge probe.
 for rule in 'Bash' 'Bash(*)' 'PowerShell(*)' 'Bash(gh *)' 'Bash(gh:*)' 'Bash(gh api *)' \
             'Bash(gh -R acme/x *)' 'Bash(gh pr *)' 'Bash(gh pr merge:*)' 'PowerShell(gh pr merge *)' \
             "Bash(python3 -c ' *)" 'Bash(node -e *)' "Bash(pwsh -NoProfile -Command ' *)" \
             'Bash(Python3 -c *)' 'Bash(gh pr m*)' 'Bash(g*)' 'Bash(gh a*)' 'Bash(*merge*)' \
-            'Bash(gh * pr merge *)' 'Bash(gh pr * -R acme/web.app *)'; do
+            'Bash(gh * pr merge *)' 'Bash(gh pr * -R acme/web.app *)' \
+            'Bash(g*:*)' 'Bash(gh pr m*e 1 --squash*)' 'Bash(* --merge --match-head-commit*)'; do
   put_allow "$LOCAL" "$rule"
   expect deny "merge-capable allow rule: $rule" "$F" "" "$R_GENERIC"
   assert_not_contains "$LAST_OUT_SH$LAST_OUT_PS1" "settings.local" "deny for '$rule' names no settings file (both twins)"
@@ -242,7 +248,7 @@ for rule in 'Bash' 'Bash(*)' 'PowerShell(*)' 'Bash(gh *)' 'Bash(gh:*)' 'Bash(gh 
 done
 # Whitespace the two regex engines' \s disagree on (\x1c-\x1f), and Unicode whitespace that
 # Python's old re.ASCII interpreter check missed: both twins now read them alike.
-for expr in '"Bash(python3 -c *)"' '"Bash(python3\x1c-c *)"' '"\x1cBash(*)"' \
+for expr in '"Bash(python3" + chr(0x2003) + "-c *)"' '"Bash(python3\x1c-c *)"' '"\x1cBash(*)"' \
             '"Bash( * )"' '"Bash(*) "' '"Bash(\x1c*)"' '"Bash(*)\x1c"'; do
   put_allow_expr "$LOCAL" "$expr"
   expect deny "merge-capable allow rule with unusual whitespace: $expr" "$F" "" "$R_GENERIC"
@@ -254,16 +260,31 @@ for rule in 'Bash(git *)' 'Bash(gh pr view *)' 'Bash(npm run *)' 'Bash(gh apix *
 done
 # The long s case-folds to s in Python's Unicode IGNORECASE but not in .NET's, so the interpreter
 # check folds ASCII letters only, in both twins.
-put_allow_expr "$LOCAL" '"Bash(baſh -c *)"'
+put_allow_expr "$LOCAL" '"Bash(ba" + chr(0x17f) + "h -c *)"'
 expect ask "a non-ASCII look-alike letter is not folded into an interpreter name" "$F"
 
-echo "--- the settings check is bounded, and fails closed at its bounds ---"
+echo "--- the settings check stays fast on hostile settings, and fails closed at its caps ---"
 # A regex glob took 23 s on a 10-star rule (2026-10-21); a hook past its timeout gives no
-# decision. This rule has 15, and both twins must answer well inside the timeout.
+# decision. This rule has 15. Each twin runs under timeout(1), so a regression fails the row
+# (exit 124) rather than hanging the suite.
 put_allow_expr "$LOCAL" '"Bash(" + "*0" * 14 + "*x)"'
 started=$SECONDS
-expect ask "a many-star rule that matches no merge is answered, not stalled on" "$F"
+LIMIT="${TIMEOUT:+$TIMEOUT 60}" expect ask "a many-star rule that matches no merge is answered, not stalled on" "$F"
 assert_equals "$(( SECONDS - started < 30 ))" 1 "both twins answer the many-star rule in under 30 s (took $(( SECONDS - started )) s)"
+# A regex whitespace strip was quadratic and ran on every rule before any cap: 1,000 long Read
+# rules took 36.7 s (2026-10-22). The strip is now a plain character-set strip.
+python3 -c 'import json,sys; json.dump({"permissions": {"allow": ["Read(" + " " * 4085 + "x)"] * 1000}}, open(sys.argv[1], "w"))' "$LOCAL"
+started=$SECONDS
+LIMIT="${TIMEOUT:+$TIMEOUT 60}" expect ask "1,000 long whitespace-padded non-Bash rules are answered, not stalled on" "$F"
+assert_equals "$(( SECONDS - started < 30 ))" 1 "both twins answer the long-rule file in under 30 s (took $(( SECONDS - started )) s)"
+# The strip's character set and the matching regex class are two spellings of one set.
+ws_ok=$(python3 -I -B -c '
+import importlib.util, re, sys
+s = importlib.util.spec_from_file_location("m", sys.argv[1]); m = importlib.util.module_from_spec(s)
+s.loader.exec_module(m)
+print(set(m.WS_CHARS) == {chr(c) for c in range(0x3100) if re.fullmatch(m.WS, chr(c))})
+' "$(native "$REPO_ROOT/scripts/_review-gate-merge.py")")
+assert_equals "$ws_ok" "True" "[py] WS_CHARS holds exactly the characters the WS class matches"
 put_allow_expr "$LOCAL" '"Bash(" + "x" * 4100 + ")"'
 expect deny "a rule longer than the length cap counts as merge-capable" "$F" "" "$R_GENERIC"
 # 600 near-miss rules spend more than the shared step budget, which then counts as merge-capable.

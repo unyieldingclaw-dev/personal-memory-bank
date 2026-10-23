@@ -18,6 +18,8 @@ $script:MergeGateGhEnv = @('GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR')
 # The same strings as WS and END in the .py twin, used instead of \s, \b and -match's IgnoreCase,
 # which differ between .NET and Python.
 $script:MergeGateWs = '[\t\n\x0b\x0c\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]'
+# The same set as characters, as WS_CHARS in the .py twin (WHY there: a regex strip is quadratic).
+$script:MergeGateWsChars = [char[]](@(0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x85, 0xa0, 0x1680) + (0x2000..0x200a) + @(0x2028, 0x2029, 0x202f, 0x205f, 0x3000))
 $script:MergeGateEnd = '(?![A-Za-z0-9_])'
 # The same limits as MAX_REPOS, MAX_RULE_LENGTH and GLOB_BUDGET in the .py twin, with the WHY there.
 $script:MergeGateMaxRepos = 10
@@ -38,7 +40,7 @@ function ConvertFrom-MergeGateJson {
 
 function Get-MergeGateTrimmedText {
     param([string]$Text)
-    $Text -creplace ('\A' + $script:MergeGateWs + '+|' + $script:MergeGateWs + '+\z'), ''
+    $Text.Trim($script:MergeGateWsChars)
 }
 
 function Get-MergeGateProbeCommand {

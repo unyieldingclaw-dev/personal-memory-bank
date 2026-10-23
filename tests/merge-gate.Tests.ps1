@@ -115,11 +115,22 @@ Describe '_review-gate-merge.ps1' {
         @{ Rule = 'Bash(git *)'; Expected = $false }
         @{ Rule = 'Bash(gh apix *)'; Expected = $false }
         @{ Rule = 'Bash(gh pr .*)'; Expected = $false }
+        @{ Rule = 'Bash(g*:*)'; Expected = $true }
+        @{ Rule = 'Bash(gh pr m*e 1 --squash*)'; Expected = $true }
+        @{ Rule = 'Bash(* --merge --match-head-commit*)'; Expected = $true }
     ) {
         Test-MergeGateCapableRule $Rule (Get-MergeGateProbeCommand @('acme/web.app')) | Should -Be $Expected
     }
 
-    It 'answers a many-star rule in linear time and fails closed at its bounds' {
+    It 'keeps its whitespace character set and regex class in step' {
+        $set = @{}
+        foreach ($c in $script:MergeGateWsChars) { $set[[int]$c] = $true }
+        $mismatch = @(0..0x30FF | Where-Object { ([string][char]$_ -cmatch ('\A' + $script:MergeGateWs + '\z')) -ne $set.ContainsKey($_) })
+        $mismatch.Count | Should -Be 0
+        (Get-MergeGateTrimmedText ([string][char]0x3000 + 'x' + [char]0x1c)) | Should -BeExactly 'x'
+    }
+
+    It 'answers a many-star rule quickly and fails closed at its bounds' {
         $probes = Get-MergeGateProbeCommand @('acme/web.app')
         $sw = [Diagnostics.Stopwatch]::StartNew()
         Test-MergeGateCapableRule ('Bash(' + ('*0' * 14) + '*x)') $probes | Should -Be $false

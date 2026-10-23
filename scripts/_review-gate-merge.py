@@ -20,8 +20,9 @@ lifts $(...) and backticks into nested segments, skips VAR= prefixes and wrapper
 accepts any path ending in gh. Any of those would let `<canonical merge>; <anything>` pass as
 canonical while the prompt describes only the merge.
 
-WHY no \\A / \\z: Python before 3.14 rejects \\z as a bad escape (measured on 3.11.9), and
-re.fullmatch already anchors both ends without accepting a trailing newline, which $ would.
+WHY the canonical regex has no \\z: Python before 3.14 rejects \\z as a bad escape (measured on
+3.11.9), and re.fullmatch already anchors both ends without accepting a trailing newline, which
+$ would.
 """
 import json
 import os
@@ -54,15 +55,22 @@ GH_ENV = ('GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR')
 # and case folding differs for the Kelvin sign and the long s). This class is Python's \s set
 # exactly; the .ps1 twin uses the same string, and both match ASCII-lowercased text case-exactly.
 WS = r'[\t\n\x0b\x0c\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]'
+# The same set as characters, for strip_ws. WHY not a regex strip: `\A WS+ | WS+ \Z` is retried at
+# every position of an inner whitespace run, so it is quadratic, and it runs on every rule before
+# any cap (measured 2026-10-22: 1,000 long Read rules, 36.7 s; str.strip on the same file, 1.5 s).
+WS_CHARS = ''.join(map(chr, [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x85,
+                             0xa0, 0x1680, *range(0x2000, 0x200b), 0x2028, 0x2029, 0x202f,
+                             0x205f, 0x3000]))
 END = r'(?![A-Za-z0-9_])'
 ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 
 # WHY these caps: everything the settings check costs grows with input the agent can write. A
 # regex glob over a many-star rule took 23 s at 10 stars (measured 2026-10-21), and a hook that
-# outruns its timeout gives no decision, which fails open. So the glob below is a linear-time
-# matcher; GLOB_BUDGET bounds its total steps over one whole check, and running out counts as
-# merge-capable; a rule longer than MAX_RULE_LENGTH is treated as merge-capable unread; and more
-# than MAX_REPOS allowlisted repos denies, since each repo multiplies the probes.
+# outruns its timeout gives no decision, which fails open. So the glob below is a greedy matcher,
+# at worst rule length times probe length; GLOB_BUDGET bounds its total steps over one whole
+# check, and running out counts as merge-capable; a rule longer than MAX_RULE_LENGTH is treated as
+# merge-capable unread; and more than MAX_REPOS allowlisted repos denies, since each repo
+# multiplies the probes. The file size itself is not capped: what is left grows linearly with it.
 MAX_REPOS = 10
 MAX_RULE_LENGTH = 4096
 GLOB_BUDGET = 200000
@@ -90,7 +98,7 @@ def load_json(path):
 
 
 def strip_ws(text):
-    return re.sub(r'\A' + WS + r'+|' + WS + r'+\Z', '', text)
+    return text.strip(WS_CHARS)
 
 
 def probe_commands(repos):
@@ -140,9 +148,11 @@ def glob_matches(body, command, budget):
 def merge_capable(rule, probes=(), budget=None):
     """True when an allow rule could carry a merge past the prompt.
 
-    WHY shapes and probes both: a probe catches a rule that matches a merge however the rule is
-    spelled (`gh pr m*`, `g*`), and a shape catches what no fixed probe can, such as an exact
-    `gh pr merge <N> ...` rule or any `gh api` rule."""
+    WHY shapes and probes both: a probe catches a rule that matches one of the fixed merge
+    commands however the rule itself is written (`gh pr m*`, `g*`), and a shape catches what no
+    fixed probe can, such as an exact `gh pr merge <N> ...` rule or any `gh api` rule. Neither
+    catches a rule that begins with a wildcard and pins a PR number or SHA the probes do not use,
+    such as `*pr merge 77*` (spec section 5.5)."""
     if budget is None:
         budget = [GLOB_BUDGET]
     if len(rule) > MAX_RULE_LENGTH:

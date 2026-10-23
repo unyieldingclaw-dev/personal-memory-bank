@@ -3,8 +3,9 @@
 #
 # Each mutation is applied to a COPY of scripts/ in a fresh temp directory, never to the
 # checkout, and the one fixture that should catch it is run through the mutated hook. KILLED
-# means the fixture's expected decision no longer holds, i.e. tests/test-merge-gate.sh would go
-# red on the same change. SURVIVED or ERROR means a guard that no test can see fail.
+# means this harness's own fixture changed decision; each fixture mirrors a row of
+# tests/test-merge-gate.sh, so that approximates, but does not prove, a red suite row. SURVIVED
+# or ERROR means a guard that no fixture here can see fail.
 #
 # WHY not named test-*.sh: tests/run.sh runs every tests/test-*.sh, and this harness is a
 # by-hand check of the suite's power, not part of the suite. Run it after changing the merge gate:
@@ -90,6 +91,9 @@ mutate() {  # mutate <name> <twin> <file> <perl-subst> <payload> <expected-unmut
 
 RULE='{"permissions":{"allow":["Bash(gh api *)"]}}'
 GLOB_RULE='{"permissions":{"allow":["Bash(gh pr m*)"]}}'
+COLON_RULE='{"permissions":{"allow":["Bash(g*:*)"]}}'
+TSTAR_RULE='{"permissions":{"allow":["Bash(gh pr m*e 1 --squash*)"]}}'
+MERGE_PROBE_RULE='{"permissions":{"allow":["Bash(* --merge --match-head-commit*)"]}}'
 PAD_RULE='{"permissions":{"allow":["Bash( * )"]}}'
 TRAIL_RULE='{"permissions":{"allow":["Bash(*) "]}}'
 BUDGET_RULES=$(python3 -c 'import json; print(json.dumps({"permissions": {"allow": ["Bash(*" + "0" * 39 + "x)"] * 600}}))')
@@ -124,6 +128,12 @@ M_SETTINGS="$RULE"; M_TARGET=".claude/settings.json"
 mutate "project settings.json not read" sh _review-gate-merge.py "s/        os\.path\.join\(project, '\.claude', 'settings\.json'\),\n//" canon.json deny
 M_SETTINGS="$GLOB_RULE"
 mutate "wildcard probe removed"      sh _review-gate-merge.py 's/if any\(glob_matches\(body, p, budget\) for p in probes\):/if False:/' canon.json deny
+M_SETTINGS="$COLON_RULE"
+mutate "trailing :* reading removed" sh _review-gate-merge.py 's/if body\.endswith\(/if False and body.endswith(/'      canon.json deny
+M_SETTINGS="$TSTAR_RULE"
+mutate "trailing-star loop removed"  sh _review-gate-merge.py 's/    while i < len\(body\) and body\[i\] == /    while False and body[i] == /' canon.json deny
+M_SETTINGS="$MERGE_PROBE_RULE"
+mutate "--merge probe removed"       sh _review-gate-merge.py 's/ --merge --match-head-commit %s/ --squash --match-head-commit %s/' canon.json deny
 M_SETTINGS="$BUDGET_RULES"
 mutate "step budget not enforced"    sh _review-gate-merge.py 's/        if budget\[0\] < 0:\n            return True\n//' canon.json deny
 M_SETTINGS="$LONG_RULE"
@@ -137,7 +147,7 @@ mutate "edge whitespace not stripped" sh _review-gate-merge.py 's/strip_ws\(rule
 M_SETTINGS="$PAD_RULE"
 mutate "body whitespace not stripped" sh _review-gate-merge.py 's/    body = strip_ws\(body\)\n//'                        canon.json deny
 M_SETTINGS="$TRAIL_RULE"
-mutate "trailing whitespace not stripped" sh _review-gate-merge.py "s/r'\+\|' \+ WS \+ r'\+\\\\Z'/r'+'/"                canon.json deny
+mutate "trailing whitespace not stripped" sh _review-gate-merge.py 's/return text\.strip\(WS_CHARS\)/return text.lstrip(WS_CHARS)/' canon.json deny
 M_SETTINGS="$PRH"
 mutate "PermissionRequest check removed" sh _review-gate-merge.py "s/if hooks.get\('PermissionRequest'\) not in \(None, \[\]\):/if False:/" canon.json deny
 M_SETTINGS="$NAN"
@@ -165,6 +175,12 @@ M_SETTINGS="$RULE"; M_TARGET=".claude/settings.json"
 mutate "project settings.json not read" ps1 _review-gate-merge.ps1 "s/        \(Join-Path \(Join-Path \\\$ProjectDir '\.claude'\) 'settings\.json'\),\n//" canon.json deny
 M_SETTINGS="$GLOB_RULE"
 mutate "wildcard probe removed"      ps1 _review-gate-merge.ps1 's/foreach \(\$p in \$Probes\) \{ if \(Test-MergeGateGlob \$body \$p \$Budget\) \{ return \$true \} \}//' canon.json deny
+M_SETTINGS="$COLON_RULE"
+mutate "trailing :* reading removed" ps1 _review-gate-merge.ps1 's/if \(\$Body\.EndsWith\(/if (\$false -and \$Body.EndsWith(/' canon.json deny
+M_SETTINGS="$TSTAR_RULE"
+mutate "trailing-star loop removed"  ps1 _review-gate-merge.ps1 's/while \(\$i -lt \$Body\.Length -and \[int\]\$Body\[\$i\] -eq 42\)/while (\$false)/' canon.json deny
+M_SETTINGS="$MERGE_PROBE_RULE"
+mutate "--merge probe removed"       ps1 _review-gate-merge.ps1 's/-R \$r --merge --match/-R \$r --squash --match/'          canon.json deny
 M_SETTINGS="$BUDGET_RULES"
 mutate "step budget not enforced"    ps1 _review-gate-merge.ps1 's/        if \(\$Budget\.Steps -lt 0\) \{ return \$true \}\n//' canon.json deny
 M_SETTINGS="$LONG_RULE"
@@ -178,7 +194,7 @@ mutate "edge whitespace not stripped" ps1 _review-gate-merge.ps1 's/\$r = Get-Me
 M_SETTINGS="$PAD_RULE"
 mutate "body whitespace not stripped" ps1 _review-gate-merge.ps1 's/\$body = Get-MergeGateTrimmedText \$Matches\[2\]/\$body = \$Matches[2]/' canon.json deny
 M_SETTINGS="$TRAIL_RULE"
-mutate "trailing whitespace not stripped" ps1 _review-gate-merge.ps1 "s/ \+ '\+\|' \+ \\\$script:MergeGateWs \+ '\+\\\\z'\), ''/ + '+'), ''/" canon.json deny
+mutate "trailing whitespace not stripped" ps1 _review-gate-merge.ps1 's/\$Text\.Trim\(\$script:MergeGateWsChars\)/\$Text.TrimStart(\$script:MergeGateWsChars)/' canon.json deny
 M_SETTINGS="$PRH"
 mutate "PermissionRequest check removed" ps1 _review-gate-merge.ps1 's/if \(\$null -ne \$pr -and/if (\$false -and/'         canon.json deny
 M_SETTINGS="$COMMENT"
