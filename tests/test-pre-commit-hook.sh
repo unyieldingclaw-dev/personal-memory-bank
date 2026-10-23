@@ -243,10 +243,14 @@ assert_contains "$OUT" "handoff.md is staged" "handoff.md staged: original messa
 
 # ── format check dispatch [NS-58] ───────────────────────────────────────────────────────────
 # The hook lists the staged regular files and pipes them, NUL-terminated, to a repo-owned
-# .githooks/format-check. These fixtures install a recorder there that saves its stdin to $FC_LOG
-# and exits $FC_EXIT, so every assertion is about exactly what the hook handed over.
-export FC_LOG FC_EXIT=0
-RECORDER='cat > "$FC_LOG"
+# .githooks/format-check. These fixtures install a recorder there that saves its stdin to $FC_LOG,
+# runs $FC_EXTRA, and exits $FC_EXIT, so every assertion is about exactly what the hook handed over.
+# Its shebang names an interpreter that does not exist: the hook must run it with bash, since a
+# copied script often lacks an executable bit, and executing it directly would fail here.
+export FC_LOG FC_EXIT=0 FC_EXTRA=
+RECORDER='#!/nonexistent/run-me-with-bash
+cat > "$FC_LOG"
+eval "${FC_EXTRA:-}"
 exit "${FC_EXIT:-0}"'
 
 # fc_install DIR -- put the recorder in DIR's .githooks/ and point FC_LOG into a fresh tmp dir.
@@ -282,6 +286,8 @@ for f in "a b.json" "-dash.json" "café.json" "x=/y.json"; do echo x > "$R/$f"; 
 # repo rather than with -C, because it would stop -C's path being converted too.
 (cd "$R" && MSYS_NO_PATHCONV=1 git add -- "a b.json" "-dash.json" "café.json" "x=/y.json")
 setup_ok $? "unusual names staged"
+echo x > "$R/run.sh"; git -C "$R" add --chmod=+x run.sh
+setup_ok $? "executable file staged (mode 100755)"
 git -C "$R" rm -q code.txt
 head=$(git -C "$R" rev-parse HEAD)
 git -C "$R" update-index --add --cacheinfo "160000,$head,submod"
@@ -291,8 +297,8 @@ try_commit "$R"
 assert_equals "$RC" "0" "recorder exit 0: commit allowed"
 # MSYS would rewrite x=/y.json if it were passed as an argument to a native program; on stdin it is
 # just bytes. A deletion, a gitlink (a directory) and a symlink are not regular files to format.
-assert_equals "$(fc_got)" "$(printf '%s\n' "-dash.json" "a b.json" "café.json" "x=/y.json")" \
-    "format-check got exactly the staged regular files (no deletion, gitlink or symlink)"
+assert_equals "$(fc_got)" "$(printf '%s\n' "-dash.json" "a b.json" "café.json" run.sh "x=/y.json")" \
+    "format-check got exactly the staged regular files, executable included (no deletion, gitlink or symlink)"
 
 echo ""
 echo "--- format check: every path is NUL-terminated, the last one too ---"
@@ -348,6 +354,34 @@ assert_equals "$(git -C "$R" rev-parse HEAD)" "$before" "recorder exit 3: nothin
 assert_contains "$OUT" ".githooks/format-check" "refusal names the script"
 assert_contains "$OUT" "exit 3" "refusal reports the script's exit code"
 assert_not_contains "$OUT" "no-verify" "refusal does not suggest --no-verify"
+
+echo ""
+echo "--- format check: a script that changes the staged files is refused ---"
+# The checks above ran on the index before the script. Anything it stages afterwards -- here a file
+# the handoff check would have refused -- must not reach the commit unchecked.
+new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+fc_install "$R"
+before=$(git -C "$R" rev-parse HEAD)
+echo x > "$R/new.json"; git -C "$R" add new.json
+FC_EXTRA='echo h > handoff.md && git add handoff.md'; try_commit "$R"; FC_EXTRA=
+assert_exit_nonzero "$RC" "script stages handoff.md: commit refused"
+assert_contains "$OUT" "changed the staged files" "script stages handoff.md: refusal says the index changed"
+assert_equals "$(git -C "$R" rev-parse HEAD)" "$before" "script stages handoff.md: nothing was committed"
+# Committing again runs every check on the new index, so the handoff check now catches it.
+try_commit "$R"
+assert_exit_nonzero "$RC" "commit again: handoff.md is refused by its own check"
+assert_contains "$OUT" "handoff.md is staged" "commit again: the handoff refusal is the one shown"
+
+echo ""
+echo "--- format check: a fixer that re-stages what it fixed is refused once, then passes ---"
+new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+fc_install "$R"
+echo messy > "$R/new.json"; git -C "$R" add new.json
+FC_EXTRA='echo tidy > new.json && git add new.json'; try_commit "$R"; FC_EXTRA=
+assert_exit_nonzero "$RC" "fixer re-stages its fix: first commit refused"
+try_commit "$R"
+assert_equals "$RC" "0" "fixer re-stages its fix: commit again succeeds on the fixed content"
+assert_equals "$(git -C "$R" show HEAD:new.json)" "tidy" "fixer re-stages its fix: the fixed content is what was committed"
 
 echo ""
 echo "--- format check: commit -- <path> and commit -a list what is actually committed ---"
