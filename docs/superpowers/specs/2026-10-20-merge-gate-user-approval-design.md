@@ -375,8 +375,9 @@ allow becomes a zero-click merge path.
     glob (`*` as `.*`) backtracked exponentially: 10 stars took 23 s (measured 2026-10-21). So
     the wildcard matcher is a greedy one with a single backtrack point, at worst rule length ×
     probe length, and both twins share three limits: a 200,000-step budget over the whole check,
-    after which a rule counts as merge-capable; a 4,096-character rule length, above which a rule
-    counts as merge-capable unread; and the repo cap in §5.1. Whitespace is stripped with a plain
+    after which a rule counts as merge-capable; a rule length of 4,096 (UTF-16 units in
+    PowerShell, code points in Python; see below), above which a rule counts as merge-capable
+    unread; and the repo cap in §5.1. Whitespace is stripped with a plain
     character-set strip, because a regex strip was quadratic in rule length: 33 ms per
     4,092-character rule in the Python twin and 6.4 ms in the PowerShell one (measured
     2026-10-23), with no cap on the number of rules. The file size itself is not capped, so
@@ -387,10 +388,21 @@ allow becomes a zero-click merge path.
     hook layer. The limits guard against accidents, such as
     a "don't ask again" rule, and against a hook that stalls; they are not a defence against a
     hostile settings writer.
-  - **Both twins read a rule alike.** Whitespace, word boundaries and case are spelled out instead
-    of `\s`, `\b` and case-insensitive matching. Python's `\s` also holds `\x1c`-`\x1f`, and case
-    folding of the Kelvin sign and the long s differs between the engines (measured 2026-10-21).
-    Both twins fold ASCII letters only, and match case-exactly otherwise.
+  - **Both twins read a rule alike, with two known differences, both toward deny.** Whitespace,
+    word boundaries and case are spelled out instead of `\s`, `\b` and case-insensitive matching.
+    Python's `\s` also holds `\x1c`-`\x1f`, and case folding of the Kelvin sign and the long s
+    differs between the engines (measured 2026-10-21). Both twins fold ASCII letters only, and
+    otherwise compare case-exactly and ordinally.
+    - The PowerShell twin uses `[string]::Equals(…, Ordinal)`, never `-ceq` or `-ccontains`.
+      Those are culture-aware: they treated a settings key, mode or description with U+200B
+      appended as equal to the real one, so a decoy key placed first hid the real one from that
+      twin only (measured 2026-10-23).
+    - The known differences, measured 2026-10-23, are left as they are and have no fixture. The
+      rule-length cap counts UTF-16 code units in PowerShell and code points in Python, so a rule
+      of characters outside the Basic Multilingual Plane reaches it sooner in PowerShell. And
+      `ConvertFrom-Json` turns a date-like rule such as `2026-01-01T00:00:00` into a `DateTime`,
+      which PowerShell then counts as merge-capable for not being a string. In each, PowerShell
+      denies where Python asks.
   - **Why this is a per-merge check:** P1 (§7) is a one-time cleanup, and clicking "don't ask
     again" on any ordinary `gh api` read writes such a rule back. Worktrees also inherit the file.
   - The exact prefix list lives in the hook and its tests, not in this public spec.
@@ -419,7 +431,8 @@ allow becomes a zero-click merge path.
     in default mode.
 - **Residuals recorded where they arise**, not repeated in the list above: the gh config
   retarget through `XDG_CONFIG_HOME`, `AppData` or `HOME` (§5.1), a wildcard rule that pins a PR
-  number the probes do not use, and an agent that writes a settings file (both earlier in §5.5).
+  number the probes do not use, an agent that writes a settings file, and the two twin
+  differences in reading a rule (all three earlier in §5.5).
 
 ### 5.6 App and MCP merge routes (Opposition S7)
 
@@ -587,6 +600,8 @@ file. It runs against both twins and covers:
   - `agent_id` present: as null, as `""`, and as an id.
   - `permission_mode` set to `bypassPermissions`, `dontAsk` or `plan`, or missing.
   - Look-alike JSON text inside the command does not spoof the mode or `agent_id`.
+  - A `permission_mode` or `description` with U+200B appended denies, and so does a decoy
+    `command` key with U+200B appended, placed before the real one.
 - **Environment and settings:**
   - `GH_REPO`, `GH_HOST` or `GH_CONFIG_DIR` set in the environment.
   - A fixture settings file with a `PermissionRequest` hook.
@@ -597,6 +612,10 @@ file. It runs against both twins and covers:
   - A malformed settings file, and each non-strict JSON form (comment, trailing comma, `NaN`,
     single quotes, a one-element array).
   - An unreadable settings file.
+  - A decoy key with U+200B appended, placed before the real `permissions`, `allow`, `hooks` or
+    `PermissionRequest` key, denies; a decoy `repos` key in `merge-gate.json` does not replace
+    the allowlist; and `Bash(*` + U+200B + `)` and `Bash(:*` + U+200B + `)` rules ask. All in both
+    twins.
 - **Bounds:** a 15-star rule is answered in under 30 s by both twins together. A file of 3,000
   whitespace-padded `Read` rules is answered by each twin, timed on its own, in under 8 s; the
   old regex strip would take about 99 s in the Python twin and 19 s in the PowerShell one. Each
@@ -655,8 +674,11 @@ it also covers the fallback-verdict guard, `GH_CONFIG_DIR`, the project settings
 wildcard probes (all of them, and the `--merge` one alone), the matcher's trailing `:*` reading
 and trailing-star loop, the step budget, the rule-length and repo-count caps, ASCII folding, whitespace
 stripping (rule edges, body edges, trailing), strict JSON (`NaN` in Python; comments and
-`-NoEnumerate` in PowerShell), and the PowerShell audit line's LF. **Not covered:** the helper's
-own exception-to-deny handler (below), for want of a way to force an exception inside it.
+`-NoEnumerate` in PowerShell), the PowerShell audit line's LF, and the PowerShell twin's ordinal
+comparisons of keys, mode, description and both halves of the bare-star body (`*` and `:*`),
+each reverted to `-ceq` or `-ccontains`. **Not covered:** the helper's own exception-to-deny
+handler (below), for want of a way to force an exception inside it; and the ordinal comparison of
+the merge method, whose input the canonical regex has already limited to `--squash` or `--merge`.
 - ask changed to allow;
 - the `agent_id` check removed;
 - the mode check removed;

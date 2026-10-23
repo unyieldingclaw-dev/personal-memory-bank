@@ -7,9 +7,12 @@
 # Returns @{ Decision = 'ASK' | 'DENY'; Reason; Audit; Cause }. The hook treats anything other
 # than Decision -ceq 'ASK' -- including a throw or this file failing to load -- as deny.
 #
-# Every comparison is case-exact (-cmatch / -ceq / -ccontains), because PowerShell's defaults
-# are case-insensitive and the Python twin is not. ConvertFrom-Json property access is also
-# case-insensitive, so payload keys are looked up through Get-MergeGateProperty.
+# Every comparison is case-exact and ordinal, as in the Python twin: -cmatch for patterns and
+# [string]::Equals(..., Ordinal) for equality. Never -eq or -contains (case-insensitive), and never
+# -ceq or -ccontains either: they are culture-aware, so a key or value with a zero-width or other
+# ignorable character appended compares equal (measured 2026-10-23, PowerShell 7). ConvertFrom-Json
+# property access is case-insensitive too, so payload keys are looked up through
+# Get-MergeGateProperty.
 
 $script:MergeGateModes = @('default', 'acceptEdits', 'auto')
 $script:MergeGateDescription = 'Merge pull request (verify the details in the hook reason)'
@@ -79,7 +82,7 @@ function Get-MergeGateProperty {
     if ($null -eq $Object -or $Object -isnot [System.Management.Automation.PSCustomObject]) {
         return [pscustomobject]@{ Present = $false; Value = $null }
     }
-    $prop = @($Object.PSObject.Properties | Where-Object { $_.Name -ceq $Name })
+    $prop = @($Object.PSObject.Properties | Where-Object { [string]::Equals($_.Name, $Name, [System.StringComparison]::Ordinal) })
     if ($prop.Count -eq 0) { return [pscustomobject]@{ Present = $false; Value = $null } }
     [pscustomobject]@{ Present = $true; Value = $prop[0].Value }
 }
@@ -97,7 +100,7 @@ function Test-MergeGateCapableRule {
     if ($r -cnotmatch '(?s)\A(Bash|PowerShell)(?:\((.*)\))?\z') { return $false }
     if (-not $Matches.ContainsKey(2)) { return $true }
     $body = Get-MergeGateTrimmedText $Matches[2]
-    if ($body -ceq '*' -or $body -ceq ':*') { return $true }
+    if ([string]::Equals($body, '*', [System.StringComparison]::Ordinal) -or [string]::Equals($body, ':*', [System.StringComparison]::Ordinal)) { return $true }
     if ($body -cmatch ('\Agh(?:' + $ws + '*\*|:\*)?\z')) { return $true }
     if ($body -cmatch ('\Agh' + $ws + '+(?:api' + $end + '|-)')) { return $true }
     if ($body -cmatch ('\Agh' + $ws + '+pr(?:' + $ws + '*\*|:\*)\z') -or $body -cmatch ('\Agh' + $ws + '+pr' + $ws + '+merge' + $end)) { return $true }
@@ -128,7 +131,7 @@ function Get-ReviewGateMergeDecision {
         return Get-MergeGateDenial 'Subagents never merge pull requests. Ask the user, in the main conversation.'
     }
     $mode = (Get-MergeGateProperty $payload 'permission_mode').Value
-    if ($mode -isnot [string] -or -not ($script:MergeGateModes -ccontains $mode)) {
+    if ($mode -isnot [string] -or -not ($script:MergeGateModes | Where-Object { [string]::Equals($_, $mode, [System.StringComparison]::Ordinal) })) {
         return Get-MergeGateDenial 'Merges are only put to the user in default, acceptEdits or auto mode; this session cannot show a prompt for it. Merge in the GitHub UI instead.'
     }
     foreach ($name in $script:MergeGateGhEnv) {
@@ -200,11 +203,11 @@ function Get-ReviewGateMergeDecision {
     }
     $m = $Matches
     $desc = Get-MergeGateProperty $toolInput 'description'
-    if ($desc.Present -and -not ($desc.Value -is [string] -and $desc.Value -ceq $script:MergeGateDescription)) {
+    if ($desc.Present -and -not ($desc.Value -is [string] -and [string]::Equals($desc.Value, $script:MergeGateDescription, [System.StringComparison]::Ordinal))) {
         return Get-MergeGateDenial ('Set the tool description to exactly "' + $script:MergeGateDescription + '", or omit it. The prompt shows it, so it must not describe the merge in the agent''s own words.')
     }
 
-    $method = if ($m['method'] -ceq '--squash') { 'squash' } else { 'merge commit' }
+    $method = if ([string]::Equals($m['method'], '--squash', [System.StringComparison]::Ordinal)) { 'squash' } else { 'merge commit' }
     [pscustomobject]@{
         Decision = 'ASK'
         Reason   = "Merge PR #$($m['n']) in $($m['repo']) by $method, exactly at head $($m['sha']). Approve only if YOU asked to merge this PR just now. This approval covers this one command."

@@ -69,6 +69,18 @@ Describe '_review-gate-merge.ps1' {
         (Get-ReviewGateMergeDecision -Raw $raw -ProjectDir $script:Proj).Decision | Should -BeExactly 'DENY'
     }
 
+    It 'compares keys and values ordinally, so an ignorable character makes them differ' {
+        # -ceq and -ccontains are culture-aware and compared each of these equal (2026-10-23).
+        $zw = [string][char]0x200b
+        (Get-MergeGateProperty ('{"a' + $zw + '": 1, "a": 2}' | ConvertFrom-Json) 'a').Value | Should -Be 2
+        Test-MergeGateCapableRule ('Bash(*' + $zw + ')') | Should -Be $false
+        (Get-ReviewGateMergeDecision -Raw (New-MergePayload -Mode ('default' + $zw)) -ProjectDir $script:Proj).Decision | Should -BeExactly 'DENY'
+        $raw = New-MergePayload -ToolExtra @{ description = 'Merge pull request (verify the details in the hook reason)' + $zw }
+        (Get-ReviewGateMergeDecision -Raw $raw -ProjectDir $script:Proj).Decision | Should -BeExactly 'DENY'
+        ('{"permissions' + $zw + '":{"allow":[]},"permissions":{"allow":["Bash(*)"]}}') | Set-Content (Join-Path $script:Proj '.claude/settings.local.json')
+        (Get-ReviewGateMergeDecision -Raw (New-MergePayload) -ProjectDir $script:Proj).Decision | Should -BeExactly 'DENY'
+    }
+
     It 'denies with a generic message when a local allow rule can carry a merge' {
         '{"permissions":{"allow":["Bash(gh api *)"]}}' | Set-Content (Join-Path $script:Proj '.claude/settings.local.json')
         $d = Get-ReviewGateMergeDecision -Raw (New-MergePayload) -ProjectDir $script:Proj

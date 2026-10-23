@@ -205,6 +205,12 @@ case_ deny "mode only inside tool_input (spoof)"  'p(C, None, tool_input_extra={
 case_ deny "custom description"                   'p(C, tool_input_extra={"description": "Merge PR #77 as you asked"})' "$R_DESC"
 case_ deny "description near miss"                'p(C, tool_input_extra={"description": DESC + " "})' "$R_DESC"
 case_ deny "description not a string"             'p(C, tool_input_extra={"description": 1})'
+# PowerShell's -ceq and -ccontains are culture-aware: a string with an ignorable character such as
+# U+200B appended compared equal to the real one (2026-10-23). Both twins compare ordinally.
+case_ deny "description with U+200B appended"     'p(C, tool_input_extra={"description": DESC + chr(0x200b)})' "$R_DESC"
+case_ deny "mode with U+200B appended"            'p(C, "default" + chr(0x200b))' "$R_MODE"
+case_ deny "a decoy command key with U+200B, placed first" \
+  'dict(p(C), tool_input={"command" + chr(0x200b): C, "command": C + " --admin"})' "$R_FORM"
 
 echo "--- a command that only mentions a merge is not a merge ---"
 case_ none "echo of the canonical command"        'p("echo " + C)'
@@ -326,6 +332,20 @@ expect deny "PermissionRequest hook in user settings" "$F"
 printf '%s' '{"hooks": {"PermissionRequest": []}}' > "$CFG/settings.json"
 expect ask "empty PermissionRequest list" "$F"
 rm -f "$CFG/settings.json"
+# A key with U+200B appended is a different key, as it is to Claude Code: a decoy placed first
+# must not hide the real one. -ceq matched the decoy in the .ps1 twin (2026-10-23).
+for expr in '{"permissions" + ZW: {"allow": []}, "permissions": {"allow": ["Bash(*)"]}}' \
+            '{"permissions": {"allow" + ZW: [], "allow": ["Bash(*)"]}}' \
+            '{"hooks" + ZW: {}, "hooks": {"PermissionRequest": [{"matcher": "Bash", "hooks": []}]}}' \
+            '{"hooks": {"PermissionRequest" + ZW: [], "PermissionRequest": [{"matcher": "Bash", "hooks": []}]}}'; do
+  python3 -c 'import json,sys; ZW = chr(0x200b); json.dump(eval(sys.argv[2]), open(sys.argv[1], "w"))' "$LOCAL" "$expr"
+  expect deny "a decoy key with U+200B does not hide the real one: $expr" "$F" "" "$R_GENERIC"
+done
+put_allow_expr "$LOCAL" '"Bash(*" + chr(0x200b) + ")"'
+expect ask "a rule body of a star and U+200B is not a bare star, in both twins" "$F"
+put_allow_expr "$LOCAL" '"Bash(:*" + chr(0x200b) + ")"'
+expect ask "a rule body of :* and U+200B is not a bare :*, in both twins" "$F"
+rm -f "$LOCAL"
 
 echo "--- the repo allowlist ---"
 GATE="$PROJ/.claude/merge-gate.json"
@@ -343,6 +363,8 @@ python3 -c 'import json,sys; json.dump({"repos": ["acme/web.app"] + ["acme/r%d" 
 expect deny "more than 10 repos (each one multiplies the probes)" "$F" "" "$R_UNSET"
 python3 -c 'import json,sys; json.dump({"repos": ["acme/web.app", "a" * 101 + "/r"]}, open(sys.argv[1], "w"))' "$GATE"
 expect deny "an owner longer than 100 characters" "$F" "" "$R_UNSET"
+python3 -c 'import json,sys; json.dump({"repos" + chr(0x200b): ["acme/other"], "repos": ["acme/web.app"]}, open(sys.argv[1], "w"))' "$GATE"
+expect ask "a decoy repos key with U+200B does not replace the allowlist" "$F"
 mv "$GATE.bak" "$GATE"
 
 echo "--- audit record ---"

@@ -35,6 +35,10 @@ mk "$WORK/other.json"   "{\"permission_mode\":\"default\",\"tool_input\":{\"comm
 mk "$WORK/desc.json"    "{\"permission_mode\":\"default\",\"tool_input\":{\"command\":\"$C\",\"description\":\"Merge PR 77 as you asked\"}}"
 mk "$WORK/nl.json"      "{\"permission_mode\":\"default\",\"tool_input\":{\"command\":\"$C\\n\"}}"
 mk "$WORK/plain.json"   "{\"permission_mode\":\"default\",\"tool_input\":{\"command\":\"ls\"}}"
+# Like mk, but built from a Python expression, for payloads holding U+200B (ZW).
+mkpy() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' C="$C" python3 -c 'import json,os,sys; C = os.environ["C"]; ZW = chr(0x200b); json.dump(eval(sys.argv[2]), open(sys.argv[1], "w"))' "$(native "$1")" "$2"; }
+mkpy "$WORK/zwmode.json" '{"permission_mode": "default" + ZW, "tool_input": {"command": C}}'
+mkpy "$WORK/zwdesc.json" '{"permission_mode": "default", "tool_input": {"command": C, "description": "Merge pull request (verify the details in the hook reason)" + ZW}}'
 
 # Per-mutation fixture state, set before a call to mutate and reset after it:
 #   M_SETTINGS  content for the settings file M_TARGET (relative to the project; default local)
@@ -105,6 +109,9 @@ PRH='{"hooks":{"PermissionRequest":[{"matcher":"Bash","hooks":[]}]}}'
 NAN='{"permissions":{"allow":[]},"x":NaN}'
 COMMENT='{"permissions":{"allow":[]}} // c'
 ARRAY='[{"permissions":{"allow":["Bash(git *)"]}}]'
+ZW_KEY=$(python3 -c 'import json; print(json.dumps({"permissions" + chr(0x200b): {"allow": []}, "permissions": {"allow": ["Bash(*)"]}}))')
+ZW_STAR=$(python3 -c 'import json; print(json.dumps({"permissions": {"allow": ["Bash(*" + chr(0x200b) + ")"]}}))')
+ZW_COLON=$(python3 -c 'import json; print(json.dumps({"permissions": {"allow": ["Bash(:*" + chr(0x200b) + ")"]}}))')
 
 echo "=== bash twin: review-reminders.sh + _review-gate-merge.py ==="
 mutate "ask emitted as allow"        sh review-reminders.sh   's/"permissionDecision":"ask"/"permissionDecision":"allow"/' canon.json ask
@@ -158,7 +165,16 @@ mutate "ask emitted as allow"        ps1 review-reminders.ps1   "s/permissionDec
 M_PREP=stub_no_verdict
 mutate "fallback-verdict guard removed" ps1 review-reminders.ps1 's/if \(-not \$verdictFromFallback\) \{/if (\$true) {/' canon.json deny
 mutate "agent_id check removed"      ps1 _review-gate-merge.ps1 "s/if \(\(Get-MergeGateProperty \\\$payload 'agent_id'\)\.Present\)/if (\\\$false)/" sub.json deny
-mutate "mode check removed"          ps1 _review-gate-merge.ps1 's/if \(\$mode -isnot \[string\] -or -not \(\$script:MergeGateModes -ccontains \$mode\)\)/if (\$false)/' bypass.json deny
+mutate "mode check removed"          ps1 _review-gate-merge.ps1 's/if \(\$mode -isnot \[string\] -or -not \(\$script:MergeGateModes \| Where-Object \{ \[string\]::Equals\(\$_, \$mode, \[System\.StringComparison\]::Ordinal\) \}\)\)/if (\$false)/' bypass.json deny
+# Ordinal comparisons reverted to the culture-aware -ceq / -ccontains, which treat U+200B as absent.
+mutate "mode compared with -ccontains" ps1 _review-gate-merge.ps1 's/\(\$script:MergeGateModes \| Where-Object \{ \[string\]::Equals\(\$_, \$mode, \[System\.StringComparison\]::Ordinal\) \}\)/(\$script:MergeGateModes -ccontains \$mode)/' zwmode.json deny
+mutate "description compared with -ceq" ps1 _review-gate-merge.ps1 's/\[string\]::Equals\(\$desc\.Value, \$script:MergeGateDescription, \[System\.StringComparison\]::Ordinal\)/\$desc.Value -ceq \$script:MergeGateDescription/' zwdesc.json deny
+M_SETTINGS="$ZW_KEY"
+mutate "keys compared with -ceq"     ps1 _review-gate-merge.ps1 's/\[string\]::Equals\(\$_\.Name, \$Name, \[System\.StringComparison\]::Ordinal\)/\$_.Name -ceq \$Name/' canon.json deny
+M_SETTINGS="$ZW_STAR"
+mutate "bare-star body compared with -ceq" ps1 _review-gate-merge.ps1 "s/\[string\]::Equals\(\\\$body, '\*', \[System\.StringComparison\]::Ordinal\)/\\\$body -ceq '*'/" canon.json ask
+M_SETTINGS="$ZW_COLON"
+mutate "bare :* body compared with -ceq" ps1 _review-gate-merge.ps1 "s/\[string\]::Equals\(\\\$body, ':\*', \[System\.StringComparison\]::Ordinal\)/\\\$body -ceq ':*'/" canon.json ask
 mutate "-cmatch -> -match"           ps1 _review-gate-merge.ps1 's/\$command -cnotmatch \$canonical/\$command -notmatch \$canonical/' upper.json deny
 mutate "[regex]::Escape removed"     ps1 _review-gate-merge.ps1 's/\$repos \| ForEach-Object \{ \[regex\]::Escape\(\$_\) \}/\$repos | ForEach-Object { \$_ }/' esc.json deny
 mutate "repo allowlist removed"      ps1 _review-gate-merge.ps1 's/\(\?<repo>\$alt\)/(?<repo>[^ ]+)/'                       other.json deny
