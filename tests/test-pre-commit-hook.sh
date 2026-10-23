@@ -241,4 +241,272 @@ try_commit "$T/main"
 assert_exit_nonzero "$RC" "handoff.md staged: refused"
 assert_contains "$OUT" "handoff.md is staged" "handoff.md staged: original message"
 
+# ── format check dispatch [NS-58] ───────────────────────────────────────────────────────────
+# The hook lists the staged regular files and pipes them, NUL-terminated, to a repo-owned
+# .githooks/format-check. These fixtures install a recorder there that saves its stdin to $FC_LOG
+# and exits $FC_EXIT, so every assertion is about exactly what the hook handed over.
+export FC_LOG FC_EXIT=0
+RECORDER='cat > "$FC_LOG"
+exit "${FC_EXIT:-0}"'
+
+# fc_install DIR -- put the recorder in DIR's .githooks/ and point FC_LOG into a fresh tmp dir.
+# Not via new_tmp: that reassigns T, which callers are still using.
+fc_install() {
+    local d
+    printf '%s\n' "$RECORDER" > "$1/.githooks/format-check"
+    d="$(mktemp -d 2>/dev/null || mktemp -d -t pmb-fc-log)"
+    ALL_TMPDIRS+=("$d")
+    FC_LOG="$d/fc-stdin"
+}
+# fc_got -- the recorded paths, one per line in byte order, or "<not run>".
+fc_got() {
+    if [ -f "$FC_LOG" ]; then tr '\0' '\n' < "$FC_LOG" | LC_ALL=C sort; else echo "<not run>"; fi
+}
+
+echo ""
+echo "--- format check: no .githooks/format-check, nothing runs ---"
+new_tmp; make_repo "$T/r"; setup_ok $? "repo created"
+echo x > "$T/r/new.json"; git -C "$T/r" add new.json
+try_commit "$T/r"
+assert_equals "$RC" "0" "no format-check: commit allowed"
+assert_equals "$OUT" "" "no format-check: hook prints nothing"
+
+echo ""
+echo "--- format check: exact paths, NUL-terminated, regular files only ---"
+new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+fc_install "$R"
+mkdir -p "$R/x="
+for f in "a b.json" "-dash.json" "café.json" "x=/y.json"; do echo x > "$R/$f"; done
+# MSYS_NO_PATHCONV: Git for Windows' bash would hand git.exe "x=C:/Program Files/Git/y.json" --
+# the very rewriting the hook avoids by using stdin. It is ignored everywhere else. From inside the
+# repo rather than with -C, because it would stop -C's path being converted too.
+(cd "$R" && MSYS_NO_PATHCONV=1 git add -- "a b.json" "-dash.json" "café.json" "x=/y.json")
+setup_ok $? "unusual names staged"
+git -C "$R" rm -q code.txt
+head=$(git -C "$R" rev-parse HEAD)
+git -C "$R" update-index --add --cacheinfo "160000,$head,submod"
+blob=$(printf 'code.txt' | git -C "$R" hash-object -w --stdin)
+git -C "$R" update-index --add --cacheinfo "120000,$blob,link.json"
+try_commit "$R"
+assert_equals "$RC" "0" "recorder exit 0: commit allowed"
+# MSYS would rewrite x=/y.json if it were passed as an argument to a native program; on stdin it is
+# just bytes. A deletion, a gitlink (a directory) and a symlink are not regular files to format.
+assert_equals "$(fc_got)" "$(printf '%s\n' "-dash.json" "a b.json" "café.json" "x=/y.json")" \
+    "format-check got exactly the staged regular files (no deletion, gitlink or symlink)"
+
+echo ""
+echo "--- format check: every path is NUL-terminated, the last one too ---"
+new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+fc_install "$R"
+echo x > "$R/one.json"; git -C "$R" add one.json
+try_commit "$R"
+printf 'one.json\0' | cmp -s - "$FC_LOG"
+assert_equals "$?" "0" "stdin is exactly 'one.json\\0'"
+
+echo ""
+echo "--- format check: renames and copies are checked under hostile diff config ---"
+# NS-58(c): --diff-filter=ACM silently skipped a renamed file. The hook lists with plumbing and
+# --no-renames, so neither diff.renames nor color config can change what it sees.
+new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+fc_install "$R"
+git -C "$R" config diff.renames copies; git -C "$R" config color.ui always
+git -C "$R" mv code.txt renamed.txt; echo more >> "$R/renamed.txt"; git -C "$R" add renamed.txt
+cp "$R/memory-bank/ctx.md" "$R/copied.md"; git -C "$R" add copied.md
+try_commit "$R"
+assert_equals "$(fc_got)" "$(printf '%s\n' copied.md renamed.txt)" "rename and copy destinations are listed"
+
+echo ""
+echo "--- format check: a symlink that became a regular file is checked ---"
+new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+blob=$(printf 'code.txt' | git -C "$R" hash-object -w --stdin)
+git -C "$R" update-index --add --cacheinfo "120000,$blob,was-link.json"
+try_commit "$R"; setup_ok "$RC" "symlink committed"
+fc_install "$R"
+blob=$(echo '{}' | git -C "$R" hash-object -w --stdin)
+git -C "$R" update-index --cacheinfo "100644,$blob,was-link.json"
+try_commit "$R"
+assert_equals "$(fc_got)" "was-link.json" "typechange to a regular file is listed"
+
+echo ""
+echo "--- format check: nothing to check means the script is not run ---"
+new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+fc_install "$R"
+git -C "$R" rm -q code.txt
+try_commit "$R"
+assert_equals "$RC" "0" "deletion-only commit allowed"
+assert_equals "$(fc_got)" "<not run>" "deletion-only commit: format-check not invoked with an empty list"
+
+echo ""
+echo "--- format check: a failing script refuses the commit ---"
+new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+fc_install "$R"
+before=$(git -C "$R" rev-parse HEAD)
+echo x > "$R/new.json"; git -C "$R" add new.json
+FC_EXIT=3; try_commit "$R"; FC_EXIT=0
+assert_exit_nonzero "$RC" "recorder exit 3: commit refused"
+assert_equals "$(git -C "$R" rev-parse HEAD)" "$before" "recorder exit 3: nothing was committed"
+assert_contains "$OUT" ".githooks/format-check" "refusal names the script"
+assert_contains "$OUT" "exit 3" "refusal reports the script's exit code"
+assert_not_contains "$OUT" "no-verify" "refusal does not suggest --no-verify"
+
+echo ""
+echo "--- format check: commit -- <path> and commit -a list what is actually committed ---"
+# Both commit through a temporary index (GIT_INDEX_FILE); --cached must read that one.
+new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+fc_install "$R"
+echo staged > "$R/staged.json"; git -C "$R" add staged.json
+echo edit >> "$R/code.txt"
+try_commit "$R" -- code.txt
+assert_equals "$(fc_got)" "code.txt" "commit -- code.txt: only code.txt, not the other staged file"
+rm -f "$FC_LOG"
+echo edit2 >> "$R/code.txt"
+try_commit "$R" -a
+assert_equals "$(fc_got)" "$(printf '%s\n' code.txt staged.json)" "commit -a: tracked edit plus the staged file"
+
+echo ""
+echo "--- format check: first commit on an unborn branch ---"
+new_tmp; R="$T/r"; mkdir -p "$R"
+(
+    cd "$R" || exit 1
+    git init -q && git config user.email "test@test.com" && git config user.name "Test"
+    mkdir -p .githooks && cp "$HOOK_SRC" .githooks/pre-commit && git config core.hooksPath .githooks
+); setup_ok $? "unborn repo created"
+fc_install "$R"
+echo x > "$R/first.json"; git -C "$R" add first.json
+try_commit "$R"
+assert_equals "$RC" "0" "unborn branch: commit allowed"
+assert_equals "$(fc_got)" "first.json" "unborn branch: the first commit's files are listed"
+
+echo ""
+echo "--- format check: earlier refusals still win, and the script never runs ---"
+for fc_exit in 0 1; do
+    new_tmp; R="$T/r"; make_repo "$R"; setup_ok $? "repo created"
+    fc_install "$R"
+    echo h > "$R/handoff.md"; git -C "$R" add handoff.md
+    FC_EXIT=$fc_exit; try_commit "$R"; FC_EXIT=0
+    assert_exit_nonzero "$RC" "handoff.md + format-check exiting $fc_exit: refused"
+    assert_contains "$OUT" "handoff.md is staged" "handoff.md + format-check exiting $fc_exit: handoff refusal shown"
+    assert_equals "$(fc_got)" "<not run>" "handoff.md + format-check exiting $fc_exit: script not run"
+
+    fresh_pair; setup_ok $? "main repo + linked worktree created"
+    fc_install "$T/wt"
+    echo edit >> "$T/wt/memory-bank/ctx.md"; git -C "$T/wt" add memory-bank
+    FC_EXIT=$fc_exit; try_commit "$T/wt"; FC_EXIT=0
+    assert_exit_nonzero "$RC" "worktree memory-bank/ + format-check exiting $fc_exit: refused"
+    assert_contains "$OUT" "linked worktree" "worktree memory-bank/ + format-check exiting $fc_exit: memory-bank refusal shown"
+    assert_equals "$(fc_got)" "<not run>" "worktree memory-bank/ + format-check exiting $fc_exit: script not run"
+done
+
+echo ""
+echo "--- format check: absolute core.hooksPath runs the committing worktree's own script ---"
+fresh_pair; setup_ok $? "main repo + linked worktree created"
+git -C "$T/main" config core.hooksPath "$(native_path "$T/main/.githooks")"
+fc_install "$T/wt"
+echo x > "$T/wt/feature.json"; git -C "$T/wt" add feature.json
+try_commit "$T/wt"
+assert_equals "$(fc_got)" "feature.json" "absolute hooksPath: the linked worktree's .githooks/format-check ran"
+
+# ── the shipped prettier example [NS-58] ────────────────────────────────────────────────────
+# templates/examples/format-check/ is copied by hand into a repo's .githooks/. These cases run it
+# through the real hook against a FAKE prettier module, so they need node but not npm or the
+# network: the fake marks content containing UNFORMATTED as unformatted and PARSE_ERROR as a
+# syntax error. Real prettier is not exercised here.
+EXAMPLE_DIR="$REPO_ROOT/templates/examples/format-check"
+FAKE_PRETTIER='export const version = "3.1.0"
+export async function getFileInfo(p, opts) {
+  const ignorePath = [].concat((opts && opts.ignorePath) || [])
+  return {
+    ignored: p.startsWith("ignored") && ignorePath.includes(".prettierignore"),
+    inferredParser: p.endsWith(".sh") ? null : "fake",
+  }
+}
+export async function resolveConfig() { return {} }
+export async function check(src, opts) {
+  if (!opts || !opts.filepath) throw new Error("check() called without filepath")
+  if (src.includes("PARSE_ERROR")) throw new Error("SyntaxError: fake parse failure\n  more detail")
+  return !src.includes("UNFORMATTED")
+}'
+
+# ex_repo [no-prettier] -- sets R to a repo with the example installed and (unless told otherwise)
+# the fake prettier in node_modules/.
+ex_repo() {
+    new_tmp; R="$T/r"; make_repo "$R" || return 1
+    cp "$EXAMPLE_DIR/format-check" "$EXAMPLE_DIR/format-check.mjs" "$R/.githooks/" || return 1
+    [ "${1:-}" = "no-prettier" ] && return 0
+    mkdir -p "$R/node_modules/prettier" &&
+        printf '{"name":"prettier","version":"3.1.0","type":"module","exports":"./index.mjs"}\n' \
+            > "$R/node_modules/prettier/package.json" &&
+        printf '%s\n' "$FAKE_PRETTIER" > "$R/node_modules/prettier/index.mjs"
+}
+
+echo ""
+echo "--- example: needs node ---"
+command -v node > /dev/null 2>&1
+assert_equals "$?" "0" "node is on PATH (the example cases below need it)"
+
+echo ""
+echo "--- example: formatted staged file is allowed ---"
+ex_repo; setup_ok $? "example repo created"
+echo good > "$R/good.json"; git -C "$R" add good.json
+try_commit "$R"
+assert_equals "$RC" "0" "formatted file: commit allowed"
+
+echo ""
+echo "--- example: checks the STAGED content, not the working tree ---"
+# Fixed on disk but not re-staged: the commit would still carry unformatted content, which CI fails.
+ex_repo; setup_ok $? "example repo created"
+echo UNFORMATTED > "$R/a.json"; git -C "$R" add a.json; echo good > "$R/a.json"
+try_commit "$R"
+assert_exit_nonzero "$RC" "unformatted staged, formatted on disk: refused"
+assert_contains "$OUT" "not formatted" "refusal says not formatted"
+assert_contains "$OUT" "a.json" "refusal names the file"
+# The reverse (CRLF on disk, LF staged, is the common Windows case): staged content is what counts.
+ex_repo; setup_ok $? "example repo created"
+echo good > "$R/b.json"; git -C "$R" add b.json; echo UNFORMATTED > "$R/b.json"
+try_commit "$R"
+assert_equals "$RC" "0" "formatted staged, unformatted on disk: allowed"
+
+echo ""
+echo "--- example: a parse error is reported as one, not as 'not formatted' ---"
+ex_repo; setup_ok $? "example repo created"
+echo PARSE_ERROR > "$R/broken.json"; git -C "$R" add broken.json
+try_commit "$R"
+assert_exit_nonzero "$RC" "parse error: refused"
+assert_contains "$OUT" "could not parse" "parse error: says it could not parse"
+assert_contains "$OUT" "broken.json" "parse error: names the file"
+assert_not_contains "$OUT" "not formatted" "parse error: not reported as unformatted"
+
+echo ""
+echo "--- example: ignored files and files prettier has no parser for are skipped ---"
+ex_repo; setup_ok $? "example repo created"
+echo UNFORMATTED > "$R/ignored.json"; echo UNFORMATTED > "$R/s.sh"
+git -C "$R" add ignored.json s.sh
+try_commit "$R"
+assert_equals "$RC" "0" "ignored and parser-less files: allowed"
+
+echo ""
+echo "--- example: unusual names map to the right staged content ---"
+ex_repo; setup_ok $? "example repo created"
+echo good > "$R/ok one.json"; echo UNFORMATTED > "$R/café two.json"; echo good > "$R/-dash.json"
+git -C "$R" add -- "ok one.json" "café two.json" "-dash.json"
+try_commit "$R"
+assert_exit_nonzero "$RC" "one unformatted among unusual names: refused"
+assert_contains "$OUT" "café two.json" "refusal names the unformatted file"
+assert_not_contains "$OUT" "ok one.json" "refusal does not name the formatted file"
+
+echo ""
+echo "--- example: commit -a checks the temporary index ---"
+ex_repo; setup_ok $? "example repo created"
+echo UNFORMATTED > "$R/code.txt"
+try_commit "$R" -a
+assert_exit_nonzero "$RC" "commit -a with an unformatted tracked edit: refused"
+
+echo ""
+echo "--- example: prettier not installed warns and allows ---"
+ex_repo no-prettier; setup_ok $? "example repo created without prettier"
+echo UNFORMATTED > "$R/a.json"; git -C "$R" add a.json
+try_commit "$R"
+assert_equals "$RC" "0" "no prettier: commit allowed"
+assert_contains "$OUT" "not installed" "no prettier: says it is not installed"
+
 print_summary

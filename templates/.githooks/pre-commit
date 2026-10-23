@@ -75,3 +75,47 @@ if [ -f ".claude/settings.json" ] && ! grep -q "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
   echo "WARNING: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE not found in .claude/settings.json."
   echo "Token budget auto-compaction may not be configured. Add it to avoid mid-task context loss."
 fi
+
+# Format check [NS-58], opted into per repo by adding .githooks/format-check (repo-owned; `mb
+# upgrade` replaces only pre-commit and pre-push here). Choosing WHICH staged paths to check is the
+# part that went wrong three ways when written per repo, so it lives in this TEMPLATE_OWNED hook and
+# a fix reaches every repo; the formatter itself belongs to the repo. A prettier example ships in
+# PMB's templates/examples/format-check/. Git runs this hook from the top of the working tree.
+#
+# Last on purpose: the refusals above must never depend on a repo's script.
+if [ -f .githooks/format-check ]; then
+  # Plumbing, so diff.renames, color and external-diff config cannot change the output.
+  # --no-renames reports a rename or copy as an add of the new path, so it is checked (a rename was
+  # skipped by the --diff-filter=ACM of the first per-repo attempt). Only regular files: a gitlink is
+  # a directory, and a symlink's target can be outside the repo.
+  fc_base=HEAD
+  git rev-parse -q --verify HEAD > /dev/null || fc_base=$(git hash-object -t tree /dev/null)
+  # Read record by record, never through $(...): command substitution drops NUL bytes and runs every
+  # path together. The trailing "end" marker proves diff-index finished, since a process
+  # substitution's exit status is lost.
+  fc_files=()
+  fc_complete=
+  while IFS= read -r -d '' fc_meta; do
+    [ "$fc_meta" = end ] && { fc_complete=1; break; }
+    IFS= read -r -d '' fc_path || break
+    fc_mode=${fc_meta#* }
+    case "${fc_mode%% *}" in 100644|100755) fc_files+=("$fc_path") ;; esac
+  done < <(git diff-index --cached -z --no-renames --diff-filter=AMT "$fc_base" && printf 'end\0')
+  if [ -z "$fc_complete" ]; then
+    mb_refuse "could not list staged files, so the format check (.githooks/format-check) could not run." "" \
+      "Fix the git error above and commit again."
+  fi
+
+  # Paths go on stdin, NUL-terminated, not as arguments: no command-line length limit, no MSYS
+  # rewriting of path-like arguments on Windows, no path mistaken for an option. Run with bash so the
+  # file needs no executable bit, and not at all when nothing is left to check.
+  if [ "${#fc_files[@]}" -gt 0 ]; then
+    printf '%s\0' "${fc_files[@]}" | bash .githooks/format-check
+    fc_rc=$?
+    if [ "$fc_rc" -ne 0 ]; then
+      echo "ERROR: the format check (.githooks/format-check) failed with exit $fc_rc, so the commit is refused."
+      echo "Its own output above says what to fix. Re-stage the fixed files and commit again."
+      exit 1
+    fi
+  fi
+fi
