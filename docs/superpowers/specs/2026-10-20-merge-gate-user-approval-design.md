@@ -215,9 +215,9 @@ match:
   - **Its size is capped**, because the allow-rule check probes every rule with every listed repo
     (§5.5), so the list sets that check's cost. At most 10 repos, each part at most 100
     characters; a longer list denies as not configured. Uncapped, 10,000 repos took 42.6 s against
-    388 rules: this machine's 194, counted once from the main checkout and once from a worktree
-    holding the same files (measured by the follow-up's first `/code-review` Opposition pass,
-    2026-10-21).
+    388 rule entries, which were this machine's 194 rules read twice, from the main checkout and
+    from a worktree holding the same files (measured by the follow-up's first `/code-review`
+    Opposition pass, 2026-10-21).
   - Flag order is fixed. Exactly one space separates tokens, with no quotes.
 - **Character rules:**
   - Printable ASCII only. No `\r`, `\n`, `;&|()$`<>#"'\{}`, and no `=`.
@@ -243,11 +243,13 @@ match:
   - **Out of scope:** `GH_TOKEN` and `GH_ENTERPRISE_TOKEN`. They change which account merges, not
     which PR in which repo, and the prompt makes no claim about the account. Denying them would
     also deny every merge for a user who keeps `GH_TOKEN` set.
-  - **Residual, not denied:** `XDG_CONFIG_HOME`, and `AppData` on Windows. When `GH_CONFIG_DIR` is
-    unset, gh looks for its config under them (`gh help environment`, gh 2.102.0), so they can
-    retarget `-R` the same way. `AppData` is set in every Windows session and `XDG_CONFIG_HOME`
-    on many Linux desktops, so denying either would deny every merge there. Editing the default
-    gh config has the same effect with no variable at all, and the hook cannot see that either.
+  - **Residual, not denied:** `XDG_CONFIG_HOME`, `AppData` on Windows, and `HOME`. When
+    `GH_CONFIG_DIR` is unset, gh looks for its config under them, in that order (`gh help
+    environment`, gh 2.102.0), so each can retarget `-R` the same way. `HOME` is set everywhere
+    and `AppData` in every Windows session, so denying them would deny every merge;
+    `XDG_CONFIG_HOME` is set on many Linux desktops, and denying it would deny every merge on
+    those. Editing the default gh config has the same effect with no variable at all, and the
+    hook cannot see that either.
     Retargeting also needs credentials on the other host and the same `owner/repo` there.
 - **Out of scope for the canonical form:** `--admin`, `--auto`, `--delete-branch`, `--rebase`,
   body and subject flags, branch or URL selectors, and `cd` prefixes. Every one of them is denied.
@@ -359,26 +361,30 @@ allow becomes a zero-click merge path.
     route and `gh -R <repo> pr merge`, for each allowlisted repo, plus `gh pr merge 1 --squash`.
     That catches `gh pr m*`, `g*` or `*merge*`, which no shape names. The shapes stay, because
     they catch what no fixed probe can, such as an exact `gh pr merge <N> …` rule.
-  - **What neither catches:** a rule that begins with a wildcard and pins a PR number or SHA the
-    probes do not use, such as `*pr merge 77*`. Whether Claude Code's legacy `X:*` also matches a
-    bare `X` is unmeasured; the matcher reads it only as `X *`.
+  - **What neither catches:** a rule with a wildcard ahead of a PR number or SHA the probes do
+    not use, such as `gh pr m* 77*` or `*pr merge 77*`. A rule that pins the number after a
+    literal `gh pr merge`, such as `gh pr merge 77*`, is caught by its shape. Whether Claude
+    Code's legacy `X:*` also matches a bare `X` is unmeasured; the matcher reads it only as `X *`.
   - **What runs this check at all:** only a command the classifier labels a merge. A spelling it
-    labels `NONE` (`gh -R <repo> pr merge`, an uppercase `GH`, `gh.exe`) never reaches the helper,
-    so an allow rule for it is the classifier gap in the residuals below, not something this
-    check can close.
-  - **Its cost is limited, and it fails closed at its limits.** A hook that outruns its timeout
-    gives no decision, and the settings are writable by the agent. A regex glob (`*` as `.*`)
-    backtracked exponentially: 10 stars took 23 s (measured 2026-10-21). So the wildcard matcher
-    is a greedy one with a single backtrack point, at worst rule length × probe length, and both
-    twins share three limits: a 200,000-step budget over the whole check, after which a rule
-    counts as merge-capable; a 4,096-character rule length, above which a rule counts as
-    merge-capable unread; and the repo cap in §5.1. Whitespace is stripped with a plain
-    character-set strip, because a regex strip was quadratic (1,000 long `Read` rules took 36.7 s,
-    measured 2026-10-22). The file size itself is not capped; what remains grows linearly with it.
-    This machine's real settings, 194 rules, use about 1,085 steps (`/code-review` round 2,
-    2026-10-22).
+    labels `NONE`, such as `gh -R <repo> pr merge` or `gh --repo <repo> pr merge`, never reaches
+    the helper, so an allow rule for it is the escape-spelling gap in §1, not something this check
+    can close. An uppercase `GH`, `gh.exe` and a path-prefixed `/usr/bin/gh` do classify as a
+    merge, in both twins (measured 2026-10-23), so the canonical check sees and denies them.
+  - **Its cost is limited except by file size, and it fails closed at its limits.** A hook that
+    outruns its timeout gives no decision, and the settings are writable by the agent. A regex
+    glob (`*` as `.*`) backtracked exponentially: 10 stars took 23 s (measured 2026-10-21). So
+    the wildcard matcher is a greedy one with a single backtrack point, at worst rule length ×
+    probe length, and both twins share three limits: a 200,000-step budget over the whole check,
+    after which a rule counts as merge-capable; a 4,096-character rule length, above which a rule
+    counts as merge-capable unread; and the repo cap in §5.1. Whitespace is stripped with a plain
+    character-set strip, because a regex strip was quadratic in rule length: 33 ms per
+    4,092-character rule in the Python twin and 6.4 ms in the PowerShell one (measured
+    2026-10-23), with no cap on the number of rules. The file size itself is not capped, so
+    nothing fails closed on it; what remains grows linearly with it. This machine's real settings,
+    194 rules at the time, used about 1,085 steps (`/code-review` round 2, 2026-10-22).
   - **None of this stops an agent that can write a settings file.** The same write can set
-    `disableAllHooks` and remove the whole hook layer. The limits guard against accidents, such as
+    `disableAllHooks` (a documented Claude Code setting, not exercised here) and remove the whole
+    hook layer. The limits guard against accidents, such as
     a "don't ask again" rule, and against a hook that stalls; they are not a defence against a
     hostile settings writer.
   - **Both twins read a rule alike.** Whitespace, word boundaries and case are spelled out instead
@@ -411,6 +417,9 @@ allow becomes a zero-click merge path.
   - a `gh` function, alias or earlier-on-PATH binary in the user's shell. That would run under an
     approval for the canonical text. Planting one means writing outside the project, which prompts
     in default mode.
+- **Residuals recorded where they arise**, not repeated in the list above: the gh config
+  retarget through `XDG_CONFIG_HOME`, `AppData` or `HOME` (§5.1), a wildcard rule that pins a PR
+  number the probes do not use, and an agent that writes a settings file (both earlier in §5.5).
 
 ### 5.6 App and MCP merge routes (Opposition S7)
 
@@ -588,9 +597,11 @@ file. It runs against both twins and covers:
   - A malformed settings file, and each non-strict JSON form (comment, trailing comma, `NaN`,
     single quotes, a one-element array).
   - An unreadable settings file.
-- **Bounds:** a 15-star rule, and a file of 1,000 whitespace-padded `Read` rules, are each
-  answered in under 30 s by both twins, each twin under `timeout 60` where timeout(1) exists, so
-  a regression fails the row instead of hanging the suite. An over-long rule, 600 rules that
+- **Bounds:** a 15-star rule is answered in under 30 s by both twins together. A file of 3,000
+  whitespace-padded `Read` rules is answered by each twin, timed on its own, in under 8 s; the
+  old regex strip would take about 99 s in the Python twin and 19 s in the PowerShell one. Each
+  twin runs under `timeout 60` where timeout(1) exists, so a regression fails its row instead of
+  hanging the suite. An over-long rule, 600 rules that
   exhaust the step budget, more than 10 repos, and an over-long owner each deny; 50 of the same
   rules still ask. The strip's character set and the whitespace class are checked to be the same
   set, in both twins.

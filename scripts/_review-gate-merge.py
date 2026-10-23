@@ -56,8 +56,9 @@ GH_ENV = ('GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR')
 # exactly; the .ps1 twin uses the same string, and both match ASCII-lowercased text case-exactly.
 WS = r'[\t\n\x0b\x0c\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]'
 # The same set as characters, for strip_ws. WHY not a regex strip: `\A WS+ | WS+ \Z` is retried at
-# every position of an inner whitespace run, so it is quadratic, and it runs on every rule before
-# any cap (measured 2026-10-22: 1,000 long Read rules, 36.7 s; str.strip on the same file, 1.5 s).
+# every position of an inner whitespace run, so it is quadratic in rule length; MAX_RULE_LENGTH
+# still allows 4,096 characters, and the number of rules is not capped (measured 2026-10-23: 33 ms
+# per 4,092-character rule, so about 33 s for 1,000; str.strip, under 1 ms for all 1,000).
 WS_CHARS = ''.join(map(chr, [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x85,
                              0xa0, 0x1680, *range(0x2000, 0x200b), 0x2028, 0x2029, 0x202f,
                              0x205f, 0x3000]))
@@ -151,8 +152,8 @@ def merge_capable(rule, probes=(), budget=None):
     WHY shapes and probes both: a probe catches a rule that matches one of the fixed merge
     commands however the rule itself is written (`gh pr m*`, `g*`), and a shape catches what no
     fixed probe can, such as an exact `gh pr merge <N> ...` rule or any `gh api` rule. Neither
-    catches a rule that begins with a wildcard and pins a PR number or SHA the probes do not use,
-    such as `*pr merge 77*` (spec section 5.5)."""
+    catches a rule with a wildcard ahead of a PR number or SHA the probes do not use, such as
+    `gh pr m* 77*` or `*pr merge 77*` (spec section 5.5)."""
     if budget is None:
         budget = [GLOB_BUDGET]
     if len(rule) > MAX_RULE_LENGTH:

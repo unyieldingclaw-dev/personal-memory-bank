@@ -271,12 +271,18 @@ put_allow_expr "$LOCAL" '"Bash(" + "*0" * 14 + "*x)"'
 started=$SECONDS
 LIMIT="${TIMEOUT:+$TIMEOUT 60}" expect ask "a many-star rule that matches no merge is answered, not stalled on" "$F"
 assert_equals "$(( SECONDS - started < 30 ))" 1 "both twins answer the many-star rule in under 30 s (took $(( SECONDS - started )) s)"
-# A regex whitespace strip was quadratic and ran on every rule before any cap: 1,000 long Read
-# rules took 36.7 s (2026-10-22). The strip is now a plain character-set strip.
-python3 -c 'import json,sys; json.dump({"permissions": {"allow": ["Read(" + " " * 4085 + "x)"] * 1000}}, open(sys.argv[1], "w"))' "$LOCAL"
-started=$SECONDS
-LIMIT="${TIMEOUT:+$TIMEOUT 60}" expect ask "1,000 long whitespace-padded non-Bash rules are answered, not stalled on" "$F"
-assert_equals "$(( SECONDS - started < 30 ))" 1 "both twins answer the long-rule file in under 30 s (took $(( SECONDS - started )) s)"
+# A regex whitespace strip was quadratic in rule length, under a 4,096-character cap but with no
+# cap on the number of rules: 33 ms per 4,092-character rule in the .py twin, 6.4 ms in the .ps1
+# one (2026-10-23), so 3,000 such rules would take about 99 s and 19 s. Each twin is timed on its
+# own, so a regression in either one fails its row.
+python3 -c 'import json,sys; json.dump({"permissions": {"allow": ["Read(" + " " * 4085 + "x)"] * 3000}}, open(sys.argv[1], "w"))' "$LOCAL"
+LIMIT="${TIMEOUT:+$TIMEOUT 60}" expect ask "3,000 long whitespace-padded non-Bash rules are answered, not stalled on" "$F"
+for twin in sh ps1; do
+  if [ "$twin" = ps1 ] && [ "$HAVE_PWSH" -eq 0 ]; then continue; fi
+  started=$SECONDS
+  LIMIT="${TIMEOUT:+$TIMEOUT 60}" "run_$twin" "$F" >/dev/null
+  assert_equals "$(( SECONDS - started < 8 ))" 1 "[$twin] answers the long-rule file in under 8 s (took $(( SECONDS - started )) s)"
+done
 # The strip's character set and the matching regex class are two spellings of one set.
 ws_ok=$(python3 -I -B -c '
 import importlib.util, re, sys
