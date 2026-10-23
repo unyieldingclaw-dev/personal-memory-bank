@@ -29,8 +29,9 @@ handoff time. At discovery time, `grep -rln 'review-command-tidy-ups\|f1ae4ce'
 memory-bank/*.md docs/archive/*.md` returned nothing — the work had fallen through an earlier
 compaction uncaptured, on `worktree-review-command-tidy-ups`, HEAD `dd8dd74` (PR #42's squash-merge,
 now well behind current `main`). That search scope was itself incomplete (see "Correction" below).
-The live memory-bank record is now `[NS-62]` in `activeContext.md`, added by the "Brainstorm video"
-peer session — this file is the detail `[NS-62]` points to, not a second pointer.
+The memory-bank record was `[NS-62]` in `activeContext.md`, added by the "Brainstorm video" peer
+session. It was resolved by PR #47 (`19931dc`) and deleted 2026-10-19; its last text:
+`git show 0b67d9d:memory-bank/activeContext.md`.
 
 **Correction:** an earlier draft of this file claimed the review behind the "8 defects" figure
 (below) was unfindable anywhere in the repo, based on the grep above. That grep never covered
@@ -111,5 +112,5 @@ passed cleanly.
 4. `/change-review`, commit, push, PR, user-run merge — same pipeline as PR #43/#44.
 
 Not touched by this entry: whether to actually pick this work up now, or who does it — `[NS-62]`
-says the "PMB full review" session (this one) is picking it up, which is a claim about intent, not
+said the "PMB full review" session (this one) is picking it up, which is a claim about intent, not
 yet a commitment executed.

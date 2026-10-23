@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Changed
+- **The agent can merge a pull request when the user clicks Allow.** `gh pr merge` was denied
+  unconditionally. The review gate now returns `"ask"` (Claude Code's Allow/Deny prompt) for exactly
+  `gh pr merge <N> -R <owner/repo> --squash|--merge --match-head-commit <40-hex SHA>`, from the main
+  agent in default/acceptEdits/auto mode, and denies every other form, a subagent, other modes, and
+  settings that could approve a merge without a prompt. **Opt-in:** list the repo in a new
+  `.claude/merge-gate.json`, or every merge stays denied. New TEMPLATE_OWNED helpers
+  `scripts/_review-gate-merge.py`/`.ps1`; a missing or crashing helper denies, but a crash of the
+  hook process itself still gives no decision, as before. Unknown classifier verdicts now deny.
+  PMB-only `permissions` add ask/deny rules adopters do not get. Details: `docs/HOOKS-GUIDE.md`
+  (Review Gate) and `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`.
 - **Stage before committing, in a command of its own.** The commit review gate now refuses while
   any tracked change is unstaged when it runs. So `git add X && git commit` in one command, and
   `git commit -a` or `-am`, are refused whenever that leaves a tracked change unstaged at hook
@@ -755,30 +765,11 @@
 
 ## Pending — NOT part of any release
 
-**This section is not release notes and must not be renamed at tag-cut.** It was previously a
-`### Added` block inside `[Unreleased]`, carrying a note that its contents were unshipped. The note
-was correct but structurally unsafe: renaming `## [Unreleased]` to a version number — the one
-mechanical step of cutting a release — would have swept four features that do not exist in this
-repository into the release notes for a tag that does not contain them. Moved to its own
-`##`-level section on 2026-09-02 so that rename cannot reach it.
-
-Everything below is implemented and committed on the not-yet-merged branch
-`worktree-concurrent-session-claims`, not on this branch or tag — see `[NS-18]` in
-`memory-bank/activeContext.md`. Move these items into a release section only when that branch
-actually merges.
-
-### Pending — session-claims (branch `worktree-concurrent-session-claims`)
-- `scripts/session-claims.sh`/`.ps1`: coordinate multiple Claude Code sessions working the same
-  repo at once via a gitignored, self-pruning `.claude/session-claims.json` registry —
-  `prune`/`list`/`claim`/`release`/`force-clear`/`notify`, `mkdir`-based lock with 30s staleness
-  theft, atomic writes. Mirrored into `templates/scripts/`.
-- New `SessionStart` hook (`notify`) auto-surfaces live claims at session start; silent when
-  there's nothing to report.
-- Two new `mb doctor` checks: malformed `session-claims.json`, stuck `session-claims.lock`
-  directory.
-- `docs/SESSION-CLAIMS-GUIDE.md`; `[NS-N]` stable-id convention for `activeContext.md`'s Next
-  Steps list, documented in `standards/MEMORY-BANK.md` and wired into `CLAUDE.md`'s
-  session-start/handoff protocol.
+The session-claims entries that stood here are now in
+`docs/archive/changelog-2026-10-23-pending-session-claims.md`. They were moved on 2026-10-23
+because this file had reached the File Size job's 800-line cap. They describe the branch
+`worktree-concurrent-session-claims`, which will not merge, because `[NS-18]` was closed as
+superseded on 2026-09-29. They are kept as history only.
 
 ## Released history
 
