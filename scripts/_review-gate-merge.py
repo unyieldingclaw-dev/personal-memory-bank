@@ -153,7 +153,8 @@ def merge_capable(rule, probes=(), budget=None):
     commands however the rule itself is written (`gh pr m*`, `g*`), and a shape catches what no
     fixed probe can, such as an exact `gh pr merge <N> ...` rule or any `gh api` rule. Neither
     catches a rule with a wildcard ahead of a PR number or SHA the probes do not use, such as
-    `gh pr m* 77*` or `*pr merge 77*` (spec section 5.5)."""
+    `gh pr m* 77*` or `*pr merge 77*`, so main calls this again with the matched command as the
+    only probe (spec section 5.5)."""
     if budget is None:
         budget = [GLOB_BUDGET]
     if len(rule) > MAX_RULE_LENGTH:
@@ -188,9 +189,10 @@ def settings_files(project):
     ]
 
 
-def check_settings(project, repos):
+def check_settings(project, repos, budget):
+    """Deny on any merge-capable allow rule; return the others as (path, rule) for main."""
     probes = probe_commands(repos)
-    budget = [GLOB_BUDGET]
+    kept = []
     for path in settings_files(project):
         if not os.path.exists(path):
             continue
@@ -216,6 +218,8 @@ def check_settings(project, repos):
                 continue
             if not isinstance(rule, str) or merge_capable(rule, probes, budget):
                 deny(GENERIC_DENY, 'merge-capable allow rule in: ' + path)
+            kept.append((path, rule))
+    return kept
 
 
 def allowed_repos(project):
@@ -251,7 +255,8 @@ def main():
     # The allowlist is read first, because the settings check probes each allow rule with it.
     project = os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd()
     repos = allowed_repos(project)
-    check_settings(project, repos)
+    budget = [GLOB_BUDGET]
+    rules = check_settings(project, repos, budget)
 
     tool_input = payload.get('tool_input')
     if not isinstance(tool_input, dict):
@@ -266,6 +271,12 @@ def main():
              'or after it: gh pr merge <N> -R ' + repos[0] + ' --squash --match-head-commit '
              '<full 40-hex head SHA> (or --merge in place of --squash). Use the PR number and '
              'head SHA the user asked for.')
+    # WHY again, with this command: only a canonical command is ever asked, so a rule that
+    # matches it is the only one that matters, and the fixed probes miss a rule that names this
+    # PR's number or SHA (`gh pr m* 77*`) or ends in a character they do not (`gh p*f`).
+    for path, rule in rules:
+        if merge_capable(rule, [command], budget):
+            deny(GENERIC_DENY, 'allow rule matches this merge command in: ' + path)
     if 'description' in tool_input and tool_input['description'] != DESCRIPTION:
         deny('Set the tool description to exactly "' + DESCRIPTION + '", or omit it. The '
              'prompt shows it, so it must not describe the merge in the agent\'s own words.')

@@ -123,7 +123,9 @@ function Get-MergeGateSettingsFile {
 function Get-ReviewGateMergeDecision {
     param([string]$Raw, [string]$ProjectDir)
 
-    $payload = $Raw | ConvertFrom-Json -ErrorAction Stop
+    # -NoEnumerate, as in ConvertFrom-MergeGateJson: enumerated, a one-element array payload read
+    # as the object inside it and asked, where the .py twin denies.
+    $payload = $Raw | ConvertFrom-Json -NoEnumerate -ErrorAction Stop
     if ($payload -isnot [System.Management.Automation.PSCustomObject]) {
         return Get-MergeGateDenial $script:MergeGateGenericDeny 'payload is not a JSON object'
     }
@@ -154,6 +156,7 @@ function Get-ReviewGateMergeDecision {
     }
     $probes = Get-MergeGateProbeCommand $repos
     $budget = @{ Steps = $script:MergeGateGlobBudget }
+    $kept = [System.Collections.Generic.List[object]]::new()
 
     foreach ($path in (Get-MergeGateSettingsFile $ProjectDir)) {
         if (-not (Test-Path -LiteralPath $path)) { continue }
@@ -188,6 +191,7 @@ function Get-ReviewGateMergeDecision {
             if ($rule -isnot [string] -or (Test-MergeGateCapableRule $rule $probes $budget)) {
                 return Get-MergeGateDenial $script:MergeGateGenericDeny "merge-capable allow rule in: $path"
             }
+            $kept.Add([pscustomobject]@{ Path = $path; Rule = $rule })
         }
     }
 
@@ -202,6 +206,12 @@ function Get-ReviewGateMergeDecision {
         return Get-MergeGateDenial ("This agent merges a pull request only in exactly this form, with nothing before or after it: gh pr merge <N> -R " + $repos[0] + " --squash --match-head-commit <full 40-hex head SHA> (or --merge in place of --squash). Use the PR number and head SHA the user asked for.")
     }
     $m = $Matches
+    # Again with the matched command as the only probe (WHY in the .py twin's main).
+    foreach ($k in $kept) {
+        if (Test-MergeGateCapableRule $k.Rule @($command) $budget) {
+            return Get-MergeGateDenial $script:MergeGateGenericDeny "allow rule matches this merge command in: $($k.Path)"
+        }
+    }
     $desc = Get-MergeGateProperty $toolInput 'description'
     if ($desc.Present -and -not ($desc.Value -is [string] -and [string]::Equals($desc.Value, $script:MergeGateDescription, [System.StringComparison]::Ordinal))) {
         return Get-MergeGateDenial ('Set the tool description to exactly "' + $script:MergeGateDescription + '", or omit it. The prompt shows it, so it must not describe the merge in the agent''s own words.')
