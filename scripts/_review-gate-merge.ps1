@@ -14,6 +14,63 @@
 $script:MergeGateModes = @('default', 'acceptEdits', 'auto')
 $script:MergeGateDescription = 'Merge pull request (verify the details in the hook reason)'
 $script:MergeGateGenericDeny = "Merge gate precondition failed. Ask the user to check this checkout's Claude settings."
+$script:MergeGateGhEnv = @('GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR')
+# The same strings as WS and END in the .py twin, used instead of \s, \b and -match's IgnoreCase,
+# which differ between .NET and Python.
+$script:MergeGateWs = '[\t\n\x0b\x0c\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]'
+$script:MergeGateEnd = '(?![A-Za-z0-9_])'
+# The same limits as MAX_REPOS, MAX_RULE_LENGTH and GLOB_BUDGET in the .py twin, with the WHY there.
+$script:MergeGateMaxRepos = 10
+$script:MergeGateMaxRuleLength = 4096
+$script:MergeGateGlobBudget = 200000
+
+function ConvertFrom-MergeGateJson {
+    param([string]$Text)
+    # ConvertFrom-Json alone also accepts comments, trailing commas, NaN, single quotes and bare
+    # keys (measured, PowerShell 7.6), so System.Text.Json validates first. -NoEnumerate and the
+    # comma keep a one-element JSON array an array; enumerated, it read as the object inside it.
+    $options = [System.Text.Json.JsonDocumentOptions]::new()
+    $options.MaxDepth = 1024
+    [System.Text.Json.JsonDocument]::Parse($Text, $options).Dispose()
+    $parsed = $Text | ConvertFrom-Json -NoEnumerate -ErrorAction Stop
+    return , $parsed
+}
+
+function Get-MergeGateTrimmedText {
+    param([string]$Text)
+    $Text -creplace ('\A' + $script:MergeGateWs + '+|' + $script:MergeGateWs + '+\z'), ''
+}
+
+function Get-MergeGateProbeCommand {
+    param([string[]]$Repos)
+    $zero = '0' * 40
+    $probes = @('gh pr merge 1 --squash')
+    foreach ($r in $Repos) {
+        $probes += "gh pr merge 1 -R $r --squash --match-head-commit $zero"
+        $probes += "gh pr merge 1 -R $r --merge --match-head-commit $zero"
+        $probes += "gh api -X PUT repos/$r/pulls/1/merge"
+        $probes += "gh -R $r pr merge 1 --squash"
+    }
+    $probes
+}
+
+function Test-MergeGateGlob {
+    # Step for step the .py twin's glob_matches. Characters compare as code units, never with
+    # -ceq, which is culture-aware.
+    param([string]$Body, [string]$Command, [hashtable]$Budget)
+    if ($Body.EndsWith(':*', [System.StringComparison]::Ordinal)) { $Body = $Body.Substring(0, $Body.Length - 2) + ' *' }
+    $i = 0; $j = 0; $star = -1; $mark = 0
+    while ($j -lt $Command.Length) {
+        $Budget.Steps--
+        if ($Budget.Steps -lt 0) { return $true }
+        if ($i -lt $Body.Length -and [int]$Body[$i] -eq 42) { $star = $i; $mark = $j; $i++ }
+        elseif ($i -lt $Body.Length -and [int]$Body[$i] -eq [int]$Command[$j]) { $i++; $j++ }
+        elseif ($star -ge 0) { $i = $star + 1; $mark++; $j = $mark }
+        else { return $false }
+    }
+    while ($i -lt $Body.Length -and [int]$Body[$i] -eq 42) { $i++ }
+    return ($i -eq $Body.Length)
+}
 
 function Get-MergeGateProperty {
     param($Object, [string]$Name)
@@ -31,17 +88,21 @@ function Get-MergeGateDenial {
 }
 
 function Test-MergeGateCapableRule {
-    param([string]$Rule)
-    $r = $Rule.Trim()
+    param([string]$Rule, [string[]]$Probes = @(), [hashtable]$Budget = @{ Steps = $script:MergeGateGlobBudget })
+    if ($Rule.Length -gt $script:MergeGateMaxRuleLength) { return $true }
+    $ws = $script:MergeGateWs; $end = $script:MergeGateEnd
+    $r = Get-MergeGateTrimmedText $Rule
     if ($r -cnotmatch '(?s)\A(Bash|PowerShell)(?:\((.*)\))?\z') { return $false }
     if (-not $Matches.ContainsKey(2)) { return $true }
-    $body = $Matches[2].Trim()
+    $body = Get-MergeGateTrimmedText $Matches[2]
     if ($body -ceq '*' -or $body -ceq ':*') { return $true }
-    if ($body -cmatch '\Agh(?:\s*\*|:\*)?\z') { return $true }
-    if ($body -cmatch '\Agh\s+(?:api\b|-)') { return $true }
-    if ($body -cmatch '\Agh\s+pr(?:\s*\*|:\*)\z' -or $body -cmatch '\Agh\s+pr\s+merge\b') { return $true }
-    $interp = '\A(?:python3?|py|node|pwsh|powershell|bash|sh|cmd)(?:\.exe)?(?:\s.*)?\s(?:-c|-e|--eval|-Command|-EncodedCommand|/c)\b'
-    return ($body.Contains('*') -and $body -match $interp)
+    if ($body -cmatch ('\Agh(?:' + $ws + '*\*|:\*)?\z')) { return $true }
+    if ($body -cmatch ('\Agh' + $ws + '+(?:api' + $end + '|-)')) { return $true }
+    if ($body -cmatch ('\Agh' + $ws + '+pr(?:' + $ws + '*\*|:\*)\z') -or $body -cmatch ('\Agh' + $ws + '+pr' + $ws + '+merge' + $end)) { return $true }
+    foreach ($p in $Probes) { if (Test-MergeGateGlob $body $p $Budget) { return $true } }
+    $lower = [regex]::Replace($body, '[A-Z]', { param($m) $m.Value.ToLowerInvariant() })
+    $interp = '\A(?:python3?|py|node|pwsh|powershell|bash|sh|cmd)(?:\.exe)?(?:' + $ws + '.*)?' + $ws + '(?:-c|-e|--eval|-command|-encodedcommand|/c)' + $end
+    return ($body.Contains('*') -and $lower -cmatch $interp)
 }
 
 function Get-MergeGateSettingsFile {
@@ -68,14 +129,31 @@ function Get-ReviewGateMergeDecision {
     if ($mode -isnot [string] -or -not ($script:MergeGateModes -ccontains $mode)) {
         return Get-MergeGateDenial 'Merges are only put to the user in default, acceptEdits or auto mode; this session cannot show a prompt for it. Merge in the GitHub UI instead.'
     }
-    if ((Test-Path Env:GH_HOST) -or (Test-Path Env:GH_REPO)) {
-        return Get-MergeGateDenial $script:MergeGateGenericDeny 'GH_HOST or GH_REPO is set in the hook environment'
+    foreach ($name in $script:MergeGateGhEnv) {
+        if (Test-Path "Env:$name") {
+            return Get-MergeGateDenial $script:MergeGateGenericDeny 'GH_HOST, GH_REPO or GH_CONFIG_DIR is set in the hook environment'
+        }
     }
+
+    # The allowlist is read first, because the settings check probes each allow rule with it.
+    $notConfigured = "Merge gate is not configured: .claude/merge-gate.json must list ""repos"" as 1 to $($script:MergeGateMaxRepos) owner/repo strings. Merge in the GitHub UI instead."
+    try {
+        $config = ConvertFrom-MergeGateJson (Get-Content -LiteralPath (Join-Path (Join-Path $ProjectDir '.claude') 'merge-gate.json') -Raw -ErrorAction Stop)
+    } catch {
+        return Get-MergeGateDenial 'Merge gate is not configured: .claude/merge-gate.json is missing or malformed, so no repository is allowed. Merge in the GitHub UI instead.'
+    }
+    $repos = (Get-MergeGateProperty $config 'repos').Value
+    if ($repos -isnot [System.Array] -or $repos.Count -eq 0 -or $repos.Count -gt $script:MergeGateMaxRepos) { return Get-MergeGateDenial $notConfigured }
+    foreach ($r in $repos) {
+        if ($r -isnot [string] -or $r -cnotmatch '\A[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\z') { return Get-MergeGateDenial $notConfigured }
+    }
+    $probes = Get-MergeGateProbeCommand $repos
+    $budget = @{ Steps = $script:MergeGateGlobBudget }
 
     foreach ($path in (Get-MergeGateSettingsFile $ProjectDir)) {
         if (-not (Test-Path -LiteralPath $path)) { continue }
         try {
-            $data = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $data = ConvertFrom-MergeGateJson (Get-Content -LiteralPath $path -Raw -ErrorAction Stop)
         } catch {
             return Get-MergeGateDenial $script:MergeGateGenericDeny "unreadable or malformed settings: $path"
         }
@@ -102,22 +180,10 @@ function Get-ReviewGateMergeDecision {
         }
         foreach ($rule in @($allow)) {
             if ($null -eq $rule) { continue }
-            if ($rule -isnot [string] -or (Test-MergeGateCapableRule $rule)) {
+            if ($rule -isnot [string] -or (Test-MergeGateCapableRule $rule $probes $budget)) {
                 return Get-MergeGateDenial $script:MergeGateGenericDeny "merge-capable allow rule in: $path"
             }
         }
-    }
-
-    $notConfigured = 'Merge gate is not configured: .claude/merge-gate.json must list "repos" as owner/repo strings. Merge in the GitHub UI instead.'
-    try {
-        $config = Get-Content -LiteralPath (Join-Path (Join-Path $ProjectDir '.claude') 'merge-gate.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    } catch {
-        return Get-MergeGateDenial 'Merge gate is not configured: .claude/merge-gate.json is missing or malformed, so no repository is allowed. Merge in the GitHub UI instead.'
-    }
-    $repos = (Get-MergeGateProperty $config 'repos').Value
-    if ($repos -isnot [System.Array] -or $repos.Count -eq 0) { return Get-MergeGateDenial $notConfigured }
-    foreach ($r in $repos) {
-        if ($r -isnot [string] -or $r -cnotmatch '\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z') { return Get-MergeGateDenial $notConfigured }
     }
 
     $toolInput = (Get-MergeGateProperty $payload 'tool_input').Value

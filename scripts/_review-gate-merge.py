@@ -26,6 +26,7 @@ re.fullmatch already anchors both ends without accepting a trailing newline, whi
 import json
 import os
 import re
+import string
 import sys
 
 MODES = ('default', 'acceptEdits', 'auto')
@@ -40,13 +41,36 @@ DESCRIPTION = 'Merge pull request (verify the details in the hook reason)'
 GENERIC_DENY = ("Merge gate precondition failed. Ask the user to check this checkout's "
                 "Claude settings.")
 
-REPO_SHAPE = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', re.ASCII)
+REPO_SHAPE = re.compile(r'[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}', re.ASCII)
+
+# WHY GH_CONFIG_DIR: it picks the gh config whose hosts decide where an unprefixed `-R owner/repo`
+# resolves (measured 2026-10-21, gh 2.102.0: a config listing only ghe.invalid sent
+# `gh pr view 1 -R cli/cli` there). GH_TOKEN and GH_ENTERPRISE_TOKEN change who merges, not what
+# is merged, and are out of scope (spec section 5.1).
+GH_ENV = ('GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR')
+
+# WHY spelled out instead of \s, \b and IGNORECASE: those differ between Python and .NET, so the
+# twins classified some rules differently (measured 2026-10-21: Python's \s also holds \x1c-\x1f,
+# and case folding differs for the Kelvin sign and the long s). This class is Python's \s set
+# exactly; the .ps1 twin uses the same string, and both match ASCII-lowercased text case-exactly.
+WS = r'[\t\n\x0b\x0c\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]'
+END = r'(?![A-Za-z0-9_])'
+ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+# WHY these caps: everything the settings check costs grows with input the agent can write. A
+# regex glob over a many-star rule took 23 s at 10 stars (measured 2026-10-21), and a hook that
+# outruns its timeout gives no decision, which fails open. So the glob below is a linear-time
+# matcher; GLOB_BUDGET bounds its total steps over one whole check, and running out counts as
+# merge-capable; a rule longer than MAX_RULE_LENGTH is treated as merge-capable unread; and more
+# than MAX_REPOS allowlisted repos denies, since each repo multiplies the probes.
+MAX_REPOS = 10
+MAX_RULE_LENGTH = 4096
+GLOB_BUDGET = 200000
 
 # Interpreters whose wildcard one-liner rules can run anything, including a merge.
 INTERPRETERS = re.compile(
-    r'(?:python3?|py|node|pwsh|powershell|bash|sh|cmd)(?:\.exe)?(?:\s.*)?'
-    r'\s(?:-c|-e|--eval|-Command|-EncodedCommand|/c)\b',
-    re.ASCII | re.IGNORECASE)
+    r'(?:python3?|py|node|pwsh|powershell|bash|sh|cmd)(?:\.exe)?(?:' + WS + r'.*)?'
+    + WS + r'(?:-c|-e|--eval|-command|-encodedcommand|/c)' + END)
 
 
 def deny(reason, cause=None):
@@ -56,24 +80,92 @@ def deny(reason, cause=None):
     sys.exit(0)
 
 
-def merge_capable(rule):
-    """True when an allow rule could carry a merge past the prompt."""
-    m = re.fullmatch(r'(Bash|PowerShell)(?:\((.*)\))?', rule.strip(), re.DOTALL)
+def load_json(path):
+    """Strict JSON only. json already refuses comments and trailing commas; NaN and Infinity are
+    refused here because the .ps1 twin's strict parser refuses them too."""
+    def no_constant(name):
+        raise ValueError('non-standard JSON constant ' + name)
+    with open(path, encoding='utf-8-sig') as f:
+        return json.load(f, parse_constant=no_constant)
+
+
+def strip_ws(text):
+    return re.sub(r'\A' + WS + r'+|' + WS + r'+\Z', '', text)
+
+
+def probe_commands(repos):
+    """Merge commands no allow rule may match: the canonical form with either method, the REST
+    route, and the global -R spelling (the last one the classifier does not see as a merge)."""
+    zero = '0' * 40
+    probes = ['gh pr merge 1 --squash']
+    for r in repos:
+        probes += ['gh pr merge 1 -R %s --squash --match-head-commit %s' % (r, zero),
+                   'gh pr merge 1 -R %s --merge --match-head-commit %s' % (r, zero),
+                   'gh api -X PUT repos/%s/pulls/1/merge' % r,
+                   'gh -R %s pr merge 1 --squash' % r]
+    return probes
+
+
+def glob_matches(body, command, budget):
+    """Claude Code's rule wildcard: * matches any run of characters, and a trailing :* is the
+    legacy spelling of ' *'. Case-exact, like the shape checks in merge_capable.
+
+    Greedy with one backtrack point, so O(len(body) * len(command)) at worst. budget is a
+    one-item list of steps left, shared by the whole settings check (see GLOB_BUDGET)."""
+    if body.endswith(':*'):
+        body = body[:-2] + ' *'
+    i = j = 0
+    star, mark = -1, 0
+    while j < len(command):
+        budget[0] -= 1
+        if budget[0] < 0:
+            return True
+        if i < len(body) and body[i] == '*':
+            star, mark = i, j
+            i += 1
+        elif i < len(body) and body[i] == command[j]:
+            i += 1
+            j += 1
+        elif star >= 0:
+            i = star + 1
+            mark += 1
+            j = mark
+        else:
+            return False
+    while i < len(body) and body[i] == '*':
+        i += 1
+    return i == len(body)
+
+
+def merge_capable(rule, probes=(), budget=None):
+    """True when an allow rule could carry a merge past the prompt.
+
+    WHY shapes and probes both: a probe catches a rule that matches a merge however the rule is
+    spelled (`gh pr m*`, `g*`), and a shape catches what no fixed probe can, such as an exact
+    `gh pr merge <N> ...` rule or any `gh api` rule."""
+    if budget is None:
+        budget = [GLOB_BUDGET]
+    if len(rule) > MAX_RULE_LENGTH:
+        return True
+    m = re.fullmatch(r'(Bash|PowerShell)(?:\((.*)\))?', strip_ws(rule), re.DOTALL)
     if not m:
         return False
     body = m.group(2)
     if body is None:
         return True  # a bare tool name allows every command
-    body = body.strip()
+    body = strip_ws(body)
     if body in ('*', ':*'):
         return True
-    if re.fullmatch(r'gh(?:\s*\*|:\*)?', body):
+    if re.fullmatch(r'gh(?:' + WS + r'*\*|:\*)?', body):
         return True
-    if re.match(r'gh\s+(?:api\b|-)', body):
+    if re.match(r'gh' + WS + r'+(?:api' + END + r'|-)', body):
         return True
-    if re.fullmatch(r'gh\s+pr(?:\s*\*|:\*)', body) or re.match(r'gh\s+pr\s+merge\b', body):
+    if (re.fullmatch(r'gh' + WS + r'+pr(?:' + WS + r'*\*|:\*)', body)
+            or re.match(r'gh' + WS + r'+pr' + WS + r'+merge' + END, body)):
         return True
-    return bool('*' in body and INTERPRETERS.match(body))
+    if any(glob_matches(body, p, budget) for p in probes):
+        return True
+    return bool('*' in body and INTERPRETERS.match(body.translate(ASCII_LOWER)))
 
 
 def settings_files(project):
@@ -85,13 +177,14 @@ def settings_files(project):
     ]
 
 
-def check_settings(project):
+def check_settings(project, repos):
+    probes = probe_commands(repos)
+    budget = [GLOB_BUDGET]
     for path in settings_files(project):
         if not os.path.exists(path):
             continue
         try:
-            with open(path, encoding='utf-8-sig') as f:
-                data = json.load(f)
+            data = load_json(path)
         except Exception:
             deny(GENERIC_DENY, 'unreadable or malformed settings: ' + path)
         if not isinstance(data, dict):
@@ -110,22 +203,23 @@ def check_settings(project):
         for rule in allow or []:
             if rule is None:
                 continue
-            if not isinstance(rule, str) or merge_capable(rule):
+            if not isinstance(rule, str) or merge_capable(rule, probes, budget):
                 deny(GENERIC_DENY, 'merge-capable allow rule in: ' + path)
 
 
 def allowed_repos(project):
     path = os.path.join(project, '.claude', 'merge-gate.json')
     try:
-        with open(path, encoding='utf-8-sig') as f:
-            repos = json.load(f)['repos']
+        config = load_json(path)
     except Exception:
         deny('Merge gate is not configured: .claude/merge-gate.json is missing or malformed, '
              'so no repository is allowed. Merge in the GitHub UI instead.')
-    if not isinstance(repos, list) or not repos or not all(
+    # Outside the try, so a config without "repos" gets the same message as the .ps1 twin.
+    repos = config.get('repos') if isinstance(config, dict) else None
+    if not isinstance(repos, list) or not 1 <= len(repos) <= MAX_REPOS or not all(
             isinstance(r, str) and REPO_SHAPE.fullmatch(r) for r in repos):
-        deny('Merge gate is not configured: .claude/merge-gate.json must list "repos" as '
-             'owner/repo strings. Merge in the GitHub UI instead.')
+        deny('Merge gate is not configured: .claude/merge-gate.json must list "repos" as 1 to '
+             '%d owner/repo strings. Merge in the GitHub UI instead.' % MAX_REPOS)
     return repos
 
 
@@ -140,12 +234,13 @@ def main():
     if not isinstance(mode, str) or mode not in MODES:
         deny('Merges are only put to the user in default, acceptEdits or auto mode; this '
              'session cannot show a prompt for it. Merge in the GitHub UI instead.')
-    if 'GH_HOST' in os.environ or 'GH_REPO' in os.environ:
-        deny(GENERIC_DENY, 'GH_HOST or GH_REPO is set in the hook environment')
+    if any(name in os.environ for name in GH_ENV):
+        deny(GENERIC_DENY, 'GH_HOST, GH_REPO or GH_CONFIG_DIR is set in the hook environment')
 
+    # The allowlist is read first, because the settings check probes each allow rule with it.
     project = os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd()
-    check_settings(project)
     repos = allowed_repos(project)
+    check_settings(project, repos)
 
     tool_input = payload.get('tool_input')
     if not isinstance(tool_input, dict):
