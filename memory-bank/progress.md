@@ -13,6 +13,11 @@ lineage: []
 
 # Progress
 
+## 2026-10-23 — PR #81 merged: the merge deny became a user-clicked permission prompt
+
+- Detail and open items (G1-G3, unpushed `327c6c2`): `[NS-65]` in `activeContext.md`; spec
+  `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`.
+
 ## 2026-10-20 — PRs #77 (`1b086c7`) and #58 (`25515a2`) merged
 
 - **#77:** the review gate's empty-diff denial now names the root it checked (`review-reminders` sh/ps1 + templates
@@ -69,14 +74,7 @@ Moved verbatim to `docs/archive/progress-2026-10-13-and-10-14-reconciliation-and
 
 ## 2026-10-05 — PRs #51 (`07e3bd2`) and #53 (`3cadb06`, [NS-19]) merged
 
-- **#53:** `/change-review` approved it with conditions. The CHANGELOG `mb plan promote` entry
-  blamed `awk`; the shipped bug was `sed -i`. Corrected here. Its parity and test gaps are listed
-  in the PR #53 body.
-- **A reviewer subagent ran `git commit` inside a script file**, which the PreToolUse gate cannot
-  see. It targeted a scratch repo, and the reflog was clean.
-  `docs/backlog/review-gate-is-bypassed-by-a-git-verb-held-in-a-va.md` already measured that case.
-- **`mb verify-integrity` flagged all five files** against a PowerShell-written baseline, which
-  holds uppercase hashes. That is [NS-36], live.
+Moved verbatim to `docs/archive/progress-2026-10-05-prs-51-and-53.md`.
 
 ## 2026-10-04 — `mb doctor --check` and pre-push Check 7 (PR #51)
 
