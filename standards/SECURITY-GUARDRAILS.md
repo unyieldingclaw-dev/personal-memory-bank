@@ -85,6 +85,8 @@ When this happens: state the recommendation, then explicitly re-ask ("Want me to
 
 This distinction can't be enforced by a hook: a `PreToolUse` hook sees only the tool call about to run, not the conversation that did or didn't authorize it. A marker file claiming "user approved this" would be exactly as fakeable as a self-written code-review marker — see `standards/RULES-FILE-INTEGRITY.md` and the `/change-review` push-gate design for why diff-bound hashes work here and an unverifiable "approved" flag would not. This rule is advisory by necessity, not by oversight.
 
+**The one exception: a harness permission prompt.** A hook can return `"ask"`, and Claude Code then shows the user an Allow/Deny prompt for that exact command. The user's click is a per-action approval the agent cannot write. The PR merge gate uses it (see the table below). It does not make the conversational rule above enforceable — a prompt asks again, it does not read what was said earlier — and it is only as good as the user reading the prompt.
+
 ### The User Is Never the Compliance Bypass
 
 Some CONFIRM/BLOCK-tier commands (force-push, `git filter-branch`, `--no-verify`, `chmod -R 777`) are deliberately designed so only the user's own hands ever execute them — the block exists specifically to require a human to decide and act, and the user running it directly genuinely satisfies that. This rule is about a different case: **blocks whose purpose is verifying that some other step already happened** — most concretely, the review-gate marker, which exists to confirm `/code-review`/`/change-review` actually ran.
@@ -113,6 +115,7 @@ This can't be hook-enforced either: a `PreToolUse` hook only fires on tool calls
 | Force push (non-protected) | `--force` to feature branch | Still risky |
 | Interactive rebase | `git rebase -i` | Complex history changes |
 | Merge into a shared/base branch | Any local `git merge` onto a branch that has a remote or an open PR — not just `git push` | Combines history irreversibly; a hook can't verify authorization for this the way it can verify a diff hash (see "What Counts as Approval" below) |
+| Merge a pull request | `gh pr merge` | Combines shared history. **Hook-enforced through a permission prompt:** only `gh pr merge <N> -R <allowlisted repo> --squash\|--merge --match-head-commit <40-hex SHA>`, from the main agent, in default/acceptEdits/auto mode, is put to the user; every other form is denied. Approve only a merge you asked for. Details: `docs/HOOKS-GUIDE.md`, Review Gate |
 
 **What the commit-signing gate does not cover.** The pattern matches a git *invocation* that sets
 the config. These reach the same outcome and are deliberately not matched:

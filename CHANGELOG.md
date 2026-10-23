@@ -2,7 +2,44 @@
 
 ## [Unreleased]
 
+### Changed
+- **The agent can merge a pull request when the user clicks Allow.** `gh pr merge` was denied
+  unconditionally. The review gate now returns `"ask"` (Claude Code's Allow/Deny prompt) for exactly
+  `gh pr merge <N> -R <owner/repo> --squash|--merge --match-head-commit <40-hex SHA>`, from the main
+  agent in default/acceptEdits/auto mode, and denies every other form, a subagent, other modes, and
+  settings that could approve a merge without a prompt. **Opt-in:** list the repo in a new
+  `.claude/merge-gate.json`, or every merge stays denied. New TEMPLATE_OWNED helpers
+  `scripts/_review-gate-merge.py`/`.ps1`; a missing or crashing helper denies, but a crash of the
+  hook process itself still gives no decision, as before. Unknown classifier verdicts now deny.
+  PMB-only `permissions` add ask/deny rules adopters do not get. Details: `docs/HOOKS-GUIDE.md`
+  (Review Gate) and `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`.
+- **Stage before committing, in a command of its own.** The commit review gate now refuses while
+  any tracked change is unstaged when it runs. So `git add X && git commit` in one command, and
+  `git commit -a` or `-am`, are refused whenever that leaves a tracked change unstaged at hook
+  time, even after an approved `/code-review`: the gate runs before either stages anything. The
+  marker survives the refusal; stage, then commit. Why, and what the gate still does not cover:
+  see "The commit review gate approved commits that held only part of the reviewed change" under
+  Fixed.
+
 ### Fixed
+- **The commit review gate approved commits that held only part of the reviewed change.** The
+  marker binds a hash of `git diff HEAD`, the working tree, but a commit records the index, so a
+  change left partly unstaged still matched. On 2026-10-16 a merge finished with `git add` on only
+  its conflicted path nearly committed without new test rows in a file that had not conflicted.
+  The commit gate (both twins and their `templates/` copies) now also refuses while
+  `git diff --quiet --no-ext-diff --no-textconv` fails, and leaves the marker in place for the
+  retry. The flags stop a textconv filter or an exit-code-trusted external diff driver from hiding
+  a difference. The review commands are unchanged and still hash `git diff HEAD`. Hashing the
+  staged diff instead was rejected: the hook runs before `git commit -a` stages anything, so a
+  partly-staged `-a` commit would have carried unreviewed changes. Cost: stage in its own command
+  first. A chained `git add` and `git commit -a` both act after the hook, so both are refused
+  while tracked changes are unstaged. Not covered yet: commits that name paths, `--amend`,
+  `--patch`, a chained command that edits or stages files before its commit, and
+  `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` in the command's environment, and content a textconv
+  filter or external diff driver hides from the reviewed diff itself: the marker still hashes
+  plain `git diff HEAD`, so the two flags guard only the staging check. New rows in
+  `tests/test-review-reminders.sh` cover both shells, including the merge case.
+  `docs/HOOKS-GUIDE.md` no longer says a mismatched marker is consumed.
 - **No WARN from a `PreToolUse` hook ever reached you or Claude.** Claude Code passes such a hook's
   plain stdout to neither: it only records it (debug log, session file), and its docs say it is
   not shown in the visible transcript. Measured 2026-10-14 with headless `claude -p`: in the main
@@ -147,6 +184,22 @@
   examples, and matchers are counted exactly, so a skipped or unpaired row fails the test. Checked
   by mutation: pointing any one matcher's de-escaped branch back at the plain view turns the test
   red on that matcher's rows.
+- **`update-reviewed.sh` could delete a memory-bank file on Windows.** It handed perl the raw
+  `tool_input` path. With a backslash-only path, `perl -i` cannot split out the directory, so it
+  writes its temp file in the cwd. Cygwin perl then unlinks the original before renaming the temp
+  over it. When the cwd and the file are on different drives the rename fails and `|| true` hides
+  it. Seen on Side-Quest-Atlas's windows-2025 CI (cwd on D:, files on C:). The hook now uses the
+  forward-slash path it already computed for its memory-bank filter. A new test uses a `perl` shim
+  to catch the backslash argument on a single-drive box. Only the bash fallback was affected; the
+  shipped `settings.json` runs `update-reviewed.ps1` first. Trade-off: on POSIX a filename
+  containing a literal backslash is now looked up by its slash form, so the hook stamps the
+  (different) file at the slash-form path if it exists and skips otherwise. A new advisory Windows CI workflow
+  (`pmb-windows-update-reviewed.yml`) runs these cases on a real Windows host.
+- **`update-reviewed.sh` did nothing when launched by a native Windows process.** It read
+  `cat /dev/stdin`. When Claude Code launches Git Bash, fd 0 is a native pipe that
+  `/dev/stdin` cannot reopen by path (ENOENT), so the payload came back empty and the hook exited
+  0 without updating. It now reads fd 0 with plain `cat`, as every other shell hook already does.
+  A new test runs the hook through a cmd.exe native pipe. Ported from Side-Quest-Atlas d18a02f.
 - **`mb commit`'s subworktree check was wrong three ways, in both runtimes.** It compared
   `--git-common-dir` against `$PWD/.git`.
   - Inside an absorbed git submodule, whose `.git` is a gitlink *file*, it said "You are in a git

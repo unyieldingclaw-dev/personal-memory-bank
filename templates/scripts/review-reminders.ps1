@@ -27,17 +27,14 @@
 # elsewhere in the command, which just means an occasional unnecessary re-review -- the safe
 # failure direction for a security gate.
 #
-# WHY `gh pr merge` gets an unconditional deny instead of a third diff-bound marker: by the
-# time a PR is mergeable, its diff already passed the commit gate, the push gate, and (per
-# branch protection's required-status-checks with strict:true) CI on the current head -- a
-# third hash gate here would mostly re-verify what's already verified, while adding real
-# fragility (PR-number/--repo parsing, a `gh pr diff` API call inside a hook). The actual gap
-# at merge time isn't diff integrity, it's authorization: merging changes shared history and
-# should never happen without the user deciding to do it in that moment, and a hash can't
-# encode "the user meant this right now." This hook can only ever see commands *this agent*
-# runs -- the user's own terminal is invisible to it -- so an unconditional deny is both
-# correct and total: if this hook fires at all, it's the agent trying to merge, never the
-# user, so there is no legitimate case to allow through.
+# WHY a merge gets a permission prompt ("ask") instead of a third diff-bound marker: the gap at
+# merge time isn't diff integrity (the commit gate, push gate and strict required checks cover
+# that), it's authorization -- the user deciding, in that moment, to merge that PR -- and no
+# marker the agent can write encodes that. The harness's own Allow/Deny prompt is the one
+# per-action approval the agent cannot forge. It replaced an unconditional deny on 2026-10-20,
+# after an in-app measurement in auto mode showed the ask stops for the user's click.
+# _review-gate-merge.ps1 decides; only one exact, repo-pinned form is ever asked. Full WHY in
+# review-reminders.sh; spec: docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md.
 #
 # WHY hookSpecificOutput.permissionDecision, not top-level "continue": top-level
 # {"continue": false} only stops the agent's turn *after* the tool call has already run --
@@ -64,6 +61,7 @@ if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
 # when its library or repository root is unavailable; read-only commands remain unaffected.
 $verdict = $null
 $cmd = $null
+$verdictFromFallback = $false
 try {
     . (Join-Path $PSScriptRoot '_review-gate-classify.ps1')
     $verdict = Get-ReviewGateVerdictFromPayload $raw
@@ -74,6 +72,7 @@ try {
 } catch {
     # Preserve the old conservative raw matcher for malformed payloads or a missing
     # classifier. Lowercasing closes the executable-case hole on this fallback path.
+    $verdictFromFallback = $true
     $lower = $raw.ToLowerInvariant()
     $fallbackMatches = @()
     if ($lower.Contains('git commit')) { $fallbackMatches += 'COMMIT' }
@@ -90,7 +89,44 @@ if ($verdict -eq 'MULTI') {
     exit 0
 }
 if ($verdict -eq 'MERGE') {
-    Deny 'This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run the merge command yourself.'
+    # Asked only when _review-gate-merge.ps1 answers ASK; a fallback verdict, a missing helper
+    # or any throw denies. See the WHY above and the .sh twin.
+    $mergeDecision = $null
+    if (-not $verdictFromFallback) {
+        try {
+            . (Join-Path $PSScriptRoot '_review-gate-merge.ps1')
+            $projectDir = if ($env:CLAUDE_PROJECT_DIR) { $env:CLAUDE_PROJECT_DIR } else { (Get-Location).Path }
+            $mergeDecision = Get-ReviewGateMergeDecision -Raw $raw -ProjectDir $projectDir
+        } catch {
+            $mergeDecision = $null
+        }
+    }
+    if ($null -ne $mergeDecision -and $mergeDecision.Decision -ceq 'ASK') {
+        @{
+            hookSpecificOutput = @{
+                hookEventName            = 'PreToolUse'
+                permissionDecision       = 'ask'
+                permissionDecisionReason = $mergeDecision.Reason
+            }
+        } | ConvertTo-Json -Compress | Write-Output
+        # After the decision, and allowed to fail: a record of what was asked, not the answer.
+        # An explicit LF, so lines match the .sh twin's in the shared log (Add-Content ends a
+        # line with CRLF on Windows).
+        try {
+            Add-Content -LiteralPath (Join-Path (Join-Path $projectDir '.claude') 'merge-asks.log') `
+                -Value ("{0}`t{1}`n" -f (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'), $mergeDecision.Audit) `
+                -NoNewline -ErrorAction Stop
+        } catch {
+            # Swallowed on purpose: the decision is already printed, and a throw escaping here would
+            # exit non-zero, run the bash fallback and print a second JSON object (no decision).
+            $null = $_
+        }
+    } elseif ($null -ne $mergeDecision -and $mergeDecision.Decision -ceq 'DENY' -and $mergeDecision.Reason) {
+        if ($mergeDecision.Cause) { [Console]::Error.WriteLine("merge gate: $($mergeDecision.Cause)") }
+        Deny $mergeDecision.Reason
+    } else {
+        Deny 'This agent merges a pull request only after the merge gate has checked it, and the check could not run here (no classifier verdict, or scripts/_review-gate-merge.ps1 unavailable). Merge in the GitHub UI instead.'
+    }
     exit 0
 }
 
@@ -204,6 +240,15 @@ switch ($verdict) {
             Deny "Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review. $rootHint"
             break
         }
+        # A commit records the INDEX, but the marker binds `git diff HEAD`, so a reviewed change
+        # left partly unstaged would still match (OPP6-1). See review-reminders.sh for why this
+        # is a refusal rather than a `git diff --cached HEAD` hash, and why --no-ext-diff and
+        # --no-textconv. Before the claim, so a refusal leaves the marker for the retry.
+        git diff --quiet --no-ext-diff --no-textconv 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Deny "Review gate: tracked changes are unstaged (or git diff failed), so this commit would not contain everything the review marker certifies. Stage every reviewed change in a separate command first -- this hook runs before any git add chained into the same command, and before git commit -a stages anything -- then commit. To keep part of the change out of this commit (whole files only), set it aside with a tagged stash: git stash push -m <unique-tag> -- <paths>, re-run /code-review on what remains, and commit. Then restore it with git stash apply <sha> (the SHA from git stash list --format='%H %gs') and drop that entry by its current stash@{n}. The stash stack is shared across worktrees, so never use a bare git stash pop. $rootHint"
+            break
+        }
         $claim = Move-ReviewGateMarkerToClaim $marker
         if ($null -eq $claim) {
             Deny 'Run /code-review before committing -- it writes a diff-bound review-ok marker this hook checks.'
@@ -237,5 +282,9 @@ switch ($verdict) {
             Deny 'Run /change-review before pushing -- the branch no longer matches the reviewed diff.'
         }
         break
+    }
+    default {
+        # An unknown verdict must not fall through to exit 0, which is allow. See the .sh twin.
+        Deny 'Review gate: unrecognised classifier verdict, so this command cannot be checked. The hook and scripts/_review-gate-classify.ps1 are probably from different versions; run mb upgrade from the main worktree.'
     }
 }

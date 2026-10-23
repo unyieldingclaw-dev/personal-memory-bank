@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-10-19
+last-reviewed: 2026-10-20
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,33 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-10-23 — PR #81 merged: the merge deny became a user-clicked permission prompt
+
+- Detail and open items (G1-G3, unpushed `327c6c2`): `[NS-65]` in `activeContext.md`; spec
+  `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`.
+
+## 2026-10-20 — PRs #77 (`1b086c7`) and #58 (`25515a2`) merged
+
+- **#77:** the review gate's empty-diff denial now names the root it checked (`review-reminders` sh/ps1 + templates
+  mirrors); J5-1 path pinned in `tests/test-review-reminders.sh`. Merged 2026-10-19.
+- **#58:** `docs/CLAUDE-CODE-PLUGINS.md` limits external skill-library guidance to actual plugin choices.
+
+## 2026-10-20 — PRs #59 (`5c6f8e4`) and #71 (`2c4088f`) merged
+
+- **#59:** `update-reviewed.sh` bash fallback: no file loss on a backslash Windows path, stdin read under a
+  native pipe (SQA #25/#26). Its advisory, paths-filtered Windows CI workflow must not become a required check.
+- **#71 (OPP6-1):** the commit gate refuses while any tracked change is unstaged (marker hashes the working
+  tree, a commit records the index; near-miss 2026-10-16). Stage in a separate command; `git commit -a` is
+  refused. Outside-pushed `1be7055c`, `e2b52866` retired by an `-s ours` merge. Follow-ups: `[NS-69]`.
+
+## 2026-10-19 — PRs #64, #72, #69, #74 and #75 merged
+
+- #64 (`0e05a6b`): both dangerous-commands hooks decode the payload fallback and also match a CR-deleted view. Its follow-ups: `[NS-38]`'s backlog file.
+- #72 (`5301460`): #65's T-A test and O-1 comment.
+- #69 (`9c9b739`): the ps1 journal refuses arguments pwsh may have altered.
+- #74 (`b35f22b`) freed 25 spec lines (800 → 775); #75 (`c10cd87`) set `PMB_REQUIRE_SYMLINKS` in CI.
+- What gates the flag PR: `[NS-68]`. Funded by moving `[NS-47]` verbatim to `docs/archive/`.
 
 ## 2026-10-19 — PR #65 merged (`0b67d9d`): no FIFO hang at `started` or the gate probe
 
@@ -39,28 +66,15 @@ lineage: []
 
 ## 2026-10-14 — PR #55 opened (WARN-tier hooks → JSON); its review's findings recorded
 
-- PR #55 got `/code-review` Approve and `/change-review` Approve with conditions in its worktree,
-  and is open for the user to merge (`[NS-66]`). Its review found four pre-existing hook defects, now `[NS-67]`.
-- Recorded from the main checkout, since a worktree may not edit `memory-bank/`. Funded by moving
-  "Earlier Work" out verbatim; see its stub below.
+Moved verbatim to `docs/archive/progress-2026-10-13-and-10-14-reconciliation-and-pr55.md`.
 
 ## 2026-10-13 — Memory-bank reconciliation committed after an 8-day pause
 
-- `/code-review` passed (Opus Approve) once the session resumed. A wiped scratchpad was handled by
-  re-deriving every reviewed figure, so the diff was proven unchanged before Step 5.
-- The merge-gate order is now in [NS-65] (user decision). The archive header's reproducer now cites
-  `3cadb06`; its `47,109` range was true only of the uncommitted working file.
+Moved verbatim to `docs/archive/progress-2026-10-13-and-10-14-reconciliation-and-pr55.md`.
 
 ## 2026-10-05 — PRs #51 (`07e3bd2`) and #53 (`3cadb06`, [NS-19]) merged
 
-- **#53:** `/change-review` approved it with conditions. The CHANGELOG `mb plan promote` entry
-  blamed `awk`; the shipped bug was `sed -i`. Corrected here. Its parity and test gaps are listed
-  in the PR #53 body.
-- **A reviewer subagent ran `git commit` inside a script file**, which the PreToolUse gate cannot
-  see. It targeted a scratch repo, and the reflog was clean.
-  `docs/backlog/review-gate-is-bypassed-by-a-git-verb-held-in-a-va.md` already measured that case.
-- **`mb verify-integrity` flagged all five files** against a PowerShell-written baseline, which
-  holds uppercase hashes. That is [NS-36], live.
+Moved verbatim to `docs/archive/progress-2026-10-05-prs-51-and-53.md`.
 
 ## 2026-10-04 — `mb doctor --check` and pre-push Check 7 (PR #51)
 
@@ -74,14 +88,8 @@ lineage: []
 
 ## 2026-10-04 — PR #47 merged (`19931dc`); `fix/ns19` rebased onto it
 
-- `fix/ns19-plan-workflow-template` was rebased onto `437d3c1` and `19931dc`, and on 10-05 onto
-  `07e3bd2` (#51). Its `progress.md` and `CHANGELOG.md` conflicts were resolved by date order
-  and by keeping both entries. Its hash citations now name the branch, because a rebase and a
-  squash merge both rewrite hashes.
-- The stale root `handoff.md` (2026-09-25) has landed except for two things: its Codex-sandbox ACR
-  note, carried by PR #48 (still open), and the open decision to track or ignore `.agents/` and
-  `.codex/`. PR #48 tracks only 1 of the 9 `.agents/` files. Delete it only once both have a
-  durable home, and with user confirmation.
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`. Still open: PR #48
+and the track-or-ignore decision for `.agents/`/`.codex/`.
 
 ## 2026-09-30 — PR #49 merged (`584a8e4`); two review-gate escapes open
 
@@ -91,9 +99,7 @@ lineage: []
 
 ## 2026-09-26 — [NS-19] plan workflow fixed; diff-only standards reversed by fleet data
 
-- Pre-approval adversarial review of "make `mb.ps1` diff-only for `standards/`": 7 of 8 adopter repos hold the
-  same OLD shipped blobs (e.g. `CODE-REVIEW.md` `8b9d06c1` in 3 repos, spot-checked), so the harm is stale
-  standards, not lost edits. Diff-only deferred to a design (overwrite only on a known shipped version).
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`.
 
 ## Relocated 2026-09-21 → 2026-09-25 — three sections moved verbatim 2026-10-05
 

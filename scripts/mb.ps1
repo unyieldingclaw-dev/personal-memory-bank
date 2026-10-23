@@ -250,6 +250,7 @@ function Get-MbUpgradeAnalysis {
         'scripts/review-reminders-post.ps1', 'scripts/review-reminders-post.sh',
         'scripts/_review-gate-lib.sh',    'scripts/_review-gate-lib.ps1',
         'scripts/_review-gate-classify.py', 'scripts/_review-gate-classify.ps1',
+        'scripts/_review-gate-merge.py',  'scripts/_review-gate-merge.ps1',
         'scripts/warn-stale-review-marker.sh', 'scripts/warn-stale-review-marker.ps1',
         # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
         'scripts/baseline-health.sh'
@@ -1006,7 +1007,7 @@ function Invoke-Init {
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
     # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
-    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1","codex-compaction-hook.sh","codex-compaction-hook.ps1","review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-lib.sh","_review-gate-lib.ps1","_review-gate-classify.py","_review-gate-classify.ps1","warn-stale-review-marker.sh","warn-stale-review-marker.ps1")) {
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1","codex-compaction-hook.sh","codex-compaction-hook.ps1","review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-lib.sh","_review-gate-lib.ps1","_review-gate-classify.py","_review-gate-classify.ps1","_review-gate-merge.py","_review-gate-merge.ps1","warn-stale-review-marker.sh","warn-stale-review-marker.ps1")) {
         Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
     }
 
@@ -1282,6 +1283,14 @@ function Show-Doctor {
         if ((Test-Path "scripts/review-reminders.sh") -and -not (Test-Path "scripts/_review-gate-classify.py")) {
             Write-Host "[ERROR] scripts/_review-gate-classify.py missing but scripts/review-reminders.sh present -- global-option command forms can bypass classification" -ForegroundColor Red
             $fatalFound = $true
+        }
+        # Missing helpers fail closed (every merge is denied), so this is an ERROR for a
+        # silently broken feature, not a security hole.
+        foreach ($pair in @(@('review-reminders.sh', '_review-gate-merge.py'), @('review-reminders.ps1', '_review-gate-merge.ps1'))) {
+            if ((Test-Path "scripts/$($pair[0])") -and -not (Test-Path "scripts/$($pair[1])")) {
+                Write-Host "[ERROR] scripts/$($pair[1]) missing but scripts/$($pair[0]) present -- every gh pr merge will be denied instead of put to the user" -ForegroundColor Red
+                $fatalFound = $true
+            }
         }
         # Git hooks — versioned via core.hooksPath
         if (Test-Path ".githooks/pre-push") {
@@ -2445,6 +2454,8 @@ function Invoke-Upgrade {
         "scripts/_review-gate-lib.ps1"
         "scripts/_review-gate-classify.py"
         "scripts/_review-gate-classify.ps1"
+        "scripts/_review-gate-merge.py"
+        "scripts/_review-gate-merge.ps1"
         # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
         "scripts/baseline-health.sh"
         "scripts/warn-stale-review-marker.sh"
