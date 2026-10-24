@@ -34,6 +34,11 @@ param(
     [string]$Arg3 = "",
     # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
     # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
+    # The 'dry-run' alias is load-bearing: under `pwsh -File` (the mb.bat launcher) the binder
+    # looks up `--dry-run` as a parameter named `dry-run`, which the switch name alone does not
+    # match -- measured: "A parameter cannot be found that matches parameter name '-dry-run'".
+    # `--all` and `--check` never needed one because their names already match.
+    [Alias('dry-run')]
     [switch]$DryRun,
     # WHY: same reasoning as $DryRun above — "mb backlog list --all" would otherwise
     # have PowerShell's binder intercept the bare "--all" token as an attempted
@@ -2379,10 +2384,12 @@ Do not commit the changes until I confirm.
 
 function Invoke-Upgrade {
     param([string]$ProjectPath = "")
-    # WHY: $DryRun is read from the script-level switch parameter rather than
-    # checking $Arg for "--dry-run". PS7 parses --dry-run as a named parameter
-    # flag, not a positional string; a [switch] is the idiomatic PS7 equivalent.
-    $dryRun = $DryRun.IsPresent
+    # WHY both: under `pwsh -File` (mb.bat) --dry-run binds to the script-level $DryRun switch;
+    # under the call operator (`& mb.ps1 upgrade --dry-run`) the same token lands in positional
+    # $Arg instead -- the split `mb doctor --check` documents at its param. Reading only the
+    # switch made that second form run a REAL upgrade when a preview was asked for (measured:
+    # template files written into the project).
+    $dryRun = $DryRun.IsPresent -or $Arg -eq '--dry-run'
 
     if ($ProjectPath) { Push-Location $ProjectPath }
 
