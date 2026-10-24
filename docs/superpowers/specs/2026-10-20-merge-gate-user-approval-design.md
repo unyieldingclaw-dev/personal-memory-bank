@@ -359,11 +359,12 @@ allow becomes a zero-click merge path.
   - `Bash(*)` or `PowerShell(*)`;
   - wildcard interpreter one-liners (python, node, pwsh `-c`/`-e`/`-Command` forms);
   - **any rule that matches a merge as a wildcard pattern.** Each rule is also matched the way
-    Claude Code matches it (`*` is any run of characters, a trailing `:*` means ` *`) against
-    fixed probes. The probes are the canonical form with `--squash` and with `--merge`, the REST
-    route and `gh -R <repo> pr merge`, for each allowlisted repo, plus `gh pr merge 1 --squash`.
-    That catches `gh pr m*`, `g*` or `*merge*`, which no shape names. The shapes stay, because
-    they catch what no fixed probe can, such as an exact `gh pr merge <N> …` rule.
+    Claude Code matches it (`*` is any run of characters, a trailing `:*` means ` *`, and a
+    PowerShell rule ignores case) against fixed probes. The probes are the canonical form with
+    `--squash` and with `--merge`, the REST route and `gh -R <repo> pr merge`, for each
+    allowlisted repo, plus `gh pr merge 1 --squash`. That catches `gh pr m*`, `g*` or `*merge*`,
+    which no shape names. The shapes stay, because they catch what no fixed probe can, such as an
+    exact `gh pr merge <N> …` rule.
   - **And every rule that matches this merge.** The probes cannot use the PR number and SHA of
     a command the check has not parsed yet. So after the §5.1 full match, every allow rule the
     check kept is read again, with the matched command as its only probe, under the same step
@@ -373,8 +374,16 @@ allow becomes a zero-click merge path.
     not end in (`gh p*7` for a SHA ending in 7). A rule for another PR, such as `gh pr m* 77*`
     while #12 is merged, still asks.
   - **What is left is the matcher itself:** the check is only as faithful as its reading of
-    Claude Code's wildcard syntax. Whether Claude Code's legacy `X:*` also matches a bare `X` is
-    unmeasured; the matcher reads it only as `X *`.
+    Claude Code's wildcard syntax, which its permissions docs state (re-read 2026-10-23). A
+    trailing `:*` equals a trailing ` *`, and either also matches the bare command when it is the
+    rule's only wildcard. The matcher misses that bare match, but for the one command ever asked
+    such a rule's literal part is the canonical command, which the `gh pr merge` shape denies.
+    PowerShell rules match case-insensitively, so for them both twins fold ASCII case in the rule
+    and in the probes or matched command, before the shapes; Bash rules stay case-exact.
+    **Unmeasured, and not covered:** how that match treats non-ASCII letters (Unicode folding
+    takes the Kelvin sign and the long s to `k` and `s`, which both twins would miss), and
+    whether a tool name in another case, such as `powershell(…)`, makes a rule at all; the
+    matcher reads only `Bash` and `PowerShell`.
   - **What runs this check at all:** only a command the classifier labels a merge. A spelling it
     labels `NONE`, such as `gh -R <repo> pr merge` or `gh --repo <repo> pr merge`, never reaches
     the helper, so an allow rule for it is the escape-spelling gap in §1, not something this check
@@ -390,7 +399,11 @@ allow becomes a zero-click merge path.
     a rule counts as merge-capable unread; and the repo cap in §5.1. Whitespace is stripped
     with a plain character-set strip, because a regex strip was quadratic in rule length: 33 ms per
     4,092-character rule in the Python twin and 6.4 ms in the PowerShell one (measured
-    2026-10-23), with no cap on the number of rules. The file size itself is not capped, so
+    2026-10-23), with no cap on the number of rules. The PowerShell twin lowercases with 26
+    ordinal character replacements, and for the interpreter check only when the rule holds a
+    `*`, because a regex evaluator had run a scriptblock per upper-case letter of every rule: 3,000
+    4,085-letter upper-case rules took 40 s in that twin before and 1.6 s after (measured
+    2026-10-23, one run each). The file size itself is not capped, so
     nothing fails closed on it; what remains grows linearly with it. This machine's real settings,
     186 rules on 2026-10-23, used 1,050 steps for the probes and 1,261 with the matched-command
     pass, for a canonical command against the main checkout's allowlist.
@@ -441,9 +454,9 @@ allow becomes a zero-click merge path.
     approval for the canonical text. Planting one means writing outside the project, which prompts
     in default mode.
 - **Residuals recorded where they arise**, not repeated in the list above: the gh config
-  retarget through `XDG_CONFIG_HOME`, `AppData` or `HOME` (§5.1), the matcher's reading of a
-  legacy `X:*`, an agent that writes a settings file, and the two twin differences in reading a
-  rule (all three earlier in §5.5).
+  retarget through `XDG_CONFIG_HOME`, `AppData` or `HOME` (§5.1), the matcher's reading of
+  non-ASCII case and of tool-name case in a rule, an agent that writes a settings file, and the
+  two twin differences in reading a rule (all three earlier in §5.5).
 
 ### 5.6 App and MCP merge routes (Opposition S7)
 

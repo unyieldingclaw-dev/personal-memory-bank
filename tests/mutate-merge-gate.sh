@@ -114,6 +114,13 @@ TRAIL_RULE='{"permissions":{"allow":["Bash(*) "]}}'
 BUDGET_RULES=$(python3 -c 'import json; print(json.dumps({"permissions": {"allow": ["Bash(*" + "0" * 39 + "x)"] * 600}}))')
 # Misses every probe (PR 1) and matches only the asked command (#12).
 CMD_RULE='{"permissions":{"allow":["Bash(gh pr m* 12*)"]}}'
+# The same rule second of three, written to the user file alone (M_TARGET ../cfg/settings.json).
+XFILE_RULES='{"permissions":{"allow":["Bash(git status)","Bash(gh pr m* 12*)","Bash(npm run *)"]}}'
+# Matches the canonical --squash probe and nothing else, the asked command (#12) included.
+SQUASH_PROBE_RULE='{"permissions":{"allow":["Bash(gh pr m* 1 -R acme/web.app --squash*)"]}}'
+# Caught only once a PowerShell rule is folded; the second also needs the asked command (-R) folded.
+PS_CASE_RULE='{"permissions":{"allow":["PowerShell(GH PR M* 12*)"]}}'
+PS_CASE_R_RULE='{"permissions":{"allow":["PowerShell(GH PR M* 12 -R ACME/WEB.APP *)"]}}'
 # Within the budget for the probes alone, over it with the asked-command pass.
 SHARED_RULES=$(python3 -c 'import json; print(json.dumps({"permissions": {"allow": ["Bash(*" + "0" * 39 + "x)"] * 460}}))')
 LONG_RULE=$(python3 -c 'import json; print(json.dumps({"permissions": {"allow": ["Bash(" + "x" * 4100 + ")"]}}))')
@@ -162,6 +169,14 @@ M_SETTINGS="$CMD_RULE"
 mutate "asked-command pass removed"  sh _review-gate-merge.py 's/if merge_capable\(rule, \[command\], budget\):/if False:/' canon.json deny
 M_SETTINGS="$SHARED_RULES"
 mutate "asked-command pass given its own budget" sh _review-gate-merge.py 's/merge_capable\(rule, \[command\], budget\)/merge_capable(rule, [command])/' canon.json deny
+M_SETTINGS="$XFILE_RULES"; M_TARGET="../cfg/settings.json"
+mutate "kept rules reset per file"   sh _review-gate-merge.py 's/(    for path in settings_files\(project\):\n)/$1        kept = []\n/' canon.json deny
+M_SETTINGS="$SQUASH_PROBE_RULE"
+mutate "canonical --squash probe removed" sh _review-gate-merge.py "s/'gh pr merge 1 -R %s --squash --match-head-commit %s' % \(r, zero\),\n\s+//" canon.json deny
+M_SETTINGS="$PS_CASE_RULE"
+mutate "PowerShell case fold removed" sh _review-gate-merge.py "s/    if m\.group\(1\) == 'PowerShell':/    if False:/" canon.json deny
+M_SETTINGS="$PS_CASE_R_RULE"
+mutate "PowerShell fold of the probes removed" sh _review-gate-merge.py 's/        probes = \[p\.translate\(ASCII_LOWER\) for p in probes\]\n//' canon.json deny
 M_SETTINGS="$LONG_RULE"
 mutate "rule length cap removed"     sh _review-gate-merge.py 's/    if len\(rule\) > MAX_RULE_LENGTH:\n        return True\n//' canon.json deny
 M_GATE="$MANY_REPOS"
@@ -222,12 +237,20 @@ M_SETTINGS="$CMD_RULE"
 mutate "asked-command pass removed"  ps1 _review-gate-merge.ps1 's/if \(Test-MergeGateCapableRule \$k\.Rule @\(\$command\) \$budget\)/if (\$false)/' canon.json deny
 M_SETTINGS="$SHARED_RULES"
 mutate "asked-command pass given its own budget" ps1 _review-gate-merge.ps1 's/Test-MergeGateCapableRule \$k\.Rule @\(\$command\) \$budget/Test-MergeGateCapableRule \$k.Rule @(\$command)/' canon.json deny
+M_SETTINGS="$XFILE_RULES"; M_TARGET="../cfg/settings.json"
+mutate "kept rules reset per file"   ps1 _review-gate-merge.ps1 's/(    foreach \(\$path in \(Get-MergeGateSettingsFile \$ProjectDir\)\) \{\n)/$1        \$kept = [System.Collections.Generic.List[object]]::new()\n/' canon.json deny
+M_SETTINGS="$SQUASH_PROBE_RULE"
+mutate "canonical --squash probe removed" ps1 _review-gate-merge.ps1 's/        \$probes \+= "gh pr merge 1 -R \$r --squash --match-head-commit \$zero"\n//' canon.json deny
+M_SETTINGS="$PS_CASE_RULE"
+mutate "PowerShell case fold removed" ps1 _review-gate-merge.ps1 "s/if \(\[string\]::Equals\(\\\$tool, 'PowerShell', \[System\.StringComparison\]::Ordinal\)\)/if (\\\$false)/" canon.json deny
+M_SETTINGS="$PS_CASE_R_RULE"
+mutate "PowerShell fold of the probes removed" ps1 _review-gate-merge.ps1 's/        \$Probes = @\(foreach \(\$p in \$Probes\) \{ ConvertTo-MergeGateAsciiLower \$p \}\)\n//' canon.json deny
 M_SETTINGS="$LONG_RULE"
 mutate "rule length cap removed"     ps1 _review-gate-merge.ps1 's/    if \(\$Rule\.Length -gt \$script:MergeGateMaxRuleLength\) \{ return \$true \}\n//' canon.json deny
 M_GATE="$MANY_REPOS"
 mutate "repo count cap removed"      ps1 _review-gate-merge.ps1 's/ -or \$repos\.Count -gt \$script:MergeGateMaxRepos//' canon.json deny
 M_SETTINGS="$CASE_RULE"
-mutate "ASCII lowercasing removed"   ps1 _review-gate-merge.ps1 's/\$lower -cmatch \$interp/\$body -cmatch \$interp/'        canon.json deny
+mutate "ASCII lowercasing removed"   ps1 _review-gate-merge.ps1 's/\(ConvertTo-MergeGateAsciiLower \$body\) -cmatch \$interp/\$body -cmatch \$interp/' canon.json deny
 M_SETTINGS="$SPACE_RULE"
 mutate "edge whitespace not stripped" ps1 _review-gate-merge.ps1 's/\$r = Get-MergeGateTrimmedText \$Rule/\$r = \$Rule/'   canon.json deny
 M_SETTINGS="$PAD_RULE"
@@ -239,7 +262,7 @@ mutate "PermissionRequest check removed" ps1 _review-gate-merge.ps1 's/if \(\$nu
 M_SETTINGS="$COMMENT"
 mutate "strict JSON validation removed" ps1 _review-gate-merge.ps1 's/\[System\.Text\.Json\.JsonDocument\]::Parse\(\$Text, \$options\)\.Dispose\(\)//' canon.json deny
 M_SETTINGS="$ARRAY"
-mutate "-NoEnumerate removed"        ps1 _review-gate-merge.ps1 's/ConvertFrom-Json -NoEnumerate -ErrorAction Stop/ConvertFrom-Json -ErrorAction Stop/' canon.json deny
+mutate "-NoEnumerate removed"        ps1 _review-gate-merge.ps1 's/\$parsed = \$Text \| ConvertFrom-Json -NoEnumerate -ErrorAction Stop/\$parsed = \$Text | ConvertFrom-Json -ErrorAction Stop/' canon.json deny
 mutate "payload -NoEnumerate removed" ps1 _review-gate-merge.ps1 's/\$Raw \| ConvertFrom-Json -NoEnumerate -ErrorAction Stop/\$Raw | ConvertFrom-Json -ErrorAction Stop/' array.json deny
 
 echo "=== default-deny for unknown verdicts (both hooks) ==="

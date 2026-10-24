@@ -280,6 +280,31 @@ for rule in 'Bash(gh pr m* 77*)' 'Bash(gh p*8)'; do
   put_allow "$LOCAL" "$rule"
   expect ask "the same shape for another PR or SHA leaves the prompt: $rule" "$F"
 done
+# Every file's rules, and every rule in a file, reach that pass: the matching rule sits between
+# two unrelated ones, in each file in turn, while the other two files hold an unrelated rule.
+for target in "$CFG/settings.json" "$PROJ/.claude/settings.json" "$LOCAL"; do
+  for other in "$CFG/settings.json" "$PROJ/.claude/settings.json" "$LOCAL"; do put_allow "$other" 'Bash(npm run *)'; done
+  python3 -c 'import json,sys; json.dump({"permissions": {"allow": sys.argv[2:]}}, open(sys.argv[1], "w"))' \
+    "$target" 'Bash(git status)' 'Bash(gh pr m* 12*)' 'Bash(npm run *)'
+  expect deny "a rule that matches only the asked command, second of three in ${target#"$TMP_MG"/}" "$F" "" "$R_GENERIC"
+done
+rm -f "$CFG/settings.json" "$PROJ/.claude/settings.json"
+# Matches only the canonical --squash probe (PR 1 with -R), not the asked command (#12).
+put_allow "$LOCAL" 'Bash(gh pr m* 1 -R acme/web.app --squash*)'
+expect deny "allow rule that matches only the canonical --squash probe" "$F" "" "$R_GENERIC"
+# Claude Code matches PowerShell rules case-insensitively (code.claude.com/docs/en/permissions,
+# PowerShell section), so both twins fold ASCII case on both sides for them; Bash rules stay
+# case-exact. The first four are caught by a shape or a probe, the last two only by the asked
+# command, and the last one only with the command folded too (it holds -R).
+for rule in 'PowerShell(GH *)' 'PowerShell(Gh pr merge *)' 'PowerShell(G*)' 'PowerShell(*SQUASH*)' \
+            'PowerShell(GH PR M* 12*)' 'PowerShell(GH PR M* 12 -R ACME/WEB.APP *)'; do
+  put_allow "$LOCAL" "$rule"
+  expect deny "PowerShell allow rule in another case: $rule" "$F" "" "$R_GENERIC"
+done
+for rule in 'Bash(GH *)' 'Bash(GH PR M* 12*)' 'PowerShell(GH PR M* 77*)'; do
+  put_allow "$LOCAL" "$rule"
+  expect ask "a Bash rule in another case, or a PowerShell rule for another PR, leaves the prompt: $rule" "$F"
+done
 # The long s case-folds to s in Python's Unicode IGNORECASE but not in .NET's, so the interpreter
 # check folds ASCII letters only, in both twins.
 put_allow_expr "$LOCAL" '"Bash(ba" + chr(0x17f) + "h -c *)"'

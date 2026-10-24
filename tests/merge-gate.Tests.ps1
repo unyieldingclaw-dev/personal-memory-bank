@@ -104,6 +104,10 @@ Describe '_review-gate-merge.ps1' {
         @{ Rule = 'PowerShell(gh p*7)'; Expected = 'DENY' }
         @{ Rule = 'Bash(gh pr m* 77*)'; Expected = 'ASK' }
         @{ Rule = 'Bash(gh p*8)'; Expected = 'ASK' }
+        @{ Rule = 'PowerShell(GH PR M* 12*)'; Expected = 'DENY' }
+        @{ Rule = 'PowerShell(GH PR M* 12 -R ACME/WEB.APP *)'; Expected = 'DENY' }
+        @{ Rule = 'PowerShell(GH PR M* 77*)'; Expected = 'ASK' }
+        @{ Rule = 'Bash(GH PR M* 12*)'; Expected = 'ASK' }
     ) {
         Test-MergeGateCapableRule $Rule (Get-MergeGateProbeCommand @('acme/web.app')) | Should -Be $false
         ('{"permissions":{"allow":["' + $Rule + '"]}}') | Set-Content (Join-Path $script:Proj '.claude/settings.local.json')
@@ -112,6 +116,23 @@ Describe '_review-gate-merge.ps1' {
         if ($Expected -ceq 'DENY') {
             $d.Reason | Should -Not -Match 'settings\.local'
             $d.Cause | Should -BeLike 'allow rule matches this merge command in: *settings.local.json'
+        }
+    }
+
+    It 'matches every rule of every file against the asked command: second of three in <Name>' -ForEach @(
+        @{ Target = 0; Name = 'the user file' }, @{ Target = 1; Name = 'the project file' }, @{ Target = 2; Name = 'the local file' }
+    ) {
+        # Get-MergeGateSettingsFile lists user, project, local; the user one is under CLAUDE_CONFIG_DIR.
+        $files = @(Get-MergeGateSettingsFile $script:Proj)
+        New-Item -ItemType Directory -Force -Path (Split-Path $files[0]) | Out-Null
+        foreach ($f in $files) { '{"permissions":{"allow":["Bash(npm run *)"]}}' | Set-Content $f }
+        '{"permissions":{"allow":["Bash(git status)","Bash(gh pr m* 12*)","Bash(npm run *)"]}}' | Set-Content $files[$Target]
+        try {
+            $d = Get-ReviewGateMergeDecision -Raw (New-MergePayload) -ProjectDir $script:Proj
+            $d.Decision | Should -BeExactly 'DENY'
+            $d.Cause | Should -BeExactly ('allow rule matches this merge command in: ' + $files[$Target])
+        } finally {
+            Remove-Item $files[0] -ErrorAction SilentlyContinue
         }
     }
 
@@ -174,6 +195,15 @@ Describe '_review-gate-merge.ps1' {
         @{ Rule = 'Bash(g*:*)'; Expected = $true }
         @{ Rule = 'Bash(gh pr m*e 1 --squash*)'; Expected = $true }
         @{ Rule = 'Bash(* --merge --match-head-commit*)'; Expected = $true }
+        @{ Rule = 'Bash(gh pr m* 1 -R acme/web.app --squash*)'; Expected = $true }
+        # PowerShell rules match case-insensitively in Claude Code, so both sides fold; Bash stays exact.
+        @{ Rule = 'PowerShell(GH *)'; Expected = $true }
+        @{ Rule = 'PowerShell(Gh pr merge *)'; Expected = $true }
+        @{ Rule = 'PowerShell(G*)'; Expected = $true }
+        @{ Rule = 'PowerShell(*SQUASH*)'; Expected = $true }
+        @{ Rule = 'PowerShell(GH PR * -R ACME/WEB.APP *)'; Expected = $true }
+        @{ Rule = 'Bash(GH *)'; Expected = $false }
+        @{ Rule = 'Bash(G*)'; Expected = $false }
     ) {
         Test-MergeGateCapableRule $Rule (Get-MergeGateProbeCommand @('acme/web.app')) | Should -Be $Expected
     }

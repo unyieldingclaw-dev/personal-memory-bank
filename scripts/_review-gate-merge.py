@@ -117,10 +117,11 @@ def probe_commands(repos):
 
 def glob_matches(body, command, budget):
     """Claude Code's rule wildcard: * matches any run of characters, and a trailing :* is the
-    legacy spelling of ' *'. Case-exact, like the shape checks in merge_capable.
+    legacy spelling of ' *'. Case-exact: merge_capable folds both sides first for a PowerShell rule.
 
     Greedy with one backtrack point, so O(len(body) * len(command)) at worst. budget is a
-    one-item list of steps left, shared by the whole settings check (see GLOB_BUDGET)."""
+    one-item list of steps left, shared by the settings check and main's matched-command pass
+    (see GLOB_BUDGET)."""
     if body.endswith(':*'):
         body = body[:-2] + ' *'
     i = j = 0
@@ -166,6 +167,12 @@ def merge_capable(rule, probes=(), budget=None):
     if body is None:
         return True  # a bare tool name allows every command
     body = strip_ws(body)
+    if m.group(1) == 'PowerShell':
+        # WHY both sides: Claude Code matches PowerShell rules case-insensitively (its permissions
+        # docs), and the probes and the matched command hold `-R` and the allowlisted repo's own
+        # case. ASCII only, as in the interpreter check below.
+        body = body.translate(ASCII_LOWER)
+        probes = [p.translate(ASCII_LOWER) for p in probes]
     if body in ('*', ':*'):
         return True
     if re.fullmatch(r'gh(?:' + WS + r'*\*|:\*)?', body):
