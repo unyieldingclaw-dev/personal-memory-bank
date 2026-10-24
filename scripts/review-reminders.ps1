@@ -110,10 +110,12 @@ if ($verdict -eq 'MERGE') {
             }
         } | ConvertTo-Json -Compress | Write-Output
         # After the decision, and allowed to fail: a record of what was asked, not the answer.
+        # An explicit LF, so lines match the .sh twin's in the shared log (Add-Content ends a
+        # line with CRLF on Windows).
         try {
             Add-Content -LiteralPath (Join-Path (Join-Path $projectDir '.claude') 'merge-asks.log') `
-                -Value ("{0}`t{1}" -f (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'), $mergeDecision.Audit) `
-                -ErrorAction Stop
+                -Value ("{0}`t{1}`n" -f (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'), $mergeDecision.Audit) `
+                -NoNewline -ErrorAction Stop
         } catch {
             # Swallowed on purpose: the decision is already printed, and a throw escaping here would
             # exit non-zero, run the bash fallback and print a second JSON object (no decision).

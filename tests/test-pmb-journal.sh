@@ -1010,7 +1010,9 @@ make_repo "$T/gatetmp" on
 PT="$(pmbdir "$T/gatetmp")"; mkdir -p "$PT" && printf 'not a dir\n' > "$PT/tmp"
 out="$(cd "$T/gatetmp" && payload sessGATE_05 | CLAUDE_CODE_SESSION_ID=sessGATE_05 PMB_GATE_PROBE_DELAY=0 bash "$J" gate 2>/dev/null)"; code=$?
 assert_equals "$code" "2" "pmb/tmp not writable after 3 probes: block"
-assert_contains "$out" "cannot write to" "the block names the unwritable-tmp condition"
+# WHY `..*/tmp (tried`: a bare "cannot write to" stays green when the path is dropped from the block
+# (J5-1). `..*` is BRE for one or more (grep reads `+` as a literal), so an empty dir fails too.
+assert_contains "$out" "cannot write to ..*/tmp (tried" "the block names the unwritable-tmp condition and its path"
 # WHY a token only the OS can produce: "[^)]" also matched the "(unknown error)" fallback (as in the
 # not-a-directory case above).
 assert_contains "$out" "tried 3 times: .*\.probe\..*Not a directory)" "the unwritable-tmp block reports the OS error"
@@ -1110,13 +1112,14 @@ case "$(uname -s)" in
         assert_equals "$([ -f "$NMP/tmp" ] && echo file || echo not-file)" "file" "the no-mktemp block case: pmb/tmp is a file (fixture check)"
         out="$(cd "$T/nomkgate" && payload sessNOMKT2 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT2 PMB_GATE_PROBE_DELAY=0 tmo bash "$J" gate 2>/dev/null; echo "rc=$?")"
         assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=2" "no mktemp, pmb/tmp not writable: the sh gate still probes and blocks"
-        # WHY `(tried` and not just `.*/tmp`: the message ends "Fix: restore write access to $dir/tmp",
-        # so an unanchored `.*/tmp` still matches through that tail when the first path is dropped.
-        assert_contains "$out" "cannot write to .*/tmp (tried" "no mktemp, pmb/tmp not writable: the sh block names the unwritable tmp/"
+        # WHY `(tried` and not just `..*/tmp`: the message ends "Fix: restore write access to $dir/tmp",
+        # so an unanchored `..*/tmp` still matches through that tail when the first path is dropped.
+        # `..*`, not `.*`, so an empty $dir fails too (BRE: grep reads `+` as a literal).
+        assert_contains "$out" "cannot write to ..*/tmp (tried" "no mktemp, pmb/tmp not writable: the sh block names the unwritable tmp/"
         if command -v pwsh >/dev/null 2>&1; then
             out="$(cd "$T/nomkgate" && payload sessNOMKT3 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT3 PMB_GATE_PROBE_DELAY=0 tmo pwsh -NoProfile -NonInteractive -File scripts/pmb-journal.ps1 gate 2>/dev/null; echo "rc=$?")"
             assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=2" "no mktemp, pmb/tmp not writable: the ps1 gate blocks as the sh gate does"
-            assert_contains "$out" "cannot write to .*/tmp (tried" "no mktemp, pmb/tmp not writable: the ps1 block names the unwritable tmp/"
+            assert_contains "$out" "cannot write to ..*/tmp (tried" "no mktemp, pmb/tmp not writable: the ps1 block names the unwritable tmp/"
         else
             echo "  SKIP: pwsh is not installed; the ps1 half of the no-mktemp block case is not run (PMB_REQUIRE_PARITY=1 makes a missing pwsh fatal below)"
         fi
@@ -1897,7 +1900,7 @@ if command -v pwsh >/dev/null 2>&1; then
         echo "pmb-file-payload-session-flag=$(yn 'note "<text>" --session sessGM_31$' "$T/gm.err")"
         make_repo "$D-tmp" on; mkdir -p "$(pmbdir "$D-tmp")" && printf 'not a dir\n' > "$(pmbdir "$D-tmp")/tmp"
         echo "tmp-file=$(PMB_GATE_PROBE_DELAY=0 gm_gate "$D-tmp" "$(payload sessGM_32)" sessGM_32)"
-        echo "tmp-file-named=$(yn 'cannot write to' "$T/gm.out")"
+        echo "tmp-file-named=$(yn 'cannot write to ..*/tmp (tried' "$T/gm.out")"
         echo "tmp-file-os-error=$(yn 'tried 3 times: [^)]*\.probe\.[0-9]' "$T/gm.out")"
         echo "tmp-file-unknown=$(yn 'unknown error' "$T/gm.out")"
         echo "tmp-file-no-hatch=$(yn 'run /compact again' "$T/gm.out")"

@@ -62,6 +62,14 @@ assert_file_exists "$TMPDIR_UP/scripts/_review-gate-classify.py" "upgrade restor
 assert_file_exists "$TMPDIR_UP/scripts/_review-gate-classify.ps1" "upgrade restores TEMPLATE_OWNED PowerShell classifier"
 
 echo ""
+echo "--- template sync: restores merge-gate helpers ---"
+rm -f "$TMPDIR_UP/scripts/_review-gate-merge.py" "$TMPDIR_UP/scripts/_review-gate-merge.ps1"
+output=$(cd "$TMPDIR_UP" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "mb upgrade exits 0"
+assert_file_exists "$TMPDIR_UP/scripts/_review-gate-merge.py" "upgrade restores TEMPLATE_OWNED Python merge helper"
+assert_file_exists "$TMPDIR_UP/scripts/_review-gate-merge.ps1" "upgrade restores TEMPLATE_OWNED PowerShell merge helper"
+
+echo ""
 echo "--- template sync: restores Codex hook wiring and adapters ---"
 rm -f "$TMPDIR_UP/.codex/hooks.json" \
       "$TMPDIR_UP/scripts/codex-compaction-hook.sh" \
