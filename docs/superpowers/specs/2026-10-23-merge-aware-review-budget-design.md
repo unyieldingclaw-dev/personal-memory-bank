@@ -62,7 +62,7 @@ each parent (round-2 opposition):
 |---|---|---|---|
 | 4e62cff | `CHANGELOG.md` | `CHANGELOG.md` | S2 |
 | f1cbabd | `tests/run.sh` | `CHANGELOG.md`, `tests/run.sh` | S2 (plus a hand-edit for the line cap) |
-| 7e839fd | none | empty | S0 |
+| 7e839fd | none | empty | S0 (assumes the §3.2 merge-config precondition held, which was not measured) |
 
 So the expensive rounds were the S2 path (§3.2). Which gate costs more in general
 is a measurement for §6 step 4, not a conclusion of this document.
@@ -86,8 +86,8 @@ is a measurement for §6 step 4, not a conclusion of this document.
 ### 3.2 Definitions
 
 - **Base ref:** `refs/remotes/origin/main`, fully qualified. A local branch named `origin/main`
-  shadows the short spelling (memory: Git/Windows facts). Adopters need this configurable, see
-  OQ-7.
+  shadows the short spelling (memory: Git/Windows facts). Adopters may need this configurable;
+  OQ-7 defers that (§7).
 - **Sync merge:** a two-parent merge M = merge(P1, P2) where P2 equals, or is an ancestor of, the
   base ref, and there is exactly one merge base. An octopus merge, a criss-cross with several
   merge bases, or any other P2 is **not** a sync. It takes today's full path.
@@ -122,21 +122,22 @@ Every merge then falls into one class:
 | Class | Condition | Gate behaviour |
 |---|---|---|
 | **S0** clean, disjoint | sync merge; precondition holds; trial clean; recorded tree == T; overlap set empty | **Deterministic pass. No marker, no review.** |
-| **S1** clean, overlapping | as S0, but the overlap set is non-empty | Pass only if **every** overlap path is on a **pass-safe allowlist** (OQ-4). The proposed list is narrow: `CHANGELOG.md`, `changelog.d/**`, `docs/backlog/**`, `docs/archive/**`. Otherwise a scoped review (§3.5). A denylist of enforcement paths was rejected: it missed `tests/**` (gate tests, `tests/mutate.py` anchors), `standards/**`, `CLAUDE.md` and `.gitattributes`. |
+| **S1** clean, overlapping | as S0, but the overlap set is non-empty | Pass only if **every** overlap path is on a **pass-safe allowlist** (OQ-4, decided in §7). The list is narrow: `CHANGELOG.md`, `changelog.d/**`, `docs/backlog/**`, `docs/archive/**`. Otherwise a scoped review (§3.5). A denylist of enforcement paths was rejected: it missed `tests/**` (gate tests, `tests/mutate.py` anchors), `standards/**`, `CLAUDE.md` and `.gitattributes`. |
 | **S2** resolved | sync merge; precondition holds; the trial conflicted, or recorded tree ≠ T | Scoped review of the resolution diff. The marker binds §3.4's scope hash. |
 | **N** not a sync | anything else, or any step errors | Today's behaviour, unchanged. |
 
 **Why S1 is separate from S0.** A clean textual merge can still be semantically wrong, and CI
 catches only part of that. So S1 keeps a reviewer on every shared path outside the allowlist.
 
-**Open premise against S0 (OQ-9).** The one real interaction #78's merge reviews checked (round-2
+**Premise against S0, decided acceptable (OQ-9, §7).** The one real interaction #78's merge reviews checked (round-2
 brief, focus item 3) was **not** a shared path:
 - #78 changed `scripts/_review-gate-classify.ps1`;
 - main's #81/#85 changed `scripts/review-reminders.ps1`, which dot-sources that file.
 
 A clean sync with only that coupling has an empty overlap set, so it is **S0: a deterministic
-pass, no reviewer**. Path overlap does not detect cross-file coupling. Whether S0 is acceptable
-anyway, with CI on the synced head as the only check, is undecided.
+pass, no reviewer**. Path overlap does not detect cross-file coupling. The user accepted this on
+2026-10-24: for S0, CI on the synced head is the only check. That relies on strict required checks
+(OQ-1); an adopter without strict lacks it.
 
 ### 3.3 Commit gate (a conflicted merge finished with `git commit`)
 
@@ -187,7 +188,7 @@ own commits on the list.
 - a version line, `pmb-merge-scope v1`;
 - for each merge in scope, a line `merge <M> <P1> <P2>`, its overlap paths if S1, then its
   resolution diff;
-- for S1, the reviewed content: `git diff <P1> <T> -- <overlap enforcement paths>`, that is, what
+- for S1, the reviewed content: `git diff <P1> <T> -- <overlap paths not on the pass-safe allowlist>`, that is, what
   main's side changes in those files.
 
 The commit gate uses the same format with M = `PENDING` and P1 = HEAD.
@@ -205,8 +206,9 @@ the helper (§3.6), which prints the class, the scope payload and its hash:
 
   Domain focus is fixed: does the resolution keep both sides' intent, and do the two sides'
   changes to shared enforcement files still compose?
-- **Panel:** see OQ-3. Recommendation:
-  - full panel with Opus opposition when the scope includes an enforcement path;
+- **Panel** (decided, OQ-3, §7):
+  - full panel with Opus opposition when the scope includes an enforcement path, as defined
+    in §7;
   - otherwise correctness and maintainability, with opposition on Sonnet ("mechanical re-review",
     per the reviewer-model memory).
 
@@ -240,7 +242,7 @@ the agent writes as a side effect of ordinary work.
 | **Resolution that silently drops main's fix** (takes ours) | Shows in the resolution diff, which compares against the conflicted trial tree. `--cc` would hide it (F5). |
 | **Forged MERGE_HEAD** with no real merge | Never trusted, only compared against. The staged tree must equal merge-tree(HEAD, MERGE_HEAD), or the merge is S2 and its difference is reviewed (F6). A forged MERGE_HEAD naming a non-base commit is class N. |
 | **Merge of an unreviewed non-main branch** | P2 is not an ancestor of the base ref, so class N: today's full scope at commit, and its content shows up in the push gate's `origin/main...HEAD`. |
-| **Forged base ref** (`git fetch . X:refs/remotes/origin/main`, or a hand-edited ref file; `git update-ref` is **confirm**-tier in dangerous-commands, not blocked) | Locally, X's content would pass as "main". **CI backstop (§3.8)**: every first-parent merge's P2 must be an ancestor of the *real* base. It is a required check, so X cannot reach main. |
+| **Forged base ref** (`git fetch . X:refs/remotes/origin/main`, or a hand-edited ref file; `git update-ref` is **confirm**-tier in dangerous-commands, not blocked) | Locally, X's content would pass as "main". **CI backstop (§3.8)**: every first-parent merge's P2 must be an ancestor of the *real* base. It is a required check, so X cannot reach main. **This holds only once OQ-5's stacking exemption has an operational definition.** As worded in §7 the exemption covers every merge, so a forged-base merge would be exempt (§10, SEC3-1). |
 | **Forged or stale remote-tracking ref** | Not consulted (§3.4). The anchor is the gate-recorded reviewed tip. |
 | **Forged `.claude/.reviewed-tips` entry** | Same trust class as writing a marker by hand, which the threat model already accepts. It takes deliberate work, not an accident. **This is a new agent-writable trust input, created by this design.** |
 | **Chained command**, **refspec push**, **empty X..HEAD** | §3.4 conditions 1, 2 and 4: each takes today's path. |
@@ -270,10 +272,15 @@ pull_request merge ref, base = `HEAD^1` and the PR head = `HEAD^2`. For every me
 - **What it does not settle:** whether an S2 review happened. No CI check verifies markers today
   either.
 - **Cost to the workflow:** it forbids merging any non-main branch into a PR branch, so it is a
-  workflow rule (OQ-5), not just a check. **It conflicts with branch stacking**, which the global
-  CLAUDE.md recommends: #90 is stacked on #78, and syncing a stacked branch with its parent is
-  exactly the non-main merge this rule fails. One way out is to fail only when the P2 commits are
-  not themselves in the PR's base..head range (OQ-5).
+  workflow rule, not just a check. It conflicts with branch stacking, which the global CLAUDE.md
+  gives as an example of a reversible alternative: #90 is stacked on #78, and syncing a stacked
+  branch with its parent is exactly the non-main merge this rule fails.
+- **Decided (OQ-5, §7):** exempt a stack parent. **The operational definition is OPEN.** The
+  wording first recorded, "P2's commits lie in the PR's own base..head range", is always true.
+  P2 is reachable from M, and M is in base..head, so that wording exempts every non-main merge.
+  Measured: `git rev-list 1eda52c..07dfd49` contains 33b7517, which is not in base. A usable
+  definition names the parent, for example "P2 is an ancestor of a named, gate-reviewed
+  stack-parent head". Choosing it is the user's call, and it is needed before step 5.
 
 **Adopters (templates).** The review-gate scripts are mirrored into `templates/scripts/` and
 shipped by `mb upgrade`, but `templates/.github/workflows/` holds only `memory-bank-size.yml`, and
@@ -309,7 +316,8 @@ The repository is **public and user-owned**.
 these places, found by `grep -rn -i "strict: *true\|strict:true"` over `*.sh`, `*.ps1` and `*.md`
 plus the ps1 wording:
 - `docs/HOOKS-GUIDE.md:257`;
-- `templates/scripts/review-reminders.sh:10`, the adopter mirror;
+- `templates/scripts/review-reminders.sh:10` and `templates/scripts/review-reminders.ps1:31`,
+  the adopter mirrors;
 - `docs/backlog/merge-gate-misses-gh-global-flags-graphql-and-powe.md:207,220`;
 - and the three below.
 - `review-reminders.sh:8-11` says a mergeable PR's diff has already passed CI on the current head
@@ -358,8 +366,9 @@ broken main is visible downstream, not just inconvenient.
   enforcement change with its own spec and review.
 - **Check D's availability** by looking for "Require merge queue" under Settings → Branches. That
   is a read, not a change.
-- **After a release is cut (item 3)**, the downstream stakes drop, and C′ or D become easier to
-  justify.
+- **After a release is cut (§5.1 a)**, adopters can pin a tag by checking it out by hand. The
+  stakes drop fully only once `mb upgrade` sources from a ref; it still copies the working tree.
+  At that point C′ or D become easier to justify.
 
 This is the user's decision. Nothing here changes a setting.
 
@@ -390,7 +399,7 @@ VERSION says 1.2.1. **The precondition has been met for five weeks and the tag w
 
 **Recommendation: b, then a.** Fragments remove the conflict class. A release then folds the
 fragments and gives the cap headroom for good. a alone buys headroom but keeps every conflict.
-Release cadence is an open question (OQ-6). Until a release exists, unreleased notes live in
+Release cadence is on demand (OQ-6, §7). Until a release exists, unreleased notes live in
 `changelog.d/`, so readers need `ls changelog.d/` or the assembly script's `--preview`. That
 trade is real; name it in the PR.
 
@@ -399,7 +408,7 @@ Things the fragments PR has to handle:
 - **Readers who start at CHANGELOG need a pointer.** `docs/UPGRADE.md:93` sends adopters to
   CHANGELOG.md, and backlog files cite CHANGELOG entries by heading.
 - **There is no instruction to put the convention next to.** No command tells agents to write a
-  changelog entry today, so the convention needs a home (OQ-8).
+  changelog entry today. The convention will live in `standards/WORKFLOW.md` (OQ-8, §7).
 - **Verified, from the opposition review:** nothing in `scripts/` or `templates/` reads
   CHANGELOG.md, so `mb upgrade` is unaffected.
 
@@ -435,47 +444,41 @@ Cheapest and most reversible first. Measure before building the expensive part.
    point.
 2. **CHANGELOG fragments** (§5.1 b). Small. Also lands the trim CHANGELOG needs anyway, since it
    is at 800 lines.
-3. **User decisions, none of them code:** cut the first release (§5.1 a), and adopt lazy syncing
-   (§4 A′).
+3. **User decisions, none of them code** (both decided on 2026-10-24, §7): cut the first release
+   as 1.3.0 (§5.1 a), and adopt lazy syncing (§4 A′).
 4. **Measure for two weeks.** Count syncs, how many conflicted (S2), and **which gate paid**
    (commit or push). Until then the only evidence is #78: two conflicted syncs (S2) and one clean
    one (S0, 7e839fd).
-5. **Steps 5 and 6 depend on OQ-1 and on step 4:**
-   - **Clean syncs still common** (strict kept, many S0): build the push-gate S0/S1 pass, the
-     CI backstop and the templates opt-in **in one PR** (§3.4, §3.8). The pass relies on the
-     backstop. Fix the opposition's B1–B4 first; this revision addresses them, but they have not
-     been re-reviewed. Opus review.
+5. **What to build next depends on step 4's measurement** (strict is kept, per OQ-1):
+   - **Clean syncs still common** (many S0): build the push-gate S0/S1 pass, the CI backstop and
+     the templates opt-in **in one PR** (§3.4, §3.8). The pass relies on the backstop. First
+     close the OPEN items in §10's round-2 list, including AD-F1, SEC-F1 and B3 (fixed in form
+     only). Opus review.
    - **Conflicted syncs still common:** build S2 scoping, the commands' merge mode, and the
      commit gate (§3.3, §3.5). For #78, the reviewed scope would have been small:
      - 4e62cff: the CHANGELOG resolution;
-     - f1cbabd: the `tests/run.sh` resolution plus the CHANGELOG cap edit;
+     - f1cbabd: the `tests/run.sh` resolution plus the CHANGELOG cap edit, including the new
+       46-line `docs/archive/changelog-2026-10-23-pending-session-claims.md`;
      - 7e839fd: no review at all.
 
      All of it is far smaller than the 289 KB payload of the full-diff review.
    - **Syncs rare** (after fragments and lazy syncing): build neither. **This is a real possible
      outcome, not a formality.**
 
-## 7. Open questions for the user
+## 7. Decisions on the open questions (user, 2026-10-24)
 
-- **OQ-1** Keep `strict` and sync lazily (§4 A′, recommended)? Or plan C′, or check whether a
-  merge queue (D) is available?
-- **OQ-2** Cut the first release now? The scheduled precondition (#25) was met on 2026-09-14. Which
-  version number: 1.3.0?
-- **OQ-3** Review panel for S2/S1-review scopes: full panel with Opus only when an enforcement
-  path is in scope, otherwise the reduced Sonnet panel (§3.5)?
-- **OQ-4** Is §3.2's pass-safe allowlist (the paths whose overlap may pass without review) right?
-- **OQ-5** Accept a CI rule that forbids merging non-main branches into PR branches (§3.8)? It
-  conflicts with stacked branches. Exempt P2 commits that are inside the PR's own range, or forbid
-  syncing a stacked branch?
-- **OQ-6** Release cadence once fragments exist: per batch of PRs, weekly, or on demand?
-- **OQ-7** Adopters: should the base ref (`origin/main`) become configurable, for example in
-  `.claude/merge-gate.json`? The push gate hardcodes it today, so adopters already inherit that
-  assumption.
-- **OQ-9** Is S0 acceptable when a clean sync couples files across paths, the way #78's
-  classifier change coupled to main's change in the hook that dot-sources it (§3.2)? If not,
-  S0 needs more than a path overlap test.
-- **OQ-8** Where does the changelog-fragment convention live? CLAUDE.md, a standards file, or the
-  review commands? No instruction to write changelog entries exists today.
+| OQ | Question | Decision |
+|---|---|---|
+| OQ-1 | `strict` up-to-date (§4) | **A′: keep strict, sync lazily.** Only the PR next to merge is synced. No setting change. |
+| OQ-2 | First release | **Cut 1.3.0 now** (§5.1 a). The user approves the tag push. |
+| OQ-3 | Panel for scoped reviews (§3.5) | **Full 5 domains plus Opus opposition when the scope touches an enforcement path.** Otherwise correctness and maintainability with a Sonnet opposition. |
+| — | Enforcement paths (defines C4's missing term) | `scripts/`, `.githooks/`, `mb.sh`, `mb.ps1`, `.claude/`, `.github/`, `templates/`, `tests/`, `standards/`, `CLAUDE.md`, `.gitattributes`, `.gitignore`. |
+| OQ-4 | Pass-safe overlap allowlist (§3.2) | As proposed: `CHANGELOG.md`, `changelog.d/**`, `docs/backlog/**`, `docs/archive/**`. |
+| OQ-5 | Non-main merges and stacking (§3.8) | **Exempt in-PR parents.** Allow a merge whose P2 commits lie in the PR's own range; fail any other non-main merge. **Intent decided: support stacking. Operational definition OPEN**, because as worded the condition is always true and so exempts every non-main merge (§3.8, §10 SEC3-1). |
+| OQ-6 | Release cadence | **On demand:** when adopters need a change, or at about 20 fragments. The user approves each tag. |
+| OQ-7 | Configurable base ref | **Deferred** until the merge-aware pass is built. |
+| OQ-8 | Home of the fragment rule | **`standards/WORKFLOW.md`**, Commit phase. Not CLAUDE.md, whose startup size is ratcheted. |
+| OQ-9 | Clean syncs with cross-file coupling (§3.2) | **Acceptable.** S0 relies on CI on the synced head. |
 
 ## 8. Test plan sketch (for the implementation PRs, not this one)
 
@@ -496,7 +499,12 @@ Cheapest and most reversible first. Measure before building the expensive part.
 - **Fail-back:** helper missing, python3 absent, or helper crashing: each must produce today's
   hash. Assert the deny message, not just the deny (PR #78 follow-up m-testing F1).
 - **Git's own refusals during a merge** (`--amend`, partial commit): measured, not assumed.
-- **CI backstop:** a PR with a non-main merge fails the job. A main-only sync passes.
+- **CI backstop:** a main-only sync passes. Under the OQ-5 definition, once it is chosen:
+  - a stack-parent merge passes;
+  - an unrelated, unreviewed branch merge fails;
+  - a merge whose P2 is a forged base fails.
+
+  A stacked sync stays class N locally (§3.2).
 
 ## 9. Out of scope
 
@@ -523,7 +531,7 @@ pass before step 5 is built.
 | B3 | High | yes | The templates opt-in is off by default and needs a backstop declaration in `merge-gate.json`; mirror and parity work named (§3.8). |
 | B4 | Medium | yes (step 5) | `merge.*` allowlist, pinned `merge.default` and `merge.renormalize`, filter refusal (§3.2); untested, so fixtures in §8. |
 | B5 | High | yes (§4 text) | The strict premise is stated with its three sources. Lazy syncing (A′) added. The recommendation changed from C to A′, with C only through C′ (§4). |
-| N1 | Medium | no | §6 steps 5 and 6 now branch on OQ-1 and on step 4's measurement. F10's "most money is in the push gate" claim withdrawn. |
+| N1 | Medium | no | §6 step 5 now branches on step 4's measurement (OQ-1 has since been decided). F10's "most money is in the push gate" claim withdrawn. |
 | N2 | Medium | no | `@{u}` dropped; the recorded tip replaces R. |
 | N3 | Medium | no | `--no-renames` on the overlap set. |
 | N4 | Medium | no | Denylist inverted to a pass-safe allowlist. §3.9's CHANGELOG claim corrected. |
@@ -537,6 +545,14 @@ pass before step 5 is built.
 The first verdict was Request Changes, for false statements of fact (OPP-1) and an overclaim in this
 section (OPP-2). Both are corrected above: the §2 class table, the §3.2 premise, §3.9 and §6. The
 round-2 findings are in `review-budget-spec/cr-domains.md` and `opposition` hand-backs.
+
+**After the round-2 Approve (commit 1e3165a):**
+- The opposition's NEW-1 to NEW-4 are fixed:
+  - NEW-1, the stale "not re-reviewed" line in §6;
+  - NEW-2, the ps1 mirror added to the §4 strict list;
+  - NEW-3, the order of the open questions, now superseded by §7's table;
+  - NEW-4, the archive file in f1cbabd's scope, and the unmeasured precondition for 7e839fd.
+- §7 now records the user's decisions of 2026-10-24.
 
 **Still OPEN, not addressed by this revision.** Opposition moved each blocking item to "blocks
 building step 5, not committing this record".
@@ -573,8 +589,28 @@ building step 5, not committing this record".
   - M2: interpreter discovery for the ps1 hooks.
   - M4: the tips-file lifecycle.
   - M8: the fragments script's language, twin and test.
-  - C4: "enforcement path" is used but no longer defined.
+  - C4: resolved after round 2. §7 now defines the enforcement paths, and §3.4 uses the
+    allowlist instead.
   - C6: `SKIP:` not `NOTE:`; path-form compare on Git Bash.
+- **Round 3** (`/code-review` of the decisions revision, 2026-10-24; findings in
+  `review-budget-spec/cr3-domains.md`):
+  - **SEC3-1 (High). OPEN, blocks step 5's backstop.** OQ-5's stacking exemption, as first
+    worded, is always true, so it exempts every non-main merge, including a forged base (§3.8).
+    The user needs to decide how a stack parent is identified, for example "an ancestor of a
+    named, gate-reviewed stack-parent head".
+  - **OPEN: gaps in the enforcement-path set** (SEC3-2, T3-3, AD3-5). These tracked paths are on
+    neither list: `.gitleaks.toml`, `AGENTS.md`, `.cursor/rules/`, `.codex/hooks.json`,
+    `VERSION`, `install.*` and `ai-review.config.json`. A scoped review touching only them gets
+    the reduced panel. Before step 5, the user should decide whether to extend the set or invert
+    it, so that only a named docs/data list gets the reduced panel.
+  - **Other open items:**
+    - T3-2: the helper should emit an enforcement flag, and the panel choice should be tested.
+    - T3-4: settle whether allowlisted overlap paths enter the S1 hash (§3.4).
+    - AD3-1: `tests/test-mirror-parity.sh` allows exactly one differing line in
+      `standards/WORKFLOW.md`, so the OQ-8 rule must be live-only with the pin updated, or
+      mirrored generically.
+    - AD3-3: a tag alone does not change what `mb upgrade` ships until it sources from a ref
+      (`memory-bank/activeContext.md`: tag → dirty-tree guard → ref-sourcing).
 - **Measured by Correctness in round 2:**
   - `merge.default=union` in `.git/config` turns a conflict into a clean concatenation, and
     `check-attr` still says `unspecified`. So the `merge.*` key check is necessary.
