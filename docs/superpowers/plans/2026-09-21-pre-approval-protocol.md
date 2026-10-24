@@ -9,7 +9,7 @@ an ask without a Findings section and a Recommendation.
 **Architecture:** A Stop hook script pair, `scripts/pre-approval-check.{sh,ps1}`, reads the Stop
 payload's `last_assistant_message` and classifies the ending. It then returns a JSON block decision,
 or allows the turn and launches the "Claude has paused" notification detached and self-closing
-(600 s). It replaces the existing modal popup Stop entry.
+(600 s on Windows). It replaces the existing modal popup Stop entry.
 - That live entry differs from the template's, so `tests/test-mirror-parity.sh` gains a narrow,
   dated trial exemption (spec §5, option A+).
 - A new "Pre-Approval Protocol" section in `WORKFLOW.md` holds the procedure, and supersedes
@@ -21,6 +21,183 @@ regex on the `.ps1` side. The bash test harness is `tests/helpers/assert.sh`.
 **Spec:** `docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md` (approved 2026-09-21,
 amended 2026-09-22 with the user's A+ and self-closing-popup decisions).
 Read it before starting; this plan does not re-derive its decisions.
+
+## Amendments 2026-10-14 to 2026-10-16
+
+Amendments 1–7 were approved by the user before execution, on 2026-10-14. Amendments 8 and 9 were
+found by the first execution attempt that day, amendment 10 is a user decision of 2026-10-15, and
+amendments 11 and 12 are user decisions of 2026-10-16.
+
+A pre-execution drift check against `origin/main` found one blocking break and several smaller
+ones. It had two review passes: the author's own, and an Opus `opposition` pass that returned
+"approve with changes", every change applied below. The user approved the amended plan and its
+contract on 2026-10-14. Each change is also marked where it lands.
+
+1. **Base moved to `e3c2f43`** (PR #52, dangerous-commands; CI green). Task 1 Step 1 built the
+   worktree on it. PR #52 tightened the BLOCK tier: a Bash command containing `|| bash` (or `| sh`)
+   is refused even as quoted text, and the Stop line in Task 7 Step 1 contains `|| bash`. So: **write
+   new files with the Write tool and change `.claude/settings.json` with the Edit tool, never through
+   a Bash heredoc, `sed` or `python`** (Tasks 2, 4, 7). The hook guards only Bash and PowerShell tool
+   calls, not Write or Edit (checked in `.claude/settings.json`).
+2. **Blocking: Task 8 fails `tests/test-mirror-parity.sh` as written.** PR #53 (`3cadb06`), merged
+   after this plan was final, pins live and template `WORKFLOW.md` to differ only in the Phase 3.5
+   "Why" line. Task 8's edits fail both of its assertions. The fix is the new **Task 8 Step 3b**, a
+   region-based pin. Spec §5 records it as an amendment. Unlike the settings.json exemption, **it is
+   undated**; the user was told so. Measured on a scratch clone of `e3c2f43`, applying this plan's
+   own text:
+   - Task 7 alone: 152 passed, 0 failed.
+   - Tasks 7 and 8 without Step 3b: 150 passed, 2 failed.
+   - Tasks 7 and 8 with Step 3b: 154 passed, 0 failed.
+   - The eleven mutations listed below behaved as intended. (An earlier draft said "twelve", but
+     only eleven are recorded; review finding M-8.) Failing as they should:
+     - Phase 3 drift;
+     - live overwritten by the template;
+     - drift after the protocol section;
+     - a renamed region heading;
+     - an unterminated region;
+     - an extra live-only section;
+     - a heading slipped into the template's 3.5 region;
+     - the hook deleted while the protocol text stays.
+   - Passing by design:
+     - an edit inside the live protocol;
+     - a CRLF live file;
+     - an edit inside the template's 3.5 region (the accepted hole).
+3. **Commit 2 grows by three files:** `tests/test-mirror-parity.sh` (Step 3b), `CHANGELOG.md` (Step 3c),
+   and `scripts/mb.sh` (Step 3d: one comment at about line 2166 that describes PR #53's pin). Task 10
+   Step 3's `git add` includes them. Without that, `/code-review`'s `git diff HEAD` hash would certify a
+   diff that commit 2 does not contain.
+4. **Route:** the setup session ran Task 1 Steps 1 and 3 (worktree, contract) and wrote these
+   amendments. **Execution runs in a fresh session opened directly in this worktree**, the route
+   constraint 1 prefers, starting at Task 1 Step 2. Its session id differed from the setup
+   session's, so Task 2 Step 1's substitution applied. It has been applied: the id below,
+   `012ed341…`, is the executing session's (Task 2 Results).
+5. **Stale numbers and line cites corrected:**
+   - Task 7 Step 4's "354-421 (146 passed, 2 failed)" and "(150/0)";
+   - the "Claude Opus 5" trailers, which are now "Claude Opus 5.5".
+
+   Other line cites may have drifted. The quoted text anchors are what to match; all of them were
+   re-checked against `e3c2f43`.
+6. **Chip-00 branches:**
+   - `fix/ns19-plan-workflow-template` landed as PR #53. Its local branch is a stale pre-squash
+     leftover.
+   - `docs/merge-gate-escapes-and-memory-bank` has not landed, but it touches only `docs/backlog/`,
+     `docs/archive/` and `memory-bank/`, so it has no overlap with this plan.
+7. **PR body:** per the 2026-09-26 triage rules, the PR carries a "memory-bank delta" section. Task 11
+   Step 2's separate main-checkout update applies it after merge.
+8. **Root check: use the system prompt, not `pwd`** (found by the first execution attempt,
+   2026-10-14). That session was opened in the main checkout. It passed Task 1 Step 2 because its
+   `pwd` came after a `cd` into the worktree in the same command, which proves nothing about where
+   hooks load from. The real check is the system prompt's **"Primary working directory"**: it must be
+   the worktree. A `cd` never changes it. `EnterWorktree` with this worktree's `path` does, but
+   whether hooks then load from the worktree is unverified (review finding N3). Spike 1 detects it:
+   NO CAPTURE means stop, and the user reopens the session directly in the worktree.
+9. **Auto mode denies every `.claude/settings.json` edit** as `[Self-Modification]` (observed
+   2026-10-14 on Task 2 Step 4). That covers Task 2 Step 4, Task 3 Steps 4 and 6, and Task 7 Step 1.
+   - **This is a valid denial.** The plan edits the agent's own hook wiring, which is exactly what
+     the guard exists to hold for a human. Don't route around it: no other tool, no shell rewrite.
+   - **Before the first of those edits, ask the user** to switch this session's permission mode from
+     auto to "Ask permissions" (default), so they approve each exact settings.json diff. Switch back
+     to auto only once Task 7 Step 1 is done.
+   - Whether default mode then permits the edit is inferred, not yet observed. If it is also refused,
+     stop and report.
+10. **Commit 2 also carries six small review fixes and some doc corrections** (user decision
+    2026-10-15). Commit 1's `/code-review` approved with 40 findings, none blocking. The full report
+    is outside the repo at `pmb-session-artifacts/pre-approval-review/review-commit1.md`. Folding
+    the fixes into commit 2 costs one more review instead of two.
+    - **Fixes:**
+      - a static test that the twins' five regex literals are identical (finding T1);
+      - allow cases also assert that the turn did not fail open (T2);
+      - an allow case with Findings after a preamble (T3);
+      - the `.ps1` kill switch compares case-sensitively, as the `.sh` does (C2);
+      - the classifier runs as `python3 -I`, so a `json.py` in the cwd cannot shadow the standard
+        library (S2);
+      - the exit-0 comments describe the `||` chain (M-2).
+    - **Doc corrections:**
+      - error-log dedup is described as once per kind, not per session, in spec §3 and both
+        scripts' comments (M-4, S5, C3);
+      - the trial exemption is re-dated to 2026-10-15 plus 21 days, `2026-11-05` (A-F2);
+      - amendment 2's mutation count (M-8);
+      - `WORKFLOW.md` says how a Task Contract proposal complies (OPP-4);
+      - `HOOKS-GUIDE.md` places the hook in a note after the enforcement-layer table (A-F1).
+    - **Deferred** to the trial-end promotion decision, and listed in spec §5: every other finding.
+    - **Task 10 Step 3** also stages the two scripts and `tests/test-pre-approval-check.sh`. Its
+      commit message names the fixes.
+    - **The code blocks in Tasks 4–10 are the text as first executed.** The shipped files supersede
+      them: Tasks 4–6 are commit-1 text, and the Task 7–10 blocks predate the fixes in amendments 10
+      and 11. Re-extracting any block would undo those fixes.
+11. **Commit 2's first `/code-review`** (2026-10-16): 26 findings, none blocking, one Medium. The
+    Medium: the Phase 3.5 pointer said the independent review now runs before every ask; it runs
+    only on escalation-list asks. Opposition was not run. The user chose to fix the Medium and the
+    multi-domain accuracy items, defer the design-level findings to spec §5, and then run one more
+    full review. The reports are out of repo, at
+    `pmb-session-artifacts/pre-approval-review/review-commit2-round1.md`.
+    - **Applied:**
+      - the Phase 3.5 pointer;
+      - WORKFLOW's "What it is not: a gate" bullet and the Integration row's "checks that its
+        sections are present";
+      - the parity check renamed to pattern literals, with options stated as not compared;
+      - the `assert_allowed` comment narrowed;
+      - a protocol region still open at EOF now counts as `inner`. A mutant with the section moved
+        to EOF fails (`inner=1`); the real files pass;
+      - the date comment reworded and cross-referenced with the WORKFLOW pin.
+    - **Applied in a second pass** (same day, a new session):
+      - "on Windows" on the 600 s claim (CHANGELOG, both HOOKS-GUIDE copies, and spec Known
+        Limitation 5);
+      - spec Known Limitation 11, the duplicated Failure-handling sentence, the header amendment
+        list, and the Testing section's commit-2 cases;
+      - the promotion checklist adds the deferred items below;
+      - plan: the Amendments title, a re-date marker at Task 7 Step 4, Task 11's expiry anchor, a
+        note that the Task 4–6 code blocks are commit-1 text, the Design Note's "once per
+        session", and "a note after the enforcement-layer table" instead of "in" it.
+    - **Deferred to spec §5** (now listed in its promotion checklist):
+      Tags are the round-1 report's own and reuse commit 1's letters, so they are written in full:
+      - architecture F1, a template content assertion;
+      - architecture F3, the template guide naming the PMB-only hook;
+      - architecture F4, CLAUDE.md, AGENTS.md and templates/CLAUDE.md saying hooks "cannot be
+        talked around", and the contract format having a second source;
+      - architecture F5, the findings vocabulary;
+      - architecture F6, the spawn budget;
+      - architecture F7, `python3 -I` for the other hooks;
+      - maintainability MAINT-1, tag prefixes;
+      - maintainability MAINT-6, comments on the awk;
+      - testing finding 3, the escape regexes' options are unpinned.
+12. **Commit 2's second `/code-review`, and a follow-up commit** (2026-10-16). Five domains plus an
+    Opus `opposition` pass: **Approve**, with 30 findings (about 20 distinct), none blocking.
+    Commit 2 landed as reviewed (`aae2be8`). `origin/main` (PRs #55 and #56) was then merged in
+    (`1d014a6`). That cleared the startup-context ratchet, which had failed only because #56 shrank
+    `memory-bank/` after this branch forked. The user chose to fold the Low fixes into one
+    follow-up commit with its own review. The report is out of repo, at
+    `pmb-session-artifacts/pre-approval-review/review-commit2-round2.md`; the tags below are its
+    own.
+    - **Fixed in the follow-up:**
+      - the expiry-date comment and Task 11's grace arithmetic (correctness F1, testing T-1,
+        maintainability F3, architecture AD-1), and the date's anchor (correctness F2);
+      - the stale code blocks and "identical" Results (correctness F3, maintainability F1,
+        architecture AD-2);
+      - amendment 11's tags, now written in full (correctness F4, maintainability F2);
+      - WORKFLOW's contract-placement sentence (correctness F5);
+      - spec §5's checklist preamble (correctness F6) and its F5 bullet (architecture AD-4);
+      - the spec header, Known Limitation 5's marker, and the Testing section's provenance and
+        wording (correctness F8 and F9, maintainability F5 and F6, opposition OPP-2);
+      - the template guide's two tiers (correctness F10) and amendment 4's session id (F11);
+      - the remaining unqualified 600 s claims (maintainability F5);
+      - the parity comment's Multiline claim (testing T-2, maintainability F4) and the region-pin
+        assertion's name (testing T-3);
+      - in `HOOKS-GUIDE.md`, fail-open as a design property and the cases the trial log misses
+        (security F1), and the "deny-tier" scope of the guarantee (architecture AD-3);
+      - the permission-mode Results, which the user corrected.
+    - **Round-1 items amendment 11 dropped** (correctness F7): MAINT-7's Known Limitation 12
+      cross-reference, the security fail-open sentence and MAINT-8's dedup comment are fixed here;
+      architecture F2's owner question is deferred to spec §5.
+    - **Deferred to spec §5:** the expiry failure's owner (architecture AD-5), the testing gaps, and
+      security F4.
+    - **Declined:**
+      - security F2: "on Windows" narrows the claim, and the 600 s evidence is unchanged and
+        disclosed in the Task 8–9 Results;
+      - security F3: already spec §5's A-F3;
+      - correctness F12: covered by the Tasks 4–10 code-block note, and commit 2's message was
+        written separately and names the fixes;
+      - opposition OPP-1: it concerns the orchestrator's notes, not the repo.
 
 ---
 
@@ -94,7 +271,9 @@ Read it before starting; this plan does not re-derive its decisions.
 | `tests/test-pre-approval-check.sh` | Behavior for both twins, plus the `settings.json` command chain |
 | `.claude/settings.json` | The single `Stop` entry, replacing the modal popup |
 | `.gitignore` | `.pmb-pre-approval.log` |
-| `tests/test-mirror-parity.sh` | The dated trial exemption for the PMB-only Stop line (spec §5) |
+| `tests/test-mirror-parity.sh` | The dated trial exemption for the PMB-only Stop line (spec §5); the region-based `WORKFLOW.md` pin (Task 8 Step 3b, amendment 2) |
+| `CHANGELOG.md` | One `[Unreleased]` entry (Task 8 Step 3c, amendment 3) |
+| `scripts/mb.sh` | One comment that describes the old `WORKFLOW.md` pin (Task 8 Step 3d, amendment 3) |
 | `tests/run.sh` | Register the suite (it has a completeness check) |
 | `standards/WORKFLOW.md` | The Pre-Approval Protocol section; Phase 3.5 becomes a pointer |
 | `docs/HOOKS-GUIDE.md`, `templates/docs/HOOKS-GUIDE.md` | §2 and the hook-types row. The template is hand-mirrored per its sync note |
@@ -119,6 +298,11 @@ git show origin/main:docs/superpowers/plans/2026-09-21-pre-approval-protocol.md 
 git worktree add .claude/worktrees/pre-approval-protocol -b feat/pre-approval-protocol origin/main
 ```
 
+**Results (2026-10-14):** done by the setup session. It ran these commands from its own worktree,
+`clever-jennings-339f73`, with an absolute path, so the main checkout was never touched. The three
+checks passed, with `MSYS_NO_PATHCONV=1`, since Git Bash mangles `origin/main:<path>`. The worktree
+is on `e3c2f43`. `feat/pre-approval-protocol` tracks `origin/main`; Task 11's `push -u` re-points it.
+
 - [ ] **Step 2: Move the session into it**
 
 Call `EnterWorktree` with `path` set to
@@ -134,7 +318,8 @@ grep -c "Claude has paused and is waiting for input" .claude/settings.json
 ```
 
 Expected:
-- `pwd` ends in `.claude/worktrees/pre-approval-protocol`;
+- `pwd` ends in `.claude/worktrees/pre-approval-protocol`, **and** your system prompt's "Primary
+  working directory" is that worktree. Only the second proves where hooks load from (amendment 8);
 - `HEAD` is the tip of `origin/main`;
 - no status lines;
 - a count of `1`.
@@ -150,6 +335,10 @@ rather than through a variable, for the reason in constraint 2.
 Follow `docs/CONTRACTS-GUIDE.md`: write `.claude/contracts/active-task.json` with the approved
 scope, `status: "active"`, and `expires_at` eight hours from now. Do not start Step 4 or the spikes
 until it exists. Task 11 marks it complete when this branch's work is finished.
+
+**Results (2026-10-14):** written by the setup session, with the user-approved amended scope:
+`expires_at` is `2026-10-15T00:12:34Z`. **If it has expired when you start, ask the user to renew
+it** before editing anything. Do not rewrite it on your own authority.
 
 - [ ] **Step 4: Confirm the spec and this plan are tracked in the worktree**
 
@@ -177,7 +366,7 @@ before Task 2.
 
 Every command in Tasks 2–3 spells its values out literally. Shell variables do not survive between
 tool calls, so a value set in one step would be empty in the next (review finding N1). The commands
-use session id `26736dfa-6f79-4dd3-8a21-62fd5081a05d`. Your system prompt names your scratchpad
+use session id `012ed341-aea7-426b-aaab-d5f738dbe768`. Your system prompt names your scratchpad
 directory, and its parent directory's name is your session id.
 
 If the two differ (for example, because you started a fresh session in the worktree), substitute
@@ -186,7 +375,7 @@ re-read Tasks 2–3 before continuing:
 
 ```bash
 cd "C:/Users/Mizzo/Claude/Personal-Memory-Bank/.claude/worktrees/pre-approval-protocol"
-sed -i 's/26736dfa-6f79-4dd3-8a21-62fd5081a05d/YOUR-SESSION-ID/g' docs/superpowers/plans/2026-09-21-pre-approval-protocol.md
+sed -i 's/012ed341-aea7-426b-aaab-d5f738dbe768/YOUR-SESSION-ID/g' docs/superpowers/plans/2026-09-21-pre-approval-protocol.md
 ```
 
 Then, whether or not you substituted:
@@ -213,6 +402,10 @@ needs a clean starting point.
 
 - [ ] **Step 3: Write the spike script**
 
+**Amendment 1:** create `scripts/_spike-stop.sh` with the **Write tool**, using the lines between
+`<<'SPIKE'` and `SPIKE` below. Then run only the closing `bash -n … && grep -c …` line in Bash. Don't
+send the heredoc through Bash.
+
 ```bash
 cd "C:/Users/Mizzo/Claude/Personal-Memory-Bank/.claude/worktrees/pre-approval-protocol"
 cat > scripts/_spike-stop.sh <<'SPIKE'
@@ -221,7 +414,7 @@ cat > scripts/_spike-stop.sh <<'SPIKE'
 # Stands in for the worktree's Stop popup entry while the spikes run, so it notifies (detached) on
 # every stop except its own block. It records and blocks ONLY for MY_SESSION_ID. Another session's
 # payload is never written anywhere, and the capture goes to a fixed directory outside the repo.
-MY_SESSION_ID="26736dfa-6f79-4dd3-8a21-62fd5081a05d"
+MY_SESSION_ID="012ed341-aea7-426b-aaab-d5f738dbe768"
 MY_OUT_DIR="C:/Users/Mizzo/Claude/pmb-session-artifacts/pre-approval-spikes"
 SENTINEL_A="PMB-SPIKE-"; SENTINEL_B="BLOCK-NOW"   # joined at runtime, so quoting this file never matches
 BLOCKED=0
@@ -260,7 +453,7 @@ if [ "$RESULT" = "block" ]; then
 fi
 exit 0
 SPIKE
-bash -n scripts/_spike-stop.sh && grep -c '^MY_SESSION_ID="26736dfa-6f79-4dd3-8a21-62fd5081a05d"$' scripts/_spike-stop.sh
+bash -n scripts/_spike-stop.sh && grep -c '^MY_SESSION_ID="012ed341-aea7-426b-aaab-d5f738dbe768"$' scripts/_spike-stop.sh
 ```
 
 Expected: `1`. The script parses and carries your session id.
@@ -270,6 +463,8 @@ wiring blocks the stop", not the pwsh-first ordering. A `.ps1` spike twin would 
 without testing anything more.
 
 - [ ] **Step 4: Point the `Stop` entry at the spike**
+
+**Amendment 9:** auto mode refuses this edit. Ask the user to switch to "Ask permissions" first.
 
 Edit `.claude/settings.json`, replacing this `command` value:
 
@@ -329,6 +524,15 @@ Add a `**Results (date):**` line under this task: `last_assistant_message` prese
 scope (whole turn or last block), and `stop_hook_active` present yes/no. **If
 `last_assistant_message` is absent, STOP:** do Task 3 Step 6 (cleanup) only, and report to the user
 that the spec's input assumption failed.
+
+**Results (2026-10-14, attempt 3, session `012ed341…`, launched in the worktree):** captured, so the
+worktree's hooks loaded. `last_assistant_message` present: **yes** (`msg_present: true`,
+1189 chars). Scope: **last text block only**. `msg_head` began with the closing message, not
+`SPIKE-FIRST-BLOCK`. `stop_hook_active` present: **yes** (`false`). Other keys: `background_tasks`,
+`cwd`, `effort`, `hook_event_name`, `permission_mode`, `prompt_id`, `scratchpad_dir`,
+`session_crons`, `session_id`, `transcript_path`. The harness sends raw UTF-8. The spike's
+locale-decoded `json.load(sys.stdin)` turned an en dash into cp1252 mojibake, which confirms F5's
+UTF-8 decoding in Tasks 5 and 6 is needed.
 
 ---
 
@@ -439,6 +643,29 @@ rmdir "C:/Users/Mizzo/Claude/pmb-session-artifacts/pre-approval-spikes" && echo 
 
 Task 8 Step 3 and Task 9 Step 2 use the kill-switch result.
 
+**Results (2026-10-14, attempt 3): GO.**
+- **Block:** worked. The harness returned the reason, and the continuation ran with no click.
+  Records at 11:42:07 (block) and 11:42:12 (continuation).
+- **The user's three popup observations:**
+  1. No popup before the continuation: inferred, not seen. On that path the script sets
+     `BLOCKED=1` and its exit trap skips the notifier, and the block JSON did arrive. The user was
+     unsure what they saw.
+  2. Continued without a click: yes, 5 s between the two records.
+  3. Popup at the final stop: yes. Placed by the user's screenshot, which shows spike 2's text behind
+     the dialog. The user also saw it directly at the Step 4 stop.
+- **The detached notifier survived the hook's exit.** That answers finding P3. A process check 25 s
+  later found it already gone, most likely dismissed by then.
+- **`stop_hook_active`:** `true` on the continuation. `prompt_id` did **not** change
+  (`cf21805c…` on both records).
+- **Kill switch:** takes effect on the **next turn**. `env_PMB_PRE_APPROVAL` was `off` on the first
+  stop after the edit, with no restart.
+- **Mode:** the session left `default` during the spikes (to auto, then acceptEdits) by a route this
+  session did not observe. The user's later switch to Ask permissions in the app's picker did not show
+  in `get_session`, which still said acceptEdits. `set_session_permission_mode` to `default` did.
+  Every spike `settings.json` edit after spike 1 was made in `default`. **Correction (2026-10-16):**
+  the user said they switch modes deliberately, to avoid approving every call, so these changes were
+  most likely theirs.
+
 ---
 
 ### Task 4: Write the failing tests (script level)
@@ -447,6 +674,8 @@ Task 8 Step 3 and Task 9 Step 2 use the kill-switch result.
 - Create: `tests/test-pre-approval-check.sh`
 
 - [ ] **Step 1: Write the test file**
+
+**Amendment 1:** use the Write tool. The file contains `| … bash -c "$CHAIN"`-shaped lines.
 
 ````bash
 #!/usr/bin/env bash
@@ -667,8 +896,8 @@ stated in Task 3's gate.
 - **Error-log deduplication is per log file, not per session, for errors where the session can't
   be read.** A parse failure has no readable `session_id` by definition, so its key uses
   `session=-`. In practice each kind of error is logged once, until someone deletes
-  `.pmb-hook-errors.log`, which `mb doctor` already tells them to do once it's resolved. This is
-  stricter than the spec's "once per session", never noisier.
+  `.pmb-hook-errors.log`, which `mb doctor` already tells them to do once it's resolved. The spec
+  now says the same: once per kind (corrected 2026-10-15; it used to say "once per session").
 
 - [ ] **Step 2: Run it and confirm it fails**
 
@@ -1059,6 +1288,12 @@ remove `-WindowStyle Hidden` from the `Start-Process` line (a console window may
 re-run Steps 2–4, and note the change in the Task 7 commit message, since the `.ps1` lands in
 commit 1 (review finding L4).
 
+**Results (2026-10-14, Tasks 4–6, attempt 3 part 2):** Task 4 Step 2 failed as expected, `[sh]` 18
+passed / 28 failed (matches L5). Both scripts were extracted from their plan blocks with `sed` and
+diff identical to an independent `awk` extraction (no CR, no non-ASCII). Task 5 Step 2: `[sh]` 46/0.
+Task 6 Step 2: 92 passed, 0 failed. Step 3: 0 findings (a control with an empty `catch` was flagged).
+Step 4: both twins exited 0 with no output, and the user saw both popups. `-WindowStyle Hidden` kept.
+
 ---
 
 ### Task 7: Wire it in, gitignore, chain tests, register the suite, and commit 1
@@ -1077,6 +1312,10 @@ Replace the popup `command` value (the exact line quoted in Task 2 Step 4) with:
 ```
 "command": "pwsh -NoProfile -NonInteractive -File scripts/pre-approval-check.ps1 2>/dev/null || bash scripts/pre-approval-check.sh 2>/dev/null || { (if [ -n \"${PMB_NOTIFY_STUB:-}\" ]; then echo notify >> \"$PMB_NOTIFY_STUB\"; else powershell.exe -Command \"(New-Object -ComObject WScript.Shell).Popup('Claude has paused and is waiting for input.', 600, 'Claude Code', 64)\"; osascript -e 'display notification \"Claude has paused and is waiting for input.\" with title \"Claude Code\"'; notify-send 'Claude Code' 'Claude has paused and is waiting for input.'; fi) >/dev/null 2>&1 </dev/null & } || true"
 ```
+
+**Amendment 1:** make this change with the **Edit tool**. The line contains `|| bash`, which PR #52's
+BLOCK tier refuses inside any Bash command. Validate afterwards with the `python3 -c` line below,
+which does not quote it.
 
 **The braces are load-bearing.** `&` binds looser than `||`, so without them the whole chain is
 backgrounded, and the block JSON arrives after the shell has exited. The chain test in Step 4 fails
@@ -1137,9 +1376,14 @@ notified 6; assert_exit_zero "$?" "with both scripts missing, the fallback link 
 
 - [ ] **Step 4: Add the dated trial exemption to `tests/test-mirror-parity.sh`** (spec §5, option A+)
 
-Without it, Step 1 fails `test-mirror-parity.sh:354-421` (146 passed, 2 failed, reproduced
-2026-09-22), because the live Stop line must equal the template's. Compute the expiry, 21 days
-from today (the 14-day trial from merge plus a 7-day grace):
+Without it, Step 1 fails the settings.json hook-wiring section of `test-mirror-parity.sh` (lines
+354-421 then; 382-436 as of `e3c2f43`), because the live Stop line must equal the template's. It was
+reproduced on 2026-09-22 as 146 passed, 2 failed. Absolute counts have moved since, so read only the
+`FAIL` lines.
+
+Compute the expiry, 21 days from today (the 14-day trial from merge plus a 7-day grace).
+**Re-dated by amendment 10:** commit 2 sets it to 2026-10-15 plus 21 days, `2026-11-05`; the
+`2026-11-04` in this task's Results is the commit-1 value.
 
 ```bash
 date -d '+21 days' +%Y-%m-%d
@@ -1182,7 +1426,7 @@ before its closing `fi`. That `fi` comes right after the `fi` that closes the
 `SKIP: settings.json structural hook compare` branch.
 
 This block was tested on 2026-09-22 against `origin/main` scratch clones. The Task 7 state passed
-(150/0). Each of these failed:
+(150/0 then; 152/0 on `e3c2f43`, re-run 2026-10-14). Each of these failed:
 - another hook's command drifting, and another hook's matcher drifting;
 - the hook moved to another event, duplicated, or absent;
 - the popup kept alongside the hook;
@@ -1223,6 +1467,19 @@ cd "C:/Users/Mizzo/Claude/Personal-Memory-Bank/.claude/worktrees/pre-approval-pr
 cd "C:/Users/Mizzo/Claude/Personal-Memory-Bank/.claude/worktrees/pre-approval-protocol" && bash tests/test-pre-approval-check.sh 2>&1 | grep -E "FAIL|Results:"
 cd "C:/Users/Mizzo/Claude/Personal-Memory-Bank/.claude/worktrees/pre-approval-protocol" && bash tests/run.sh > "$TMP/pmb-run.txt" 2>&1; echo "run.sh exit=$?"; grep -E "FAIL|completeness|Results" "$TMP/pmb-run.txt" | tail -15
 ```
+
+**Results (2026-10-14, Task 7 Steps 1–5, attempt 3 part 2):** the Stop line, after the Edit
+tool, is byte-identical to the block above, and the JSON is valid. **Correction (2026-10-15):** this
+line first said the user saw "the new hook's popup" at the end of that turn. That does not hold.
+`get_session` reports this session's `cwd` as the main checkout, so its hooks most likely loaded
+from the main checkout's `settings.json`. That file still has the old modal popup with the same text.
+Amendment 8's caveat applies: the "Primary working directory" had moved to the worktree, but hook
+loading did not follow. So the new hook running under the real harness is **unverified**. It needs
+a session rooted in the worktree. `-WindowStyle Hidden` is kept on Task 6 Step 4's direct runs,
+where the user saw both twins' popups. The chain block and the trial
+exemption, with expiry `2026-11-04`, were spliced in from this plan by extraction.
+`test-mirror-parity.sh` gave 152/0; the `2000-01-01` copy failed only the expiry check. With the
+seven files staged, the new suite gave 97/0 and `run.sh` exited 0, with completeness clean.
 
 Expected: the new suite passes with 0 failures, and `run.sh exit=0`, completeness check included.
 `run.sh` takes about 35 minutes; run it in the background. **Wait for its completion notice before
@@ -1311,12 +1568,21 @@ the harness no longer waits on a modal MessageBox. PMB-only; not installed by
 mb init. tests/test-mirror-parity.sh gains a dated trial exemption for the
 PMB-only Stop line (design spec section 5).
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 )"
 ```
 
 Expected: the commit succeeds, and `git status --short` is clean apart from later tasks' files.
+
+**Results (2026-10-14/15, Task 7 Step 6):** `/code-review` approved.
+- Six domains returned 40 findings, none blocking. The Opus `opposition` pass approved, and its
+  baseline re-run matched the orchestrator's.
+- The review left HEAD and the staged tree unchanged. The marker landed in the worktree only.
+- The `opposition` pass took about 15 hours of wall clock in default mode.
+- The contract had expired at 00:12Z, and the user renewed it.
+- Commit 1 is `a0eccde`. It is unsigned, like every local commit in this repo; `main`'s commits
+  carry GitHub's merge signatures.
 
 ---
 
@@ -1324,7 +1590,10 @@ Expected: the commit succeeds, and `git status --short` is clean apart from late
 
 **Files:**
 - Modify: `standards/WORKFLOW.md` (Phase 3.5 at about lines 69–84; Quick Reference row at about
-  line 168; Integration row at about line 182; new section before `## Context Management`)
+  line 168; Integration row at about line 182; new section before `## Context Management`). As of
+  `e3c2f43` these are lines 78–93, 177 and 191, with `## Context Management` at line 198.
+- Modify: `tests/test-mirror-parity.sh` (Step 3b), `CHANGELOG.md` (Step 3c), `scripts/mb.sh` (Step 3d);
+  amendments 2 and 3
 
 - [ ] **Step 1: Replace the Phase 3.5 section**
 
@@ -1411,6 +1680,104 @@ the ask, so the workflow stays at 7 phases. It supersedes Phase 3.5. Design and 
 In the last line, keep only the variant that matches Task 3's result, and delete the other along
 with the angle brackets and the `|`.
 
+- [ ] **Step 3b: Replace the `WORKFLOW.md` pin in `tests/test-mirror-parity.sh`** (amendment 2)
+
+PR #53's pin allows only the Phase 3.5 "Why" line to differ, so Steps 1–3 fail it in two places.
+With the Edit tool, replace everything from the line
+`# WHY a narrower check for WORKFLOW.md: the anti-rot loop above only proves the pair differs`
+through the line
+`    "WORKFLOW.md: no other line differs between live and template (Phase 3 stays in sync)"`
+inclusive (about lines 212–223 as of `e3c2f43`) with:
+
+```bash
+# WHY a pin for WORKFLOW.md on top of the anti-rot loop above: that loop only proves the pair
+# differs SOMEWHERE, so any intended difference keeps it green forever. [NS-19] was Phase 3
+# drifting apart behind exactly that cover. So the intended differences are named as regions, and
+# every line outside them must match:
+#   - the Phase 3.5 section (live: a pointer to the Pre-Approval Protocol; template: the advisory
+#     plan-review step), up to its closing `---`;
+#   - the live-only `## Pre-Approval Protocol` section, which must be followed directly by
+#     `## Context Management`. It is PMB-only during its trial
+#     (docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md, section 5);
+#   - the Phase 3.5 Quick Reference row, and the plan-review row of the Claude Code Integration table.
+# Each region must be found exactly as often as expected on each side, and may not contain a new
+# heading (inner=0), so neither a renamed heading nor a section slipped inside a region widens the
+# exemption. A live file overwritten by the template (mb.ps1 force-overwrites standards/) fails too,
+# because its protocol section is gone.
+# Accepted holes: the CONTENT inside the regions, chiefly the template's Phase 3.5 and the two rows,
+# is unconstrained, since it has no live twin left; pinning it would need a frozen hash, the
+# decaying absolute this file argues against further down.
+# UNDATED, unlike the settings.json trial exemption, because it guards prose, not wiring. Only the
+# hook-presence assertion ties it to the trial: deleting the hook while leaving the protocol text,
+# which says the hook enforces it, fails here. When the protocol is promoted into templates/ or
+# removed, rewrite this block.
+echo ""
+echo "--- WORKFLOW.md differs only in its named regions ---"
+wf_regions() {
+    awk '
+        { sub(/\r$/, "") }
+        skip == "phase35"  { if ($0 ~ /^#/) inner++; if ($0 != "---") next; skip = "" }
+        skip == "protocol" { if ($0 !~ /^## /) { if ($0 ~ /^#/) inner++; next }; skip = ""; if ($0 != "## Context Management") inner++ }
+        /^### Phase 3\.5 /                 { p35++; skip = "phase35"; print "<phase 3.5>"; next }
+        $0 == "## Pre-Approval Protocol"  { proto++; skip = "protocol"; next }
+        /^\| 3\.5 /                        { r35++; print "<row 3.5>"; next }
+        /^\| Independent Plan Review / || /^\| Pre-Approval Protocol \|/ { rrev++; print "<row review>"; next }
+        { print }
+        END { printf "regions: phase35=%d protocol=%d row35=%d rowreview=%d inner=%d\n", p35, proto, r35, rrev, inner }
+    ' "$1"
+}
+WF_LIVE_R="$(wf_regions "$STD_LIVE/WORKFLOW.md" 2>/dev/null)"
+WF_TMPL_R="$(wf_regions "$STD_TMPL/WORKFLOW.md" 2>/dev/null)"
+assert_equals "$(printf '%s\n' "$WF_LIVE_R" | tail -n 1)" "regions: phase35=1 protocol=1 row35=1 rowreview=1 inner=0" \
+    "WORKFLOW.md (live): each named region found exactly once, with no heading inside"
+assert_equals "$(printf '%s\n' "$WF_TMPL_R" | tail -n 1)" "regions: phase35=1 protocol=0 row35=1 rowreview=1 inner=0" \
+    "WORKFLOW.md (template): each named region found, no protocol section, no heading inside"
+[ -n "$WF_LIVE_R" ] && [ "$(printf '%s\n' "$WF_LIVE_R" | sed '$d')" = "$(printf '%s\n' "$WF_TMPL_R" | sed '$d')" ]
+assert_exit_zero "$?" "WORKFLOW.md: every line outside the named regions is identical (Phase 3 stays in sync)"
+[ -f "$REPO_ROOT/scripts/pre-approval-check.sh" ] && [ -f "$REPO_ROOT/scripts/pre-approval-check.ps1" ]
+assert_exit_zero "$?" "WORKFLOW.md: the hook its live protocol section names (scripts/pre-approval-check.*) exists"
+```
+
+It relies on `REPO_ROOT`, `STD_LIVE` and `STD_TMPL`, which the file defines at lines 34 and 174–175.
+It was verified on a scratch clone of `e3c2f43` with the eleven mutations that amendment 2 lists.
+
+- [ ] **Step 3c: Add the CHANGELOG entry** (amendment 3)
+
+Insert this as the first bullet under the first `### Added` heading inside `## [Unreleased]`:
+
+```markdown
+- **PMB-only trial: the Pre-Approval Protocol and its `pre-approval-check` Stop hook.** PMB's own
+  `standards/WORKFLOW.md` gains a Pre-Approval Protocol section that supersedes Phase 3.5. Before any
+  approve-or-choose ask: run the checks the options depend on, add an `opposition` pass on
+  CLAUDE.md's escalation triggers, and send the ask with Findings and a Recommendation. A Stop hook
+  (`scripts/pre-approval-check.{sh,ps1}`) sends back a turn that ends in an ask without them. It also
+  now owns the "Claude has paused" notification, which is detached and closes itself after 600 s.
+  - **Adopters:** nothing is installed. `mb init` still installs the modal popup, and both
+    `HOOKS-GUIDE.md` copies say so.
+  - **Tests:** `tests/test-mirror-parity.sh` gains a dated exemption for the PMB-only Stop line. It
+    also pins `WORKFLOW.md`'s live/template difference to named regions, replacing the one-line pin.
+```
+
+- [ ] **Step 3d: Correct the `scripts/mb.sh` comment the new pin makes false** (amendment 3)
+
+With the Edit tool, in the `WHY standards/*.md are NOT here` comment (about line 2166), replace:
+
+```
+        # template, and test-mirror-parity.sh now pins WORKFLOW.md's remaining divergence to one
+        # generic paragraph. The overwrite would still discard an adopter's own edits to
+```
+
+with:
+
+```
+        # template, and test-mirror-parity.sh now pins WORKFLOW.md's remaining divergence to named
+        # regions (Phase 3.5, PMB's live-only Pre-Approval Protocol, two table rows). The overwrite
+        # would still discard an adopter's own edits to
+```
+
+Then rewrap the next comment line if it now reads short. Comment only; no code changes. `mb.sh` has
+no `templates/` twin.
+
 - [ ] **Step 4: Verify parity and repo health**
 
 ```bash
@@ -1420,7 +1787,10 @@ bash scripts/baseline-health.sh --no-fetch > "$TMP/pmb-bh.txt" 2>&1; echo "basel
 
 Expected:
 - **Mirror test:** 0 failures. `WORKFLOW.md` is on the allowlist, and its anti-rot check still sees
-  the pair diverging.
+  the pair diverging. Step 3b's four new assertions pass: two region-count lines, one line about
+  identity outside the regions, and one hook-presence line. The hook-presence line passes only because
+  commit 1 already added `scripts/pre-approval-check.*`. If any of them fails, stop and report; don't
+  widen the regions.
 - **`baseline-health`:** exit `0`. Read any other code by its meaning:
   - `1`: a real check failed;
   - `2`: the workflow file is absent;
@@ -1518,6 +1888,37 @@ Expected:
 - `0` for each file on the "excluded" count;
 - `1` for each file on the caveat count (review finding F14).
 
+**Results (2026-10-15, Tasks 8–9 and amendment 10):**
+- **Task 8:** Steps 1, 3, 3b and 3c were spliced from this plan's blocks by an extraction script.
+  Each was identical to its block at splice time; amendments 10 and 11 changed the files since. The
+  kill switch reads "takes effect on the next turn", per Task 3. Mirror test: 154 passed, 0 failed,
+  the figure amendment 2 measured. `baseline-health` passed all 7 checks.
+- **Task 9:** both §2 blocks were identical to their plan blocks at splice time. Step 4: 0
+  "excluded", 1 caveat per file.
+- **Amendment 10 fixes:** five mutants, one per fix, each failed the assertion its fix added:
+  - T1, a typo in one twin;
+  - T2, a fail-open when a Recommendation is present;
+  - T3, FINDINGS without multiline;
+  - C2, `-eq`;
+  - S2, no `-I`.
+- **The T1 check's first version was itself defective.** It used `python3 -I - FILE`, and here
+  `python3` is the Python install manager, which ran FILE's shebang instead. That executed
+  `bash scripts/pre-approval-check.sh`, unstubbed, once per suite run. It now uses `-c`, as the
+  hook does.
+- **The same check had a second defect.** Windows Python writes CRLF line endings, so on the first
+  full Task 10 run its multi-line comparison failed on a correct tree (127 passed, 1 failed). It
+  now writes one line with no newline. The exact comparison the suite makes was then checked on
+  both inputs: the real tree compares equal, and the T1 mutant gives `ASK=DIFFERENT`.
+- **Permission mode:** on 2026-10-15 the session was found in acceptEdits with no observed cause,
+  and the user was not sure whether they had changed it. It was reset to default, and the user
+  chose default for the commit-2 review. This is the second session where the mode changed this
+  way. **Correction (2026-10-16):** the user switches to auto deliberately, to avoid approving every
+  call, and commit 2's review rounds ran in auto.
+- **Popup timeout:** WScript.Shell.Popup self-closed (return -1) on both launch paths, so the
+  "closes itself after 600 s" claim is measured, not assumed. Git Bash shows that -1 as exit 127.
+  Two new-style popups seen still open 15 minutes after launch, during that defective run, are
+  unexplained.
+
 ---
 
 ### Task 10: Final verification and commit 2
@@ -1558,8 +1959,14 @@ Expected:
 Stage first (review finding F3), then snapshot. Re-stage and re-snapshot after any fix:
 
 ```bash
-cd "C:/Users/Mizzo/Claude/Personal-Memory-Bank/.claude/worktrees/pre-approval-protocol" && git add standards/WORKFLOW.md docs/HOOKS-GUIDE.md templates/docs/HOOKS-GUIDE.md docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md docs/superpowers/plans/2026-09-21-pre-approval-protocol.md
+cd "C:/Users/Mizzo/Claude/Personal-Memory-Bank/.claude/worktrees/pre-approval-protocol" && git add standards/WORKFLOW.md docs/HOOKS-GUIDE.md templates/docs/HOOKS-GUIDE.md docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md docs/superpowers/plans/2026-09-21-pre-approval-protocol.md tests/test-mirror-parity.sh CHANGELOG.md scripts/mb.sh
 ```
+
+Amendment 3 added the last three paths. **Amendment 10** adds three more:
+`scripts/pre-approval-check.sh`, `scripts/pre-approval-check.ps1` and
+`tests/test-pre-approval-check.sh`. The commit message also names the review fixes. Then confirm nothing is left unstaged: `git diff --stat`
+(unstaged) must print nothing. `/code-review` hashes `git diff HEAD`, so an unstaged leftover would
+be certified but left out of the commit.
 
 ```bash
 mkdir -p "C:/Users/Mizzo/Claude/pmb-session-artifacts/pre-approval-review"
@@ -1605,9 +2012,11 @@ docs: add the Pre-Approval Protocol to WORKFLOW.md and document its Stop hook
 Supersedes Phase 3.5 with a protocol that runs before every approval ask:
 execute the checks, add the Opus opposition pass on escalation-list asks,
 and send the ask with Findings and a Recommendation. The approved spec
-and this plan are present on the branch.
+and this plan are present on the branch. Also replaces PR #53's one-line
+WORKFLOW.md parity pin with a region-based one (spec section 5, amended
+2026-10-14), adds a CHANGELOG entry, and corrects an mb.sh comment.
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1621,10 +2030,11 @@ EOF
 Pushing, opening a PR and merging are **each** separate approvals from the user. Ask for each one,
 with Findings and a Recommendation.
 
-**Before the push, re-check the exemption's expiry date** (review finding L2). Task 7 Step 4 set
-it 21 days from that day, so every day between then and merge comes out of the 7-day grace. If
-merge is unlikely before `expiry - 14 days`, move the date in a new commit through the gate, not an
-amend.
+**Before the push, re-check the exemption's expiry date** (review finding L2). Commit 2 set it to
+2026-10-15 plus 21 days, `2026-11-05` (amendment 10, re-dating Task 7 Step 4's value). Each day
+the merge lands after 2026-10-15 uses up a day of the 7-day grace, and a merge after 2026-10-22
+(`expiry - 14 days`) leaves less than 14 days of trial. If merge is unlikely by then, move the date
+in a new commit through the gate, not an amend.
 
 **Constraint 2 still applies inside the skill** (review finding N3). The skill's own push command
 won't start with the literal `cd`, so write the push yourself (below).
