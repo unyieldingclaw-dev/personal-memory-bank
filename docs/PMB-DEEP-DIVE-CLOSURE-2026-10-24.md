@@ -8,6 +8,74 @@
 
 **Related prior PMB work:** `docs/MEMORY-BANK-PARADIGM-REVIEW.md`, `docs/MEMORY-BANK-CAP-ALLOCATION-FINDING.md`, `docs/RETRIEVAL-BASELINE-2026-09-09.md`, and `docs/superpowers/specs/2026-09-18-memory-bank-index-detail-design.md`.
 
+
+---
+
+## Recovered October 21–22 deep-dive work
+
+The session that ran out of context contained additional PMB-specific work that was not durably closed.
+
+The key proposed experiment was a **PMB Recall & Context Efficiency Harness**. It was not implemented or executed. Its purpose was to test the loading question instead of debating it:
+
+### Baseline A — current behavior
+
+- current `CLAUDE.md` startup contract;
+- read all startup memory in full;
+- normal PMB query/read behavior afterward.
+
+### Treatment B — bounded startup + targeted retrieval
+
+- a small deterministic SessionStart brief;
+- only universally required state in the initial working set;
+- targeted full-text retrieval of durable detail when the task requires it;
+- no vector database, embeddings service, Rust/SQLite server, or new memory daemon.
+
+### Measurements
+
+For the same representative tasks, record:
+
+- task correctness;
+- whether the right evidence/source was selected;
+- authority-tier adherence;
+- whether required hidden detail was retrieved;
+- user correction count;
+- approximate startup/input tokens;
+- tool calls;
+- latency / elapsed execution where available;
+- PMB maintenance overhead.
+
+The retrieval path must be **mutation-tested**: deliberately remove or corrupt the retrieval cue/index entry and prove the task fails or degrades. A retrieval mechanism that still “passes” when its route is broken has not demonstrated that retrieval contributed.
+
+### Patterns worth mining, not copying wholesale
+
+The unfinished session also identified several useful design patterns:
+
+- **L0/L1/L2 briefing:** tiny universal orientation → compact structural map → full detail only when needed;
+- **raw journal/history as evidence:** preserve durable raw evidence instead of repeatedly rewriting it into smaller summaries;
+- **disposable derived indexes:** an index may be regenerated from canonical evidence and should not become a second authority;
+- **offer-before-claim handoffs:** a handoff should expose/retrieve supporting state before asserting conclusions from it;
+- **deterministic retrieval before semantic infrastructure:** plain-text/full-text retrieval should be tested before embeddings or a vector store.
+
+Explicit rejections from that session remain correct for PMB at this stage:
+
+- no Rust/SQLite/server-based memory subsystem;
+- no embeddings/vector DB by default;
+- no automatic rewriting of canonical memory;
+- no automatic policy/authority promotion;
+- no blind time-decay eviction.
+
+### Current journal status
+
+The same prior session called for finishing the multi-session journal work. That is **partially implemented, not complete** on this baseline:
+
+- Plan A merged as PR #57 on 2026-10-17;
+- Plans B → C → D remain;
+- `[NS-68]` says the journal stays inert until Plan C's `.pmb-features` flag PR;
+- multiple hardening/follow-up items still gate that flag.
+
+Therefore neither the Recall & Context Efficiency Harness nor the journal work should be described as completed by the prior deep-dive session.
+
+
 ---
 
 ## Executive conclusion
@@ -276,16 +344,18 @@ Reconcile `mb clean` with `standards/MEMORY-BANK.md`:
 - require explicit review for semantic rewrites;
 - keep compaction-generation metadata as a risk signal, not proof of semantic integrity.
 
-### P1 — retrieval experiment
+### P1 — Recall & Context Efficiency Harness
 
-Run one bounded task that requires archived detail:
+Run the recovered October 21–22 experiment before implementing the full index/detail design.
 
-1. Put a necessary fact only in a retrievable detail/archive file.
-2. Leave a realistic startup pointer with a useful “open when” trigger.
-3. Start a fresh normal session.
-4. Ask a task question that requires that fact without naming the detail file.
-5. Record whether retrieval occurs, whether the answer is correct, corrective turns, and context delta.
-6. Repeat enough times to distinguish one lucky route from a reliable pattern.
+Compare:
+
+- **A: current read-all baseline**
+- **B: bounded deterministic SessionStart brief + targeted full-text retrieval**
+
+Use representative tasks, including at least one whose correct answer requires detail available only through retrieval. Measure correctness, evidence/source selection, authority adherence, retrieval events, corrections, approximate tokens, tool calls, latency, and maintenance overhead.
+
+Mutation-test the retrieval path by removing/corrupting the retrieval cue and proving the affected case degrades. This prevents a “retrieval test” that passes even when retrieval never contributed.
 
 Do **not** implement the full activeContext split until this produces useful evidence.
 
@@ -347,10 +417,11 @@ The original review's **product Definition of Done is not complete** because it 
 
 1. reporting correctness fixes;
 2. semantic-compaction contract;
-3. task-requiring retrieval experiment;
-4. write-rate rule/evidence;
-5. decision on the index/detail implementation after retrieval evidence;
-6. the empirical PMB pilot.
+3. Recall & Context Efficiency Harness, including task-requiring retrieval and mutation testing;
+4. completion/decision of the multi-session journal Plans B → C → D;
+5. write-rate rule/evidence;
+6. decision on the index/detail implementation after retrieval evidence;
+7. the empirical PMB pilot.
 
 That distinction is intentional. We have enough evidence to stop researching the shape of the problem. We do **not** have enough evidence to declare the problem solved.
 
