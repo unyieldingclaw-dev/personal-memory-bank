@@ -112,5 +112,6 @@ passed cleanly.
 4. `/change-review`, commit, push, PR, user-run merge — same pipeline as PR #43/#44.
 
 Not touched by this entry: whether to actually pick this work up now, or who does it — `[NS-62]`
-said the "PMB full review" session (this one) is picking it up, which is a claim about intent, not
-yet a commitment executed.
+(text only in the local, unpushed `7b70f01`, branch `archive/orphaned-7b70f01`) said the "PMB
+full review" session (this one) is picking it up, which is a claim about intent, not yet a
+commitment executed.
