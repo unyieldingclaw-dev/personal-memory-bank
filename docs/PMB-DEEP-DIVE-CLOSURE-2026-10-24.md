@@ -428,3 +428,44 @@ That distinction is intentional. We have enough evidence to stop researching the
 The durable operating rule from this deep dive is:
 
 > **PMB should preserve durable state without forcing every durable detail into every session. Measure the fixed context tax, keep retrieval explicit and testable, prefer verbatim evidence movement over lossy condensation, and add architecture only after a reproduced failure demonstrates that the simpler path is insufficient.**
+
+
+---
+
+## Execution acceptance and verification ledger
+
+This ledger assigns **component ownership**, not people. Implementation owners are the maintainers of the named paths; no individual assignee is implied. Keep evidence links here when work is actually completed. Do not mark any item done merely because its design or PR exists.
+
+| Work item / priority | Owning component | Acceptance criteria | Verification evidence (pending until performed) |
+|---|---|---|---|
+| P0: startup observability and token-budget correctness | \`scripts/mb.sh\`, \`scripts/mb.ps1\`; doctor tests | Bash and PowerShell report the same explicitly scoped startup file set and byte/token estimates under equivalent fixtures; \`README.md\` included; \`CLAUDE.md\` measured by bytes; effective auto-compact setting consistent with project settings and documented precedence; absolute ceiling reported as advisory, no-growth ratchet remains enforced | Implementation PR; cross-shell fixture results; representative \`mb doctor\` output; PMB Health checks |
+| P0: project/local version drift triage | \`VERSION\`, \`.pmb-version\`, version-detection logic | Establish whether divergence is intended; either document the distinct meanings or correct the unintended mismatch, with no false warnings | Explanation or fix PR; version-check output |
+| P1: compaction semantics | \`scripts/mb.sh\`, \`scripts/mb.ps1\`, \`standards/MEMORY-BANK.md\` and relevant tests | Verbatim evidence relocation by default; no silent lossy condensation of unique detail, authority, citations, provenance or unresolved conflicts; semantic rewrites require explicit review; tests pin the contractual guidance and deterministic invariants rather than claiming an LLM summary is provably lossless | Reviewed contract change; test cases; before/after preservation sample |
+| P1: Recall & Context Efficiency Harness | Bounded test fixture and experiment record under \`docs/\` or \`tests/\` (exact files TBD) | Same representative tasks tested against read-all A and bounded-brief/retrieval B; include at least one task requiring hidden detail; record task correctness, source/authority use, successful retrieval, corrections, approximate tokens, calls, time and upkeep; mutation of retrieval cue must observably degrade the retrieval-dependent case | Reproducible setup, task fixtures, raw results and decision record |
+| P1: write-rate discipline | \`standards/MEMORY-BANK.md\`, \`memory-bank/progress.md\` writing workflow | State clearly what cross-session information belongs in progress vs commit history; report comparable before/after byte growth over a defined interval; avoid new automation unless simple guidance fails | Narrow rule change; measured baseline and follow-up window |
+| P1/P2: multi-session journal | Existing journal Plan B/C/D implementation paths and \`.pmb-features\` | Map prerequisite order; distinguish Plan A merged from B/C/D pending and flag still inert; do not label feature usable until gates, tests and enabled behavior are demonstrated | Linked implementation PRs; gating tests; enabled-feature verification |
+| P2: activeContext index/detail decision | Existing \`docs/superpowers/specs/2026-09-18-memory-bank-index-detail-design.md\` and \`[NS-44]\` | Explicit adopt-narrowly / improve-retrieval-and-retest / reject decision **after** retrieval experiment; avoid moving crucial rules behind unreliable pointers | Experiment-linked ADR/decision and, only if justified, narrowly scoped migration PR |
+| P2: operational pilot | Existing \`PMB-BUILD-READINESS-ASSESSMENT.md\` follow-up | Ten real sessions on a noncritical initialized repository; log continuation correctness, correction burden, retrieval, maintenance effort, governance false positives and startup footprint; separate observed data from inference | Ten-session log and summary verdict |
+
+### Decision gates for the retrieval experiment
+
+Define task set, baseline, estimated overhead, and exact pass thresholds **before running** the harness; do not retrofit thresholds to the preferred architecture.
+
+- **Consider bounded retrieval:** the retrieval-dependent tasks succeed without explicitly supplying hidden file paths; authority/source selection is correct; breaking the retrieval cue worsens the relevant case; correctness and correction burden are not materially worse than read-all; context savings are meaningful after accounting for extra retrieval calls and maintenance.
+- **Improve retrieval and retest:** hidden detail is missed, authority is confused, mutation does not change outcomes, or results cannot be reproduced. Do **not** migrate canonical information into hidden detail while this is unresolved.
+- **Reject/defer index/detail:** bounded approach adds operational complexity without convincing end-to-end savings, fails correctness criteria, or is not needed after write-rate controls. Retain the simple ratchet and the known-correct read-all behavior pending better evidence.
+
+### Closure record (fill only with verified results)
+
+- **Investigation PR:** #95 — this document. Merge status: **pending at time of this edit**.
+- **Reporting correctness PR / tests:** pending.
+- **Compaction contract PR / tests:** pending.
+- **Recall harness results / retrieval decision:** pending.
+- **Journal B/C/D and feature-flag verification:** pending.
+- **Write-rate comparison:** pending.
+- **Index/detail architecture verdict:** pending.
+- **Ten-session pilot and operational verdict:** pending.
+- **Before/after startup bytes and approximate tokens:** baseline **97,156 bytes / ~24,289 estimated tokens** at reviewed main; post-change measurement pending.
+- **Final product DoD:** **OPEN** until relevant improvements and evidence above exist.
+
+**Scope control:** update this ledger with links to implementation evidence rather than creating another broad review or inserting experiment logs into always-loaded \`memory-bank/\`.
