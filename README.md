@@ -100,7 +100,7 @@ mb change-check  Validates a change package against its declared plan before rev
 mb help          Full command list
 ```
 
-> Deprecated commands (`validate`, `audit`, `budget`, `compact`, `update`, `archive`, `slim`, `install-hooks`) still work as redirects to their absorbing command. They are not shown in `mb help` but will not error.
+> Deprecated commands (`validate`, `audit`, `budget`, `compact`, `archive`, `slim`, `install-hooks`) print a notice naming their absorbing command and **exit 2** ("command moved"). They are not shown in `mb help`. The non-zero exit is deliberate: a redirect that exits 0 is indistinguishable from real success to any script reading the exit code, which is how a pre-push check came to report `[OK] mb validate passed` while validating nothing. Run the absorbing command instead. (`update` is the exception on POSIX — there it is a live alias for `mb upgrade`, not a redirect.)
 
 ## Slash Commands
 
@@ -226,7 +226,7 @@ Files use hierarchical tags (`auth/session`, `infra/postgres`) in their frontmat
 <details>
 <summary>Worktree support</summary>
 
-Memory bank lives in the main worktree only. `mb commit` detects and refuses mutations from git subworktrees, preventing split-brain memory.
+Memory bank lives in the main worktree only. `mb commit` detects and refuses mutations from git subworktrees, and `.githooks/pre-commit` refuses a plain `git commit` of `memory-bank/` from one, preventing split-brain memory.
 
 </details>
 
@@ -244,7 +244,21 @@ The `pmb-health` CI workflow runs on every push and PR with six jobs:
 | `rules-file-integrity` | invisible Unicode chars, hidden HTML comments, LLM bypass phrases in `CLAUDE.md` and `standards/` |
 | `sast` | Semgrep `p/bash` scan of `scripts/` and `templates/scripts/` |
 
-The same checks `mb doctor` runs locally are enforced in CI so drift is caught before merge.
+Most checks `mb doctor` runs locally are also enforced in CI, so drift is caught before merge. The
+memory-bank size caps are the exception worth knowing.
+
+`mb upgrade` can add a `.github/workflows/memory-bank-size.yml` to your project — **`mb init` does
+not**, so a project set up with `mb init` alone has no CI enforcement of these caps at all until you
+run `mb upgrade`. It is added only if absent and is never overwritten, so an existing workflow of
+your own is left alone.
+
+That workflow ships deliberately looser starting defaults than `mb doctor`'s built-in caps. **As
+shipped**, therefore, `mb doctor` is never _looser_ than that CI: it may warn about a file your build
+would still accept, but it will not pass one your build would reject. That ordering is a property of
+the two default sets — it is asserted by `tests/test-threshold-parity.sh` for the shipped values and
+nothing more. Tune the workflow's caps to your project, but note that tightening any cap below
+`mb doctor`'s own value inverts the relationship for that file, and you will get a clean local check
+followed by a red build. `mb doctor` reports its caps at runtime; compare before you tune.
 
 </details>
 
@@ -273,16 +287,22 @@ PMB installs two git hooks automatically — no manual copying needed.
 
 **`mb init`** creates `.githooks/pre-push` and `.githooks/pre-commit` in the project and sets `core.hooksPath = .githooks` (a local git config, not committed), so git resolves hooks from the versioned `.githooks/` directory. **`mb upgrade`** keeps them current (both hooks are `TEMPLATE_OWNED` — overwritten if stale).
 
-**`.githooks/pre-push`** — runs before every `git push`, blocks on errors:
+**`.githooks/pre-push`** — runs before every `git push`. Only 3 of its 7 checks block:
 
-- Unresolved merge conflicts or conflict markers in staged files
-- Uncommitted changes in the working tree
-- Missing `.gitattributes`
-- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs) — scans first pushes via `git log --not --remotes` when no upstream tracking ref exists
-- Files over 500 KB
-- `mb validate` result (if `mb` is in PATH)
+- Unresolved merge conflicts or conflict markers in staged files — **blocks**
+- Possible secrets in the push diff (AWS keys, API tokens, GitHub PATs) — **blocks**; scans first pushes via `git log HEAD --not --remotes` when no upstream tracking ref exists
+- Uncommitted changes in the working tree — warns
+- Missing `.gitattributes` — warns
+- Files over 500 KB — warns
+- Memory-bank integrity via `mb doctor` — warns, or reports `UNKNOWN` if `mb` is unavailable
 
-Fails open — if the script errors unexpectedly, the push is allowed through.
+Because most checks are advisory, the summary reports three states rather than two — `[PASS]`
+only when every check ran and passed, `[PASS with N warning(s)]`, or `[DEGRADED]` when a check
+could not be evaluated at all. A check that did not run is never reported as one that passed.
+Set `ENFORCE=true` to promote warnings and unknowns to blocking.
+
+Fails open — if the script errors unexpectedly, the push is allowed through, except that an
+already-confirmed blocking finding is still honoured.
 
 **`.githooks/pre-commit`** — runs before every `git commit`:
 

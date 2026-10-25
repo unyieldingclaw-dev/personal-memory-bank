@@ -6,8 +6,8 @@
 # even list it, so `mb.ps1 backlog add ...` threw a parameter-validation error before
 # any script body ran. This proves the ported PowerShell implementation behaves the
 # same as the bash original: slug generation/collision, default list excludes
-# promoted/dismissed, promote seeds a .claude/plans/ stub without touching
-# docs/plans/, dismiss/promote never delete the backlog file, and the same
+# promoted/dismissed/resolved, promote seeds a .claude/plans/ stub without touching
+# docs/plans/, dismiss/promote/resolve never delete the backlog file, and the same
 # malformed-frontmatter/slug-validation guards apply. See
 # docs/superpowers/specs/2026-07-14-backlog-design.md.
 #
@@ -91,6 +91,21 @@ Describe "mb backlog command family (in-process happy paths)" {
         (Get-Content "docs/backlog/to-dismiss.md" -Raw) | Should -Match "status: dismissed"
     }
 
+    It "resolve: sets status: resolved, file is kept, excluded from default list" {
+        Invoke-BacklogAdd -Title "Open Item"
+        Invoke-BacklogAdd -Title "To Resolve"
+        Invoke-BacklogResolve -Slug "to-resolve"
+
+        Test-Path "docs/backlog/to-resolve.md" | Should -Be $true
+        (Get-Content "docs/backlog/to-resolve.md" -Raw) | Should -Match "status: resolved"
+
+        $DefaultOutput = (Show-BacklogList 6>&1) | Out-String
+        $DefaultOutput | Should -Not -Match "to-resolve"
+
+        $AllOutput = (Show-BacklogList -All 6>&1) | Out-String
+        $AllOutput | Should -Match "to-resolve"
+    }
+
     It "promote: seeds a plan stub in .claude/plans/, updates backlog frontmatter, does not touch docs/plans/" {
         Invoke-BacklogAdd -Title "Worth Planning" -Desc "Needs a real plan"
 
@@ -151,6 +166,21 @@ Describe "mb backlog command family (subprocess CLI paths)" {
 
         $LASTEXITCODE | Should -Be 0
         $Output | Should -Match "dismissed-item"
+    }
+
+    # WHY this test exists: the "list --all" test above exercises `dismiss` via a real
+    # subprocess invocation for exactly the reason its own WHY comment explains -- an
+    # in-process call bypasses PowerShell's parameter binder and can hide a dispatch bug
+    # an in-process call would never see. `resolve`'s switch-case wiring had no equivalent
+    # coverage; this closes that gap the same way.
+    It "resolve: works via the real CLI invocation, sets status: resolved" {
+        & pwsh -NoLogo -ExecutionPolicy Bypass -File $script:MbScript backlog add "To Resolve" 2>&1 | Out-Null
+
+        $Output = (& pwsh -NoLogo -ExecutionPolicy Bypass -File $script:MbScript backlog resolve "to-resolve" 2>&1) -join "`n"
+
+        $LASTEXITCODE | Should -Be 0
+        $Output | Should -Match "Resolved: to-resolve"
+        (Get-Content "docs/backlog/to-resolve.md" -Raw) | Should -Match "status: resolved"
     }
 
     It "add: rejects a title with no alphanumeric characters" {

@@ -138,17 +138,24 @@ For future sessions: run `/compact` manually at natural task boundaries rather t
 
 ---
 
-## Scenario 8: `mb commit` Refusing With Worktree Error
+## Scenario 8: A memory-bank/ Commit Refused in a Worktree
 
-**Symptoms:** `[ERROR] You are in a git subworktree.`
+**Symptoms:** `mb commit` prints `[ERROR] You are in a git subworktree.`, or a plain `git commit` fails with `ERROR: memory-bank/ changes cannot be committed from a linked worktree`.
 
-**This is intentional.** Memory bank is canonical in the main worktree. Switch to your main worktree branch and commit from there:
+**This is intentional.** Memory bank is canonical in the main worktree, and `.githooks/pre-commit` enforces that for every commit, not only `mb commit`. Take the change out of this commit and make it in the main worktree instead:
 
 ```bash
-cd /path/to/main/worktree
+git restore --staged memory-bank/   # in the linked worktree: unstage it
+cd /path/to/main/worktree           # then make the memory-bank/ edit here
 git add memory-bank/
 git commit -m "chore: update memory bank context"
 ```
+
+If the edit only exists in the linked worktree, copy the file across before restoring it there (`git restore memory-bank/`), so the linked branch keeps main's copy.
+
+**During a merge** the message instead lists the `memory-bank/` files that differ from the branch being merged. Take that branch's version with `git checkout MERGE_HEAD -- <path>`, then finish the merge. Files that already match the merged branch are allowed through. Taking the merged version discards your own branch's side of that file, so if your branch carries `memory-bank/` commits of its own, check what you would lose first (`git diff MERGE_HEAD HEAD -- <path>`).
+
+**`[ERROR] mb commit must be run from the repository root.`** — `mb commit` looks for `memory-bank/` in the current directory, so it refuses from a subdirectory rather than reporting "No changes" over a dirty memory bank. `cd` to the repository root and run it again.
 
 ---
 

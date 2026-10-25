@@ -22,7 +22,7 @@ One-page cheatsheet for daily use.
 |---------|--------------|
 | `mb init` | Scaffold memory-bank/ in the current project |
 | `mb status` | Quick state check — initialized, memory, context, standards, tasks |
-| `mb doctor` | Full 24-check diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, drift flags, integrity, plan hygiene |
+| `mb doctor` | Full diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, drift flags, integrity, plan hygiene. `--check`: same checks, never rewrites `.pmb-checksums` (what the pre-push hook runs) |
 | `mb query TAG` | Find all memory tagged with TAG |
 | `mb preflight` | Check tool availability for /change-review (git, gh, ai-review-agent, semgrep) |
 | `mb change-check` | Post-change summary — diff stats, file types, /change-review job preview |
@@ -44,13 +44,13 @@ One-page cheatsheet for daily use.
 
 ## Handoff Process
 
-**When to handoff:** Context reaches 40%
+**When to handoff:** Context reaches 40% (proactive fallback; not every platform exposes a blocking event)
 
 **What happens:**
 1. Type "Handoff"
-2. AI creates `handoff.md`
+2. AI updates Memory Bank, then creates `handoff.md` only for ephemeral in-flight state
 3. Start new conversation
-4. AI reads handoff and continues
+4. AI reads all five Memory Bank files first, reads `handoff.md` second, reconciles and verifies state, then continues
 
 ---
 
@@ -72,7 +72,7 @@ One-page cheatsheet for daily use.
 | systemPatterns.md | 100-180 | 300 |
 | techContext.md | 150-250 | 400 |
 | activeContext.md | 50-100 | 150 |
-| progress.md | 100-250 | 400 |
+| progress.md | 100-250 | 600 |
 
 ---
 
@@ -126,7 +126,12 @@ Four rules that reduce common LLM over-engineering. Active in all projects via `
 | Cursor (global) | `~/.cursor/rules/*.mdc` | All projects |
 | Claude Code (project) | `CLAUDE.md` | Single project |
 | Claude Code (global) | `~/.claude/CLAUDE.md` | All projects |
-| Any tool (global) | `~/.claude/AGENTS.md` | All projects, all tools |
+| Codex (project) | `AGENTS.md` + `.codex/hooks.json` | Single project; hooks require `/hooks` trust |
+| Codex (global) | `~/.codex/AGENTS.md` | All Codex projects |
+
+Compaction support: Claude Code can block with `PreCompact`; trusted Codex hooks run only
+`SessionStart(source=compact)` recovery; Cursor's 40% handoff remains advisory because its native
+`preCompact` event cannot block or modify compaction.
 
 ---
 
@@ -156,7 +161,7 @@ For multi-session work, create `plan.md`:
 |---------|----------|
 | AI doesn't know context | Check rule files, restart IDE |
 | Files too large | Run `mb clean` to deduplicate; run `mb doctor` to verify sizes |
-| Handoff not working | Explicitly: "Read handoff.md" |
+| Handoff not working | Explicitly: "Read all Memory Bank files first, then read handoff.md" |
 | Wrong patterns | Reference: `@memory-bank/systemPatterns.md` |
 
 ---
@@ -179,5 +184,5 @@ Skip to Implement for: single-file fixes, typos, config changes.
 ## Daily Workflow
 
 ```
-Start Session -> AI reads Memory Bank automatically -> Work on tasks (use /feature-dev for new features) -> If context gets full -> Type "Handoff" -> Start new chat -> When done for the day -> "mb update" -> Commit
+Start Session -> AI reads Memory Bank automatically -> Work on tasks (use /feature-dev for new features) -> If context gets full -> Update Memory Bank, then type "Handoff" -> Start new chat -> Read Memory Bank first and handoff second -> When done for the day -> "mb update" -> Commit
 ```

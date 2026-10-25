@@ -50,6 +50,14 @@ Plugins are configured in `~/.claude/settings.json` under `enabledPlugins`.
 
 **Rule of thumb:** 3 plugins max. More plugins = more context loaded per session = slower, more expensive.
 
+### External skill-library guidance for PMB
+
+An external skill catalog (including Anthropic's Small Business library) is **not** a recommended PMB dependency merely because its skill architecture is interesting. PMB's plugin recommendations should remain focused on actual project-memory and review needs.
+
+Before recommending another skill to a PMB user, verify that it solves a concrete PMB task, that its description does not collide with existing PMB commands or installed skills, and that the client's actual routing works on both intended and neighboring requests. Treat new skills as optional until demonstrated; do not copy an entire external catalog or repeat shared security policy inside every skill.
+
+General skill-architecture research belongs in [Harness Engineering](https://github.com/unyieldingclaw-dev/harness-engineering) rather than PMB's permanent `memory-bank/systemPatterns.md`.
+
 ### Installing Plugins
 
 Claude Code downloads plugins automatically when listed in `enabledPlugins`. Just add the entry and restart.
@@ -119,9 +127,12 @@ Claude Code has a built-in auto-memory system at `~/.claude/projects/<project-ha
 
 ## AGENTS.md (Cross-Tool Alternative)
 
-`AGENTS.md` is an open standard readable by Claude Code, Cursor, Codex, and Gemini CLI.
+`AGENTS.md` is a portable project-instruction convention. Codex loads it natively; other tools may
+make it readable without treating it as their native always-loaded rule file.
 
-Place it at the project root or globally at `~/.claude/AGENTS.md`. It combines the rules from all four `.cursor/rules/*.mdc` files into one file that any tool understands.
+Place it at the project root for portable project instructions. Codex's global path is
+`~/.codex/AGENTS.md`; Claude Code and Cursor retain their own native paths. Do not assume one global
+file is loaded by every tool.
 
 Use AGENTS.md when:
 - Your team uses multiple AI tools
@@ -131,7 +142,8 @@ Use separate files when:
 - You want Cursor's glob scoping (language-specific rules for `*.py` files only)
 - You want rule names visible in Cursor's UI
 
-Both approaches work. AGENTS.md is simpler; separate files are more powerful in Cursor.
+Use `AGENTS.md` for the shared project-level baseline and keep native files for platform-specific
+features such as Cursor globs and executable hooks.
 
 ---
 
@@ -141,8 +153,9 @@ Both approaches work. AGENTS.md is simpler; separate files are more powerful in 
 # 1. Global CLAUDE.md
 Copy-Item .\templates\CLAUDE.md "$env:USERPROFILE\.claude\CLAUDE.md"
 
-# 2. Global AGENTS.md
-Copy-Item .\templates\AGENTS.md "$env:USERPROFILE\.claude\AGENTS.md"
+# 2. Global Codex AGENTS.md
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex"
+Copy-Item .\templates\AGENTS.md "$env:USERPROFILE\.codex\AGENTS.md"
 
 # 3. Slash commands
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.claude\commands"
@@ -166,7 +179,8 @@ After this, every new project automatically has:
 - Rules-file integrity hygiene (`.cursor/rules/rules-file-integrity.mdc` — glob-scoped to `.cursorrules` / `CLAUDE.md` / `AGENTS.md` / `.mdc` / slash-command `.md` files)
 - `/feature-dev`, `/security-review`, and `/code-review` slash commands
 
-The only per-project step remaining is running `init-memory-bank.ps1` to scaffold the `memory-bank/` directory with project-specific content.
+Run `mb init` in each project to scaffold `memory-bank/`, project-root `AGENTS.md`, native rule
+files, and the project-local Codex compaction hooks.
 
 ---
 
@@ -179,6 +193,7 @@ After setup, test each piece:
 2. Security review:  Type /security-review → should scan diff for 9 patterns
 3. Code review:      Type /code-review → should spawn 3 role subagents + test coverage + auditor
 4. Global CLAUDE.md: New session → Claude should follow memory-bank protocol without being told
-5. AGENTS.md:        In Cursor, type @AGENTS.md → rules should be visible
-6. Cursor rules:     Ask "what rules are you following?" → should list security + quality rules
+5. AGENTS.md:        Start Codex in the project → it should load the project-root instructions
+6. Codex hooks:      Run /hooks → review and trust the PMB project hooks
+7. Cursor rules:     Ask "what rules are you following?" → should list security + quality rules
 ```

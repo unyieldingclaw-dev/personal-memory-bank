@@ -162,12 +162,328 @@ Describe "Invoke-Init review-reminders scripts (subprocess)" {
             $env:MB_HOME = $script:RepoRoot5
             & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
 
-            foreach ($f in @("review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1")) {
+            foreach ($f in @("review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-classify.py","_review-gate-classify.ps1","_review-gate-merge.py","_review-gate-merge.ps1")) {
                 Test-Path (Join-Path $script:InitReviewRemindersProject "scripts\$f") | Should -Be $true
             }
         } finally {
             Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
             Pop-Location
         }
+    }
+}
+
+# WHY this block exists: the bash side got both a positive test and a completeness invariant for
+# agent delivery (tests/test-mb-upgrade.sh), and the pwsh side got neither -- despite ps1 discovery
+# being a SEPARATE implementation (Get-TemplateDirFile) from the bash glob. A pwsh-only adopter
+# could therefore silently not receive a newly-shipped agent, which is precisely the failure that
+# `mb upgrade`'s agent auto-discovery was written to close. Found 2026-08-27.
+Describe "Invoke-Upgrade agent advisory-create (subprocess)" {
+    BeforeAll {
+        $script:RepoRoot6 = $RepoRoot
+        $script:UpgradeAgentsProject = New-TestProject -Base $TestDrive -Name 'upgrade-agents-advisory'
+    }
+
+    It "delivers EVERY agent in templates/.claude/agents to a project that has none" {
+        $mbScript = Join-Path $script:RepoRoot6 'scripts/mb.ps1'
+        Push-Location $script:UpgradeAgentsProject
+        try {
+            git init -q 2>$null
+            git config user.email "test@test.com" 2>$null
+            git config user.name "Test" 2>$null
+            git commit -q --allow-empty -m "init" 2>$null
+
+            $env:MB_HOME = $script:RepoRoot6
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
+
+            # Simulate an adopter that predates the agents: clear whatever init delivered.
+            $agentsDir = Join-Path $script:UpgradeAgentsProject '.claude\agents'
+            if (Test-Path $agentsDir) {
+                Get-ChildItem $agentsDir -Filter '*.md' -File | Remove-Item -Force
+            }
+
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript upgrade 2>&1 | Out-Null
+
+            # COMPLETENESS INVARIANT, deliberately not "opposition.md exists": a hard-coded name
+            # would keep passing on the day a third agent is added and goes undelivered, which is
+            # the exact stale-list bug this feature replaced. Assert the delivered set covers the
+            # template set instead, so the check has no list of its own to go stale.
+            $expected = Get-ChildItem (Join-Path $script:RepoRoot6 'templates/.claude/agents') -Filter '*.md' -File |
+                        Select-Object -ExpandProperty Name | Sort-Object
+            $expected.Count | Should -BeGreaterThan 0
+            $missing = @()
+            foreach ($name in $expected) {
+                if (-not (Test-Path (Join-Path $agentsDir $name))) { $missing += $name }
+            }
+            ($missing -join ',') | Should -BeExactly ''
+        } finally {
+            Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            Pop-Location
+        }
+    }
+}
+
+# WHY a separate Describe from the Invoke-Upgrade agent block above: `upgrade` and `init` are
+# different delivery paths with different code, and agent delivery was built into `upgrade` only.
+# A fresh adopter runs `init`, never `upgrade`, so the path the review gate actually depends on
+# was the one with no coverage. Asserting it through `upgrade` would have kept reporting green.
+Describe "Invoke-Init agent delivery (subprocess)" {
+    BeforeAll {
+        $script:RepoRoot7 = $RepoRoot
+        $script:InitAgentsProject = New-TestProject -Base $TestDrive -Name 'init-agents-delivery'
+    }
+
+    It "delivers EVERY agent in templates/.claude/agents on a bare mb init" {
+        $mbScript = Join-Path $script:RepoRoot7 'scripts/mb.ps1'
+        Push-Location $script:InitAgentsProject
+        try {
+            git init -q 2>$null
+            git config user.email "test@test.com" 2>$null
+            git config user.name "Test" 2>$null
+            git commit -q --allow-empty -m "seed" 2>$null
+
+            $env:MB_HOME = $script:RepoRoot7
+            # No upgrade anywhere in this test, deliberately: init alone must be sufficient.
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
+
+            # COMPLETENESS INVARIANT -- see the bash twin in tests/test-mb-init.sh for the full
+            # rationale. Derived from templates/ at runtime, never enumerated, and asserted
+            # non-empty so an absent template directory fails loudly instead of passing on an
+            # empty comparison.
+            $expected = Get-ChildItem (Join-Path $script:RepoRoot7 'templates/.claude/agents') -Filter '*.md' -File |
+                        Select-Object -ExpandProperty Name | Sort-Object
+            $expected.Count | Should -BeGreaterThan 0
+
+            $agentsDir = Join-Path $script:InitAgentsProject '.claude\agents'
+            $missing = @()
+            foreach ($name in $expected) {
+                if (-not (Test-Path (Join-Path $agentsDir $name))) { $missing += $name }
+            }
+            ($missing -join ',') | Should -BeExactly ''
+        } finally {
+            Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            Pop-Location
+        }
+    }
+}
+
+
+# WHY this exists: the review-agent model-pin check (mb doctor check 25) shipped in d795abb with
+# BASH coverage ONLY (tests/test-mb-doctor.sh). Its own comment calls it security-relevant -- an
+# unpinned review agent silently inherits CLAUDE_CODE_SUBAGENT_MODEL=haiku, and a cheap review that
+# finds nothing looks exactly like a thorough one that finds nothing. A pwsh-only adopter had no
+# test behind the check at all. Subprocess, matching the other doctor-path tests: Show-Doctor writes
+# to the host rather than returning a value.
+Describe "Show-Doctor review-agent model pin (subprocess)" {
+    BeforeAll {
+        $script:RepoRootPin = $RepoRoot
+        $script:PinProject  = New-TestProject -Base $TestDrive -Name 'doctor-model-pin'
+        $script:PinAgents   = Join-Path $script:PinProject '.claude\agents'
+        New-Item -ItemType Directory -Force -Path $script:PinAgents | Out-Null
+
+        # Defined here, not in the Describe body: a function declared directly in a Describe block
+        # is not in scope inside It. Pester runs BeforeAll in the container scope, so this is.
+        function Invoke-PinDoctor {
+            Push-Location $script:PinProject
+            try {
+                $env:MB_HOME = $script:RepoRootPin
+                & pwsh -NoLogo -ExecutionPolicy Bypass -File (Join-Path $script:RepoRootPin 'scripts/mb.ps1') doctor 2>&1 | Out-String
+            } finally { Pop-Location }
+        }
+    }
+
+    BeforeEach {
+        # security-reviewer is a gate agent and is always well-formed here, so each case below
+        # isolates the ONE field under test on `opposition` alone.
+        Set-Content -Path (Join-Path $script:PinAgents 'security-reviewer.md') -Encoding utf8 -Value @(
+            '---', 'name: security-reviewer', 'model: sonnet', 'description: t', '---', 'body')
+    }
+
+    It "stays silent when every review agent pins a capable model" {
+        Set-Content -Path (Join-Path $script:PinAgents 'opposition.md') -Encoding utf8 -Value @(
+            '---', 'name: opposition', 'model: opus', 'description: t', '---', 'body')
+        Invoke-PinDoctor | Should -Not -Match 'not pinned to a capable model'
+    }
+
+    # The two mutations. Without these the test above would pass against a DELETED check, which is
+    # the defect class standards/CODE-REVIEW.md names: a check that cannot fail is not a check.
+    It "WARNs when a review agent declares no model at all" {
+        Set-Content -Path (Join-Path $script:PinAgents 'opposition.md') -Encoding utf8 -Value @(
+            '---', 'name: opposition', 'description: t', '---', 'body')
+        Invoke-PinDoctor | Should -Match 'not pinned to a capable model'
+    }
+
+    It "WARNs when a review agent is pinned to the cost-optimized model" {
+        Set-Content -Path (Join-Path $script:PinAgents 'opposition.md') -Encoding utf8 -Value @(
+            '---', 'name: opposition', 'model: haiku', 'description: t', '---', 'body')
+        Invoke-PinDoctor | Should -Match 'not pinned to a capable model'
+    }
+}
+
+# WHY this exists: 2026-09-11 whole-repo review, finding 2 -- Show-Doctor never set an exit code
+# reflecting what it found, so CI's "MB Doctor Self-Check" job (mb.sh only) and any
+# PowerShell-only adopter's own doctor run could never fail on a real problem. Fixed by gating
+# only on genuinely fatal conditions (see $fatalFound in scripts/mb.ps1); checksum-mismatch and
+# the startup-context ceiling stay advisory by design and must NOT flip the exit code. Both
+# directions are asserted, not just the fatal one -- a test that only checks the fatal case
+# would also pass against a blanket "any [ERROR] -> exit 1" implementation, which is the
+# wrong-grained fix this section exists to rule out (mirrors tests/test-mb-doctor.sh check 26).
+Describe "Show-Doctor exit code (subprocess)" {
+    BeforeAll {
+        $script:RepoRootExit = $RepoRoot
+
+        function Invoke-ExitDoctor {
+            param([string]$ProjectPath)
+            Push-Location $ProjectPath
+            try {
+                $env:MB_HOME = $script:RepoRootExit
+                $out = & pwsh -NoLogo -ExecutionPolicy Bypass -File (Join-Path $script:RepoRootExit 'scripts/mb.ps1') doctor 2>&1 | Out-String
+                [PSCustomObject]@{ Output = $out; ExitCode = $LASTEXITCODE }
+            } finally {
+                Pop-Location
+                Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "exits non-zero when a fatal condition is present (CLAUDE.md and memory-bank both missing)" {
+        $p = New-TestProject -Base $TestDrive -Name 'doctor-exit-fatal'
+        $result = Invoke-ExitDoctor -ProjectPath $p
+        $result.Output | Should -Match 'CLAUDE\.md missing'
+        $result.ExitCode | Should -Be 1
+    }
+
+    It "exits 0 when the only finding is the advisory checksum mismatch" {
+        $p = New-TestProject -Base $TestDrive -Name 'doctor-exit-checksum'
+        $mb = Join-Path $p 'memory-bank'
+        New-Item -ItemType Directory -Force -Path $mb | Out-Null
+        foreach ($f in @("projectbrief.md", "systemPatterns.md", "techContext.md", "activeContext.md", "progress.md")) {
+            Set-Content -Path (Join-Path $mb $f) "---`nauthority: stable`nlast-reviewed: 2026-01-01`n---`n# $f`nContent."
+        }
+        Set-Content -Path (Join-Path $p 'CLAUDE.md') "# Project`nCLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40"
+
+        Invoke-ExitDoctor -ProjectPath $p | Out-Null   # baseline run establishes checksums
+        Add-Content -Path (Join-Path $mb 'progress.md') 'External modification.'
+
+        $result = Invoke-ExitDoctor -ProjectPath $p
+        $result.Output | Should -Match 'hash mismatch'
+        $result.ExitCode | Should -Be 0
+    }
+}
+
+# WHY this exists: plain doctor rewrites .pmb-checksums at the end of every run, so the
+# pre-push hook (Check 7) re-baselined on every push and erased the mismatch it had just
+# reported. `doctor --check` must leave the working tree untouched so the mismatch is still
+# reported on the NEXT run -- persistence is the property, not merely "file unchanged", which
+# a build skipping the comparison would also satisfy. Mirrors tests/test-mb-doctor.sh check 27.
+#
+# Both binding forms are exercised because both reach mb.ps1: `-File` (the mb.bat launcher from
+# install.bat, which is how the pre-push hook gets here) binds `--check` to the [switch], while
+# the call operator (`& mb.ps1 doctor --check`, interactive use) leaves the literal "--check" in
+# positional $Arg. The call form runs in a child pwsh here so its host output reaches stdout; the
+# hook could not use that form in-process, since Write-Host escapes its `2>&1` capture.
+Describe "Show-Doctor --check is read-only (subprocess)" -ForEach @(
+    @{ Form = 'file' }
+    @{ Form = 'call' }
+) {
+    BeforeAll {
+        $script:RepoRootChk = $RepoRoot
+
+        function Invoke-ChkDoctor {
+            param([string]$ProjectPath, [string[]]$DoctorArgs = @())
+            Push-Location $ProjectPath
+            try {
+                $env:MB_HOME = $script:RepoRootChk
+                $env:MB_VERSION_CACHE_DIR = Join-Path $TestDrive 'mb-cache'
+                $env:MB_VERSION_CHECK_URL = 'http://127.0.0.1:1/VERSION'
+                $mbPs1 = Join-Path $script:RepoRootChk 'scripts/mb.ps1'
+                if ($Form -eq 'file') {
+                    $out = & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $mbPs1 doctor @DoctorArgs 2>&1 | Out-String
+                } else {
+                    # Script path and args via the ENVIRONMENT with a single-quoted -Command body,
+                    # so a path containing quote characters cannot become executable text.
+                    $env:MB_SCRIPT = $mbPs1
+                    $env:MB_DOCTOR_ARGS = ($DoctorArgs -join ' ')
+                    $out = & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command `
+                        '$a = @($env:MB_DOCTOR_ARGS -split " " | Where-Object { $_ }); & $env:MB_SCRIPT doctor @a; exit $LASTEXITCODE' 2>&1 | Out-String
+                }
+                [PSCustomObject]@{ Output = $out; ExitCode = $LASTEXITCODE }
+            } finally {
+                Pop-Location
+                foreach ($v in 'MB_HOME', 'MB_VERSION_CACHE_DIR', 'MB_VERSION_CHECK_URL', 'MB_SCRIPT', 'MB_DOCTOR_ARGS') {
+                    Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        function Get-TreeSnapshot {
+            param([string]$ProjectPath)
+            Get-ChildItem -LiteralPath $ProjectPath -Recurse -File -Force |
+                Where-Object { $_.FullName -notmatch '[\\/]\.git([\\/]|$)' } |
+                Sort-Object FullName |
+                ForEach-Object { "$($_.FullName.Substring($ProjectPath.Length))=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" } |
+                Out-String
+        }
+
+        function New-ChkProject {
+            param([string]$Name)
+            $p = New-TestProject -Base $TestDrive -Name $Name
+            $mb = Join-Path $p 'memory-bank'
+            New-Item -ItemType Directory -Force -Path $mb | Out-Null
+            foreach ($f in @("projectbrief.md", "systemPatterns.md", "techContext.md", "activeContext.md", "progress.md")) {
+                Set-Content -Path (Join-Path $mb $f) "---`nauthority: stable`nlast-reviewed: 2026-01-01`n---`n# $f`nContent."
+            }
+            Set-Content -Path (Join-Path $p 'CLAUDE.md') "# Project`nCLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40"
+            return $p
+        }
+    }
+
+    It "reports a mismatch without writing, and still reports it on the next run (<Form>)" {
+        $p = New-ChkProject -Name "chk-persist-$Form"
+        Invoke-ChkDoctor -ProjectPath $p | Out-Null   # plain doctor establishes the baseline
+        Add-Content -Path (Join-Path $p 'memory-bank/progress.md') 'External modification.'
+
+        $before = Get-TreeSnapshot -ProjectPath $p
+        $first = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        $after = Get-TreeSnapshot -ProjectPath $p
+
+        # Exit 0 is only observable under -File. Via the call operator a script that ends
+        # without `exit` leaves $LASTEXITCODE at whatever native command it ran last (measured:
+        # git's 128 in this non-repo fixture), so the host's exit code says nothing about doctor.
+        # The fatal case below IS observable in both forms, because mb.ps1 calls `exit 1`.
+        if ($Form -eq 'file') { $first.ExitCode | Should -Be 0 }
+        $first.Output | Should -Match '\[ERROR\] memory-bank/progress\.md \(hash mismatch'
+        $first.Output | Should -Match 'Integrity check mode: \.pmb-checksums not modified'
+        $first.Output | Should -Match 'mb verify-integrity'
+        $after | Should -BeExactly $before
+
+        $second = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        $second.Output | Should -Match '\[ERROR\] memory-bank/progress\.md \(hash mismatch'
+    }
+
+    It "leaves plain doctor's re-baseline and output unchanged (<Form>)" {
+        $p = New-ChkProject -Name "chk-plain-$Form"
+        Invoke-ChkDoctor -ProjectPath $p | Out-Null
+        Add-Content -Path (Join-Path $p 'memory-bank/progress.md') 'External modification.'
+
+        $plain = Invoke-ChkDoctor -ProjectPath $p
+        $plain.Output | Should -Not -Match 'Integrity check mode:'
+        $after = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        $after.Output | Should -Not -Match 'hash mismatch'
+        $after.Output | Should -Match '\[OK\]   Integrity checksums verified'
+    }
+
+    It "does not create a missing baseline, and says so as WARN (<Form>)" {
+        $p = New-ChkProject -Name "chk-nobase-$Form"
+        $result = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        Test-Path -LiteralPath (Join-Path $p '.pmb-checksums') | Should -BeFalse
+        $result.Output | Should -Match '\[WARN\] Integrity checksums: no baseline'
+        $result.Output | Should -Match 'Integrity check mode: \.pmb-checksums not modified'
+    }
+
+    It "keeps doctor's exit code: a fatal condition exits 1 (<Form>)" {
+        $p = New-TestProject -Base $TestDrive -Name "chk-fatal-$Form"
+        $result = Invoke-ChkDoctor -ProjectPath $p -DoctorArgs '--check'
+        $result.Output | Should -Match 'CLAUDE\.md missing'
+        $result.ExitCode | Should -Be 1
     }
 }

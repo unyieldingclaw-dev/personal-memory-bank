@@ -376,6 +376,39 @@ if command -v pwsh >/dev/null 2>&1; then
   output=$(MB_HOME="$REPO_ROOT" MB_VERSION_CACHE_DIR="$TMPDIR_PS1U/.mb" pwsh -NoLogo -File "$REPO_ROOT/scripts/mb.ps1" upgrade 2>&1)
   cd - > /dev/null || exit 1
   assert_not_contains "$output" "\[NOTICE\]" "mb.ps1: mb upgrade suppresses the generic [NOTICE]"
+
+  # WHY this test is gated on "no cygpath" (i.e. real Linux/macOS, not Git-Bash-on-Windows):
+  # it targets Get-CachedPmbVersion's un-overridden fallback (mb.ps1: `else { Join-Path $HOME
+  # ".mb" }`), which the two tests above never reach -- both always pass MB_VERSION_CACHE_DIR,
+  # so the branch this fixed (previously `$env:USERPROFILE`, null on Linux) has no dedicated
+  # test anywhere in this suite. On real Windows, pwsh's $HOME ignores the HOME env var and
+  # always resolves to the real user profile (verified directly: `HOME=/tmp/x pwsh -Command
+  # '$HOME'` still prints the real profile path) -- so isolating it in a temp dir, as this test
+  # requires, is only possible on Linux/macOS, which is also CI's actual runner OS.
+  if ! command -v cygpath >/dev/null 2>&1; then
+    echo ""
+    echo "--- mb.ps1: Get-CachedPmbVersion resolves via \$HOME when MB_VERSION_CACHE_DIR is unset ---"
+    FAKE_HOME="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-home)"
+    CLEANUP_DIRS+=("$FAKE_HOME")
+    TMPDIR_HOMEFALLBACK="$(mktemp -d 2>/dev/null || mktemp -d -t mb-vn-homefallback)"
+    CLEANUP_DIRS+=("$TMPDIR_HOMEFALLBACK")
+    setup_test_project "$TMPDIR_HOMEFALLBACK"
+    cd "$TMPDIR_HOMEFALLBACK" || exit 1
+    output=$(MB_HOME="$REPO_ROOT" HOME="$FAKE_HOME" MB_VERSION_CHECK_URL="http://127.0.0.1:1/VERSION" pwsh -NoLogo -File "$REPO_ROOT/scripts/mb.ps1" status 2>&1)
+    cd - > /dev/null || exit 1
+    # WHY "no crash" is sufficient proof here, with no live-fetch server needed: Join-Path
+    # throws on a null path the instant $cacheDir is COMPUTED (mb.ps1's Get-CachedPmbVersion),
+    # before any network activity -- so reaching normal "status" output at all already proves
+    # $HOME resolved to a real, non-null path. A cache-file-exists assertion would additionally
+    # require a reachable remote, which a deliberately-unreachable URL (used here to keep this
+    # deterministic and avoid the flaky live-server dance the test above already SKIPS under)
+    # cannot provide.
+    assert_not_contains "$output" "Cannot bind argument to parameter" "mb.ps1: no null-path crash when \$HOME is set but MB_VERSION_CACHE_DIR is not"
+    assert_contains "$output" "PMB Status" "mb.ps1: status still runs to completion and prints its normal output (positive proof the command didn't just fail silently)"
+  else
+    echo ""
+    echo "--- mb.ps1 \$HOME-fallback test: SKIPPED (Windows/cygpath present -- \$HOME cannot be isolated from the real profile here) ---"
+  fi
 else
   echo ""
   echo "--- mb.ps1 tests: SKIPPED (pwsh not installed on this machine) ---"

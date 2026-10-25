@@ -21,7 +21,7 @@ At the start of every conversation, and again after any context compaction, sile
 
 ## Context Compaction Recovery
 
-Claude Code compacts at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json. The `PreCompact` hook fires first and warns if neither the memory bank nor a handoff has been captured this session. A "context was compacted" summary may appear at the top of the conversation.
+Claude Code compacts at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json. The `PreCompact` hook fires first and **blocks** compaction unless: `activeContext.md` has ≥3 substantive content lines AND `progress.md` has an entry dated today. A `handoff.md` **dated today** bypasses the gate; a stale one does not. A "context was compacted" summary may appear at the top of the conversation.
 
 **If you observe a compaction summary:** Re-read ALL `memory-bank/` files immediately, summarize recovered context to the user, confirm where to resume if mid-task. **Do not continue from memory alone.**
 
@@ -105,7 +105,7 @@ This is the single highest-leverage habit for improving output quality.
 ## Tools
 
 - **Hooks** — `.claude/settings.json` enforces rules deterministically (format, lint, block dangerous ops). See `docs/HOOKS-GUIDE.md`.
-- **Agents** — `.claude/agents/` defines specialized subagents (security-reviewer, researcher). Spawn with: "use the security-reviewer agent".
+- **Agents** — `.claude/agents/` defines specialized subagents (security-reviewer, researcher, opposition). Spawn with: "use the security-reviewer agent". `opposition` is dispatched by the review commands, not usually by hand.
 - **MCP** — connect external services via `claude mcp add`. See `standards/MCP-SECURITY.md` before adding any server.
 
 ## Handoff Protocol
@@ -117,7 +117,11 @@ When user types "Handoff" or reports context >= 40%:
 1. **STOP** all work immediately
 2. Before writing `handoff.md`, verify `memory-bank/activeContext.md` and `progress.md` are actually current. If stale, update them FIRST — a rich `handoff.md` cannot compensate for a stale memory-bank, since the next session is instructed to treat memory-bank as authoritative, not this file
 3. **CREATE** `handoff.md` in project root, scoped ONLY to: exact in-flight state (file/line being edited, uncommitted diffs, what was about to run next), any running processes/services left in a non-default state, any command needed to resume, and an explicit pointer — "See `memory-bank/activeContext.md`'s Next Steps for priority and rationale; this file covers only what wasn't captured there yet."
-4. **RESPOND** only: "Handoff ready at `handoff.md`. Start a new conversation."
+4. **RESPOND** with "Handoff ready at `handoff.md`." and then a fenced, paste-able block carrying the
+   session title, branch, worktree status, and the single first action — the next session is opened
+   by pasting it, so omitting it just makes the user ask. Verify those facts with a command rather
+   than transcribing from memory; a wrong branch there sends the successor into the wrong tree.
+   Close with two or three lines that point at `handoff.md`'s sections instead of restating them.
 5. **STOP** - do not continue
 
 When starting a new conversation:
@@ -133,7 +137,7 @@ When starting a new conversation:
 **Model selection — default to Sonnet, escalate deliberately:**
 - Sonnet handles 90%+ of tasks. Start here every session.
 - Switch to Opus (`/model opus`) for work such as: complex architecture decisions, large multi-file refactors, deep cross-file debugging — see the trigger list below for the full set. Switch back after.
-- Subagents run on Haiku automatically (set in settings.json) — sufficient for file reads, test runs, and exploration.
+- Subagents default to Haiku (`CLAUDE_CODE_SUBAGENT_MODEL` in settings.json) — sufficient for file reads, test runs, and exploration, and NOT for review judgement. `security-reviewer` pins `sonnet` and `opposition` pins `opus` in their own frontmatter, which overrides that env var (verified 2026-08-26). Do not read this line as blanket permission to run a review cheap.
 
 **Claude must PROMPT for escalation — do not wait to be asked.** Escalating at the right moment is a token *saving*, not a spend: a wrong design caught after implementation costs a revert, a debugging pass, and a redesign — many times the price of one careful pass up front. Quality at the front end is the cheaper path. When a trigger below fires, say so explicitly and recommend `/model opus` before continuing.
 
@@ -156,7 +160,7 @@ Nominal defaults are per-model: `high` for Sonnet, `xhigh` for Opus. **An explic
 **Also check `MAX_THINKING_TOKENS`** (`.claude/settings.json` env block). Exact interaction with model and effort is not verifiable from inside the repo, but it plausibly bounds reasoning depth independently of both — so a raised effort level may still be capped by it. Worth revisiting before deep architecture or security-boundary work.
 
 **Compact at task boundaries — auto-compact fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`:**
-- Auto-compaction fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json; the `PreCompact` hook warns first if memory bank is stale
+- Auto-compaction fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json; the `PreCompact` hook fires first and **blocks** if the memory bank is stale (see Context Compaction Recovery above for the exact conditions)
 - Compact manually at natural boundaries before that point:
   - After planning: `/compact Focus on decisions and file paths`
   - After debugging: `/compact Focus on what was tried and what worked`

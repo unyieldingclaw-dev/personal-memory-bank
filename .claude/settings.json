@@ -25,6 +25,15 @@
             "command": "pwsh -NonInteractive -File scripts/review-reminders-post.ps1 2>/dev/null || bash scripts/review-reminders-post.sh 2>/dev/null || true"
           }
         ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NonInteractive -File scripts/review-reminders-post.ps1 2>/dev/null || true"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -47,6 +56,10 @@
           {
             "type": "command",
             "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "pwsh -NonInteractive -File scripts/review-reminders.ps1 2>/dev/null || true"
           }
         ]
       },
@@ -104,6 +117,14 @@
       "Bash(python -m mypy *)",
       "Bash(python -m ruff *)",
       "Bash(bash tests/*.sh)"
+    ],
+    "ask": [
+      "Bash(gh pr merge:*)",
+      "PowerShell(gh pr merge:*)"
+    ],
+    "deny": [
+      "mcp__ccd_pr__set_auto_merge",
+      "mcp__plugin_engineering_github__merge_pull_request"
     ]
   }
 }

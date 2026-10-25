@@ -157,13 +157,14 @@ show_help() {
     echo "  init     Initialize Memory Bank in current project (or: mb init <path>)"
     echo "  status   Quick state check — initialized, memory, context, standards, tasks"
     echo "  doctor   Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
+    echo "             --check: same checks, never rewrites .pmb-checksums (used by the pre-push hook)"
     echo "  query    Search memory-bank by tag or section header"
     echo "  clean    Memory bank maintenance: slim check + unified cleanup prompt"
     echo "  commit            Stage and commit Memory Bank changes"
     echo "  upgrade           Propagate current governance templates to this project"
     echo "  verify-integrity  Check and refresh memory-bank file integrity checksums"
     echo "  plan              Plan management: status, list, promote, archive"
-    echo "  backlog           Backlog management: add, list, show, promote, dismiss"
+    echo "  backlog           Backlog management: add, list, show, promote, dismiss, resolve"
     echo "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
     echo "  change-check      Post-change summary: diff stats, file types, /change-review job preview"
     echo "  help              Show this help message"
@@ -241,7 +242,7 @@ show_status() {
                 DAYS_SINCE=$(( (TODAY - REVIEWED_EPOCH) / 86400 ))
                 if [ "$DAYS_SINCE" -gt "$STALE_DAYS" ]; then
                     echo -e "  ${YELLOW}⚠${NC} Active Context ($DAYS_SINCE days)"
-                    ATTENTION_ITEMS+=("Active Context stale (${DAYS_SINCE}d, threshold ${STALE_DAYS}d) — run 'mb audit'")
+                    ATTENTION_ITEMS+=("Active Context stale (${DAYS_SINCE}d, threshold ${STALE_DAYS}d) — run 'mb doctor'")
                 else
                     echo -e "  ${GREEN}✓${NC} Active Context Current"
                 fi
@@ -384,7 +385,7 @@ show_clean() {
     # Slim check
     # WHY progress.md is checked here too, not just activeContext.md: mb doctor's own
     # File Sizes check (check_size, ~line 809) already measures progress.md against a
-    # 400-line cap -- this display only ever showed activeContext.md, so running `mb clean`
+    # 600-line cap -- this display only ever showed activeContext.md, so running `mb clean`
     # without also running `mb doctor` gave a false "maintenance pass complete" impression
     # even when progress.md was well over its own limit. Same thresholds as mb doctor's
     # check_size() and pmb-health.yml's CI file-size job, kept in sync deliberately.
@@ -406,8 +407,8 @@ show_clean() {
     PROGRESS_PATH="$MEMORY_BANK_PATH/progress.md"
     if [ -f "$PROGRESS_PATH" ]; then
         PROGRESS_LINES=$(wc -l < "$PROGRESS_PATH" | tr -d ' ')
-        echo "progress.md: $PROGRESS_LINES lines (max: 400)"
-        if [ "$PROGRESS_LINES" -gt 400 ]; then
+        echo "progress.md: $PROGRESS_LINES lines (max: 500)"
+        if [ "$PROGRESS_LINES" -gt 500 ]; then
             echo -e "${RED}ACTION NEEDED: File is over limit!${NC}"
         elif [ "$PROGRESS_LINES" -gt 250 ]; then
             echo -e "${YELLOW}RECOMMENDED: Consider archiving old entries${NC}"
@@ -463,17 +464,81 @@ invoke_commit() {
 
     # WHY: Detect subworktrees so we refuse memory-bank/ mutations from the wrong root.
     COMMON_GIT=$(git rev-parse --git-common-dir 2>/dev/null || true)
-    LOCAL_GIT="$PWD/.git"
-    if [ -n "$COMMON_GIT" ] && [ "$(realpath "$COMMON_GIT" 2>/dev/null)" != "$(realpath "$LOCAL_GIT" 2>/dev/null)" ]; then
+    # An empty COMMON_GIT is the definitive not-in-a-repo signal, and it is answered here rather
+    # than inferred from the `git status` call below, which can also fail on an unreadable index
+    # -- a different condition that deserves a different message. Checked BEFORE the subworktree
+    # comparison because it is the more fundamental case. "Not a git repository" is the wording
+    # `mb doctor`'s Check 1 already uses for this condition -- at WARN there, ERROR here, because
+    # doctor is reporting and this command cannot proceed. (`mb status` does NOT check git state
+    # at all; an earlier version of this comment claimed it did.)
+    if [ -z "$COMMON_GIT" ]; then
+        echo -e "${RED}[ERROR] Not a git repository.${NC}"
+        echo -e "${YELLOW}Run mb commit from inside your project's git repository.${NC}"
+        echo ""
+        exit 1
+    fi
+    # Refused from a subdirectory BEFORE the worktree comparison. memory-bank/ is resolved relative
+    # to $PWD, so a subdirectory run would inspect <subdir>/memory-bank, find nothing, and report
+    # "No changes" with exit 0 over a dirty memory-bank. Failing to read the prefix refuses too, for
+    # the same reason.
+    if ! PREFIX=$(git rev-parse --show-prefix 2>/dev/null); then
+        echo -e "${RED}[ERROR] Could not determine where you are in this repository.${NC}"
+        echo ""
+        exit 1
+    fi
+    if [ -n "$PREFIX" ]; then
+        echo -e "${RED}[ERROR] mb commit must be run from the repository root.${NC}"
+        echo -e "${YELLOW}You are in ${PREFIX%/} -- cd to the repository root and run it again.${NC}"
+        echo ""
+        exit 1
+    fi
+    # A linked worktree is exactly the case where --git-dir and --git-common-dir differ. This
+    # replaced a comparison of realpath(common-dir) against realpath($PWD/.git), which was wrong
+    # three ways, all measured: inside an absorbed submodule $PWD/.git is a gitlink FILE, so it
+    # reported a subworktree; from a subdirectory, likewise; and with `realpath` missing both sides
+    # came back empty, compared equal, and a real subworktree went through to the commit prompt.
+    # `cd && pwd -P` needs no extra tool. The `-n` tests come first because some shells treat
+    # `cd ""` as "stay here"; the `|| true` keeps a failed `cd` from tripping `set -e`.
+    GIT_DIR_ABS=$(git rev-parse --git-dir 2>/dev/null || true)
+    COMMON_ABS="$COMMON_GIT"
+    [ -n "$GIT_DIR_ABS" ] && GIT_DIR_ABS=$(cd "$GIT_DIR_ABS" 2>/dev/null && pwd -P || true)
+    [ -n "$COMMON_ABS" ] && COMMON_ABS=$(cd "$COMMON_ABS" 2>/dev/null && pwd -P || true)
+    # Two empty values compare EQUAL -- that is how the realpath hole let a subworktree through --
+    # so an unresolved side refuses rather than being compared.
+    if [ -z "$GIT_DIR_ABS" ] || [ -z "$COMMON_ABS" ]; then
+        echo -e "${RED}[ERROR] Could not resolve this repository's git directories.${NC}"
+        echo -e "${YELLOW}Refusing rather than guessing whether this is a git subworktree.${NC}"
+        echo ""
+        exit 1
+    fi
+    if [ "$GIT_DIR_ABS" != "$COMMON_ABS" ]; then
         echo -e "${RED}[ERROR] You are in a git subworktree.${NC}"
         echo -e "${YELLOW}Commit memory-bank/ from the main worktree root instead.${NC}"
         echo ""
-        return
+        # ADOPTER-VISIBLE CONTRACT CHANGE: this path returned 0 before the commit that added this
+        # comment (no date is written here -- git blame supplies it and cannot go stale). Both of this
+        # function's refusal paths now exit non-zero, because no rule distinguished them -- each
+        # means "mb commit did not commit and your location is wrong". A refusal reporting
+        # success is a false-success signal: `mb commit && echo done` printed "done" from a
+        # subworktree having committed nothing.
+        exit 1
     fi
 
-    # WHY: 2>/dev/null suppresses git errors if not in a repo (graceful handling).
-    # --porcelain gives machine-readable output stable across git versions.
-    STATUS=$(git status --porcelain "$MEMORY_BANK_PATH" 2>/dev/null)
+    # WHY: --porcelain gives machine-readable output stable across git versions.
+    # NOT `|| true`. The not-in-a-repo case exits above, so a failure reaching here is a real one
+    # (corrupt or unreadable index, permissions) -- and `|| true` would leave STATUS empty, which
+    # the `-z` test below reports as "No changes in memory-bank/ to commit", exit 0. Reproduced
+    # against a repo with genuine uncommitted memory-bank changes and a truncated .git/index:
+    # `|| true` claimed there was nothing to commit and succeeded. That is the same false-success
+    # shape the subworktree branch above exists to remove, so failing loudly here is the point.
+    # `2>/dev/null` hides git's message but NOT its exit status, which is why this needs an
+    # explicit handler at all: bare, under `set -e`, it aborted with only the banner printed.
+    if ! STATUS=$(git status --porcelain "$MEMORY_BANK_PATH" 2>/dev/null); then
+        echo -e "${RED}[ERROR] git status failed in this repository.${NC}"
+        echo -e "${YELLOW}memory-bank/ was NOT inspected — resolve the git error and retry.${NC}"
+        echo ""
+        exit 1
+    fi
 
     if [ -z "$STATUS" ]; then
         echo -e "${YELLOW}No changes in memory-bank/ to commit${NC}"
@@ -491,13 +556,89 @@ invoke_commit() {
         git add "$MEMORY_BANK_PATH"
         # WHY: "chore:" prefix follows conventional commits — makes it clear this
         # is maintenance, not a feature/fix. Helps with changelog generation.
-        git commit -m "chore: Update Memory Bank context"
+        # WHY the pathspec: a bare `git commit` commits the WHOLE index, so anything already staged
+        # for other work rode along inside this chore commit. The exit status is checked rather
+        # than left to `set -e`, so a rejected commit (a hook, or git refusing a partial commit
+        # mid-merge) says so instead of relying on the abort to keep "Committed!" from printing.
+        if ! git commit -m "chore: Update Memory Bank context" -- "$MEMORY_BANK_PATH"; then
+            echo -e "${RED}[ERROR] git commit failed — memory-bank/ was NOT committed.${NC}"
+            echo ""
+            exit 1
+        fi
         echo ""
         echo -e "${GREEN}Committed!${NC}"
     else
         echo -e "${YELLOW}Cancelled${NC}"
     fi
     echo ""
+}
+
+# Canonical .gitignore entries every mb-managed project needs: the review gate's runtime
+# markers, the integrity baseline, the delegation counter, the ephemeral handoff note, and
+# per-task contracts. All are machine-local state that must never be committed.
+#
+# WHY a shared helper called from BOTH init and upgrade: this list previously lived inline in
+# invoke_init only, and invoke_upgrade never touched .gitignore at all -- so an entry added
+# here could never reach a project that had already been initialized, however many times it
+# upgraded. That is the same fix-the-template-and-the-fleet-never-receives-it shape as the
+# fleet version-drift incident. Measured across 12 sibling projects on 2026-08-25:
+# `.claude/contracts/*.json` was ignored in PMB and in NONE of five checked adopters, so every
+# project that had ever written a task contract carried permanent untracked noise in
+# `git status`.
+#
+# WHY this list and the .ps1 twin's must stay identical: they had drifted. mb.ps1 already
+# ignored the six review-gate runtime paths below and mb.sh did not, so a bash adopter got a
+# dirtier working tree than a pwsh adopter from the same command -- observed as an untracked
+# .claude/.code-review-ok in a sibling project.
+PMB_GITIGNORE_ENTRIES=(
+    "handoff.md"
+    ".pmb-hook-errors.log"
+    ".pmb-checksums"
+    ".pmb-delegation-depth"
+    ".claude/.code-review-ok"
+    ".claude/.change-review-ok"
+    ".claude/.code-review-ok.claimed*"
+    ".claude/.change-review-ok.claimed*"
+    ".claude/.pending-commit-presha"
+    ".claude/.pending-push-presha"
+    ".claude/contracts/*.json"
+    # Scratch plan drafts: standards/WORKFLOW.md Phase 3 and /feature-dev call them gitignored,
+    # and `mb doctor` reports a tracked one as an ERROR ([NS-19]).
+    ".claude/plans/"
+)
+
+# Appends any missing canonical entries to $1/.gitignore. Sets GITIGNORE_ADDS to what was
+# (or would be) added; returns 0 if there was anything, 1 if the file is already complete.
+# Pass "true" as $2 to compute without writing. Callers must invoke this inside an `if`:
+# the script runs under `set -e`, where a bare 1 return would abort.
+#
+# WHY grep -qxF (whole-line, fixed-string) and not the previous escaped-regex grep: these
+# entries contain both `.` and `*`, and a substring match makes ".claude/.code-review-ok"
+# register as already present when only ".claude/.code-review-ok.claimed*" is in the file --
+# silently skipping a needed entry. Whole-line fixed matching cannot collide that way. The
+# list is append-only, so a false miss costs a duplicate line, never a behaviour change.
+sync_gitignore() {
+    _gi_dir="$1"
+    _gi_dry="${2:-false}"
+    GITIGNORE="$_gi_dir/.gitignore"
+    # WHY the sed: a bare `grep -qxF` against a CRLF-terminated .gitignore MISSES every
+    # entry under real GNU grep -- the trailing \r is part of the line. Git Bash's grep runs
+    # in text mode and strips it, which hides the bug on Windows; this repo's own .gitignore
+    # is CRLF, so an `mb upgrade` from WSL or Linux CI would re-append every entry on
+    # every run, unbounded. Trailing whitespace is stripped for the same reason, and only
+    # TRAILING: a .gitignore line's LEADING whitespace is significant to git, so `  foo` does
+    # not ignore `foo` and must not be treated as already present. Must match Sync-Gitignore.
+    GITIGNORE_CONTENT=$(sed 's/[[:space:]]*$//' "$GITIGNORE" 2>/dev/null || echo "")
+    GITIGNORE_ADDS=()
+    for entry in "${PMB_GITIGNORE_ENTRIES[@]}"; do
+        printf '%s\n' "$GITIGNORE_CONTENT" | grep -qxF -- "$entry" || GITIGNORE_ADDS+=("$entry")
+    done
+    [ "${#GITIGNORE_ADDS[@]}" -eq 0 ] && return 1
+    [ "$_gi_dry" = true ] && return 0
+    if [ ! -f "$GITIGNORE" ]; then printf "# Memory Bank\n" > "$GITIGNORE"; fi
+    printf "\n# Memory Bank\n" >> "$GITIGNORE"
+    for entry in "${GITIGNORE_ADDS[@]}"; do printf "%s\n" "$entry" >> "$GITIGNORE"; done
+    return 0
 }
 
 invoke_init() {
@@ -544,8 +685,14 @@ invoke_init() {
     # CLAUDE.md
     copy_if_new "$TEMPLATES_DIR/CLAUDE.md" "$TARGET/CLAUDE.md" "CLAUDE.md"
 
+    # AGENTS.md is the portable project-local instruction surface used by Codex and other tools.
+    copy_if_new "$TEMPLATES_DIR/AGENTS.md" "$TARGET/AGENTS.md" "AGENTS.md"
+
     # .claude/settings.json
     copy_if_new "$TEMPLATES_DIR/.claude/settings.json" "$TARGET/.claude/settings.json" ".claude/settings.json"
+
+    # Codex lifecycle wiring. The exact definition still requires user trust in Codex /hooks.
+    copy_if_new "$TEMPLATES_DIR/.codex/hooks.json" "$TARGET/.codex/hooks.json" ".codex/hooks.json"
 
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
@@ -556,9 +703,12 @@ invoke_init() {
                   pre-push-check.sh pre-push-check.ps1 \
                   delegation-depth-check.sh delegation-depth-check.ps1 \
                   pre-compact-check.sh pre-compact-check.ps1 \
+                  codex-compaction-hook.sh codex-compaction-hook.ps1 \
                   review-reminders.sh review-reminders.ps1 \
                   review-reminders-post.sh review-reminders-post.ps1 \
                   _review-gate-lib.sh _review-gate-lib.ps1 \
+                  _review-gate-classify.py _review-gate-classify.ps1 \
+                  _review-gate-merge.py _review-gate-merge.ps1 \
                   warn-stale-review-marker.sh warn-stale-review-marker.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
@@ -593,6 +743,27 @@ invoke_init() {
         [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/commands/$(basename "$f")" ".claude/commands/$(basename "$f")"
     done
 
+    # .claude/agents/ — auto-discovered from the template directory, never enumerated.
+    #
+    # WHY init needs this and cannot lean on `mb upgrade`: a fresh adopter runs init and nothing
+    # else, and the slash commands init DOES deliver dispatch agents BY NAME.
+    # templates/claude-commands/code-review.md and change-review.md both call
+    # `subagent_type: opposition`, so init shipped a review gate whose sole authority was a file it
+    # never copied — and code-review.md's documented fallback ("paste the body of
+    # .claude/agents/opposition.md in as the prompt") named that same missing file, so the
+    # degradation path was broken by the identical gap. Latent until d795abb made the agent a named
+    # dependency instead of a prose request for "a capable model".
+    #
+    # Agent delivery was added to invoke_upgrade and scoped to the one path that prompted it; this
+    # is the same fix on the path adopters actually take. The *.md filter matches
+    # Get-TemplateDirFile's on the pwsh side so both shells discover the same set — without it a
+    # stray README or editor backup dropped here would be delivered by one shell and not the other.
+    if [ -d "$TEMPLATES_DIR/.claude/agents" ]; then
+        for f in "$TEMPLATES_DIR/.claude/agents"/*.md; do
+            [ -f "$f" ] && copy_if_new "$f" "$TARGET/.claude/agents/$(basename "$f")" ".claude/agents/$(basename "$f")"
+        done
+    fi
+
     # standards/ files — governance contracts referenced at runtime by commands
     if [ -d "$TEMPLATES_DIR/standards" ]; then
         for f in "$TEMPLATES_DIR/standards"/*; do
@@ -607,18 +778,8 @@ invoke_init() {
         done
     fi
 
-    # .gitignore
-    GITIGNORE="$TARGET/.gitignore"
-    GITIGNORE_CONTENT=$(cat "$GITIGNORE" 2>/dev/null || echo "")
-    GITIGNORE_ADDS=()
-    echo "$GITIGNORE_CONTENT" | grep -q "handoff\.md" || GITIGNORE_ADDS+=("handoff.md")
-    echo "$GITIGNORE_CONTENT" | grep -q "\.pmb-hook-errors\.log" || GITIGNORE_ADDS+=(".pmb-hook-errors.log")
-    echo "$GITIGNORE_CONTENT" | grep -q "\.pmb-checksums" || GITIGNORE_ADDS+=(".pmb-checksums")
-    echo "$GITIGNORE_CONTENT" | grep -q "\.pmb-delegation-depth" || GITIGNORE_ADDS+=(".pmb-delegation-depth")
-    if [ "${#GITIGNORE_ADDS[@]}" -gt 0 ]; then
-        if [ ! -f "$GITIGNORE" ]; then printf "# Memory Bank\n" > "$GITIGNORE"; fi
-        printf "\n# Memory Bank\n" >> "$GITIGNORE"
-        for entry in "${GITIGNORE_ADDS[@]}"; do printf "%s\n" "$entry" >> "$GITIGNORE"; done
+    # .gitignore — see sync_gitignore for the canonical entry list and why it is shared.
+    if sync_gitignore "$TARGET"; then
         CREATED+=(".gitignore (${GITIGNORE_ADDS[*]})")
     fi
 
@@ -709,6 +870,16 @@ show_doctor() {
     echo -e "${CYAN}======${NC}"
     echo ""
     DRIFT_FOUND=false
+    # Genuinely fatal conditions only -- set at the six sites below. Deliberately excludes
+    # the checksum-mismatch and startup-context-ceiling [ERROR] lines further down: both are
+    # advisory by this code's own design (checksum drift is explicitly "permitted" per its own
+    # message and is [WARN], not [ERROR], in `mb verify-integrity`'s equivalent check; the
+    # ceiling breach is tracked separately as NS-44). Found 2026-09-19: doctor's exit code was
+    # always 0 regardless of what it printed, so CI's "MB Doctor Self-Check" job could never fail.
+    FATAL_FOUND=false
+    # `mb doctor --check`: compare integrity checksums without rewriting them (check 20).
+    CHECK_MODE=false
+    [ "$ARG" = "--check" ] && CHECK_MODE=true
 
     # 0. Version
     VERSION_FILE="$REPO_ROOT/VERSION"
@@ -731,6 +902,7 @@ show_doctor() {
         echo -e "${GREEN}[OK]   Templates found (REPO_ROOT = $REPO_ROOT)${NC}"
     else
         echo -e "${RED}[ERROR] Templates not found — run install.sh from memory-bank repo${NC}"
+        FATAL_FOUND=true
     fi
 
     # 3. Required files
@@ -742,12 +914,14 @@ show_doctor() {
         echo -e "${GREEN}[OK]   All memory-bank files present${NC}"
     else
         echo -e "${RED}[ERROR] One or more memory-bank files missing — run 'mb init'${NC}"
+        FATAL_FOUND=true
     fi
 
     if [ -f "CLAUDE.md" ]; then
         echo -e "${GREEN}[OK]   CLAUDE.md present${NC}"
     else
         echo -e "${RED}[ERROR] CLAUDE.md missing — run 'mb init'${NC}"
+        FATAL_FOUND=true
     fi
 
     # 4. Hooks
@@ -787,6 +961,10 @@ show_doctor() {
         fi
         LIB_CHECK_OUT=$(sh "$SCRIPT_DIR/check-review-gate-lib-presence.sh" "scripts" 2>&1) || true
         if [ -n "$LIB_CHECK_OUT" ]; then
+            # FATAL_FOUND set here, not inside the loop below: that loop's stdin comes via a
+            # pipe, which bash runs in a subshell -- an assignment made inside it would be
+            # invisible to this function once the pipe exits.
+            FATAL_FOUND=true
             echo "$LIB_CHECK_OUT" | while IFS= read -r line; do
                 echo -e "${RED}[ERROR] $line${NC}"
             done
@@ -808,27 +986,114 @@ show_doctor() {
         echo -e "${YELLOW}[WARN] No .claude/settings.json — safety hooks inactive${NC}"
     fi
 
-    # 5. Token Budget drift
+    # 5. Token Budget drift — do the instruction files agree with the LIVE setting?
+    #
+    # WHY this compares values and not the presence of a variable name: it used to test only
+    # whether the string CLAUDE_AUTOCOMPACT_PCT_OVERRIDE appeared in both CLAUDE.md files, and
+    # reported "[OK] Token Budget section current" whenever it did. Measured 2026-08-25, that
+    # passed while ~/.claude/CLAUDE.md hardcoded "50%" against a settings.json value of 65 —
+    # a presence check reported as a correctness check, the same shape as the round-7 finding
+    # that coverage failures wear correctness clothing. Naming the variable is not the property
+    # worth checking; agreeing with it is.
+    #
+    # WHY a document that states NO number passes: deferring to the setting by name is the
+    # correct way to write it, and is what the project CLAUDE.md already does. This check exists
+    # to catch a COPIED value that has gone stale, so having nothing to copy is a pass, not a gap.
     GLOBAL_CLAUDE="$HOME/.claude/CLAUDE.md"
-    if [ -f "CLAUDE.md" ] && [ -f "$GLOBAL_CLAUDE" ]; then
-        LOCAL_HAS=0; grep -q "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "CLAUDE.md" 2>/dev/null && LOCAL_HAS=1 || true
-        GLOBAL_HAS=0; grep -q "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" "$GLOBAL_CLAUDE" 2>/dev/null && GLOBAL_HAS=1 || true
-        if [ "$GLOBAL_HAS" -gt 0 ] && [ "$LOCAL_HAS" -eq 0 ]; then
-            echo -e "${YELLOW}[WARN] Token Budget section may have drifted from ~/.claude/CLAUDE.md${NC}"
-            echo -e "       Run 'mb init' to refresh or manually copy the Token Budget section"
-        elif [ "$LOCAL_HAS" -gt 0 ]; then
-            echo -e "${GREEN}[OK]   Token Budget section current${NC}"
+    TB_SETTINGS=".claude/settings.json"
+    TB_TRUE=""
+    if [ -f "$TB_SETTINGS" ]; then
+        # head -1: grep -o emits every match, so a settings.json carrying the key twice would
+        # make TB_TRUE multi-line and warn against a document that is actually correct.
+        TB_TRUE=$(grep -o '"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"[[:space:]]*:[[:space:]]*"\{0,1\}[0-9]\{1,3\}' "$TB_SETTINGS" 2>/dev/null | grep -o '[0-9]\{1,3\}$' | head -1 || true)
+    fi
+    if [ -z "$TB_TRUE" ]; then
+        echo -e "${GRAY}[SKIP] Token Budget drift — no CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in $TB_SETTINGS${NC}"
+    else
+        TB_DRIFT=()
+        # WHY standards/MEMORY-BANK.md is in this list: it hardcoded the threshold too, and the
+        # first version of this check could not see it. NOTE the boundary, since an earlier draft
+        # of this comment overstated it: the templates/ MIRROR is NOT scanned. In an adopter
+        # standards/MEMORY-BANK.md IS the shipped copy (upgrade copies templates/standards/* into
+        # standards/*), so the gap exists only in the PMB source repo, where a stale constant
+        # could live in templates/ alone. A standards/-vs-templates parity check is tracked
+        # follow-up. Keep in step with mb.ps1.
+        for tb_file in "CLAUDE.md" "$GLOBAL_CLAUDE" "standards/MEMORY-BANK.md"; do
+            [ -f "$tb_file" ] || continue
+            # Any concrete threshold this file asserts: an explicit assignment, or prose of the
+            # form "... at N%" on a line that also mentions compaction.
+            # WHY the gate is the feature name and not a verb or a bare percentage: gating on
+            # 'at N%' over any line mentioning compaction harvested ordinary prose ("keep quality
+            # at 90% while cutting tokens"); gating on the verb 'fires' then missed
+            # "auto-compacts at approximately 50% context", which is how standards/MEMORY-BANK.md
+            # spelled it -- the very file this check was widened to cover. 'auto-compact' matches
+            # all three real spellings and neither near-miss.
+            #
+            # WHY the number must follow "at": sharing a line with "auto-compact" is not
+            # enough. The handoff table reads "| **40%** | Manual compact before auto-compact
+            # fires |", where 40% is the HANDOFF threshold -- a different, legitimate constant
+            # that a bare percentage scan wrongly reported as drift. Binding to "at [qualifier]
+            # N%" keeps every real spelling ("...at 50%", "...at approximately 50%", "...fires
+            # at 50%") and drops both the handoff number and a trailing "~95%" default mention.
+            #
+            # WHY \b before "at": without it the match ran INSIDE other words -- "th(at) 50%",
+            # "form(at) 50%", "gre(at) 90%" each yielded a bogus claim and a false WARN. This is
+            # a narrowing only: it removes false positives and can introduce none. Must match
+            # mb.ps1's '(?i)\bat ...'.
+            #
+            # KNOWN LIMITS -- measured 2026-08-26 and recorded rather than patched, matching how
+            # the S4/S5 matcher limits were handled. Widening this matcher is what produced the
+            # false positives above, so the bar for changing it is a real corpus miss, not a
+            # hypothetical spelling.
+            #   (a) FALSE OK. A threshold is invisible unless its digits follow "at". The table
+            #       row THIS COMMIT hand-fixed -- "Manual compact before 50% auto-compact fires"
+            #       -- states 50% and yields no claim; so do "threshold is 50%" and "at 50
+            #       percent". The check catches the common spellings of the defect it exists to
+            #       catch, not all of them. Do not read [OK] as proof no constant is restated.
+            #   (b) FALSE WARN. A line that legitimately says "at N%" about something else while
+            #       also mentioning auto-compaction still registers ("auto-compact keeps quality
+            #       at 90%"). \b does NOT close this; only sentence parsing would.
+            #   (c) An earlier draft of this comment claimed the 'auto-compact' gate had closed
+            #       (b). It had not -- that gate only helps when the offending line does NOT also
+            #       mention the feature. Corrected here rather than left standing.
+            #   (d) NOT SCANNED: templates/standards/MEMORY-BANK.md. In an adopter,
+            #       standards/MEMORY-BANK.md IS the shipped copy, so this gap is PMB-source-only;
+            #       a standards/-vs-templates parity check is tracked follow-up work.
+            #   (e) REMOVED BEHAVIOUR: the pre-2026-08-25 check WARNed when ~/.claude/CLAUDE.md
+            #       carried the sentinel and the project CLAUDE.md did not, so a CLAUDE.md that
+            #       loses its Token Budget section entirely now reports [OK]. Deliberate: that
+            #       branch required a global CLAUDE.md, which mb never creates, so it was silent
+            #       for essentially every adopter -- and its remediation ("copy the section from
+            #       global") is the exact practice this check now warns against.
+            TB_CLAIMS=$( { grep -o 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE[[:space:]]*=[[:space:]]*[0-9]\{1,3\}' "$tb_file" 2>/dev/null | grep -o '[0-9]\{1,3\}$'
+                           grep -i 'auto-compact' "$tb_file" 2>/dev/null | grep -io '\bat [a-z]* *~*[0-9]\{1,3\}%' | grep -o '[0-9]\{1,3\}'; } | sort -u || true)
+            for claim in $TB_CLAIMS; do
+                [ "$claim" = "$TB_TRUE" ] || TB_DRIFT+=("$tb_file states ${claim}%")
+            done
+        done
+        if [ "${#TB_DRIFT[@]}" -gt 0 ]; then
+            echo -e "${YELLOW}[WARN] Token Budget drift — instruction files disagree with $TB_SETTINGS (${TB_TRUE}%)${NC}"
+            for d in "${TB_DRIFT[@]}"; do echo -e "       $d"; done
+            echo -e "       Name the setting instead of copying its value — a restated constant goes stale silently."
+        else
+            echo -e "${GREEN}[OK]   Token Budget — no instruction file contradicts $TB_SETTINGS (${TB_TRUE}%)${NC}"
         fi
     fi
 
     # 6. File sizes
     OVER_LIMIT=false
     check_size() { local f="$1" max="$2" lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0); [ "$lines" -gt "$max" ] && echo -e "${YELLOW}[WARN] $f is $lines lines (max $max) — run 'mb clean'${NC}" && OVER_LIMIT=true || true; }
-    [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   150
-    [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 300
-    [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    400
+# THRESHOLD SOURCE OF TRUTH: .github/workflows/pmb-health.yml's MB_FAIL map. Aligned 2026-08-27
+# after an audit found THREE divergences, in both directions: progress.md was stricter here (400)
+# than in CI (600), so `mb doctor` WARNed on files the shipped docs certified compliant; while
+# projectbrief.md (150 vs 120) and techContext.md (400 vs 300) were LOOSER here than CI, meaning a
+# clean `mb doctor` could still be followed by a red build. Only the progress.md case had been
+# recorded. `tests/test-threshold-parity.sh` now fails if these drift from CI again.
+    [ -f "memory-bank/projectbrief.md"   ] && check_size "memory-bank/projectbrief.md"   80
+    [ -f "memory-bank/systemPatterns.md" ] && check_size "memory-bank/systemPatterns.md" 120
+    [ -f "memory-bank/techContext.md"    ] && check_size "memory-bank/techContext.md"    120
     [ -f "memory-bank/activeContext.md"  ] && check_size "memory-bank/activeContext.md"  150
-    [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       400
+    [ -f "memory-bank/progress.md"       ] && check_size "memory-bank/progress.md"       500
     [ "$OVER_LIMIT" = false ] && echo -e "${GREEN}[OK]   File sizes within limits${NC}"
 
     # 7. Handoff
@@ -872,6 +1137,7 @@ show_doctor() {
                     if echo "$ancestor" | grep -q '/'; then continue; fi
                     if [ -n "$ancestor" ] && [ ! -e "$ancestor" ]; then
                         INTEGRITY_ISSUES+=("${RED}[ERROR] memory-bank/$f lineage root missing: $ancestor (recovery impossible)${NC}")
+                        FATAL_FOUND=true
                     fi
                 fi
             done <<< "$fm"
@@ -919,7 +1185,7 @@ show_doctor() {
         DETAIL=""
         [ "$STALE_VOLATILE" -gt 0 ] && DETAIL="${STALE_VOLATILE} volatile/accumulating"
         [ "$STALE_STABLE" -gt 0 ] && DETAIL="${DETAIL:+$DETAIL, }${STALE_STABLE} stable"
-        echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb audit' for details${NC}"
+        echo -e "${YELLOW}[WARN] ${STALE_TOTAL} stale memory-bank file(s) detected (${DETAIL}) — run 'mb doctor' for details${NC}"
     fi
 
     # 10. Placeholder residue
@@ -1004,11 +1270,42 @@ show_doctor() {
     fi
 
     # 15. Startup context size ceiling — WARN >15 KB, ERROR >25 KB
+    # WORKTREE-AWARE. CLAUDE.md's Memory Bank section makes the MAIN worktree's memory-bank/
+    # authoritative ("If in a git worktree: read memory-bank/ from the main worktree ... Never
+    # update or commit memory-bank/ from a subworktree"). Measuring the subworktree's own copies
+    # instead was demonstrated to report 69,594 bytes UNDER origin/main from a worktree whose
+    # memory-bank is simply stale and smaller -- a phantom reduction, and a falsely reassuring
+    # green in exactly the case this repo hits most: a side job spun up in a worktree while the
+    # main session runs. Resolving to the main worktree makes the number identical from every
+    # session on this repo, which is the only way it means anything.
+    # Default to "." and override ONLY on genuine success. The first version wrote
+    # `cd "$(git rev-parse --git-common-dir || echo .)/.."`, which on git failure resolves to the
+    # PARENT of the cwd, not the cwd -- and the -d guard did not revert it, because a sibling
+    # directory named memory-bank exists. Reproduced here: it resolved to /c/Users/Mizzo/Claude,
+    # where an unrelated Memory-Bank project sits, and NTFS is case-insensitive -- doctor would
+    # have measured a different project. This matches the PowerShell twin, which assigns only
+    # inside its success branch.
+    STARTUP_ROOT="."
+    # `|| true` is load-bearing under `set -e` (top of file): a bare assignment whose command
+    # substitution exits non-zero aborts the whole script, and `git rev-parse` exits 128 outside
+    # a repo. Without it `mb doctor` died right here at 128 and checks 15-25 never ran, while the
+    # PowerShell twin -- which cannot fail this way -- completed. `2>/dev/null` suppresses git's
+    # message, not its exit status, so it is not a substitute for this.
+    _mb_common="$(git rev-parse --git-common-dir 2>/dev/null)" || true
+    if [ -n "$_mb_common" ] && [ -d "$_mb_common" ]; then
+        _mb_cand="$(cd "$_mb_common/.." 2>/dev/null && pwd)"
+        if [ -n "$_mb_cand" ] && [ -d "$_mb_cand/memory-bank" ]; then STARTUP_ROOT="$_mb_cand"; fi
+    fi
     CEILING_BYTES=0
-    [ -f "CLAUDE.md" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "CLAUDE.md" 2>/dev/null || echo 0)))
-    for f in projectbrief.md systemPatterns.md techContext.md activeContext.md progress.md; do
-        [ -f "memory-bank/$f" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "memory-bank/$f" 2>/dev/null || echo 0)))
-    done
+    [ -f "$STARTUP_ROOT/CLAUDE.md" ] && CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "$STARTUP_ROOT/CLAUDE.md" 2>/dev/null || echo 0)))
+    # Enumerated, not listed -- CLAUDE.md defines startup context as CLAUDE.md plus EVERY file in
+    # memory-bank/, and memory-bank/README.md was in no list. Matches .github/workflows/pmb-health.yml.
+    # RECURSIVE, matching the ls-tree -r baseline below. A memory-bank/*.md glob is not, so the
+    # two sides enumerated different sets and a 30,000-byte memory-bank/sub/notes.md was
+    # demonstrated invisible to the ratchet. Both sides recurse now.
+    while IFS= read -r f; do
+        CEILING_BYTES=$((CEILING_BYTES + $(wc -c < "$f" 2>/dev/null || echo 0)))
+    done < <(find "$STARTUP_ROOT/memory-bank" -name "*.md" -type f 2>/dev/null)
     CEILING_KB=$(awk "BEGIN {printf \"%.1f\", $CEILING_BYTES / 1024}")
     if [ "$CEILING_BYTES" -gt 25600 ]; then
         echo -e "${RED}[ERROR] Startup context ${CEILING_KB} KB exceeds 25 KB limit — compact memory-bank/ immediately${NC}"
@@ -1016,6 +1313,43 @@ show_doctor() {
         echo -e "${YELLOW}[WARN] Startup context ${CEILING_KB} KB exceeds 15 KB — consider slimming memory-bank/${NC}"
     else
         echo -e "${GREEN}[OK]   Startup context: ${CEILING_KB} KB (warn: 15 KB, fail: 25 KB)${NC}"
+    fi
+    # The 25 KB line above is ADVISORY. What actually fails CI is the ratchet: this aggregate may
+    # not exceed its value on origin/main. Mirrored here because a threshold enforced only in CI
+    # gives a developer no local signal before the build reds -- the failure this repo already paid
+    # for once, recorded above check_size() as "a clean mb doctor followed by a red build".
+    # Same six files and same comparison as .github/workflows/pmb-health.yml; silent when no
+    # baseline is reachable, since an unavailable baseline is not evidence of growth.
+    RATCHET_BASE=$(git cat-file -s "origin/main:CLAUDE.md" 2>/dev/null || echo 0)
+    RATCHET_OK=1
+    [ "$RATCHET_BASE" -gt 0 ] || RATCHET_OK=0
+    RATCHET_FILES=0
+    # NUL-delimited: the unquoted `for f in $(git ls-tree ...)` form word-splits a filename with a
+    # space into two nonexistent paths, both lookups fail, RATCHET_OK goes 0, and the ratchet
+    # silently degrades to advisory. Demonstrated on a real tree with "memory-bank/space file.md".
+    # Success is the cat-file EXIT STATUS, not `-gt 0`: a legitimately empty file returns "0",
+    # which the old test read as failure while the PowerShell twin read as success.
+    # git cat-file -s reports the blob's exact byte size with no decoding step, which is why both
+    # shells use it rather than reconstructing the blob (that diverged by 1,698 bytes once).
+    while IFS= read -r -d '' f; do
+        case "$f" in *.md) ;; *) continue ;; esac
+        if b=$(git cat-file -s "origin/main:$f" 2>/dev/null); then
+            RATCHET_BASE=$((RATCHET_BASE + b))
+        else
+            RATCHET_OK=0
+        fi
+        RATCHET_FILES=$((RATCHET_FILES + 1))
+    done < <(git ls-tree -rz --name-only origin/main -- memory-bank/ 2>/dev/null)
+    # RATCHET_OK is only cleared INSIDE the loop, so a baseline with CLAUDE.md but zero
+    # memory-bank files -- the ordinary first-adoption shape -- left it true and produced a
+    # ~94 KB false regression. A partially-unreachable baseline is unreachable.
+    [ "$RATCHET_FILES" -gt 0 ] || RATCHET_OK=0
+    if [ "$RATCHET_OK" = "1" ] && [ "$RATCHET_BASE" -gt 0 ]; then
+        if [ "$CEILING_BYTES" -gt "$RATCHET_BASE" ]; then
+            echo -e "${YELLOW}[WARN] Startup context is $((CEILING_BYTES - RATCHET_BASE)) bytes above origin/main. PMB's own CI gates on this; an adopter's memory-bank-size.yml does NOT, so treat it as advisory outside PMB.${NC}"
+        else
+            echo -e "${GREEN}[OK]   Startup-context ratchet: $((RATCHET_BASE - CEILING_BYTES)) bytes under origin/main${NC}"
+        fi
     fi
 
     # 16. Hook error log — check for recent hook failures
@@ -1155,16 +1489,29 @@ show_doctor() {
             for iss in "${CHECKSUM_ISSUES[@]}"; do
                 echo -e "${RED}[ERROR] $iss${NC}"
             done
-            echo "       External edits are permitted — run 'mb doctor' again to refresh checksums after review."
+            if [ "$CHECK_MODE" = true ]; then
+                echo "       Not refreshed (--check). After review, accept with: mb verify-integrity"
+            else
+                echo "       External edits are permitted — run 'mb doctor' again to refresh checksums after review."
+            fi
         fi
+    elif [ "$CHECK_MODE" = true ]; then
+        echo -e "${YELLOW}[WARN] Integrity checksums: no baseline (.pmb-checksums absent); --check does not create one. Run: mb verify-integrity${NC}"
     else
         echo -e "${GREEN}[OK]   Integrity checksums — baseline established on this run${NC}"
     fi
-    # Always refresh checksums at end of doctor
-    {
-        echo "# PMB Checksums — last verified by mb doctor $(date '+%Y-%m-%d %H:%M:%S')"
-        echo -e "$CURRENT_HASHES" | grep -v '^$'
-    } > "$CHECKSUM_FILE" 2>/dev/null || true
+    # WHY --check skips the refresh: plain doctor re-baselines here, so a hook that runs it on
+    # every push reports a mismatch exactly once — in the run that then erases it. Check mode
+    # compares only. The marker line is ASCII and stable because pre-push Check 7 requires it
+    # as proof the read-only path ran (an older mb ignores --check and rewrites silently).
+    if [ "$CHECK_MODE" = true ]; then
+        echo -e "${GREEN}[OK]   Integrity check mode: .pmb-checksums not modified${NC}"
+    else
+        {
+            echo "# PMB Checksums — last verified by mb doctor $(date '+%Y-%m-%d %H:%M:%S')"
+            echo -e "$CURRENT_HASHES" | grep -v '^$'
+        } > "$CHECKSUM_FILE" 2>/dev/null || true
+    fi
 
     # 21. Git-vs-reviewed lag — last-reviewed frontmatter date vs. last git commit date
     GIT_LAG_FOUND=false
@@ -1173,7 +1520,8 @@ show_doctor() {
         [ ! -f "$p" ] && continue
         last_rev=$(grep -m1 '^last-reviewed:' "$p" 2>/dev/null | sed 's/last-reviewed:[[:space:]]*//' | tr -d ' \r')
         [ -z "$last_rev" ] || [ "$last_rev" = "YYYY-MM-DD" ] && continue
-        last_commit=$(git log -1 --format="%as" -- "$p" 2>/dev/null)
+        # || true: same set -e trap as the git-common-dir call in the startup-context block.
+        last_commit=$(git log -1 --format="%as" -- "$p" 2>/dev/null) || true
         [ -z "$last_commit" ] && continue
         # WHY: YYYY-MM-DD dates sort lexicographically — string comparison is safe.
         if [[ "$last_commit" > "$last_rev" ]]; then
@@ -1289,6 +1637,7 @@ show_doctor() {
     if [ -d "$SCRATCH_PLAN_DIR" ]; then
         TRACKED=$(git ls-files "$SCRATCH_PLAN_DIR" 2>/dev/null | wc -l | tr -d ' ')
         if [ "$TRACKED" -gt 0 ]; then
+            FATAL_FOUND=true
             echo -e "${RED}[ERROR] $TRACKED scratch plan(s) in $SCRATCH_PLAN_DIR are tracked by git${NC}"
             git ls-files "$SCRATCH_PLAN_DIR" 2>/dev/null | while read -r f; do echo "       $f"; done
             echo -e "       Fix: git rm --cached $SCRATCH_PLAN_DIR/*.md"
@@ -1342,6 +1691,7 @@ show_doctor() {
     if [ -d "$AGENTS_DIR" ]; then
         MISSING_NAME_AGENTS=()
         MISMATCHED_NAME_AGENTS=()
+        UNPINNED_REVIEW_AGENTS=()
         for f in "$AGENTS_DIR"/*.md; do
             [ ! -f "$f" ] && continue
             STEM=$(basename "$f" .md)
@@ -1360,7 +1710,37 @@ show_doctor() {
             elif [ "$AGENT_NAME" != "$STEM" ]; then
                 MISMATCHED_NAME_AGENTS+=("$f (name: $AGENT_NAME, filename: $STEM)")
             fi
+            # Review agents that decide whether code ships must PIN a capable model. An unpinned
+            # agent silently inherits CLAUDE_CODE_SUBAGENT_MODEL (haiku in this repo), and a cheap
+            # review that finds nothing is indistinguishable from a thorough one that finds
+            # nothing. Found live 2026-08-26: security-reviewer had no model: field and had been
+            # running on haiku. Nothing structural caught it, so this check exists.
+            case "$STEM" in
+                security-reviewer|opposition)
+                    # Normalization mirrors AGENT_NAME above, deliberately and in full. The
+                    # trailing-CR strip matters on Windows checkouts; the quote strip matters
+                    # because mb.ps1's equivalent does .Trim('"', "'"), so without it a
+                    # frontmatter `model: "haiku"` is caught by pwsh and silently missed by
+                    # bash -- a fresh sh/ps1 divergence of exactly the class this branch exists
+                    # to remove. Both found 2026-08-27.
+                    AGENT_MODEL=$(echo "$FM" | grep -m1 '^model:' \
+                        | sed 's/^model:[[:space:]]*//' \
+                        | sed -E 's/\r$//' \
+                        | sed -E 's/[[:space:]]+$//' \
+                        | sed -E 's/^"(.*)"$/\1/' \
+                        | sed -E "s/^'(.*)'\$/\1/")
+                    if [ -z "$AGENT_MODEL" ]; then
+                        UNPINNED_REVIEW_AGENTS+=("$f (no model: — inherits CLAUDE_CODE_SUBAGENT_MODEL)")
+                    elif [ "$AGENT_MODEL" = "haiku" ]; then
+                        UNPINNED_REVIEW_AGENTS+=("$f (model: haiku — cost-optimized, invalid for a review gate)")
+                    fi
+                    ;;
+            esac
         done
+        if [ "${#UNPINNED_REVIEW_AGENTS[@]}" -gt 0 ]; then
+            echo -e "${YELLOW}[WARN] ${#UNPINNED_REVIEW_AGENTS[@]} review agent(s) not pinned to a capable model:${NC}"
+            for a in "${UNPINNED_REVIEW_AGENTS[@]}"; do echo "       $a"; done
+        fi
         if [ "${#MISSING_NAME_AGENTS[@]}" -gt 0 ]; then
             echo -e "${YELLOW}[WARN] ${#MISSING_NAME_AGENTS[@]} agent(s) missing name: in frontmatter — Claude Code will silently fail to register them:${NC}"
             for a in "${MISSING_NAME_AGENTS[@]}"; do echo "       $a"; done
@@ -1418,7 +1798,9 @@ show_doctor() {
         tokens=$((bytes / 4))
         printf "    %-37s ~%d tokens\n" "$file" "$tokens"
     done
-    COMMIT_30D=$(git log --before="30 days ago" -1 --format="%H" -- "${STARTUP_FILES[@]}" 2>/dev/null)
+    # || true: same set -e trap as the git-common-dir call above. Outside a repo git exits 128,
+    # which aborted doctor here and so the graceful else branch below could never run.
+    COMMIT_30D=$(git log --before="30 days ago" -1 --format="%H" -- "${STARTUP_FILES[@]}" 2>/dev/null) || true
     if [ -n "$COMMIT_30D" ]; then
         TOTAL_30D=0
         for f in "${STARTUP_FILES[@]}"; do
@@ -1454,6 +1836,13 @@ show_doctor() {
     show_validate
 
     show_budget
+
+    # Under `set -e` (top of file), this return propagates directly to the process exit
+    # code: `doctor)  show_doctor ;;` calls this as a bare statement, so a non-zero return
+    # here aborts the script immediately, skipping the update-notifier block below --
+    # matching how every other failing command in this dispatch already behaves.
+    [ "$FATAL_FOUND" = true ] && return 1
+    return 0
 }
 
 show_budget() {
@@ -1649,7 +2038,7 @@ show_compact() {
 
     if [ "$TOTAL_KB" -lt 60 ]; then
         echo -e "${GREEN}memory-bank/ is ${TOTAL_KB} KB — below the 60 KB compaction threshold.${NC}"
-        echo -e "${YELLOW}Compaction is most valuable when size > 60 KB and mb audit shows stale files.${NC}"
+        echo -e "${YELLOW}Compaction is most valuable when size > 60 KB and mb doctor shows stale files.${NC}"
         echo ""
     fi
 
@@ -1734,6 +2123,8 @@ invoke_upgrade() {
         ".cursor/rules/rules-file-integrity.mdc"
         # Claude Code settings — hook wiring, not project-specific
         ".claude/settings.json"
+        # Codex hook wiring — deterministic lifecycle configuration, trusted explicitly in /hooks
+        ".codex/hooks.json"
         # Hook scripts — deterministic enforcement scripts, no project customization
         "scripts/dangerous-commands.sh"
         "scripts/dangerous-commands.ps1"
@@ -1747,17 +2138,44 @@ invoke_upgrade() {
         "scripts/delegation-depth-check.ps1"
         "scripts/pre-compact-check.sh"
         "scripts/pre-compact-check.ps1"
+        "scripts/codex-compaction-hook.sh"
+        "scripts/codex-compaction-hook.ps1"
         "scripts/review-reminders.sh"
         "scripts/review-reminders.ps1"
         "scripts/review-reminders-post.sh"
         "scripts/review-reminders-post.ps1"
         "scripts/_review-gate-lib.sh"
         "scripts/_review-gate-lib.ps1"
+        "scripts/_review-gate-classify.py"
+        "scripts/_review-gate-classify.ps1"
+        "scripts/_review-gate-merge.py"
+        "scripts/_review-gate-merge.ps1"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
+        # Review helper, not a hook. Bash-only ON PURPOSE: it works by extracting check bodies out
+        # of the CI workflow and running them, so a PowerShell twin would be a SECOND implementation
+        # of that extractor — reintroducing exactly the runtime divergence this script removes. Git
+        # Bash ships with Git for Windows, which this repo already requires (the suite is all bash).
+        "scripts/baseline-health.sh"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
+        # WHY standards/*.md are NOT here, despite scripts/mb.ps1 listing them: moving them into
+        # this array was attempted on 2026-09-03 (completing the port a453a5a began in mb.ps1) and
+        # REVERTED the same day on a Critical review finding. TEMPLATE_OWNED force-overwrites via
+        # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md was then STALE,
+        # not genericized: its Phase 3 described a superseded plan flow, so force-overwriting would
+        # have replaced a correct governance file with a known-wrong one. [NS-19] fixed that
+        # template, and test-mirror-parity.sh now pins WORKFLOW.md's remaining divergence to one
+        # generic paragraph. The overwrite would still discard an adopter's own edits to
+        # standards/, and three of the fifteen stay on test-mirror-parity.sh's STD_DIVERGE_OK
+        # allowlist, which asserts they must KEEP diverging.
+        #
+        # The two runtimes therefore disagree, deliberately and visibly: mb.ps1 force-overwrites
+        # standards, mb.sh does not. That disagreement is now pinned by an assertion in
+        # tests/test-mirror-parity.sh rather than left as an undocumented fact. Reconciling it is a
+        # real decision -- whether upgrade may discard local edits to standards/ -- not a drift to
+        # be silently closed.
     )
 
     # WHY: Slash commands are auto-discovered from templates/claude-commands/ instead of
@@ -1777,15 +2195,18 @@ invoke_upgrade() {
     ADVISORY_DIFF=(
         # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
         "CLAUDE.md"
-        # Agent definitions likely contain project-specific tool lists and instructions
-        ".claude/agents/researcher.md"
-        ".claude/agents/security-reviewer.md"
+        # WHY agent definitions are no longer listed here: they moved to ADVISORY_CREATE and are
+        # auto-discovered — see the block immediately after that array. ADVISORY_DIFF SKIPS any
+        # target missing in the project, which is precisely wrong for agents: a newly-shipped agent
+        # is missing for every adopter by definition, so it would never be delivered at all.
     )
 
     # WHY: ADVISORY_CREATE — files that must exist for commands to work at runtime.
     # Create if missing (unlike ADVISORY_DIFF which skips missing files), but show
     # a diff rather than silently overwriting if the file has been customized.
     ADVISORY_CREATE=(
+        # Cross-tool instructions may carry project-specific rules; create or diff, never overwrite.
+        "AGENTS.md"
         "standards/CODE-REVIEW.md"
         "standards/WORKFLOW.md"
         "standards/SECURITY-GUARDRAILS.md"
@@ -1814,6 +2235,30 @@ invoke_upgrade() {
         # notice, rather than having a workflow overwritten under it.
         ".github/workflows/memory-bank-size.yml"
     )
+
+    # WHY agent definitions are auto-discovered rather than listed: a static list silently goes
+    # stale the moment a new agent is added — the identical bug this file already documents for
+    # slash commands (accessibility-review.md and change-review.md shipped in 1.2.0 and were never
+    # added to the old hardcoded list, so `mb upgrade` never copied them into existing projects).
+    # It recurred immediately: `.claude/agents/opposition.md` was added 2026-08-26 and both review
+    # commands were changed to dispatch it BY NAME, while the hardcoded list here still named only
+    # researcher and security-reviewer. Every adopter would have received a review command
+    # referencing an agent `mb upgrade` never delivered, failing at the Opposition step — the gate's
+    # sole authority on whether a change ships.
+    #
+    # WHY ADVISORY_CREATE and not ADVISORY_DIFF, where agents used to live: ADVISORY_DIFF skips a
+    # target that is missing in the project. A newly-shipped agent is missing for EVERY adopter, so
+    # listing it there — hardcoded or discovered — still delivers nothing. ADVISORY_CREATE creates
+    # when absent and shows a diff rather than overwriting when the adopter has customized it,
+    # which is the behaviour agent definitions actually need.
+    #
+    # Paths resolve via _upgrade_src's default branch ($TEMPLATES_DIR/$target), so
+    # .claude/agents/X.md -> templates/.claude/agents/X.md with no mapping entry required.
+    if [ -d "$TEMPLATES_DIR/.claude/agents" ]; then
+        for f in "$TEMPLATES_DIR/.claude/agents"/*.md; do
+            [ -f "$f" ] && ADVISORY_CREATE+=(".claude/agents/$(basename "$f")")
+        done
+    fi
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X lives at templates/cursor/rules/X (no dot prefix) because
@@ -1946,6 +2391,18 @@ invoke_upgrade() {
         fi
     done
 
+
+    # .gitignore — reconcile the canonical entry list. WHY upgrade does this at all: it did
+    # not before, so any entry added after a project was initialized could never reach it.
+    if sync_gitignore "." "$DRY_RUN"; then
+        if [ "$DRY_RUN" = true ]; then
+            echo -e "${GREEN}[+?] .gitignore (would add: ${GITIGNORE_ADDS[*]})${NC}"
+        else
+            echo -e "${GREEN}[+] .gitignore (added: ${GITIGNORE_ADDS[*]})${NC}"
+        fi
+    else
+        echo -e "${GRAY}[=] .gitignore (all mb entries present)${NC}"
+    fi
 
     # Write .pmb-version — records which PMB version this project was last upgraded with
     if [ -f "$REPO_ROOT/VERSION" ] && [ "$DRY_RUN" = false ]; then
@@ -2227,7 +2684,7 @@ backlog_field() {
 }
 
 # backlog_set_status — rewrites a backlog item's status field. Shared by
-# promote/dismiss so a future change to how the field is rewritten (e.g.
+# promote/dismiss/resolve so a future change to how the field is rewritten (e.g.
 # also bumping last-reviewed) only needs one edit.
 backlog_set_status() {
     sed -i.bak "s/^status:.*/status: $2/" "$1" && rm -f "${1}.bak"
@@ -2401,6 +2858,20 @@ invoke_backlog_dismiss() {
     echo -e "${GREEN}Dismissed: $SLUG${NC}"
 }
 
+# invoke_backlog_resolve — for an item fixed directly, outside the promote/plan
+# pipeline. Neither existing terminal status fits that case: `dismissed` means
+# dropped, not done; `promoted` means a plan stub was seeded, which never
+# happened here. Without this, an already-fixed item has no accurate status to
+# move to and is stuck `open` indefinitely. No status guard (unlike promote):
+# resolving has no destructive side effect to guard against — it only flips
+# the status field, matching dismiss's existing unconditional behavior.
+invoke_backlog_resolve() {
+    SLUG="$1"
+    FILE=$(backlog_resolve_slug "$SLUG" "Usage: mb backlog resolve <slug>") || exit 1
+    backlog_set_status "$FILE" "resolved"
+    echo -e "${GREEN}Resolved: $SLUG${NC}"
+}
+
 invoke_plan_promote() {
     DRAFT="$ARG"
     if [ -z "$DRAFT" ]; then
@@ -2430,8 +2901,17 @@ invoke_plan_promote() {
 
     mkdir -p "docs/plans"
 
-    # Check/add frontmatter
-    HAS_FM=$(head -1 "$DRAFT" | grep -c '^---' || true)
+    # Check/add frontmatter. WHY a closing fence is required: a draft that merely starts with a
+    # `---` horizontal rule is not frontmatter, and editing "inside" it would corrupt the body.
+    HAS_FM=0
+    FM_CLOSE=""
+    FIRST_LINE=$(head -1 "$DRAFT" | tr -d '\r' | sed 's/[[:blank:]]*$//')
+    if [ "$FIRST_LINE" = "---" ]; then
+        # WHY BINMODE=3: Windows gawk (Git Bash) otherwise strips every CR on read, so a CRLF draft
+        # came out LF-only; other awks ignore the variable.
+        FM_CLOSE=$(awk -v BINMODE=3 'NR == 1 {next} {sub(/\r$/, "")} /^---[ \t]*$/ {print NR; exit}' "$DRAFT")
+        [ -n "$FM_CLOSE" ] && HAS_FM=1
+    fi
     if [ "$HAS_FM" -eq 0 ]; then
         TODAY=$(date +%Y-%m-%d)
         FM="---\nstatus: planned\ncreated: $TODAY\napproved: $TODAY\nrelated_spec: null\nscope: local\nrisk: medium\nsource: ai-draft\n---\n\n"
@@ -2439,14 +2919,33 @@ invoke_plan_promote() {
         cat "$DRAFT" >> "$DEST"
         echo -e "${GREEN}Added frontmatter and promoted to $DEST${NC}"
     else
-        cp "$DRAFT" "$DEST"
-        # Ensure status is at least 'planned'
-        CURRENT_STATUS=$(grep -m1 '^status:' "$DEST" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
-        if [ "$CURRENT_STATUS" = "draft" ] || [ -z "$CURRENT_STATUS" ]; then
-            sed -i.bak 's/^status: draft/status: planned/' "$DEST" && rm -f "${DEST}.bak"
-            echo -e "${GREEN}Promoted to $DEST (status: draft → planned)${NC}"
-        else
+        # Ensure status is at least 'planned', looking ONLY inside the frontmatter: the old
+        # whole-file grep/sed also rewrote a body line starting `status: draft`, and left a
+        # frontmatter with no status key (or an empty one) without any status at all.
+        STATUS_LINE=$(awk -v BINMODE=3 -v c="$FM_CLOSE" 'NR > 1 && NR < c && /^status:/ {print NR; exit}' "$DRAFT")
+        CURRENT_STATUS=""
+        if [ -n "$STATUS_LINE" ]; then
+            CURRENT_STATUS=$(sed -n "${STATUS_LINE}p" "$DRAFT" | sed 's/^status:[[:space:]]*//' | tr -d ' \r"'"'")
+        fi
+        # The key is matched case-sensitively (YAML keys are); the draft value is not, matching
+        # mb.ps1's -ne. Must match mb.ps1's Invoke-PlanPromote.
+        if [ -n "$CURRENT_STATUS" ] && [ "$(printf '%s' "$CURRENT_STATUS" | tr '[:upper:]' '[:lower:]')" != "draft" ]; then
+            cp "$DRAFT" "$DEST"
             echo -e "${GREEN}Promoted to $DEST (status: $CURRENT_STATUS preserved)${NC}"
+        else
+            # The new line copies the line ending of the line it replaces or precedes, so a
+            # CRLF draft stays CRLF throughout.
+            awk -v BINMODE=3 -v c="$FM_CLOSE" -v s="$STATUS_LINE" '
+                function eol(l) { return (l ~ /\r$/) ? "\r" : "" }
+                s != "" && NR == s { print "status: planned" eol($0); next }
+                s == "" && NR == c { print "status: planned" eol($0) }
+                { print }
+            ' "$DRAFT" > "$DEST"
+            if [ -z "$STATUS_LINE" ]; then
+                echo -e "${GREEN}Promoted to $DEST (status: planned added)${NC}"
+            else
+                echo -e "${GREEN}Promoted to $DEST (status: ${CURRENT_STATUS:-empty} → planned)${NC}"
+            fi
         fi
     fi
 
@@ -2657,15 +3156,26 @@ case "$COMMAND" in
     preflight)         show_preflight ;;
     change-check)      show_change_check ;;
     help)              show_help ;;
-    # Deprecated aliases — kept for backward compatibility, not shown in help
-    install-hooks) echo -e "${YELLOW}mb install-hooks is now part of mb upgrade. Run: mb upgrade${NC}" ;;
-    validate)      echo -e "${YELLOW}mb validate is now part of mb doctor. Run: mb doctor${NC}" ;;
-    audit)         echo -e "${YELLOW}mb audit is now part of mb doctor. Run: mb doctor${NC}" ;;
-    budget)        echo -e "${YELLOW}mb budget is now part of mb doctor. Run: mb doctor${NC}" ;;
-    compact)       echo -e "${YELLOW}mb compact is now part of mb clean. Run: mb clean${NC}" ;;
+    # Deprecated aliases — kept for backward compatibility, not shown in help.
+    #
+    # WHY the redirect-only shims exit 2 rather than 0: a shim that prints a notice and
+    # returns success is indistinguishable from a real success to any script reading the
+    # exit code. That is not hypothetical — the pre-push gate called `mb validate` and
+    # printed "[OK] mb validate passed" on every push in every managed project while
+    # validating nothing, because the shim returned 0. Exit 2 means "command moved":
+    # humans see the same notice, scripts can tell it did not run.
+    #
+    # NOTE `update` is deliberately NOT in this group. It is a LIVE alias that really
+    # performs the upgrade, not a redirect notice — giving it a non-zero exit would break
+    # a working command. Deprecated does not imply dead; check the body before changing.
+    install-hooks) echo -e "${YELLOW}mb install-hooks is now part of mb upgrade. Run: mb upgrade${NC}"; exit 2 ;;
+    validate)      echo -e "${YELLOW}mb validate is now part of mb doctor. Run: mb doctor${NC}"; exit 2 ;;
+    audit)         echo -e "${YELLOW}mb audit is now part of mb doctor. Run: mb doctor${NC}"; exit 2 ;;
+    budget)        echo -e "${YELLOW}mb budget is now part of mb doctor. Run: mb doctor${NC}"; exit 2 ;;
+    compact)       echo -e "${YELLOW}mb compact is now part of mb clean. Run: mb clean${NC}"; exit 2 ;;
     update)            invoke_upgrade ;;
-    archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}" ;;
-    slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}" ;;
+    archive)       echo -e "${YELLOW}mb archive is now part of mb clean. Run: mb clean${NC}"; exit 2 ;;
+    slim)          echo -e "${YELLOW}mb slim is now part of mb clean. Run: mb clean${NC}"; exit 2 ;;
     plan)
         SUBCMD="${2:-status}"
         ARG="${3:-}"
@@ -2689,9 +3199,10 @@ case "$COMMAND" in
             show)     show_backlog_item "${3:-}" ;;
             promote)  invoke_backlog_promote "${3:-}" ;;
             dismiss)  invoke_backlog_dismiss "${3:-}" ;;
+            resolve)  invoke_backlog_resolve "${3:-}" ;;
             *)
                 echo -e "${RED}Unknown backlog subcommand: $SUBCMD${NC}"
-                echo -e "${YELLOW}Usage: mb backlog <add|list|show|promote|dismiss>${NC}"
+                echo -e "${YELLOW}Usage: mb backlog <add|list|show|promote|dismiss|resolve>${NC}"
                 exit 1
                 ;;
         esac

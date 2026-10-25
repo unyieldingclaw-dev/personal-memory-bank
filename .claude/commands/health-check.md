@@ -55,4 +55,4 @@ For each subdirectory in `fixtures/security/`, report:
 
 Print a short paragraph summarizing all five areas. Use ✅ for clean, ⚠️ for warnings, ❌ for failures. Example:
 
-> ✅ mb doctor: all 25 checks OK. ✅ mb validate: structure valid. ⚠️ mb audit: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date. ✅ Security fixtures: 9/9 rules caught.
+> ✅ mb doctor: all 25 checks OK, structure valid. ⚠️ Staleness: activeContext.md is 9 days past its 7-day threshold. ✅ Working tree clean, main is up to date. ✅ Security fixtures: 9/9 rules caught.

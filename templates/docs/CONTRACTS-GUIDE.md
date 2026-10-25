@@ -66,7 +66,7 @@ The hook fires on every Write and Edit tool call (PreToolUse). It:
 - **Prints a WARN** when: target file is outside the declared scope, or contract is expired
 - **Always exits 0** — never blocks writes (WARN tier)
 
-The WARN output is visible in Claude's context so Claude can pause and check with you.
+The WARN is plain text, which Claude Code only records: it never reaches Claude and is not shown in the visible transcript, so currently neither you nor Claude sees it. This is a known gap in this release.
 
 ## When to Skip Contracts
 

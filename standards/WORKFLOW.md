@@ -48,6 +48,12 @@ A 7-phase workflow that front-loads understanding and defers code until the desi
 
 ### Phase 3 — Plan
 
+**What happens:**
+- Map out every file to be created or modified
+- Break implementation into bite-sized tasks (2–5 minutes each)
+- Each task includes: exact file paths, complete code, exact test commands, expected output
+- No placeholders — if a step changes code, show the code
+
 Create the implementation plan as a draft in `.claude/plans/YYYY-MM-DD-slug.md`.
 
 After user approval, promote the plan with:
@@ -55,7 +61,10 @@ After user approval, promote the plan with:
 mb plan promote .claude/plans/YYYY-MM-DD-slug.md
 ```
 
-This moves the plan to `docs/plans/YYYY-MM-DD-slug.md` and sets `status: planned`.
+This copies the plan to `docs/plans/YYYY-MM-DD-slug.md` and sets `status: planned`, unless the draft's
+frontmatter already carries a later status, which is kept. The draft stays in `.claude/plans/`.
+
+**Output:** the promoted `docs/plans/YYYY-MM-DD-slug.md`, committed to git.
 
 **Rules:**
 - Do NOT treat `.claude/plans/` as durable memory. These are scratch files — gitignored.
@@ -68,7 +77,7 @@ This moves the plan to `docs/plans/YYYY-MM-DD-slug.md` and sets `status: planned
 
 ### Phase 3.5 — Independent Plan Review (advisory — not one of the 7 counted phases)
 
-Not a gate. This project's `memory-bank/projectbrief.md` fixes the workflow at 7 phases as a non-negotiable requirement, so this step is deliberately scoped as a recommended practice inserted between Plan and Implement, not an 8th phase — matching the precedent `.claude/commands/change-review.md`'s own "Step 3.5: Baseline Repo Health" already sets for a non-counted, informational step.
+Not a gate: advisory, not one of the 7 phases. This step is deliberately scoped as a recommended practice inserted between Plan and Implement, not an 8th phase — matching the precedent `.claude/commands/change-review.md`'s own "Step 3.5: Baseline Repo Health" already sets for a non-counted, informational step.
 
 **Why:** self-review, however adversarial, shares the blind spots of whoever wrote the plan. A 14-task plan for this repo's own review-gate mechanism passed its author's self-review (which found 3 real gaps) — a separately-dispatched agent with no context from writing it then found 8 more real, file:line-verified defects, including a Blocking-severity bug the self-review missed. See `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md`'s "independent review discipline" (mechanism 3) for the full mechanism.
 
@@ -153,6 +162,8 @@ Scan the current diff against 9 patterns:
 git add <specific files — never git add -A blindly>
 git commit -m "feat: <what was built and why in one line>"
 ```
+
+Stage in a command of its own, then commit: the commit review gate runs before a chained `git add` or `git commit -a` stages anything, and refuses while any tracked change is unstaged. To commit only some files, set the rest aside with a tagged stash (`git stash push -m <unique-tag> -- <paths>`), re-run `/code-review` on what remains, and commit. Then restore them with `git stash apply <sha>` (the SHA from `git stash list --format='%H %gs'`) and drop that entry by its current `stash@{n}`. The stash stack is shared across worktrees, so never use a bare `git stash pop`.
 
 Never commit `.env`, credentials, or unrelated changes.
 

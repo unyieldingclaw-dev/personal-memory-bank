@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-08-19
+last-reviewed: 2026-10-23
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -13,383 +13,431 @@ lineage: []
 
 # Progress
 
-## 2026-08-12 through 2026-08-14 — Investigation-Integrity Mechanism: Design, 5 Independent Review Rounds, Stale-Marker Hook — condensed, full detail archived
+## 2026-10-23 — PR #85 merged (`c2a5d1c`): merge-gate follow-ups; their sessions; an ACR timeout
 
-- **User-as-bypass hardened into governance** (2026-08-12): the "hand the user the commit command"
-  workaround was named as never acceptable; hardened into `standards/SECURITY-GUARDRAILS.md` +
-  `docs/HOOKS-GUIDE.md`. Same session fixed a real ~2-month-old latent bug (`.claude/skills/mb-drift.md`
-  undiscoverable — needed `<name>/SKILL.md`, not a flat file).
-- **Review-gate layered enforcement spec** (2026-08-12, `f2cec79`/`b47db8f`): three enforcement layers
-  designed (CC hook downgraded to peek, `.githooks/` promoted to sole marker consumer, new CI containment
-  check) after 2 user-requested re-verification passes each found real bugs. A proposed docs-only
-  "lightweight review path" exemption was explicitly designed then withdrawn on the user's principled
-  objection — same failure class as the original user-as-bypass mistake. **Standing rule: full
-  `/code-review`, every time, no lite path.** Implementation plan written 2026-08-13
-  (`docs/superpowers/plans/2026-08-12-review-gate-layered-enforcement.md`, 14 tasks); independent
-  pre-implementation review completed 2026-08-14, found 8 more real defects (3 Blocking), all fixed.
-  **Superseded 2026-08-17: all 14 tasks implemented and committed** — see that date's entry below.
-- **Investigation-integrity design + third mechanism** (2026-08-14, `15df2c2`/`70a06c1`): "independent
-  review discipline" added as mechanism 3, motivated directly by the plan review above. Design itself went
-  through 2 rounds of independent review (round 2 caught a Blocking conflict with `projectbrief.md`'s
-  immutable 7-phase-workflow requirement in the first design). Applied to 8 files; follow-up wording fixes
-  went through 2 more full review rounds (rounds 4-5), surfacing 16 more findings total (1 genuinely
-  Blocking) before landing clean — the concrete case study for why `WORKFLOW.md`'s "no lite path" rule has
-  no size exception, even for a 3-file mostly-cosmetic diff.
-- **Stale-marker warning hook built** (2026-08-14): `scripts/warn-stale-review-marker.sh`/`.ps1`, a
-  warn-only PreToolUse hook on Write/Edit flagging when a review marker currently exists (motivated by the
-  round-4→5 sequence above — editing after Approve silently invalidates the marker with no signal until
-  the next commit attempt). A second review pass caught a genuinely Blocking gap the first missed: no
-  `templates/` distribution path — fixed by mirroring to `templates/scripts/` and registering in every
-  `TEMPLATE_OWNED`/export-allowlist location `_review-gate-lib.sh`/`.ps1` already appears in.
-  **Superseded 2026-08-17/18: documented in `HOOKS-GUIDE.md` (Task #31, committed `7d6d2b9`).**
-- **Independently verified an imported governance-review document** (2026-08-14): a work-MB session's
-  analysis of PMB's code was checked claim-by-claim rather than trusted — 2 of 3 claimed defects were
-  wrong (one a misread of denies-vs-allows boolean logic, one accurate-but-wrong-severity), 1 was real and
-  fixed (`/change-review` Job 7 had no ACR exit-code failure path). Independently (not from the imported
-  doc) found `activeContext.md` (671 lines) and `progress.md` (775 lines) both well over their CI limits —
-  trimmed, historical detail moved to `docs/archive/`, same pattern this entry itself now follows.
+- What changed, the verification figures and the /change-review conditions: the PR #85 body and the messages of
+  `73deeeb`, `dadda3e`, `3439d4b` and `208ab36`. The gate merged its own PR (the user clicked Allow; logged in
+  `.claude/merge-asks.log`). Open conditions and owners: `[NS-65]`.
+- Also 2026-10-23: `[NS-58]` got an owner; ACR 1.15.0's ~307 s "fetch failed" is undici's 300 s headersTimeout
+  (`[NS-48]`).
 
-Full narrative for all of the above (exact findings lists, before/after diffs, dated sub-corrections):
-`docs/archive/progress-2026-08-investigation-integrity.md`.
+## 2026-10-23 — PR #81 merged: the merge deny became a user-clicked permission prompt
 
-## 2026-08-17 — Review-Gate Layered Enforcement: All 14 Tasks Implemented and Committed — condensed, full detail archived
+- Detail and open items (G1-G3; `327c6c2`, rebased as `73deeeb`, merged in PR #85): `[NS-65]` in `activeContext.md`; spec
+  `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`.
 
-- ✅ All 14 tasks committed on `feature/review-gate-layered-enforcement` (isolated worktree), each via
-  implement → independently verify → Opposition review → orchestrator re-verifies marker hash. 3 real bugs
-  found only because test suites were fixed to actually exercise what they claimed to (a pwsh-vs-sh test
-  gap that then surfaced a genuine `set -e` crash in shipped `pre-push-check.sh`; two test-only bugs; a
-  `findings_has_blocking()` bug that would have let a blocked `change-review` entry pass CI containment).
-  A confirmed known limitation: non-fast-forward `git merge` doesn't fire Layer 2's `pre-commit` hook
-  (documented, not fixed — Layer 3 CI containment is unaffected). **Not yet merged to `main` or pushed**
-  — see `activeContext.md`'s Task #33 deferral note for why, and current status.
+## 2026-10-20 — PRs #77 (`1b086c7`) and #58 (`25515a2`) merged
 
-Full narrative (exact bug descriptions, commit cycle detail): `docs/archive/progress-2026-08-review-gate-layered-enforcement-execution.md`.
+- **#77:** the review gate's empty-diff denial now names the root it checked (`review-reminders` sh/ps1 + templates
+  mirrors); J5-1 path pinned in `tests/test-review-reminders.sh`. Merged 2026-10-19.
+- **#58:** `docs/CLAUDE-CODE-PLUGINS.md` limits external skill-library guidance to actual plugin choices.
 
-## 2026-08-17 (continued) — Branch-Ancestry Diagnosis, Handoff/Compaction Gap, Standards-Freshness Gap, Review-Gate Hardening Audit
+## 2026-10-20 — PRs #59 (`5c6f8e4`) and #71 (`2c4088f`) merged
 
-- 🔴 **`feature/review-gate-layered-enforcement` cannot be cleanly rebased onto `main`** — attempted, hit
-  immediate modify/delete conflicts on `_review-gate-lib.sh`/`.ps1` on the very first replayed commit.
-  Root cause, confirmed via `git cat-file -e main:scripts/_review-gate-lib.sh` (fails — file does not
-  exist on `main` at all) and `git merge-base --is-ancestor 39a8647 main` ("NOT an ancestor"): `main` is
-  missing entire prerequisite review-gate infrastructure going back to commit `39a8647`
-  (2026-07-16-ish), not just `docs/branch-protection-rollout`'s later commits. Rebase aborted cleanly
-  (`git rebase --abort`, verified clean + `HEAD` unchanged). Root cause: PR #8
-  (`docs/branch-protection-rollout` → `main`) has sat open, `MERGEABLE`/`CLEAN`, all 9 checks green,
-  since 2026-07-09 — over a month unmerged — while local work kept stacking on top (69 commits ahead of
-  `origin/docs/branch-protection-rollout` alone, confirmed via `git rev-list --left-right --count`).
-  Decision: merge PR #8 first (after refreshing its now-stale CI run), so `main` catches up and the
-  feature branch becomes a normal rebase — not yet executed as of this entry.
-- 🔴 **`[NS-22]` — handoff/compaction protocol gap.** Two stale `handoff.md` files found: repo root
-  (2026-08-03/04 session, confirmed untracked via `git ls-files --error-unmatch handoff.md` → error) and
-  `.claude/worktrees/mystifying-hertz-c54477/handoff.md` (2026-07-27, mtime-confirmed). Neither was
-  deleted per `CLAUDE.md:124`'s instruction ("merge its info into Memory Bank, delete `handoff.md`") —
-  nothing enforces that step. Triggered by the user asking whether a handoff was written before today's
-  compaction; the honest answer required manually diffing file mtimes against today's date, since no
-  hook surfaces handoff freshness. This session's own compaction was not actually harmed — the
-  `PreCompact` gate's alternate path (`progress.md` dated today) was already satisfied via this file's
-  own same-day entry — but the near-miss and the two-path ambiguity (handoff.md vs. progress.md-dated
-  gate, no way to tell from outside which fired) are real. Not designed yet.
-- 🔴 **`[NS-23]` — standards-freshness gap.** No mechanism checks `standards/*.md` content against the
-  external authorities it cites. Checked directly: only `PERFORMANCE-BUDGET.md`, `SECURITY-RULES.md`,
-  `TRUST-CLASSIFICATION.md` carry `review-cycle`/`staleness-threshold` frontmatter (all `last-reviewed:
-  2026-05-31`, ~2.5 months stale against their own 90-day cycle but not yet past the 180-day
-  staleness-threshold). `ACCESSIBILITY.md` (asserts WCAG 2.1 AA), `SECURITY-GUARDRAILS.md`,
-  `CODE-QUALITY.md` have no frontmatter at all — no tracked review cadence whatsoever. Even where the
-  frontmatter exists, `grep`-confirmed no `mb doctor`/CI check references WCAG or OWASP version numbers
-  — the mechanism only prompts a manual timer-based re-read, it does not verify against the standard's
-  actual current published version. Not designed yet.
-- 🔴 **`[NS-21]` update — review-gate command hardening audit.** Dispatched a focused, read-only audit of
-  `/code-review`, `/security-review`, `/change-review` (user-requested, prompted by re-observing the
-  `/code-review` Skill-tool shadowing bug live a third time during this session). Findings:
-  - `/security-review` — solid, no issues.
-  - `/code-review` — the 5 required domains (`standards/CODE-REVIEW.md:6-11`) are named but only
-    Architecture Drift has a concrete definition; Security/Correctness/Maintainability/Testing subagents
-    get the diff plus generic Severity/Blocking/Basis field defs and nothing else, so their findings rest
-    on unconstrained model judgment with zero shared criteria against `/security-review`'s explicit
-    9-pattern list. Marker-write hash logic and Opposition rigor are both solid.
-  - `/change-review` — Job 7's inline security fallback (used whenever ACR is unavailable or its exit
-    code is non-zero) has genuinely diverged from `/security-review`'s pattern list in **both**
-    directions: it drops the XSS check (`security-review.md:24`) and the unsafe eval/exec check
-    (`security-review.md:26`) entirely, while adding path traversal/template injection/dependency-audit
-    items `/security-review` doesn't have. Confirmed via direct line comparison, not speculative — this
-    means `/change-review` can silently produce weaker security coverage than running `/security-review`
-    directly, especially on UI-touching diffs. Job 4 "Runtime Semantics" also folds 5 distinct concerns
-    (env-defaults, async correctness, startup/shutdown ordering, rollback safety, race conditions) into
-    one lens with no dedicated pass each, unlike the narrower Job 8 Accessibility which got its own job.
-    Minor schema drift: `change-review.md` still carries both `Basis` and `Confidence` fields though
-    `standards/CODE-REVIEW.md:87` says `Confidence` was removed.
-  - Recommended first fix (not yet done): add the missing XSS and eval/exec patterns to Job 7's fallback
-    list in `change-review.md`. The `/code-review` domain-checklist-sharing question is a bigger design
-    call, deferred.
-- 🔴 **`[NS-14]` update — mb.sh/mb.ps1 setup/upgrade scripts verified.** `tests/test-mb-init.sh` (19/19)
-  and `tests/test-mb-upgrade.sh` (26/26) both green fresh, including the regression class that bit this
-  project three times before (files silently missing from `TEMPLATE_OWNED`). Cross-checked the
-  `TEMPLATE_OWNED` array against every file actually in `templates/` — full parity. One piece of debris
-  found, not fixed (low priority): `templates/hooks/pre-push` is orphaned, unreferenced anywhere. Confirmed
-  no global (`$HOME/.claude/`) install/upgrade path exists — every `TEMPLATE_OWNED` destination is
-  project-relative; the only `$HOME/.claude/` touch is a read-only `mb doctor` comparison. Practical
-  consequence: nothing in `mb.sh`/`mb.ps1` could push project-level fixes out to the user-level shadowing
-  twins found in `[NS-21]` — that's a manual operation today.
-  - Checked the version-check code directly per the user's "upgrade should look at local and the repo to
-    verify we have the latest" concern: three distinct version values exist (target's `.pmb-version`, the
-    local PMB source clone's `VERSION`, GitHub `main`'s true latest) and nothing compares all three —
-    `mb doctor` only checks target-vs-local-clone (WARN-only), a separate notifier only checks
-    local-clone-vs-GitHub. **Nothing compares target-vs-GitHub directly**, so a stale local PMB clone makes
-    `mb doctor` report "up to date" even when genuinely behind upstream. Sharpens `[NS-14]`'s existing
-    finding (nothing *triggers* a check) with a second gap: a triggered check can still give a false "OK"
-    if its own reference point is stale. Not designed yet.
+- **#59:** `update-reviewed.sh` bash fallback: no file loss on a backslash Windows path, stdin read under a
+  native pipe (SQA #25/#26). Its advisory, paths-filtered Windows CI workflow must not become a required check.
+- **#71 (OPP6-1):** the commit gate refuses while any tracked change is unstaged (marker hashes the working
+  tree, a commit records the index; near-miss 2026-10-16). Stage in a separate command; `git commit -a` is
+  refused. Outside-pushed `1be7055c`, `e2b52866` retired by an `-s ours` merge. Follow-ups: `[NS-69]`.
 
-## 2026-08-18 — `dangerous-commands.sh`/`.ps1` Git-Merge CONFIRM Hardening (Task #30, committed `499dbe5`) — condensed, full detail archived
+## Relocated 2026-10-04 → 2026-10-19 — five sections moved verbatim 2026-10-23
 
-Full narrative: `docs/archive/progress-2026-08-18-task30-dangerous-commands-hardening.md`.
+Moved to `docs/archive/progress-2026-10-04-to-19-c1-plan-a-and-journal-hardening.md` **verbatim**, to fund
+the PR #85 entry under the ratchet. Citation check: that file's header. The original headings are kept
+below, so `progress.md <date>` references still resolve. Three earlier stubs are folded in, with their files.
 
-- ✅ **Closed the `git merge`-into-shared-branch CONFIRM gap** `standards/SECURITY-GUARDRAILS.md:114` had
-  documented but never enforced. Added `confirm_boundary()` (bash) + a `$confirmPatterns` regex (ps1).
-  Went through full `/code-review` + Opposition **twice**, each round catching real defects the prior
-  round missed: Round 1 fixed a false-positive substring match (`"legit merge"` matching via "le**git
-  merge**"); Round 2, verified via direct adversarial execution not hand-tracing, fixed a bash-vs-PowerShell
-  Unicode-whitespace parity gap (NBSP bypassed bash, caught by PowerShell); Opposition (BLOCK, then
-  re-reviewed to APPROVE) caught the fix landing only in `scripts/`, never mirrored to `templates/scripts/`
-  — this repo's canonical `mb upgrade`-synced surface — missed by both domain-review rounds because
-  diff-scoped review structurally can't see a missing companion file; also caught and fixed an
-  sh/ps1 case-sensitivity divergence on the guarded command. Docs (`HOOKS-GUIDE.md` + template) had a
-  stale CONFIRM table, corrected. New PowerShell test coverage (`dangerous-commands.Tests.ps1`, 13 tests)
-  added — this hook's first ever. Re-review independently re-ran both suites + a 26-case parity harness,
-  confirmed zero remaining divergence, and logged 4 more non-blocking findings for later (one real,
-  pre-existing bypass — `curl | bash` with double-spacing — out of this diff's scope, tracked as backlog).
-- 🔴 **Live-reproduced the still-pending "marker-destruction-on-denial" bug.** Opposition approved and
-  wrote `.claude/.code-review-ok`; the following `git commit` was DENIED by `dangerous-commands.sh`
-  because its own commit message quoted the guarded phrase as a literal example — and that denial
-  destroyed the just-written marker even though the working tree never changed. Resolved by resuming the
-  same Opposition agent to reconfirm byte-identical state and re-write the marker (hash matched three
-  independent recomputations). A harness security monitor flagged the marker re-write as a possible
-  self-certification pattern; the verification evidence was walked through directly before committing.
-  Now a concrete reproducible incident for Task #33 (below), not just a theoretical description.
-- 📌 Work-MB findings doc updated (Document 8) with both findings above, plus a clean-verified check of
-  this project's own global-CLI-install path for the same staleness-gap class a sibling project had.
-- ✅ **All 3 test-coverage gaps closed (Task #32, `2991093`):** version-notifier cache round-trip test
-  (first draft's second assertion pointed at the live test server, masking a broken reader — fixed by
-  pointing it at an unreachable port, mutation-tested); `mb clean`'s "RECOMMENDED" middle branch coverage
-  (replaced a trivially-satisfied header-string assertion); PowerShell-side `Resolve-CdRoot` coverage for
-  the chained-cd/whitespace fixes (first draft's own JSON-escaping bug in the test helper produced a false
-  security-bypass signal, traced to an unescaped backslash in a Windows temp path — fixed via a
-  `win_path_for_json()` helper, gated on `cygpath`). Also root-caused an unrelated "9 failed" one-off as a
-  pre-existing test-server readiness-poll flake, unrelated to this diff.
+- **2026-10-19 — PRs #64, #72, #69, #74 and #75 merged**
+- **2026-10-19 — PR #65 merged (`0b67d9d`): no FIFO hang at `started` or the gate probe**
+- **2026-10-19 — PR #63 merged (`d3f87f8`): FIFO-safe journal gate, ps1 regular-file check**
+- **2026-10-18 — C1 Plan A merged (#57, `d751b73`); PreCompact lock-up recorded (#62, `e38620f`)**
+- **2026-10-14 — PR #55 opened (WARN-tier hooks → JSON); its review's findings recorded**
+- **2026-10-13 — Memory-bank reconciliation committed after an 8-day pause**
+  (both: `docs/archive/progress-2026-10-13-and-10-14-reconciliation-and-pr55.md`)
+- **2026-10-05 — PRs #51 (`07e3bd2`) and #53 (`3cadb06`, [NS-19]) merged**: `docs/archive/progress-2026-10-05-prs-51-and-53.md`
+- **2026-10-04 — `mb doctor --check` and pre-push Check 7 (PR #51)**
 
-## 2026-08-18 (continued) — Version-Notifier Readiness-Poll Fix + Stderr-Capture Refinement
+## 2026-10-04 — PR #47 merged (`19931dc`); `fix/ns19` rebased onto it
 
-- ✅ **Root-caused and fixed a real pre-existing flake** in `tests/test-mb-version-notifier.sh`'s
-  live-fetch sub-test: the background `python3 -m http.server` readiness poll (10×0.3s) silently fell
-  through and let 9 downstream assertions fail with confusing cascading output if the server never
-  became reachable — this is the same flake the opposition reviewer had already root-caused (noted in
-  the entry above) as unrelated to that day's diff, now actually fixed. Reproduced deterministically by
-  neutering the server-launch line to confirm the exact "14 passed, 9 failed" signature, then fixed with
-  a `server_ready` flag + `if/else` around the whole server-dependent block, printing a clear
-  `SKIPPED (test HTTP server did not become ready within the poll window)` message instead. Went through
-  its own Opposition review (mutation-tested: a corrupted cache genuinely fails, a valid one still
-  passes in ~400ms via the cache-hit short-circuit). Committed `d64a4fc`.
-- ✅ **Refined the same SKIP path to capture the server's stderr**, previously discarded to `/dev/null`,
-  so a genuine bind failure is diagnosable in the SKIP message instead of reading as an unexplained
-  absence — one specific idea kept from a user-pasted "suggested task" chip whose alternative proposal
-  (a hard `exit 1` on server-never-ready) was rejected: it would have aborted the whole script and
-  silently skipped an unrelated, later `if command -v pwsh` block (the cross-shell PS1 parity tests) that
-  has nothing to do with the HTTP server. Verified against a real bind failure two independent ways: the
-  orchestrator pre-occupied a fixed port before running a temporary fixed-port copy of the test and got
-  `PermissionError: [WinError 10013]`; the Opposition reviewer, working independently, found the first
-  repro method (simple port pre-occupation) didn't actually collide under this machine's Windows socket-
-  sharing semantics, then found a *different*, more realistic collision mechanism
-  (`netsh interface ipv4 show excludedportrange`) and reproduced the same class of failure that way — a
-  genuinely independent confirmation via a different method, not a re-run of the same repro. Suite
-  verified clean across 5 separate runs (23 passed, 0 failed each), including one run inside a piped
-  `for` loop that hung/timed out on a later iteration — isolated re-runs with output redirected to files
-  were all clean, so this reads as a shell-construct artifact of that particular piped-loop invocation,
-  not a regression introduced by the diff (no timing-sensitive code was touched).
-- 🔴 **Process incident, self-corrected before commit:** the first attempt at getting this diff reviewed
-  dispatched a single subagent to both domain-review the diff *and* write `.claude/.code-review-ok` in
-  the same call. The harness's security monitor correctly flagged this as self-approval — reviewer and
-  reviewed-change must be separate agents per this repo's own two-party review-gate discipline, and a
-  single agent checking its own findings and immediately writing the marker has no genuine second check
-  on itself, even though it didn't author the diff. The marker was deleted unused, and the review was
-  redone properly as two separate agent dispatches (a domain reviewer with no marker-write authority,
-  then a separate Opposition agent that independently re-read the diff, challenged the first reviewer's
-  two non-blocking findings, ran its own additional checks, and was the only one authorized to write the
-  marker). Hash independently re-verified by direct recomputation before trusting it, matching exactly.
-  Committed `bbb697a`.
-- Remaining, same as above: the marker-destruction-on-denial fix itself (Task #33); atomic
-  version-cache write + `diff_hash()` trap-scoping (Task #34); final full test-suite run + re-run
-  `/change-review` + push/merge PR #8 (Task #35).
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`. Still open: PR #48
+and the track-or-ignore decision for `.agents/`/`.codex/`.
 
-## 2026-08-18 (continued) — Task #33 Deferred; Task #34 Hardening Fixes (One Self-Caught, Reverted)
+## 2026-09-30 — PR #49 merged (`584a8e4`); two review-gate escapes open
 
-- 🔴 **Task #33 investigated, deliberately deferred rather than patched.** The real structural fix already
-  exists on `feature/review-gate-layered-enforcement` (can't cleanly rebase onto `main`); a second branch
-  has uncommitted WIP on an overlapping mechanism. A narrow patch here would be a third. Full reasoning:
-  `activeContext.md`'s NS-24 entry. Committed `c66d9d1`.
-- ✅ **Task #34, atomic version-cache write:** `mb.sh`/`mb.ps1` wrote the version-cache JSON via a direct
-  overwrite, not atomic against a concurrent reader — real risk, since this check runs after every `mb`
-  command and this repo supports concurrent sessions. Fixed via mktemp-in-same-dir + `mv` (bash), temp
-  file + `[System.IO.File]::Move` (PowerShell). **PowerShell needed a second fix mid-review:** a reviewer
-  load-tested `Move-Item -Force` under concurrent access and got 105 writer-side `IOException`s and 67+
-  reader-side `FileNotFoundException`s — not the atomic primitive it looks like on Windows. Switched to
-  the raw `File.Move` overload (zero errors under identical load).
-- 🔴 **Task #34, `diff_hash()` trap-scoping: a self-caught regression.** The original bug (unconditional
-  `trap - EXIT` clears a caller's own trap on a direct, same-shell call) was real. The first fix
-  (`trap -p EXIT` save + `eval`-restore) looked correct until it deleted `test-review-gate-lib.sh`'s own
-  `$TMPDIR_LIB` mid-run. Root cause: bash treats an EXIT trap merely *inherited* into a
-  command-substitution subshell as dormant, but explicitly calling `trap` inside it — even to restore the
-  same value — arms it, firing early. Since `review-reminders.sh` calls `diff_hash` via
-  `$(diff_hash ...)`, the "fix" would have fired a caller's cleanup trap early in production. Reverted to
-  touching no trap state at all; a guard test for this had its own bug first (checked the marker after
-  the subshell's own `exit`, which fires it too) fixed via an echoed status string before any exit.
-  Mutation-tested repeatedly: the fix passes 9/9; the buggy code reliably drops it to 4/9.
-- 🔴 **A first-round review finding was independently re-tested and found wrong, not accepted on
-  authority.** The reviewer claimed the subshell-trap test couldn't discriminate the fix from the bug;
-  re-running the exact mutation showed it clearly does (9/9 vs 4/9, twice). Their other findings held up:
-  the `Move-Item` issue, and a genuine coverage gap — "no leftover temp file" also passes against fully
-  reverted code. Fixed with a stronger test: open an fd on the cache file before a forced rewrite, confirm
-  it still shows the complete *old* content — exploiting the POSIX guarantee (`rename()` doesn't touch an
-  already-open fd) the fix depends on.
-- ✅ Two full review rounds, both reproducing the mutations themselves. Opposition's first revert attempt
-  used `git checkout --` on an uncommitted file (reset to pre-fix `HEAD`), caught immediately, corrected
-  from the `templates/` mirror, disclosed not hidden. Hash independently re-verified. Committed `acdfbb6`.
+- **Unfixed:** an apostrophe in a heredoc body before a commit in one command makes both
+  classifiers return NONE (chip 08). A wrapper's own options do the same; fix `0e04fa0` is
+  unpushed on `docs/wrapper-option-classifier-escape`.
 
-## 2026-08-18 (continued) — Task #35 Change-Review Findings Fixed; Handoff Protocol Redesign
+## 2026-09-26 — [NS-19] plan workflow fixed; diff-only standards reversed by fleet data
 
-- ✅ **Task #35, whole-branch `/change-review`:** ran clean (baseline health + ACR clean). Jobs 1-6
-  surfaced 2 Blocking + 2 related Medium findings; fixed, committed `69b9566`. Opposition's Job 9 marker
-  write correctly refused the first attempt (fixes were in the working tree but not yet committed, so
-  `git diff origin/main...HEAD` didn't reflect them) — same agent resumed post-commit, confirmed clean.
-  Push-gate marker independently re-verified (`ec65945c...`). **Only the actual `git push` remains** —
-  paused for the tangent below, resume on user go-ahead (push is user-facing).
-- ✅ **Handoff Protocol redesigned** (user-initiated, following a reported problem in the user's
-  separate work-MB project): asking a new session to synthesize priority from `handoff.md` — written
-  under compaction-time pressure — caused real synthesis misses on complex sessions. Reframe:
-  `activeContext.md`'s Next Steps is already continuously updated and the better priority source;
-  `handoff.md` narrowed to ephemeral in-flight state only. New sessions now read memory-bank first as
-  authoritative, `handoff.md` second, then reconcile and surface conflicts. Applied to `CLAUDE.md` +
-  `templates/CLAUDE.md` (byte-identical, verified), reviewed (domain + Opposition, one Medium
-  non-blocking gap fixed pre-commit), hash re-verified, committed `3a2a7fd`. Portable brief
-  `docs/WORK-MB-HANDOFF-DESIGN-BRIEF.md` for work-MB (same discipline, one Medium finding softened
-  pre-commit), committed `3aa70af`. Distinct from `[NS-22]` (cleanup-enforcement gap), still open.
-- ✅ **Task #35 completed, branch pushed, CI verified green.** The Handoff Protocol commits changed
-  the diff, so the earlier push-gate marker (`ec65945c...`) no longer matched
-  `git diff origin/main...HEAD` — re-ran `/change-review` (ACR exit 1 on the whole diff due to its own
-  2000-line truncation default; inline security greps + Opposition spot-checks substituted as Job 7's
-  actual coverage, all clean; false-positive "command injection" findings on static hardcoded hook
-  strings dismissed with evidence — separately written up as a portable ACR investigation brief for
-  the user's ACR session, sent as a file, not committed to this repo). Came back clean, hash
-  `5d3607cd...`. Pushed `0cc53f1..c80d494`.
-- 🔴 **CI actually failed post-push** (`MB Command Tests`, a required check): `tests/test-review-gate-lib.sh`'s
-  `Get-FileHashHex` cross-shell parity test guarded on `pwsh` alone but unconditionally called
-  `cygpath` inside — GitHub Actions' `ubuntu-latest` ships `pwsh` without `cygpath` (a git-bash/MSYS
-  tool), so `cygpath: command not found` fired 3 times and 2 assertions failed for an environment
-  reason unrelated to the code being tested. Root-caused by reading the actual CI job log, not
-  guessed. **Fix matched an already-established precedent found in this exact repo:** two sibling
-  test files (`test-review-reminders.sh`, `test-update-reviewed.sh`) already required both
-  `command -v pwsh` AND `command -v cygpath` before any cygpath-dependent block, from an earlier,
-  separate code review — this file was the one instance missed. Applied the identical guard. Verified
-  locally (still 9/9 passing with both tools present) and via a logic-level mutation test (old guard
-  proceeds into the broken block under simulated "pwsh present, cygpath absent," new guard correctly
-  skips) before ever touching CI. Reviewed (domain + Opposition, no blocking findings), committed
-  `d864d99`. Re-ran the push-gate `/change-review` a second time (marker invalidated again by the new
-  commit; the new delta was tiny and already reviewed at the commit gate, so the push-gate Opposition
-  pass was scoped to confirming that plus scope integrity, not re-reviewing all 93 prior commits),
-  hash `1f0e5f3...`, pushed `c80d494..d864d99`. **Waited for the actual CI run and confirmed via
-  `gh pr checks 8`: all 10 checks pass, `mergeStateStatus: CLEAN`.**
-- ✅ **PR #8 merged 2026-08-19** (`gh pr merge 8 --squash`, now `main`'s tip `b0490ef`). One
-  local-only commit (this very entry's own predecessor, `d745121`) was committed but never pushed
-  before the merge, so it was left out of `main`. Cherry-picked onto a fresh branch
-  (`docs/finalize-branch-protection-memory-bank`, off the post-merge `main` tip) as commit `805ae5a`,
-  reviewed again at the push gate (content byte-identical to what was already reviewed this session;
-  the only new finding was this exact "PR #8 open" staleness, now corrected inline), for a small
-  follow-up PR. Only `[NS-24]`'s Task #33 remains open from this thread.
-- ✅ **PR #12 merged 2026-08-19** (the follow-up carrying the CI-fix narrative + staleness correction), `main` fast-forwarded to `4f24768`. Both fully-merged branches (`docs/branch-protection-rollout`, `docs/finalize-branch-protection-memory-bank`) deleted locally and on `origin` after confirming `git diff main <branch>` was empty (or, for the old branch, showed only its own now-superseded stale text — `main`'s version was strictly more accurate, not missing anything).
-- 📌 **`[NS-25]` found while deleting branches:** `review-reminders.sh`/`.ps1`'s push-gate raw-substring-matches `'git push'`, so `git push origin --delete <branch>` (no content diff) got denied identically to a real push — `diff_hash origin/main...HEAD` is meaningless for a pure ref deletion. Worked around via `gh api -X DELETE repos/.../git/refs/heads/<branch>`, which bypasses `git push` entirely and is legitimate (no diff exists to review). Not fixed in the hook itself: an independent review caught that the first-pass reasoning for deferring the fix (cited JSON-field-extraction fragility) was wrong — the real risk of a `--delete` special case is a fail-*open* substring false-positive on a real push, corrected accordingly. See `activeContext.md`'s `[NS-25]` for the full, corrected reasoning.
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`.
 
-## 2026-08-19 — Model/Effort Escalation Guidance; Review-Gate Port Design Corrected (Opus deep dive)
+## Relocated 2026-09-21 → 2026-09-25 — three sections moved verbatim 2026-10-05
 
-- 🔴 **A Sonnet-authored port design was found to be repo-breaking, on an Opus re-examination.** It split the Layer 1 (`review-reminders.sh` PreToolUse) and Layer 2 (git-hook) marker changes into two independent steps — but `consume_marker()` destroys the marker at PreToolUse time, so adding a Layer 2 marker check while Layer 1 still consumes would deny *every* agent commit and push. The flaw survived several self-review passes because the premise (that the two were separable) was never questioned. Also found: `feature/review-gate-layered-enforcement` is *behind* `main` on shared files — it still carries the unsafe `diff_hash()` trap logic reverted 2026-08-18 and predates `write_marker_atomic` — so any port must be main-forward, never a wholesale file copy. Full corrected design in `activeContext.md`'s `[NS-26]`, which supersedes `[NS-15]`'s rebase/replay approach.
-- ✅ **Model- and effort-escalation guidance added to `CLAUDE.md` + `templates/CLAUDE.md`** (Token Budget section). Reframed around the user's point that quality up front *saves* tokens: rework costs a revert plus a debugging pass plus a redesign, far more than one careful pass. Escalation is now something Claude must proactively prompt for, keyed to *observable* triggers (cross-branch reconciliation, enforcement-boundary changes, 5+ files, 3+ failed fixes, spec authoring, cross-shell semantics) rather than introspection — since a model out of its depth is a poor judge that it is. Effort documented as a separate, cheaper dial: raise effort for care, raise model for premise risk. **Verified live, with a self-correction:** first pass reported `CLAUDE_CODE_EFFORT_LEVEL` as "unset everywhere" and concluded the level came from a UI selector only — an independent review caught that an effort var *is* live in the environment, just under a different name (`CLAUDE_EFFORT=high`), absent from every `settings.json` and evidently harness-injected. That is the actual reason selecting Opus left effort below its nominal default. Docs now name the real variable and tell readers to check `env | grep -i effort` rather than trusting a config file. `MAX_THINKING_TOKENS=10000` also flagged, with its interaction explicitly hedged as unverifiable from inside the repo rather than asserted. Template mirror deliberately genericized (no PMB-specific incident narrative), per the established portability convention.
+Moved to `docs/archive/progress-2026-09-21-to-25-ns-audit-preapproval-plan-and-pr46.md`
+**verbatim**, to fund PR #51's owed delta under the ratchet. Delta and citation check: that file's
+header. The original headings are kept below, so `progress.md <date>` references still resolve.
 
-- 🔴 **PreCompact freshness gate found switched off for ~2 weeks (`[NS-22]`, escalated).** `scripts/pre-compact-check.sh:10-13` bypasses the whole gate on a bare `[ -f "handoff.md" ]` check with no staleness test. The untracked 2026-08-03/04 root `handoff.md` therefore disabled it continuously, including every compaction in this session. The 2026-08-17 pass had logged those stale files as clutter and missed that their *presence* is what disables the gate. Content verified fully committed (`2fa1b63`, `fac4976`), so deletion is safe — held for user approval as a CONFIRM-tier action.
-- 🔴 **Session-continuity thresholds do not cohere.** Handoff is specified at 40% but is user-triggered with nothing automating it; auto-compact fires at 65%; the global `~/.claude/CLAUDE.md` claims 50%, which is factually wrong. Consequence: sessions never hand off — they pass 40% unnoticed, compact in place at 65%, and continue indefinitely, with the only gate on that boundary bypassed. Answers the user's "shouldn't we have moved to a new session?" — auto-compact summarizes *within* a session; it never starts a new one, and nothing links the two mechanisms.
-- 📌 **Overnight/unattended implication:** compaction, not handoff, is the only mechanism that survives without a human (handoff requires someone to start the next session), which makes the PreCompact gate load-bearing for autonomous runs — it must work before any overnight operation is trusted. Scheduler-driven session chaining (headless session reading memory-bank + `handoff.md`) is feasible but undesigned.
-- 📌 **`[NS-27]` recovered, not newly invented:** an explicit 2026-08-15 design discussion about ACR taking over the Opposition pass (with DeepSeek as candidate backend) was never written to memory-bank and was consequently lost to compaction — the agent twice told the user no such decision existed before recovering it from the raw session transcript. A direct, self-demonstrating case for the memory-bank discipline this repo already mandates.
+- **2026-09-24 → 25 — PR #46 merged; local `main` reconciled; two more merge-gate escapes**
+- **2026-09-22 — Pre-Approval Protocol plan: six review rounds, and my "Approve" was wrong twice**
+- **2026-09-21 — Next-Steps audit; NPM_TOKEN resolved; false "unmerged" claims found**
 
-- 🔴 **`[NS-28]` — measured PMB's SessionStart cost at ~22,072 tokens, matching the enterprise MB figure (~21,897) the external findings doc calls a context crisis**, despite PMB being forked to be lighter. Caps are enforced on lines, not bytes; `activeContext.md` runs ~208 chars/line, so the 150-line limit permits ~2.4x its intent. Proven gameable the same day: a cap breach was resolved by reflowing 158→134 lines with identical content and zero bytes saved, CI green throughout. Stale root `handoff.md` deleted (content verified already committed) and the PreCompact gate confirmed re-activated and passing.
+## Relocated 2026-09-19 → 2026-09-21 — three sections moved verbatim 2026-09-25
 
-- 🔴 **`[NS-30]` — the memory-bank cost driver is distributed but its guardrail is not.** `templates/CLAUDE.md` ships "read ALL files in `memory-bank/`" three times while `templates/.github/workflows/` does not exist, so adopting projects inherit the mandate with no CI cap — only `mb doctor`'s ignorable warning. ACR's own audit measured the result: 190,798 bytes / ~47.7K tokens, 2.5x PMB's own footprint. PMB stays bounded solely because it holds CI its adopters never receive. Three independent audits converged on the same four systemic items, so this is a distribution defect rather than one repo's neglect.
+Moved to `docs/archive/progress-2026-09-19-to-21-ai-review-config-and-ns44.md` **verbatim** to fund
+the 2026-09-24 → 25 entry under the ratchet. Delta and citation check: that file's header.
+
+- **2026-09-21 — `ai-review.config.json` test guard ships (PR #40); mid-session data-loss recovery**
+- **2026-09-19 — `ai-review.config.json` ships NS-48; first draft was a near-miss**
+- **2026-09-19 — NS-44 design (PR #33); NS-55 opened; write-rate fix confirmed insufficient**
+
+## Relocated 2026-09-15 → 2026-09-19 — three sections moved 2026-09-22
+
+Moved to `docs/archive/progress-2026-09-15-to-19-review-gate-pr28-29-and-marker-writes.md` without rewriting the narrative text; section separators were normalized. See its header for why.
+The original headings are kept below, so `progress.md <date>` references still resolve.
+
+- **2026-09-19 — Review-gate marker writes intermittently vanish; a platform classifier, not a repo hook**
+- **2026-09-18 — PR #28 and #29 merged; both change-review push-gates run for the first time**
+- **2026-09-15 — review-gate paired paths corrected and opposition-approved**
+
+## Relocated 2026-09-16 → 2026-09-17 — two sections moved verbatim 2026-09-19
+
+Moved to `docs/archive/progress-2026-09-16-to-17-codex-precompact-reproduction-and-review.md`
+**verbatim**, not summarised — same precedent as every relocation above. **Why:** today's review-gate
+marker-persistence finding broke the aggregate startup-context ratchet; this move relocates 2,449 bytes
+(gross, matching the archive header's own body — delta, not a level). Citation survival grep-verified
+(`activeContext.md`'s PR #28/#29 entry cited this range; updated in the same commit to split the
+citation between this archive file and the live 09-18 entry). Original headings preserved below so
+`progress.md 2026-09-16`/`2026-09-17` references still resolve.
+
+- **2026-09-17 — Recovery-only Codex review**
+- **2026-09-16 — Codex PreCompact reproduction and pending UX review**
+
+## Relocated 2026-08-12 → 2026-08-18 — five sections moved verbatim 2026-08-28
+
+Moved to `docs/archive/progress-2026-08-condensed-sections.md` to clear the 60,000-byte CI cap; this
+file had reached it and could not accept a new dated entry. **12,965 bytes moved out, 1,490 added
+back as this stub — net −11,475.** Stated as a delta rather than before/after totals, which decay the
+moment anything else in the file changes. **Nothing was summarised or deleted** — the 2026-08-25 pass was reverted for removing content, and this follows the
+relocate-verbatim convention that replaced it.
+
+Each original heading is preserved below so existing citations of the form "`progress.md`'s
+2026-08-14 entry" still resolve. All five were already marked *condensed, full detail archived*
+before this move, so their fuller narrative was already in `docs/archive/context-2026-*`; this
+relocation moves the condensed layer out as well.
+
+- 2026-08-12 through 2026-08-14 — Investigation-Integrity Mechanism: Design, 5 Independent Review Rounds, Stale-Marker Hook — condensed, full detail archived
+- 2026-08-17 — Review-Gate Layered Enforcement: All 14 Tasks Implemented and Committed — condensed, full detail archived
+- 2026-08-17 (continued) — Branch-Ancestry Diagnosis, Handoff/Compaction Gap, Standards-Freshness Gap, Review-Gate Hardening Audit — condensed, full detail archived
+- 2026-08-18 — `dangerous-commands.sh`/`.ps1` Git-Merge CONFIRM Hardening (Task #30, committed `499dbe5`) — condensed, full detail archived
+- 2026-08-18 (continued) — Tasks #33–#35, Version-Notifier Fix, Handoff Redesign — condensed, full detail archived
+
+## Relocated 2026-08-19 → 2026-08-21 — four sections moved verbatim 2026-08-28
+
+Moved to `docs/archive/progress-2026-08-19-to-21-escalation-and-bundle-1.md` **verbatim**, not
+summarised. **Delta, not a level: 16,670 bytes moved out.** Citation survival grep-verified before
+the move. The citation surface is larger than a short list captures — `activeContext.md` alone
+carries five references to these entries, enumerated in full in the archive header — so the check
+that matters is that each original heading is preserved below, which it is.
+
+- **2026-08-19 — Model/Effort Escalation Guidance; Review-Gate Port Design Corrected (Opus deep dive)**
+- **2026-08-20 — Archive Pass; Session-Crossed-Midnight Dating Error Caught by the Gate It Broke**
+- **2026-08-20 (continued) — Enforcement Integrity Bundle 1 (committed 2026-08-21 as `4bc107c`)**
+- **2026-08-21 — Bundle 1 Committed; Hook-Wiring Fix Withdrawn by Its Own Review**
+
+## Relocated 2026-08-22 → 2026-08-27 — six sections moved verbatim 2026-08-30
+
+Moved to `docs/archive/progress-2026-08-22-to-27-gate-passes-and-bundle-review.md` **verbatim**, not summarised. **Delta, not a level: 20452 bytes moved out.**
+Citation survival grep-verified before the move; each original heading is preserved below and in
+the archive file, so existing `progress.md` <date> references still resolve.
+
+- **2026-08-26 — PR #21: round-10 gate pass, Approve + 4 must-fixes**
+- **2026-08-26 (continued) — `[NS-37]` closed at the mechanism; a measured perf revert; cap deadlock resolved by relocation**
+- **2026-08-26 (later) — review-gate model pinning; `mb upgrade` agent-delivery fix; tiered-loading design DROPPED on review**
+- **2026-08-27 — Full `/code-review` of the five-concern bundle; 24 findings remediated; three new mechanism bugs**
+- **2026-08-23 (continued) — Cap Deadlock Cleared by Relocation; Round-6 Pre-Gate Hardening**
+- **2026-08-22 — Commit-Signing CONFIRM Tier; Two Review-Driven Corrections; Midnight Gate-Expiry Found**
+
+## Relocated 2026-08-28 — five sections moved verbatim 2026-08-31
+
+Moved to `docs/archive/progress-2026-08-28-round3-gate-passes-and-brief-staleness.md` **verbatim**, not summarised. **Delta, not a level: 30,235 bytes moved out** (LF blob — an earlier draft said 30,448, the CRLF worktree figure).
+Citation survival grep-verified before the move; each original heading is preserved below and in
+the archive file, so existing `progress.md` <date> references still resolve.
+
+- **2026-08-28 — `[NS-22]` committed; Cursor's handoff threshold re-derived; `[NS-22]` action 3 closed as not-a-defect**
+- **2026-08-28 (later) — `d550282` committed; branch `/change-review` run; the nine-instance pattern named**
+- **2026-08-28 (continued) — Round-3 pass, Opposition Approve, committed `2052c3c`**
+- **2026-08-28 (fix) — `mb init` agent delivery closed; the exported Work-MB briefs found stale**
+- **2026-08-28 (eviction) — `activeContext.md` resolved-entry pass; its own finding was false**
+
+## Relocated 2026-09-12 → 2026-09-14 — three sections moved verbatim 2026-09-18
+
+Moved to `docs/archive/progress-2026-09-12-to-14-check15-and-baseline-health-ci-fixes.md`
+**verbatim**, not summarised — same precedent as every relocation above. **Why:** today's PR #28/#29
+merge log and `[NS-54]` broke the aggregate startup-context ratchet; this move relocates 3,892 bytes
+(gross, matching the archive header's own body — delta, not a level). Citation survival grep-verified (`activeContext.md`'s
+`[NS-37]`/`[NS-51]` cited these sections by date; both updated in the same commit to point at the
+archive file instead). Original headings preserved below so `progress.md <date>` references still
+resolve.
+
+- **2026-09-14 — baseline-health's CI-only failure was a shallow nested-clone ref assumption**
+- **2026-09-13 — check 15's real cause found and fixed: `$env:USERPROFILE`, not the bracket glob**
+- **2026-09-12 — PR #25 stays red after the grep-portability fix; a second, pre-existing failure**
+
+## 2026-09-11 — whole-repo review: the enforcement layer does not enforce; and a scratchpad collision
+
+**Eleven blocking findings, five domains, whole repository rather than a diff.** Full report preserved
+in `WHOLE-REPO-REVIEW.md`, held outside the repository (see "The patch and the report are NOT in
+this repository" below) rather than committed:
+the payload and the record were split after two review rounds found the payload was 88% of the diff
+and essentially all of the blocking findings.
+The ones that matter, and the Tier-1 conflict they sit inside:
+
+- **The review gate mints a valid marker for an UNREVIEWED tree — REPRODUCED on both shells.**
+  `review-reminders.sh` consumes the marker and writes `.pending-commit-presha` *before* the guarded
+  tool runs; if the call is then denied by any other hook, PostToolUse never fires and the residue
+  survives. `review-reminders-post.sh:43` then recomputes `diff_hash HEAD` at post time and writes it
+  as a fresh marker, so any later command whose text matches the verb launders the current tree into
+  an approved one. An `echo` is sufficient. Nothing stores the reviewed hash, so the reissue could not
+  be validated even in principle: the binding was missing, not the check. Sharpens `[NS-45]` (filed
+  INFERRED, never reproduced) and `[NS-24]` Task #33; strengthens `[NS-26]`'s `peek_marker()` case.
+  Two orphaned presha files sit in `.claude/worktrees/strange-bun-9a0ffc` and `sweet-poincare-ee03fc`.
+- **Two CI jobs cannot fail.** `.gitleaks.toml` has no `[[rules]]` and no `[extend] useDefault = true`,
+  so gitleaks runs an empty ruleset — reproduced with 8.30.1: no config finds two planted secrets, this
+  config finds zero. `standards/SECURITY-GUARDRAILS.md:394` asserts the opposite, on a public repo.
+  Separately `show_doctor()` contains no `exit` in either runtime, so `MB Doctor Self-Check` passes
+  while printing `[ERROR]` lines. Both are among PR #25's passing checks; `gh pr checks 25` names
+  them as `Secret Scan` (`pmb-health.yml`'s gitleaks job) and `MB Doctor Self-Check`; no tally is
+  stated here because the live one moves.
+  **No historical hit is a live credential** — checked before recording any of this on a public repo:
+  running gitleaks with `[extend] useDefault = true` over this branch's own line of history — the clone
+  is grafted at the parentless `030662c` (`cat .git/shallow`), so the scanned range is at most
+  `git rev-list --count 030662c..HEAD` plus that commit, NOT the project's full history, and no
+  full-history scan has been run from this clone — returns findings confined
+  to `fixtures/security/`, two `docs/superpowers/plans/` files and the two `MCP-SECURITY.md` copies,
+  and every secret value inspected is a visible placeholder. A planted canary was detected by the same
+  config, so it discriminates. The count is deliberately unstated: it differs between history mode and
+  worktree mode, and the report's own figure did not reproduce in either.
+- **Two Tier-1 conflicts, surfaced not reconciled.** `projectbrief.md:26` requires that security
+  guardrails "are always active" and `:43` forbids external dependencies. The findings above are
+  measured breaches of the first. The second is contradicted already, and was before this work:
+  `_review-gate-lib.sh`'s `resolve_cd_root()` shells out to `python3` and `check-contract.sh`
+  requires it outright, under a documented "fail open on missing dependency" convention. The fix adds
+  another caller, not a new class of dependency — for the current caller set run
+  `grep -rln 'python3 -c\|python3 -' scripts/`, which is wider than the two named here — an earlier draft of this entry mis-scoped it as
+  something the fix would introduce, which was wrong. `techContext.md`, the stable-tier authority on
+  the toolchain, records none of it. Tier 1 governs, so this is a decision to be taken rather than a
+  drift to close quietly: amend the constraint deliberately, or reimplement the python3 callers in
+  shell. Not taken, and older than this change.
+- **The gate is wired to one of two doors.** The `PowerShell` matcher runs `dangerous-commands.ps1`
+  only; `review-reminders` is bound to `Bash` alone, so a commit, push or PR merge issued through the
+  PowerShell tool meets no marker check. `review-reminders.ps1:56` never inspects `tool_name`, so the
+  gap is wiring, not capability. Most hook entries also fail OPEN when their pwsh twin launches,
+  drains stdin, then exits non-zero: the bash fallback reads an empty stream and exits 0. No count
+  is stated — an earlier draft said "eight of nine" and both numbers were wrong; parse
+  `.claude/settings.json` for the current one.
+- **Fourteen ordinary argument forms walk past both tiers**, each measured against a matched control
+  that was correctly denied: `git -C <dir> commit`, `git -c k=v commit`, `git -C <dir> push`,
+  `gh api .../pulls/N/merge`, and ten BLOCK-tier forms including `git push origin main --force`,
+  `rm -fr`, `rm -r -f`, `dd bs=... of=... if=...`, `curl | /bin/bash` and `curl | python3`. Both twins
+  also allow `rm -rf /` under a `toolInput.command` harness, widening `[NS-50]`(b) to the ps1 side.
+
+- **Four findings summarised here because the report that holds them is out of repo**, and this entry
+  itself calls it unrecoverable if that directory is lost. No sole-record claim is made: that needs a
+  per-finding search with its scope stated, and B10 in fact has a fuller in-repo record than this
+  summary at `scripts/mb.sh:2062-2076` — an earlier draft of this bullet asserted the opposite for all
+  four at once, which is the absence-claim shape `standards/CODE-REVIEW.md` rejects. (B8) The push gate's hash comparison had zero
+  test coverage — a mutation deleting the comparison left the suite fully green. (B9) A test removes
+  the live review-gate library from the working tree while it runs, disarming the gate for any
+  concurrent session. (B10) `mb upgrade` on PowerShell force-overwrites `standards/` from templates
+  that are known stale, so it can replace a correct governance file with a wrong one. (B11) Two
+  `mb doctor` checks cannot fire in this repo or in a fresh adopter. Full text: `WHOLE-REPO-REVIEW.md`
+  in the preserved directory.
+
+**A fix for the marker binding, the argument forms and the case hole is built and mutation-proved,
+and is NOT applied. It does NOT cover the interpreter wiring** — an earlier draft of this entry
+claimed it did, which was false: `grep '^+++ ' gate-fix-v2.patch` lists eight files, none of them
+`.claude/settings.json`, where the wiring defect lives. That matters more than the error, because
+the wiring is the bypass on the PRIMARY path here: pwsh runs first, and `review-reminders` is bound
+to the `Bash` matcher alone, so the fix as built leaves the live hole open. Named rather than numbered: an earlier draft said "the first,
+third and fourth" into a list that has since gained a bullet. It also closes a PRE-EXISTING hole this
+branch is named for — both matchers compared the executable case-sensitively, the parser via a
+case-sensitive basename that kept `.exe` and the raw fallback via lowercase literals in a `case`
+statement, so the uppercase and `.exe` spellings walked past both. Windows and macOS default
+filesystems are case-insensitive and this repo develops on Windows.
+
+The patch and the report are NOT in this repository. They are preserved at
+`C:/Users/Mizzo/Claude/pmb-session-artifacts/2026-09-11/`, deliberately: their whole reason for existing is
+that the fix cannot land until the PowerShell half is written, so committing them meant carrying a
+holding pen through review. Two rounds established the cost — the payload was 88% of the diff and
+23 of round 2's 38 findings were introduced by the previous round's own remediation. The durable
+record is what belongs in the memory bank; the payload gets its own review when it is worth one, and
+may not need one at all: once the fix is applied, the classifier and harnesses exist as real files
+under `scripts/` and `tests/` and a copy of an applied patch is dead weight.
+
+**The figures that were here have been deleted
+rather than corrected.** They were v1's, and every count disagreed with the harnesses; deleting
+decaying figures beat correcting them every time (`f70e84a`). What survives restating
+is qualitative: every guard in v2 goes red when removed, and the one guard whose mutation left the
+suite GREEN was redesigned out rather than kept, because a race is not something a sequential test can
+prove. Only the bash half exists; applying it alone would leave the primary path unfixed, since
+pwsh runs first here.
+
+**`activeContext.md`'s cap is still open and 29% of its pending-work list was mis-declared.** Read
+its margins the way the 2026-09-01 bullet below already prescribes — both dimensions live, act on the
+tighter — not from any level named here. Two attempts to trim it were reverted, and the pressure is
+`[NS-42]` in the field: the same squeeze pushed the PR #12 disposition into a gitignored `handoff.md`
+that the tooling then tells the operator to delete (`[NS-52]`). `Next Steps` holds almost all of the
+file, so any trim has to come from there.
+
+Every `[NS-N]` entry then present was re-verified against the repository rather than read — the rule
+being that a self-attested completion counts as UNMET — and it held: **14 carried a status the repo
+contradicts.** For the current denominator run
+`grep -cE '^[0-9]+\. \[NS-[0-9]+\]' memory-bank/activeContext.md`; it is one higher than the pass
+saw, because `[NS-52]` is added by this same change. `[NS-33]`'s WIP is in `stash@{0}`, not the working tree it claims, so a successor would
+look, find nothing, and conclude it was lost. `[NS-13]` still tracks writing an implementation plan
+that is already written and committed. `[NS-8]` says `mb.sh` hardcodes a command list it no longer
+hardcodes. Those corrections are NOT applied here; only the finding is recorded.
+
+**Attempt 1 — have the verifying agents rewrite the entries they had just checked.** Reverted. Its
+own review found the rewrite introducing factual errors at close to the rate it corrected them: a
+miscount inside a correction, a branch tip pinned into the very file that forbids pinning counts, and
+a commit cited that `merge-base --is-ancestor` places outside this shallow clone's history. **A
+verifying pass is a good detector and a bad author.**
+
+**Attempt 2 — move the eight largest entries out verbatim, leaving generated pointers.** Also
+reverted, for two reasons worth keeping. First, "a move cannot fabricate" was true of the move and
+false of the pointer generator: a non-greedy `**...**` match terminated on the `**` inside `[NS-48]`'s
+inline code span, emitting a truncated title that dropped both the consequence and "NOT APPLIED",
+while `[NS-26]` lost its operative rule — "do NOT rebase or replay" fell to zero occurrences in the
+live file, the rule that stops a worktree-branch merge regressing the review gate. Second, the
+destination is measured unread: `docs/RETRIEVAL-BASELINE-2026-09-09.md`, committed the same day,
+found content unique to `docs/archive/` entering zero of sixteen sessions while the pointer loaded in
+all sixteen. `CLAUDE.md` loads `memory-bank/` only. Relocating RESOLVED narrative is the validated
+use of that convention; relocating live rules is not the same move.
+
+**What the two failures establish is that this cap is not reachable by eviction or by paraphrase.**
+Eviction breaks retrieval, paraphrase fabricates, and condensation-in-place does both. The remaining
+option is the one `projectbrief.md` already mandates and `CLAUDE.md:9-16` already admits does not
+exist — state available at session start, detail fetched on demand — i.e. an index, not a list.
+That is `[NS-44]`, it is a design decision rather than an edit, and it is left open deliberately
+rather than approximated a third time in the same session.
+
+**The repo's own guards blocked their own repair three times in one session** — an `rm -rf` on a
+scratch path, a patch script containing the PR-merge phrase, and a JSON payload piped to a local
+script. Each was correct by the rule as written and wrong by intent. That is the false-positive half
+of the same text-matching defect the fix addresses, and it is why the substring matcher cannot simply
+be widened.
+
+**The `opposition` tool-allowlist caveat got a second, independent observation.**
+`.claude/agents/opposition.md:26-35` — added by `d795abb`, the same commit that added the allowlist —
+already records that those `Bash(...)` entries "declare INTENT, not an enforced boundary", measured
+once on 2026-08-27, and explicitly marks it **NOT established** whether that is general harness
+behaviour, version-specific, or a misread. It reproduced on 2026-09-11 in a different session: an
+agent spawned under that list ran `sha256sum`, `bash <script>` and a `> file` redirect. A second
+observation fifteen days later weakens the version-specific reading without settling the question,
+and nothing else changes — that file's operational consequence, that the list is not a security
+boundary and a real prohibition belongs in the agent's instructions and in hooks, already stands.
+**Orchestration finding, not a repo defect: a subagent silently overwrote another's scratch file.**
+Roughly thirty subagents across seven review rounds were all told to write scratch files to one shared
+session directory. A round-7 reviewer wrote its own `classify.py` (a transcript hit-counter) over the
+gate fix's `classify.py` (the payload classifier) — same name, no namespacing, no collision detection.
+The source survived only because it had already been copied into a scratch clone under a different
+name. The loss would have been silent, and the worse shape is the one that did not happen: reading
+another agent's file as if it were one's own and drawing conclusions from it. **Give each dispatched
+agent its own subdirectory, or require a per-agent filename prefix** — a shared flat scratch directory
+across parallel agents is a silent data-loss vector, and "write only under <scratch>" is not
+sufficient instruction.
+
+## Relocated 2026-09-09 — one section moved verbatim 2026-09-17
+
+Moved to `docs/archive/progress-2026-09-09-ci-check-vacuity-and-retrieval-baseline.md` **verbatim**,
+not summarised — same precedent as every relocation above. **Why:** the Codex PreCompact recovery-only
+policy correction's two new dated entries pushed this file to 512 of its 500-line cap and the
+aggregate startup-context ratchet 3,057 bytes over `origin/main`. Citation survival grep-verified
+(`activeContext.md`'s `[NS-44]` cites the sibling doc, not this section, by name); the original
+heading is preserved below so `progress.md <date>` references still resolve.
+
+- **2026-09-09 — a CI check that had never been able to fail, and what found it**
+
+## Relocated 2026-09-01 — two sections moved verbatim 2026-09-13
+
+Moved to `docs/archive/progress-2026-09-01-review-rounds-4-5.md` **verbatim**, not summarised — the
+same precedent as every relocation above. **Why:** `progress.md` hit 520 of its 500-line CI cap after
+the 2026-09-13 `[NS-51]` entry landed; these were the oldest full-detail sections not yet relocated.
+Citation survival grep-verified before the move (`activeContext.md:40`, `[NS-48]`); each original
+heading is preserved below and in the archive file, so existing `progress.md <date>` references
+still resolve.
+
+- **2026-09-01 (round 5) — why the exit-code table stopped enumerating, and the cost of four rounds**
+- **2026-09-01 — the Request Changes round: what blocked, and two reversals of my own**
+## Relocated 2026-08-29 → 2026-08-31 — four sections moved verbatim 2026-09-11
+
+Moved to `docs/archive/progress-2026-08-29-to-31-gap-fixes-and-durable-lessons.md` **verbatim**, not
+summarised. **Delta, not a level: 12,448 bytes moved out.** Without the move this file could not have
+accepted the 2026-09-11 entry at all — the same cap deadlock recorded on 2026-08-23 and 2026-08-28.
+No level is quoted, and none should be reconstructed from this stub: read both margins live against
+`pmb-health.yml`'s caps.
+
+Citation survival grep-verified before the move; each original heading is preserved below and in the
+archive file, so existing `progress.md` <date> references still resolve.
+
+**STILL OPEN — carried forward, not relocated.** The four sections below are archived narrative, but
+four of their findings are self-marked unfixed, and `CLAUDE.md` loads `memory-bank/` only, so the
+archive cannot hold a live rule. (1) **The BLOCK-tier hook receives TRUNCATED payloads**:
+`.pmb-hook-errors.log` has carried `Unterminated string` since 2026-08-17, the hook then falls back
+to matching raw text, and **a BLOCK substring past the truncation point is not seen** — undiagnosed,
+and separate from the OEM-code-page fix. (2) **Mutate a scratch copy, not the shared tree** —
+copy-aside-and-restore can revert a peer's concurrent edit, and checksum-verifying the restore proves
+your copy intact, not that nobody else wrote. (3) ACR availability is decided in two places with
+different criteria, and `mb preflight` reads `ACR_VER` without ever comparing it. (4) `show_slim()`
+and `Show-Slim` exist in both shells and are dispatched from neither.
+
+- **2026-08-31 (post-review) — the gap fixes, and the one finding that came from reading ACR's source**
+- **2026-08-30 — two durable lessons; the change itself is in the commit message**
+- **2026-08-30 — Contract 1: what the commit message cannot carry**
+- **2026-08-29 — absence-claim scope rule (`a11e4df`); a review-gate defect recorded**
+
+## Relocated 2026-08-31 — “what four Opposition rounds cost, and the one rule worth keeping”, moved verbatim 2026-09-09
+
+Moved to `docs/archive/progress-2026-08-31-opposition-rounds.md` to clear the 500-line CI cap; this
+file stood at 498/500 and could not accept the dated entry the `PreCompact` gate requires — the gate
+demanded exactly what the cap forbade, and the gate was measured exiting 2 before this pass.
+**18,208 bytes and 173 lines moved out.** Stated as a delta rather than
+before/after totals, which decay on the next edit. Second occurrence of this bind; see the archive
+file's header for why that is structural rather than incidental.
+
+## Review rounds 4-9 (2026-08-23 → 2026-08-25) — relocated 2026-08-26, detail in `docs/MEMORY-BANK-PARADIGM-REVIEW.md`
+
+Five dated sections were moved **verbatim** to `docs/MEMORY-BANK-PARADIGM-REVIEW.md` § "Rounds 4-9"
+— nothing summarised, reworded or deleted — because this file had 5 bytes of headroom against its
+60,000-byte CI hard-fail. Same convention the Round 10 entry already uses. Each keeps its heading
+there, so a citation to any of them still resolves:
+
+- **2026-08-25 — Round 9 Completed (all six domains); Separator Hole Closed; Figures Corrected Outward**
+- **2026-08-24 (rounds 8-9) — Round 8's Fixes Rejected by Round 8; Round 9 Then Found the Gap Class Was Itself a Bypass**
+- **2026-08-24 (continued) — Review Round 7 — condensed; all five findings superseded by rounds 8-9**
+- **2026-08-24 — Review Round 6: One Blocker, Two Pre-Existing Bypasses Closed, Cap Metric Fixed**
+- **2026-08-23 — Review Round 4: A Pre-Existing Critical, and a Fix Withdrawn** — cited by `[NS-35]`
 
 ## 2026-08-12 — Fleet Version Drift Incident (reported, not yet fixed)
 
-- 📌 `ai-code-review-agent` drifted 2 versions behind PMB, ran a 13-task feature under stale
-  governance hooks before caught; not yet fixed (blocked on that session's own cross-repo write
-  boundary). Full detail: `activeContext.md`'s `[NS-14]`, which carries the current-state summary —
-  not duplicated here.
+- 📌 ACR drifted 2 versions behind PMB and ran a 13-task feature under stale governance hooks before
+  it was caught; still unfixed. Current state: `activeContext.md`'s `[NS-14]`.
 
-## Earlier Work (2026-07-02 through 2026-08-10) — condensed, full detail archived
+## Relocated 2026-07-02 → 2026-08-10 — "Earlier Work", moved verbatim 2026-10-14
 
-- **2026-07-16 through 2026-08-05 — Review-gate mechanism evolution**: self-attestation fix (marker-write
-  moved into the last dispatched review subagent), a false-positive fix in `review-reminders.sh`'s
-  command matching, the confirm-step redesign (durable `docs/review-log/` + user-confirmed marker write),
-  a worktree-root-resolution fix (closed a real denial-from-inside-a-worktree bug), a hook-lib dedup
-  (`_review-gate-lib.sh`/`.ps1`), and the confirm-step's first live whole-branch review (found and fixed
-  one real Blocking finding). Full detail: `docs/archive/progress-2026-07-review-gate-evolution.md`.
-- **2026-07-02 through 2026-07-13 — Repo governance, CI hardening, branch protection**: `mb upgrade`
-  slash-command auto-discovery fixes, 4 pre-existing CI failures closed (SAST config, 2 false-positive
-  greps, PowerShell lint), CI hardening across 3 downstream repos, branch protection rolled out to 5
-  public repos, a real hash byte-mismatch bug fixed (bash vs. PowerShell diverged on trailing-newline
-  handling), the cross-repo write boundary hook built after a real incident (this session wrote into
-  another repo's working directory without checking ownership), and the review-flow fleet audit (found
-  real enforcement in only 2 of 11 repos). Full detail:
-  `docs/archive/progress-2026-07-repo-governance-and-ci.md`.
-- **2026-07-14, 2026-07-23 — `mb backlog` Task 1 + mb update-notifier**: `mb backlog`'s Task 1 shipped
-  with two real Critical/High security bugs found and fixed (path traversal, sed-delimiter injection);
-  Tasks 2-5 not started (`[NS-0]`). The update-notifier shipped clean, but the same session produced an
-  authorization-drift incident (a "what do you suggest" non-answer treated as merge approval) that
-  produced the "What Counts as Approval" rule. Full detail:
-  `docs/archive/progress-2026-07-mb-backlog-and-notifier.md`.
-- **2026-08-08, 2026-08-10 — Concurrent session claims + memory-bank freshness hook**: session-claims
-  shipped (13 tasks + 5 post-review fixes, including one found only by a final whole-branch review after
-  every individual task had already passed its own two-stage review); the freshness-hook spec was
-  designed and committed but not yet implemented (`[NS-13]`). Full detail:
-  `docs/archive/progress-2026-08-freshness-and-session-claims.md`.
+Moved to `docs/archive/progress-2026-07-02-to-08-10-earlier-work.md` **verbatim** to fund the
+PR #55 delta under the ratchet. Delta and citation check: that file's header.
 
-## What's In This Fork
-
-Status: Ready. Personal fork of the enterprise Memory Bank standard — lifecycle management and provenance tracking implemented.
-
-- ✅ Memory Bank system (5-file + handoff protocol) + authority hierarchy + 3-dimension frontmatter
-- ✅ Provenance frontmatter: compaction_generation, source_type, confidence, lineage
-- ✅ Security Guardrails (BLOCK/CONFIRM/WARN) + 9-rule registry (SECURITY-RULES.md) + 9 security fixtures
-- ✅ Code Quality, Logging, 7-phase Workflow standards; Supply Chain, MCP Security, Rules-File Integrity (reference)
-- ✅ Slash commands: /pmb-status, /code-review, /feature-dev, /security-review, /test-audit, /health-check, /mb-drift, /change-review
-- ✅ mb CLI: init, status, doctor (25 checks), query, clean, commit, upgrade, verify-integrity, plan (status/list/promote/archive) + deprecated aliases
-- ✅ Hook suite: dangerous-commands blocker, contract scope check, delegation depth check, auto-last-reviewed, PreCompact memory gate, review gate
-- ✅ Versioned git hooks via core.hooksPath (.githooks/pre-push + pre-commit), distributed by mb upgrade (TEMPLATE_OWNED)
-- ✅ mb upgrade: TEMPLATE_OWNED/ADVISORY_DIFF/ADVISORY_CREATE distribution model; remote version check
-- ✅ CI: template-integrity job + SAST (Semgrep p/bash); CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40
-- ✅ install.bat / install.sh, examples/task-tracker-api, VERSION, CHANGELOG.md, docs/COMMANDS-REFERENCE.md
-- ✅ Cursor rules (5 rules + code-review rule)
-
-Full history: CHANGELOG.md
-
-## Removed vs Enterprise
-
-Eric Nolan branding/brand assets; Data Classification, Model Governance, OWASP LLM Top 10 (compliance only);
-Incident Runbook, accessibility review command; enterprise logging (PII redaction, correlation IDs);
-team onboarding scripts and training materials.
+- **Earlier Work (2026-07-02 through 2026-08-10) — condensed, full detail archived**
 
 ## Backlog
 
 Deferred pending operational evidence: handoff CLI, pinned.md, mb update --from-git, mb privacy.
 
-## Earlier Sessions (2026-06-19 to 2026-06-24) — condensed, full detail in CHANGELOG.md
+## Reference Sections — relocated 2026-08-23
 
-- ✅ **06-19:** Semantic drift checks 21-23 added to `mb doctor`; `/mb-drift` skill created; startup context trimmed to below 25 KB.
-- ✅ **06-22:** `docs/plans/` + `.claude/plans/` workflow scaffolded; `mb plan status|list|promote|archive`; doctor check 24 (plan hygiene); `/change-review` command created (9-job review + ACR bridge).
-- ✅ **06-24 Audit Sprint:** Bug fixes (settings.json JSON, pre-compact false positives, TRUNCATE/DELETE guardrails); 8 new test files (115 assertions); CI hardened to 9 jobs (PSScriptAnalyzer, mb-doctor-self-check); perf fixes (O(n²) pre-cache); ACR P0/P1/P2 (comment markers, SARIF, GitHub annotations, schemaVersion).
-
-## Satellite Projects
-
-- **ai-code-review-agent** — `unyieldingclaw-dev/ai-code-review-agent`. v1.1.0: 15 observe-only agents, profiles, --context memory-bank, SARIF, GitHub annotations, agentPolicy, integration contract. 276 tests passing.
+Project inventory, scope-delta vs enterprise, the 2026-06-19/24 session summary, and satellite-project
+pointers moved **verbatim** to `docs/archive/progress-reference-sections-2026-08-23.md` to recover line
+headroom under the 400-line CI cap. Nothing was condensed or rewritten. `## Backlog` stays above because
+it is still actionable. One-time recovery, not a fix — see `[NS-35]` decision 3.

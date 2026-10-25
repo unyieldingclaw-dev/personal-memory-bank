@@ -40,6 +40,12 @@ invoke_hook_ps1() {
     | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null)
 }
 
+invoke_post_hook_ps1() {
+  local command="$1"
+  printf '{"tool_input":{"command":"%s"}}' "$command" \
+    | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders-post.ps1" 2>/dev/null)
+}
+
 win_path_for_json() {
   # win_path_for_json <posix-path> — converts a bash-style POSIX path (e.g. from mktemp -d)
   # into a JSON-string-safe native Windows path, for embedding inside a command string sent
@@ -97,6 +103,9 @@ write_marker_bash_recipe() {
 echo ""
 echo "--- commit gate: bash recipe accepted by review-reminders.sh ---"
 echo "line two" >> "$TMPDIR_RR/file.txt"
+# Staged, not just edited: the commit gate refuses while tracked changes are unstaged (OPP6-1,
+# covered at the end of this file), so every commit-gate fixture below stages what it reviews.
+git -C "$TMPDIR_RR" add file.txt
 write_marker_bash_recipe ".code-review-ok"
 resp=$(invoke_hook "review-reminders.sh" "git commit -m test")
 assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh accepts a marker written via its own documented bash recipe"
@@ -112,6 +121,7 @@ if command -v pwsh >/dev/null 2>&1; then
   echo ""
   echo "--- cross-shell parity: bash-written marker accepted by review-reminders.ps1 ---"
   echo "line three" >> "$TMPDIR_RR/file.txt"
+  git -C "$TMPDIR_RR" add file.txt
   write_marker_bash_recipe ".code-review-ok"
   resp=$(invoke_hook_ps1 "git commit -m test3")
   assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 accepts a marker written via the bash-documented recipe (regression test for the trailing-newline hash mismatch)"
@@ -136,28 +146,49 @@ echo ""
 echo "--- post-hook: reissues marker via diff_hash() after a failed commit attempt ---"
 rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha"
 presha=$(git -C "$TMPDIR_RR" rev-parse HEAD)
-printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+reviewed_c=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+printf '%s %s' "$presha" "$reviewed_c" > "$TMPDIR_RR/.claude/.pending-commit-presha"
 invoke_hook "review-reminders-post.sh" "git commit -m test5" >/dev/null
 expected=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
 actual=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
 assert_contains "$actual" "$expected" "review-reminders-post.sh reissues .code-review-ok with the correct diff_hash() output when HEAD didn't move (failed commit)"
 
-# ── post-hook: reissues a marker after a failed push attempt (origin/main path, not fallback) ─
+# ── push recovery: never infer success from the configured upstream ───────────────────────
 echo ""
-echo "--- post-hook: reissues marker via diff_hash() after a failed push attempt (origin/main exists) ---"
+echo "--- push recovery: alternate-remote success stays single-use; no-upstream failure does not mint state ---"
 BAREDIR_RR="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-bare)"
+BAREDIR_ALT_RR="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-alt-bare)"
 git init -q --bare "$BAREDIR_RR"
+git init -q --bare "$BAREDIR_ALT_RR"
 git -C "$TMPDIR_RR" remote add origin "$BAREDIR_RR" 2>/dev/null || git -C "$TMPDIR_RR" remote set-url origin "$BAREDIR_RR"
+git -C "$TMPDIR_RR" remote add alternate "$BAREDIR_ALT_RR" 2>/dev/null || git -C "$TMPDIR_RR" remote set-url alternate "$BAREDIR_ALT_RR"
+git -C "$TMPDIR_RR" add file.txt
+git -C "$TMPDIR_RR" commit -q -m "push recovery baseline"
 git -C "$TMPDIR_RR" push -q -u origin main 2>/dev/null
+echo "alternate remote change" >> "$TMPDIR_RR/file.txt"
+git -C "$TMPDIR_RR" add file.txt
+git -C "$TMPDIR_RR" commit -q -m "alternate remote change"
 
 rm -f "$TMPDIR_RR/.claude/.change-review-ok" "$TMPDIR_RR/.claude/.pending-push-presha"
-presha=$(git -C "$TMPDIR_RR" rev-parse '@{u}')
-printf '%s' "$presha" > "$TMPDIR_RR/.claude/.pending-push-presha"
-invoke_hook "review-reminders-post.sh" "git push origin main" >/dev/null
-expected=$(git -C "$TMPDIR_RR" diff origin/main...HEAD | sha256sum | cut -d' ' -f1)
-actual=$(cat "$TMPDIR_RR/.claude/.change-review-ok" 2>/dev/null)
-assert_contains "$actual" "$expected" "review-reminders-post.sh reissues .change-review-ok with the correct diff_hash() output when the upstream ref didn't move (failed push, origin/main path)"
-rm -rf "$BAREDIR_RR"
+reviewed_p=$(git -C "$TMPDIR_RR" diff origin/main...HEAD | sha256sum | cut -d' ' -f1)
+printf '%s' "$reviewed_p" > "$TMPDIR_RR/.claude/.change-review-ok"
+resp=$(invoke_hook "review-reminders.sh" "git push alternate HEAD:refs/heads/main")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh accepts an alternate-remote push with its matching marker"
+assert_file_not_exists "$TMPDIR_RR/.claude/.pending-push-presha" "review-reminders.sh does not create ambiguous push-recovery state"
+git -C "$TMPDIR_RR" push -q alternate HEAD:refs/heads/main
+invoke_hook "review-reminders-post.sh" "git push alternate HEAD:refs/heads/main" >/dev/null
+assert_file_not_exists "$TMPDIR_RR/.claude/.change-review-ok" "a successful alternate-remote push remains single-use even though the configured upstream did not move"
+
+git -C "$TMPDIR_RR" branch --unset-upstream
+printf '%s' "$reviewed_p" > "$TMPDIR_RR/.claude/.change-review-ok"
+resp=$(invoke_hook "review-reminders.sh" "git push missing-remote HEAD")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh accepts the reviewed no-upstream push attempt"
+assert_file_not_exists "$TMPDIR_RR/.claude/.pending-push-presha" "a no-upstream push attempt creates no unverifiable recovery state"
+invoke_hook "review-reminders-post.sh" "git push missing-remote HEAD" >/dev/null
+assert_file_not_exists "$TMPDIR_RR/.claude/.change-review-ok" "a failed no-upstream push requires a fresh review instead of minting a marker"
+git -C "$TMPDIR_RR" branch --set-upstream-to=origin/main main >/dev/null 2>&1
+echo "line after push policy" >> "$TMPDIR_RR/file.txt"
+rm -rf "$BAREDIR_RR" "$BAREDIR_ALT_RR"
 
 # ── merge gate: gh pr merge is unconditionally denied ────────────────────────────────────────
 echo ""
@@ -185,6 +216,24 @@ else
   echo "--- merge gate PowerShell tests: SKIPPED (pwsh not installed on this machine) ---"
 fi
 
+# A compound command cannot spend one marker on multiple guarded actions. In particular,
+# the unconditional merge denial must not be downgraded because a commit appeared first.
+echo ""
+echo "--- compound guarded actions are denied before any marker is consumed ---"
+write_marker_bash_recipe ".code-review-ok"
+resp=$(invoke_hook "review-reminders.sh" "git commit -m x && gh pr merge 25")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies commit-then-merge as a compound guarded command"
+assert_file_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders.sh does not consume a commit marker for a denied compound command"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+
+if command -v pwsh >/dev/null 2>&1; then
+  write_marker_bash_recipe ".code-review-ok"
+  resp=$(invoke_hook_ps1 "git commit -m x && gh pr merge 25")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies commit-then-merge as a compound guarded command"
+  assert_file_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders.ps1 does not consume a commit marker for a denied compound command"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+fi
+
 # ── worktree-root fix: hook resolves root from the command's own leading cd ─────────────────
 echo ""
 echo "--- worktree-root fix: correct marker found via leading cd, even when spawned elsewhere ---"
@@ -193,6 +242,7 @@ if command -v python3 >/dev/null 2>&1; then
   git init -q -b main "$TMPDIR_WRONG_RR"
 
   echo "line five" >> "$TMPDIR_RR/file.txt"
+  git -C "$TMPDIR_RR" add file.txt
   write_marker_bash_recipe ".code-review-ok"
   resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_WRONG_RR" "cd \\\"$TMPDIR_RR\\\" && git commit -m test6")
   assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh resolves root from the command's leading cd, finding the correct marker, even though the hook process itself was spawned from an unrelated directory"
@@ -200,6 +250,7 @@ if command -v python3 >/dev/null 2>&1; then
   echo ""
   echo "--- worktree-root fix: negative control (wrong marker at the cd-derived root still denies) ---"
   echo "line six" >> "$TMPDIR_RR/file.txt"
+  git -C "$TMPDIR_RR" add file.txt
   # Explicitly write a marker that does NOT match the current diff (rather than relying on
   # the previous test's marker having been consumed) -- this specifically proves a *wrong*
   # marker at the cd-derived root is rejected, not just an *absent* one (already covered by
@@ -208,15 +259,25 @@ if command -v python3 >/dev/null 2>&1; then
   resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_WRONG_RR" "cd \\\"$TMPDIR_RR\\\" && git commit -m test7")
   assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh still denies via the cd-derived root when the marker there doesn't match the diff, proving the fix doesn't weaken hash validation"
 
-  # The deny above is ambiguous by itself: it looks identical whether root resolution correctly
-  # found $TMPDIR_RR and rejected its stale marker, OR silently fell back to $TMPDIR_WRONG_RR
-  # (which has no .claude/ directory at all) and denied for finding no marker whatsoever --
-  # confirmed by direct reproduction that this test previously couldn't tell the two apart.
-  # consume_marker()'s atomic mv only removes the marker file it actually operates on, so
-  # checking that the marker at $TMPDIR_RR/.claude/.code-review-ok is gone afterward proves the
-  # hook really did resolve root to $TMPDIR_RR (not fall back), and denied because its content
-  # didn't match -- not for the wrong reason.
-  assert_file_not_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders.sh consumed the marker at the cd-derived root (not a wrong fallback directory), confirming the prior deny was a real hash mismatch rather than root-resolution silently failing"
+  # The gate now claims then restores, so a mismatch leaves the marker in place. That is
+  # the fix for the marker-destruction defect, and it also removes the signal this test used
+  # to rely on: marker-gone no longer proves the hook resolved root correctly, because a
+  # matching marker is the only thing that consumes now.
+  #
+  # Pin the peek behaviour explicitly -- a denial must not destroy an earned marker.
+  assert_file_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders.sh does NOT consume the marker when the hash mismatches, so a denial cannot burn an expensively-earned review (peek-before-consume)"
+
+  # Then prove root resolution POSITIVELY, which is strictly stronger than the old
+  # consumption check: place a marker at the cd-derived root that DOES match the diff. If
+  # root resolution works, the gate allows and writes its presha at that root. If it silently
+  # fell back to $TMPDIR_WRONG_RR (which has no .claude/ at all) it would find no marker and
+  # deny. Allow-plus-presha-at-the-right-path is therefore unambiguous.
+  good_hash=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+  printf '%s' "$good_hash" > "$TMPDIR_RR/.claude/.code-review-ok"
+  rm -f "$TMPDIR_RR/.claude/.pending-commit-presha"
+  resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_WRONG_RR" "cd \\\"$TMPDIR_RR\\\" && git commit -m test7b")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh allows via the cd-derived root when the marker there matches the diff, proving root resolution found the real root"
+  assert_file_exists "$TMPDIR_RR/.claude/.pending-commit-presha" "review-reminders.sh wrote its presha at the cd-derived root, confirming root resolution rather than a silent fallback"
 
   rm -rf "$TMPDIR_WRONG_RR"
 else
@@ -251,6 +312,7 @@ if command -v python3 >/dev/null 2>&1; then
   rm -f "$tmp"
 
   echo "line seven" >> "$TMPDIR_RR/file.txt"
+  git -C "$TMPDIR_RR" add file.txt
   rm -f "$TMPDIR_RR/.claude/.code-review-ok"
   resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_DECOY_A" "cd \\\"$TMPDIR_DECOY_A\\\" && cd \\\"$TMPDIR_RR\\\" && git commit -m test8")
   assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh resolves root to the LAST cd (RR) in a chained command, not the first (decoy A) — denies because RR has no valid marker of its own, proving decoy A's valid-but-unrelated marker cannot be reused to authorize a commit actually happening in RR"
@@ -297,6 +359,7 @@ if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
   rm -f "$tmp"
 
   echo "line nine" >> "$TMPDIR_RR/file.txt"
+  git -C "$TMPDIR_RR" add file.txt
   rm -f "$TMPDIR_RR/.claude/.code-review-ok"
   DECOY_A_PS1_WIN="$(win_path_for_json "$TMPDIR_DECOY_A_PS1")"
   TMPDIR_RR_WIN="$(win_path_for_json "$TMPDIR_RR")"
@@ -323,6 +386,7 @@ if command -v python3 >/dev/null 2>&1; then
   git init -q -b main "$TMPDIR_WRONG_WS"
 
   echo "line eight" >> "$TMPDIR_RR/file.txt"
+  git -C "$TMPDIR_RR" add file.txt
   write_marker_bash_recipe ".code-review-ok"
   resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_WRONG_WS" "cd \\\"$TMPDIR_RR\\\"&&git commit -m test9")
   assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh resolves root from a cd prefix with no space before && (tight-whitespace variant), even though the hook process was spawned from an unrelated directory"
@@ -347,6 +411,7 @@ if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
   git init -q -b main "$TMPDIR_WRONG_WS_PS1"
 
   echo "line ten" >> "$TMPDIR_RR/file.txt"
+  git -C "$TMPDIR_RR" add file.txt
   write_marker_bash_recipe ".code-review-ok"
   TMPDIR_RR_WIN="$(win_path_for_json "$TMPDIR_RR")"
   resp=$(invoke_hook_ps1_from "$TMPDIR_WRONG_WS_PS1" "cd \\\"$TMPDIR_RR_WIN\\\"&&git commit -m test9ps1")
@@ -365,16 +430,38 @@ fi
 # one file's sourcing line isn't guaranteed to be caught by testing only one representative
 # file per language.
 echo ""
-echo "--- fail-open: review-reminders.sh exits 0 when _review-gate-lib.sh is missing ---"
+echo "--- lib missing: a GUARDED verb is denied, an unguarded command is not ---"
+# POLICY CHANGE, deliberate and reversible. This block previously asserted the opposite --
+# that a missing _review-gate-lib.sh must NOT deny ("fails open, doesn't wrongfully block").
+# That was a considered position, not an oversight: [NS-26] records the fear that a broken
+# gate makes commits impossible at all, and --no-verify is CONFIRM-tier and user-run only, so
+# a gate that bricks the repo is worse than a gate that is off.
+#
+# What changed is the evidence. `mb upgrade` run inside a git worktree MANUFACTURES the
+# lib-missing state: it copies main's review-reminders.sh (which dot-sources the lib) while
+# the TEMPLATE_OWNED list it copies from is the literal in the worktree's own older mb.sh,
+# which predates the lib. So fail-open is not a rare broken installation -- it is a state the
+# repo's own upgrade path produces, silently, in the trees most likely to be working
+# unattended. A gate that is off for that reason grants approval nobody earned.
+#
+# The work-stoppage concern is answered by SCOPE rather than by allowing: the deny fires only
+# once the payload has already been classified as a guarded verb, so every other command in a
+# lib-less tree proceeds untouched. The control below is what proves that, and it is why this
+# is a discriminating test rather than a blanket "deny everything".
+#
+# To revert to fail-open, restore the single `|| exit 0` sourcing line in
+# scripts/review-reminders.sh and flip the two assertions here.
 LIBBAK_SH="$REPO_ROOT/scripts/_review-gate-lib.sh.bak"
 trap '[ -f "$LIBBAK_SH" ] && mv "$LIBBAK_SH" "$REPO_ROOT/scripts/_review-gate-lib.sh"; trap - EXIT' EXIT
 mv "$REPO_ROOT/scripts/_review-gate-lib.sh" "$LIBBAK_SH"
-resp=$(printf '{"tool_input":{"command":"git commit -m test"}}' | (cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" 2>/dev/null))
+resp=$(printf '{"tool_input":{"command":"git commit -m test"}}' > "$TMPDIR_RR/libmissing.json"; cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" < "$TMPDIR_RR/libmissing.json" 2>/dev/null)
 rc=$?
+resp_benign=$(printf '{"tool_input":{"command":"ls -la"}}' > "$TMPDIR_RR/libmissing-benign.json"; cd "$TMPDIR_RR" && bash "$REPO_ROOT/scripts/review-reminders.sh" < "$TMPDIR_RR/libmissing-benign.json" 2>/dev/null)
 mv "$LIBBAK_SH" "$REPO_ROOT/scripts/_review-gate-lib.sh"
 trap - EXIT
-assert_exit_zero $rc "review-reminders.sh exits 0 when _review-gate-lib.sh is missing (fails open, doesn't crash)"
-assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not deny when _review-gate-lib.sh is missing (fails open, doesn't wrongfully block)"
+assert_exit_zero $rc "review-reminders.sh still exits 0 when _review-gate-lib.sh is missing (a hook must not crash)"
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh DENIES a guarded verb when _review-gate-lib.sh is missing (fail-closed: a gate that cannot check must not approve)"
+assert_not_contains "$resp_benign" '"permissionDecision":"deny"' "review-reminders.sh does NOT deny an unguarded command when the lib is missing (matched control, so the assertion above cannot pass by denying everything)"
 
 echo ""
 echo "--- fail-open: review-reminders-post.sh exits 0 when _review-gate-lib.sh is missing ---"
@@ -396,8 +483,16 @@ if command -v pwsh >/dev/null 2>&1; then
   rc=$?
   mv "$LIBBAK_PS1" "$REPO_ROOT/scripts/_review-gate-lib.ps1"
   trap - EXIT
-  assert_exit_zero $rc "review-reminders.ps1 exits 0 when _review-gate-lib.ps1 is missing (fails open)"
-  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 does not deny when _review-gate-lib.ps1 is missing (fails open)"
+  assert_exit_zero $rc "review-reminders.ps1 exits 0 when _review-gate-lib.ps1 is missing (a hook must not crash)"
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies a guarded verb when _review-gate-lib.ps1 is missing"
+
+  LIBBAK_PS1="$REPO_ROOT/scripts/_review-gate-lib.ps1.bak"
+  trap '[ -f "$LIBBAK_PS1" ] && mv "$LIBBAK_PS1" "$REPO_ROOT/scripts/_review-gate-lib.ps1"; trap - EXIT' EXIT
+  mv "$REPO_ROOT/scripts/_review-gate-lib.ps1" "$LIBBAK_PS1"
+  resp_benign=$(printf '{"tool_input":{"command":"git status --short"}}' | (cd "$TMPDIR_RR" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null))
+  mv "$LIBBAK_PS1" "$REPO_ROOT/scripts/_review-gate-lib.ps1"
+  trap - EXIT
+  assert_not_contains "$resp_benign" '"permissionDecision":"deny"' "review-reminders.ps1 does not deny an unguarded command when the lib is missing"
 
   echo ""
   echo "--- fail-open: review-reminders-post.ps1 exits 0 when _review-gate-lib.ps1 is missing ---"
@@ -411,6 +506,500 @@ if command -v pwsh >/dev/null 2>&1; then
 else
   echo ""
   echo "--- fail-open PowerShell tests: SKIPPED (pwsh not installed on this machine) ---"
+fi
+
+# ── post-hook: the reissue is BOUND to the reviewed hash (the critical-bypass regression) ───
+# WHY this exists, and why the negative case is the one that matters:
+#
+# review-reminders.sh consumes the marker and writes .pending-commit-presha BEFORE the guarded
+# tool runs. If that call is then denied by any other hook, PostToolUse never fires and the
+# presha survives. The old post-hook recomputed diff_hash HEAD at post time and wrote it as a
+# fresh marker, so a later command whose text matched the verb minted a marker for a tree
+# nobody had reviewed. Reproduced on both shells; an `echo` was sufficient.
+#
+# The fix records "<presha> <reviewed-hash>" and reissues only a marker equal to the recorded
+# reviewed hash. A mutation removing that comparison leaves the rest of this file fully green,
+# which is why the negative case below is not optional.
+echo ""
+echo "--- post-hook: refuses to reissue a marker for a tree that changed after the review ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha"
+presha_b=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+# A reviewed-hash that is deliberately NOT the current tree's hash: this stands in for "the
+# tree changed after the review was earned".
+printf '%s %s' "$presha_b" "2222222222222222222222222222222222222222222222222222222222222222" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+invoke_hook "review-reminders-post.sh" "git commit -m test-bind" >/dev/null
+assert_file_not_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders-post.sh does NOT reissue a marker when the recorded reviewed hash no longer matches the tree (closes the presha-residue bypass)"
+
+# Matched positive control: with the CORRECT reviewed hash recorded, the reissue still works.
+# Without this, a post-hook that simply never reissued would pass the assertion above.
+rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha"
+reviewed_b=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+printf '%s %s' "$presha_b" "$reviewed_b" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+invoke_hook "review-reminders-post.sh" "git commit -m test-bind2" >/dev/null
+actual_b=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
+assert_contains "$actual_b" "$reviewed_b" "review-reminders-post.sh still reissues the marker when the reviewed hash matches (matched control, so the test above cannot pass by never reissuing)"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha"
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- PowerShell post-hook: reissue stays bound to the reviewed hash ---"
+  printf '%s %s' "$presha_b" "3333333333333333333333333333333333333333333333333333333333333333" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+  invoke_post_hook_ps1 "git commit -m test-bind-ps1" >/dev/null
+  assert_file_not_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders-post.ps1 does not reissue a marker for a tree changed after review"
+
+  reviewed_ps=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+  printf '%s %s' "$presha_b" "$reviewed_ps" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+  invoke_post_hook_ps1 "git commit -m test-bind-ps1-control" >/dev/null
+  actual_ps=$(cat "$TMPDIR_RR/.claude/.code-review-ok" 2>/dev/null)
+  assert_contains "$actual_ps" "$reviewed_ps" "review-reminders-post.ps1 reissues only the matching reviewed hash"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha"
+fi
+
+# ── push gate: denies on a hash mismatch (previously ZERO coverage) ─────────────────────────
+# WHY this exists: a mutation replacing the push gate's equality test with a tautology left
+# the suite at full green, because the only push-gate assertion was an accept case. The
+# property the .change-review-ok marker exists to provide -- that the pushed diff is the
+# reviewed diff -- therefore had no regression protection at all.
+echo ""
+echo "--- push gate: a non-matching .change-review-ok is rejected, and survives the denial ---"
+rm -f "$TMPDIR_RR/.claude/.change-review-ok" "$TMPDIR_RR/.claude/.pending-push-presha"
+printf '%s' "1111111111111111111111111111111111111111111111111111111111111111" > "$TMPDIR_RR/.claude/.change-review-ok"
+resp=$(invoke_hook "review-reminders.sh" "git push origin HEAD")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies a push whose .change-review-ok does not match the diff"
+assert_file_exists "$TMPDIR_RR/.claude/.change-review-ok" "review-reminders.sh does NOT consume a non-matching .change-review-ok (peek-before-consume on the push gate too)"
+rm -f "$TMPDIR_RR/.claude/.change-review-ok"
+
+# ── argument forms: git's global options must not smuggle the verb past the gate ────────────
+# WHY: `git -C <dir> commit`, `git -c k=v commit` and `git -C <dir> push` each perform the
+# guarded action while containing neither two-word substring the old matcher looked for. All
+# three were measured passing the gate against matched controls that were correctly denied.
+echo ""
+echo "--- argument forms: -C / -c / REST merge are gated, read-only git is not ---"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+for form in "git -C . commit -m x" "git -c user.name=x commit -m x" "git -C . push origin HEAD"; do
+  resp=$(invoke_hook "review-reminders.sh" "$form")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh gates the form: $form"
+done
+resp=$(invoke_hook "review-reminders.sh" "git log --oneline -5")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh does not gate read-only git (matched control for the forms above)"
+
+if command -v pwsh >/dev/null 2>&1; then
+  echo ""
+  echo "--- PowerShell argument forms: -C / -c / REST merge are gated, read-only git is not ---"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.change-review-ok"
+  for form in "git -C . commit -m x" "git -c user.name=x commit -m x" "git -C . push origin HEAD" "gh api -X PUT repos/o/r/pulls/25/merge"; do
+    resp=$(invoke_hook_ps1 "$form")
+    assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 gates the form: $form"
+  done
+  resp=$(invoke_hook_ps1 "git log --oneline -5")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 does not gate read-only git"
+fi
+
+# ── explicit git -C root: authorization must bind to the TARGET repository ────────────────
+echo ""
+echo "--- git -C root binding: an ambient marker cannot authorize a different repository ---"
+TMPDIR_CROOT="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-croot)"
+git -C "$TMPDIR_CROOT" init -q -b main
+git -C "$TMPDIR_CROOT" config user.email "test@example.com"
+git -C "$TMPDIR_CROOT" config user.name "Test"
+echo "base" > "$TMPDIR_CROOT/file.txt"
+git -C "$TMPDIR_CROOT" add file.txt
+git -C "$TMPDIR_CROOT" commit -q -m initial
+mkdir -p "$TMPDIR_CROOT/.claude"
+echo "target change" >> "$TMPDIR_CROOT/file.txt"
+git -C "$TMPDIR_CROOT" add file.txt
+
+ambient_hash=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+target_hash=$(git -C "$TMPDIR_CROOT" diff HEAD | sha256sum | cut -d' ' -f1)
+printf '%s' "$ambient_hash" > "$TMPDIR_RR/.claude/.code-review-ok"
+rm -f "$TMPDIR_RR/.claude/.pending-commit-presha" "$TMPDIR_CROOT/.claude/.pending-commit-presha"
+resp=$(invoke_hook "review-reminders.sh" "git -C $TMPDIR_CROOT commit -m target")
+assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh refuses git -C when only the ambient repository has a valid marker"
+assert_file_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders.sh leaves the unrelated ambient marker untouched"
+
+printf '%s' "$target_hash" > "$TMPDIR_CROOT/.claude/.code-review-ok"
+resp=$(invoke_hook "review-reminders.sh" "git -C $TMPDIR_CROOT commit -m target")
+assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh accepts git -C only from the target repository's matching marker"
+assert_file_not_exists "$TMPDIR_CROOT/.claude/.code-review-ok" "review-reminders.sh consumes the target repository's marker"
+assert_file_exists "$TMPDIR_CROOT/.claude/.pending-commit-presha" "review-reminders.sh writes recovery state in the target repository"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_RR/.claude/.pending-commit-presha" "$TMPDIR_CROOT/.claude/.pending-commit-presha"
+
+if command -v pwsh >/dev/null 2>&1; then
+  target_win=$(win_path_for_json "$TMPDIR_CROOT")
+  printf '%s' "$ambient_hash" > "$TMPDIR_RR/.claude/.code-review-ok"
+  resp=$(invoke_hook_ps1 "git -C \\\"$target_win\\\" commit -m target")
+  assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 refuses git -C when only the ambient repository has a valid marker"
+  assert_file_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders.ps1 leaves the unrelated ambient marker untouched"
+
+  printf '%s' "$target_hash" > "$TMPDIR_CROOT/.claude/.code-review-ok"
+  resp=$(invoke_hook_ps1 "git -C \\\"$target_win\\\" commit -m target")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 accepts git -C only from the target repository's matching marker"
+  assert_file_not_exists "$TMPDIR_CROOT/.claude/.code-review-ok" "review-reminders.ps1 consumes the target repository's marker"
+  assert_file_exists "$TMPDIR_CROOT/.claude/.pending-commit-presha" "review-reminders.ps1 writes recovery state in the target repository"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok" "$TMPDIR_CROOT/.claude/.pending-commit-presha"
+fi
+
+# ── post-hook classification: no prose false positive; -C attempts are reconciled ─────────
+echo ""
+echo "--- post-hook classification follows the pre-hook classifier ---"
+presha_c=$(git -C "$TMPDIR_RR" rev-parse HEAD)
+reviewed_c=$(git -C "$TMPDIR_RR" diff HEAD | sha256sum | cut -d' ' -f1)
+printf '%s %s' "$presha_c" "$reviewed_c" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+invoke_hook "review-reminders-post.sh" "echo documenting the git commit gate" >/dev/null
+assert_file_not_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders-post.sh ignores prose that merely mentions the guarded verb"
+assert_file_exists "$TMPDIR_RR/.claude/.pending-commit-presha" "review-reminders-post.sh preserves pending state for a benign prose command"
+invoke_hook "review-reminders-post.sh" "git -C . commit -m failed" >/dev/null
+assert_file_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders-post.sh reconciles a classified git -C commit attempt"
+assert_file_not_exists "$TMPDIR_RR/.claude/.pending-commit-presha" "review-reminders-post.sh consumes pending state for the classified attempt"
+rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+
+if command -v pwsh >/dev/null 2>&1; then
+  printf '%s %s' "$presha_c" "$reviewed_c" > "$TMPDIR_RR/.claude/.pending-commit-presha"
+  invoke_post_hook_ps1 "echo documenting the git commit gate" >/dev/null
+  assert_file_not_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders-post.ps1 ignores prose that merely mentions the guarded verb"
+  assert_file_exists "$TMPDIR_RR/.claude/.pending-commit-presha" "review-reminders-post.ps1 preserves pending state for a benign prose command"
+  invoke_post_hook_ps1 "git -C . commit -m failed" >/dev/null
+  assert_file_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders-post.ps1 reconciles a classified git -C commit attempt"
+  assert_file_not_exists "$TMPDIR_RR/.claude/.pending-commit-presha" "review-reminders-post.ps1 consumes pending state for the classified attempt"
+  rm -f "$TMPDIR_RR/.claude/.code-review-ok"
+fi
+
+rm -rf "$TMPDIR_CROOT"
+
+# ── commit gate: reviewed changes left unstaged are refused (OPP6-1) ───────────────────────
+# WHY: the marker binds `git diff HEAD` -- the WORKING TREE against HEAD -- but `git commit`
+# records the INDEX. With part of the reviewed change left unstaged the two hashes still matched,
+# so the gate approved a commit that did not contain everything the marker certified. Live
+# 2026-10-16: finishing a conflicted merge with `git add` on only the conflicted path nearly
+# committed without the new test rows edited into a file that had not conflicted.
+#
+# Each refusal is asserted by its OWN reason text, not by "deny" alone: a matching marker is
+# present in every refused row, so a bare deny assertion would also pass on an unrelated refusal
+# and could not tell this guard from any other.
+echo ""
+echo "--- commit gate: reviewed changes left unstaged are refused (OPP6-1) ---"
+TMPDIR_PARTIAL="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-partial)"
+# Stop if mktemp failed: an empty path makes every `git -C "$TMPDIR_PARTIAL"` below act on the
+# current directory, normally the checkout running this suite, and partial_reset's
+# `reset --hard base` would then discard its uncommitted work. This covers only this fixture:
+# the earlier fixtures' mktemp calls are still unguarded and run first.
+[ -n "$TMPDIR_PARTIAL" ] && [ -d "$TMPDIR_PARTIAL" ] || { echo "FATAL: mktemp -d failed for TMPDIR_PARTIAL" >&2; exit 1; }
+git -C "$TMPDIR_PARTIAL" init -q -b main
+git -C "$TMPDIR_PARTIAL" config user.email "test@example.com"
+git -C "$TMPDIR_PARTIAL" config user.name "Test"
+git -C "$TMPDIR_PARTIAL" config core.autocrlf false
+printf 'a\n' > "$TMPDIR_PARTIAL/a.txt"
+printf 'b\n' > "$TMPDIR_PARTIAL/b.txt"
+git -C "$TMPDIR_PARTIAL" add a.txt b.txt
+git -C "$TMPDIR_PARTIAL" commit -q -m initial
+git -C "$TMPDIR_PARTIAL" tag base
+mkdir -p "$TMPDIR_PARTIAL/.claude"
+PARTIAL_MARKER="$TMPDIR_PARTIAL/.claude/.code-review-ok"
+PARTIAL_REASON='tracked changes are unstaged'
+
+partial_marker() {
+  # /code-review Step 5's own recipe, which this fix leaves unchanged.
+  local tmp
+  tmp=$(mktemp)
+  git -C "$TMPDIR_PARTIAL" diff HEAD > "$tmp" 2>/dev/null
+  sha256sum "$tmp" | cut -d' ' -f1 > "$PARTIAL_MARKER"
+  rm -f "$tmp"
+}
+
+partial_gate() {
+  # partial_gate <sh|ps1> <command-text>
+  if [ "$1" = sh ]; then
+    invoke_hook_from "review-reminders.sh" "$TMPDIR_PARTIAL" "$2"
+  else
+    invoke_hook_ps1_from "$TMPDIR_PARTIAL" "$2"
+  fi
+}
+
+partial_reset() {
+  git -C "$TMPDIR_PARTIAL" merge --abort >/dev/null 2>&1
+  git -C "$TMPDIR_PARTIAL" checkout -q main
+  git -C "$TMPDIR_PARTIAL" reset -q --hard base
+  rm -f "$TMPDIR_PARTIAL/c.txt" "$PARTIAL_MARKER" "$TMPDIR_PARTIAL/.claude/.pending-commit-presha"
+}
+
+partial_shells="sh"
+command -v pwsh >/dev/null 2>&1 && partial_shells="sh ps1"
+for shell_kind in $partial_shells; do
+  hook="review-reminders.$shell_kind"
+
+  partial_reset
+  printf 'a2\n' >> "$TMPDIR_PARTIAL/a.txt"
+  printf 'b2\n' >> "$TMPDIR_PARTIAL/b.txt"
+  git -C "$TMPDIR_PARTIAL" add a.txt
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m partial")
+  assert_contains "$resp" "$PARTIAL_REASON" "$hook refuses a commit whose reviewed diff is only partly staged"
+  # "Stage every reviewed change" is advice about one tree, so the denial names it.
+  assert_contains "$resp" "The gate checked $(git -C "$TMPDIR_PARTIAL" rev-parse --show-toplevel):" "$hook's unstaged-changes denial names the root it checked"
+  # A WIP commit is gated like any other, so the only way out an agent can take is a tagged stash.
+  assert_contains "$resp" "git stash push -m" "$hook's unstaged-changes denial offers a tagged stash"
+  assert_contains "$resp" "git stash list --format=" "$hook's unstaged-changes denial says how to find the stash entry's SHA"
+  assert_contains "$resp" "git stash apply" "$hook's unstaged-changes denial restores by apply, not pop"
+  assert_not_contains "$resp" "WIP commit" "$hook's unstaged-changes denial no longer offers a gated WIP commit"
+  assert_file_exists "$PARTIAL_MARKER" "$hook leaves the marker unconsumed when refusing a partly-staged commit"
+
+  git -C "$TMPDIR_PARTIAL" add b.txt
+  resp=$(partial_gate "$shell_kind" "git commit -m complete")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "$hook allows the same commit once every reviewed change is staged"
+  assert_file_not_exists "$PARTIAL_MARKER" "$hook consumes the marker on the allowed, fully-staged commit"
+
+  # The denial's own escape hatch, end to end: set one file aside in a tagged stash, review what
+  # remains, and the gate must allow the commit. Then restore by SHA and drop. The fixture is its
+  # own repository, so its stash stack is not the shared one the advice warns about.
+  partial_reset
+  printf 'a2\n' >> "$TMPDIR_PARTIAL/a.txt"
+  printf 'b2\n' >> "$TMPDIR_PARTIAL/b.txt"
+  git -C "$TMPDIR_PARTIAL" stash push -q -m "rr-e2e-$shell_kind" -- b.txt
+  git -C "$TMPDIR_PARTIAL" add a.txt
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m part")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "$hook allows the commit once the excluded file is set aside in a tagged stash"
+  assert_file_not_exists "$PARTIAL_MARKER" "$hook consumes the marker on the stash-assisted commit"
+  stash_sha=$(git -C "$TMPDIR_PARTIAL" stash list --format='%H %gs' | awk -v t="rr-e2e-$shell_kind" '$0 ~ t {print $1; exit}')
+  git -C "$TMPDIR_PARTIAL" stash apply -q "$stash_sha"
+  assert_contains "$(cat "$TMPDIR_PARTIAL/b.txt")" "b2" "the stash entry found by its tag restores the excluded file"
+  git -C "$TMPDIR_PARTIAL" stash drop -q "$(git -C "$TMPDIR_PARTIAL" stash list --format='%gd %gs' | awk -v t="rr-e2e-$shell_kind" '$0 ~ t {print $1; exit}')"
+  assert_equals "$(git -C "$TMPDIR_PARTIAL" stash list | wc -l | tr -d ' ')" "0" "dropping by the tag-matched index leaves the fixture's stash stack empty"
+
+  # Nothing staged at all: also the state a chained `git add X && git commit` presents, because
+  # this hook runs before the chained add does. The refusal is the documented cost of the fix.
+  partial_reset
+  printf 'a3\n' >> "$TMPDIR_PARTIAL/a.txt"
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m unstaged")
+  assert_contains "$resp" "$PARTIAL_REASON" "$hook refuses a commit when the reviewed change is not staged at all"
+  # Same state, -a form: the hook runs before -a stages anything, so it is refused too. Pinned
+  # because it is a documented cost, and a later change must not flip it silently either way.
+  resp=$(partial_gate "$shell_kind" "git commit -a -m all")
+  assert_contains "$resp" "$PARTIAL_REASON" "$hook refuses git commit -a while the reviewed change is unstaged"
+
+  # Intent-to-add: the file is in `git diff HEAD`, so it was reviewed, but a commit skips it.
+  partial_reset
+  printf 'new\n' > "$TMPDIR_PARTIAL/c.txt"
+  git -C "$TMPDIR_PARTIAL" add -N c.txt
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m ita")
+  assert_contains "$resp" "$PARTIAL_REASON" "$hook refuses a commit while a reviewed file is only intent-to-add"
+
+  # A reviewed deletion that was never staged would not be committed.
+  partial_reset
+  rm "$TMPDIR_PARTIAL/b.txt"
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m delete")
+  assert_contains "$resp" "$PARTIAL_REASON" "$hook refuses a commit while a reviewed deletion is unstaged"
+
+  # The over-refusal direction: a file whose stat changed but whose content did not is not an
+  # unstaged change, and must not block an otherwise fully-staged commit. This checks the
+  # end-to-end outcome: porcelain `git diff` refreshes the index, so the marker recipe and the
+  # hook's own hash may clear the stat-dirty entry before the guard looks at it.
+  partial_reset
+  printf 'a4\n' >> "$TMPDIR_PARTIAL/a.txt"
+  git -C "$TMPDIR_PARTIAL" add a.txt
+  touch -d '2001-01-01' "$TMPDIR_PARTIAL/b.txt"
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m touched")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "$hook allows a fully-staged commit when another file was only touched"
+  assert_file_not_exists "$PARTIAL_MARKER" "$hook consumes the marker on the touched-file commit"
+
+  # A textconv filter can make a differing index and working tree compare equal, so --quiet
+  # alone passed while the commit recorded index bytes nobody reviewed.
+  partial_reset
+  printf 'a.txt diff=strip\n' > "$TMPDIR_PARTIAL/.git/info/attributes"
+  git -C "$TMPDIR_PARTIAL" config diff.strip.textconv "sed -e s/HIDDEN.*//"
+  printf 'two HIDDEN\n' > "$TMPDIR_PARTIAL/a.txt"
+  git -C "$TMPDIR_PARTIAL" add a.txt
+  printf 'two \n' > "$TMPDIR_PARTIAL/a.txt"
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m textconv")
+  assert_contains "$resp" "$PARTIAL_REASON" "$hook refuses a partly-staged commit that a textconv filter hides"
+  rm -f "$TMPDIR_PARTIAL/.git/info/attributes"
+  git -C "$TMPDIR_PARTIAL" config --unset diff.strip.textconv
+
+  # Likewise an external diff driver trusted for its exit code (diff.trustExitCode, newer git).
+  # It prints a constant so the reviewed hash is not the empty-diff constant the gate refuses
+  # first. On a git without diff.trustExitCode, --quiet ignores the driver and this row passes
+  # on the plain check alone.
+  partial_reset
+  printf 'echo constant\nexit 0\n' > "$TMPDIR_PARTIAL/.git/ext-constant.sh"
+  git -C "$TMPDIR_PARTIAL" config diff.external "sh .git/ext-constant.sh"
+  git -C "$TMPDIR_PARTIAL" config diff.trustExitCode true
+  printf 'a5\n' >> "$TMPDIR_PARTIAL/a.txt"
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m extdiff")
+  assert_contains "$resp" "$PARTIAL_REASON" "$hook refuses an unstaged change that an exit-code-trusted external diff driver hides"
+  git -C "$TMPDIR_PARTIAL" config --unset diff.external
+  git -C "$TMPDIR_PARTIAL" config --unset diff.trustExitCode
+  rm -f "$TMPDIR_PARTIAL/.git/ext-constant.sh"
+
+  # The 2026-10-16 shape: a conflicted merge, `git add` on only the conflicted path, and a
+  # reviewed edit to a non-conflicted file left unstaged.
+  partial_reset
+  git -C "$TMPDIR_PARTIAL" checkout -q -b "side-$shell_kind" base
+  printf 'side\n' > "$TMPDIR_PARTIAL/a.txt"
+  git -C "$TMPDIR_PARTIAL" commit -q -am side
+  git -C "$TMPDIR_PARTIAL" checkout -q main
+  printf 'main\n' > "$TMPDIR_PARTIAL/a.txt"
+  git -C "$TMPDIR_PARTIAL" commit -q -am main
+  git -C "$TMPDIR_PARTIAL" merge -q "side-$shell_kind" >/dev/null 2>&1
+  printf 'resolved\n' > "$TMPDIR_PARTIAL/a.txt"
+  git -C "$TMPDIR_PARTIAL" add a.txt
+  printf 'new test row\n' >> "$TMPDIR_PARTIAL/b.txt"
+  partial_marker
+  resp=$(partial_gate "$shell_kind" "git commit -m merge")
+  assert_contains "$resp" "$PARTIAL_REASON" "$hook refuses a merge commit when only the conflicted path was staged"
+  git -C "$TMPDIR_PARTIAL" add b.txt
+  resp=$(partial_gate "$shell_kind" "git commit -m merge")
+  assert_not_contains "$resp" '"permissionDecision":"deny"' "$hook allows the merge commit once the non-conflicted edit is staged too"
+  assert_file_not_exists "$PARTIAL_MARKER" "$hook consumes the marker on the allowed merge commit"
+done
+partial_reset
+rm -rf "$TMPDIR_PARTIAL"
+# ── empty-diff denial names the root it checked ───────────────────────────────────────────
+# WHY: a command whose cd was not its first word fell back to the hook's working directory,
+# found an empty diff there, and was denied with nothing saying which tree had been checked.
+echo ""
+echo "--- empty-diff denial names the resolved root and how it was chosen ---"
+TMPDIR_EMPTY="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-empty)"
+git -C "$TMPDIR_EMPTY" init -q -b main
+git -C "$TMPDIR_EMPTY" config user.email "test@example.com"
+git -C "$TMPDIR_EMPTY" config user.name "Test"
+echo "clean" > "$TMPDIR_EMPTY/file.txt"
+git -C "$TMPDIR_EMPTY" add file.txt
+git -C "$TMPDIR_EMPTY" commit -q -m "initial"
+root_empty=$(git -C "$TMPDIR_EMPTY" rev-parse --show-toplevel)
+# The fragments avoid quotes, apostrophes and <>&, which the two twins' JSON encoders may escape differently.
+hint_tail="plus any git -C path, else from the hook"
+resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_EMPTY" "git commit -m empty")
+assert_contains "$resp" "no diff to review" "review-reminders.sh denies an empty-diff commit (fixture check)"
+assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.sh's empty-diff commit denial names the root it checked"
+assert_contains "$resp" "$hint_tail" "review-reminders.sh's empty-diff commit denial says how the root was chosen"
+resp=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_EMPTY" "git push origin main")
+assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.sh's empty-diff push denial names the root it checked"
+assert_contains "$resp" "$hint_tail" "review-reminders.sh's empty-diff push denial says how the root was chosen"
+if command -v pwsh >/dev/null 2>&1; then
+  resp=$(invoke_hook_ps1_from "$TMPDIR_EMPTY" "git commit -m empty")
+  assert_contains "$resp" "no diff to review" "review-reminders.ps1 denies an empty-diff commit (fixture check)"
+  assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.ps1's empty-diff commit denial names the root it checked"
+  assert_contains "$resp" "$hint_tail" "review-reminders.ps1's empty-diff commit denial says how the root was chosen"
+  resp=$(invoke_hook_ps1_from "$TMPDIR_EMPTY" "git push origin main")
+  assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.ps1's empty-diff push denial names the root it checked"
+  assert_contains "$resp" "$hint_tail" "review-reminders.ps1's empty-diff push denial says how the root was chosen"
+else
+  echo "  SKIP: pwsh is not installed; the ps1 half of the empty-diff root message is not run"
+fi
+
+# WHY spawn outside any repository: in every case above the hook's working directory IS the root,
+# so a hint naming the working directory instead of the resolved root would pass them all.
+# python3 because the bash twin resolves a cd only through _review-gate-classify.py.
+if command -v python3 >/dev/null 2>&1; then
+  TMPDIR_OUTSIDE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-outside)"
+  ceiling="$(dirname "$TMPDIR_OUTSIDE")"
+  resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_from "review-reminders.sh" "$TMPDIR_OUTSIDE" "git commit -m empty")
+  assert_contains "$resp" "repository root could not be resolved" "review-reminders.sh resolves no root from the outside spawn directory (fixture check)"
+  resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_from "review-reminders.sh" "$TMPDIR_OUTSIDE" "cd \\\"$root_empty\\\" && git commit -m empty")
+  assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.sh's empty-diff denial names the quoted cd's repository, not the hook's working directory"
+  if command -v pwsh >/dev/null 2>&1; then
+    resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_ps1_from "$TMPDIR_OUTSIDE" "cd \\\"$root_empty\\\" && git commit -m empty")
+    assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.ps1's empty-diff denial names the quoted cd's repository, not the hook's working directory"
+  fi
+  rm -rf "$TMPDIR_OUTSIDE"
+else
+  echo "  SKIP: python3 is not installed; the bash twin cannot resolve a cd, so the outside-spawn case is not run"
+fi
+
+# ── deny output stays valid JSON when the reason carries quotes or backslashes ────────────
+# WHY: review-reminders.sh printed the reason into a JSON string unescaped, so the unresolved-root
+# denial (which quotes cd "<repo>") was invalid JSON, and so would be any denial naming a
+# repository path that contains a quote or a backslash.
+echo ""
+echo "--- deny output is valid JSON ---"
+PY=""
+for py in python3 python; do
+  if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import json' >/dev/null 2>&1; then PY="$py"; break; fi
+done
+json_reason() {
+  "$PY" -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["permissionDecisionReason"])' 2>/dev/null
+}
+if [ -n "$PY" ]; then
+  TMPDIR_NOREPO="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-norepo)"
+  resp=$(GIT_CEILING_DIRECTORIES="$(dirname "$TMPDIR_NOREPO")" invoke_hook_from "review-reminders.sh" "$TMPDIR_NOREPO" "git commit -m x")
+  assert_contains "$resp" "repository root could not be resolved" "review-reminders.sh denies when no repository resolves (fixture check)"
+  assert_contains "$(printf '%s' "$resp" | json_reason)" 'prefix it with cd "<repo>" &&' "review-reminders.sh's unresolved-root denial is valid JSON and keeps its quoted cd"
+  rm -rf "$TMPDIR_NOREPO"
+  # WHY parse the JSON here: the remedy the empty-diff hint gives must be the quoted cd the
+  # resolvers accept (an unquoted one falls back to the working directory and is denied again),
+  # and the quotes are encoded differently by the two twins, so only the decoded reason compares.
+  # The hint must not name --git-dir/--work-tree either: both twins deny those before any root.
+  reason=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_EMPTY" "git commit -m empty" | json_reason)
+  assert_contains "$reason" 'start the command with cd "<repo>" &&' "review-reminders.sh's empty-diff denial advises the quoted cd the resolvers accept"
+  assert_not_contains "$reason" 'git-dir' "review-reminders.sh's empty-diff denial does not offer --git-dir as a root source"
+  assert_not_contains "$reason" 'work-tree' "review-reminders.sh's empty-diff denial does not offer --work-tree as a root source"
+  if command -v pwsh >/dev/null 2>&1; then
+    reason=$(invoke_hook_ps1_from "$TMPDIR_EMPTY" "git commit -m empty" | json_reason)
+    assert_contains "$reason" 'start the command with cd "<repo>" &&' "review-reminders.ps1's empty-diff denial advises the quoted cd the resolvers accept"
+    assert_not_contains "$reason" 'git-dir' "review-reminders.ps1's empty-diff denial does not offer --git-dir as a root source"
+    assert_not_contains "$reason" 'work-tree' "review-reminders.ps1's empty-diff denial does not offer --work-tree as a root source"
+  fi
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Windows forbids quotes in file names; the quoted-root JSON case runs on Linux and macOS only" ;;
+    *)
+      QROOT="$TMPDIR_EMPTY/q\"b\\s"
+      git init -q -b main "$QROOT"
+      git -C "$QROOT" config user.email "test@example.com"
+      git -C "$QROOT" config user.name "Test"
+      echo "clean" > "$QROOT/file.txt"
+      git -C "$QROOT" add file.txt
+      git -C "$QROOT" commit -q -m "initial"
+      # WHY rev-parse and not $QROOT: the hook names git's toplevel, which on macOS is the
+      # /private/var form of mktemp's /var path.
+      qroot_top=$(git -C "$QROOT" rev-parse --show-toplevel)
+      resp=$(invoke_hook_from "review-reminders.sh" "$QROOT" "git commit -m empty")
+      assert_contains "$resp" "no diff to review" "review-reminders.sh denies the empty-diff commit in a quoted-name repo (fixture check)"
+      assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $qroot_top:")" "1" "review-reminders.sh's denial naming a root with a quote and a backslash is valid JSON and keeps the path intact"
+      # A raw tab or newline inside a JSON string is invalid JSON, so deny() drops control characters.
+      CROOT="$TMPDIR_EMPTY/c$(printf '\t')t$(printf '\nn')"
+      git init -q -b main "$CROOT"
+      git -C "$CROOT" config user.email "test@example.com"
+      git -C "$CROOT" config user.name "Test"
+      echo "clean" > "$CROOT/file.txt"
+      git -C "$CROOT" add file.txt
+      git -C "$CROOT" commit -q -m "initial"
+      croot_stripped=$(git -C "$CROOT" rev-parse --show-toplevel | tr -d '\t\n')
+      resp=$(invoke_hook_from "review-reminders.sh" "$CROOT" "git commit -m empty")
+      assert_contains "$resp" "no diff to review" "review-reminders.sh denies the empty-diff commit in a repo whose name has a tab and a newline (fixture check)"
+      assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $croot_stripped:")" "1" "review-reminders.sh's denial naming a root with a tab and a newline is valid JSON, with those characters dropped"
+      # WHY a quote-only path for ps1: pwsh on Linux reads the `\` in its working directory as a
+      # path separator, so it resolves no root there at all and denies with the unresolved-root
+      # message instead (measured 2026-10-19; it fails closed).
+      if command -v pwsh >/dev/null 2>&1; then
+        QROOT_PS1="$TMPDIR_EMPTY/q\"ps1"
+        git init -q -b main "$QROOT_PS1"
+        git -C "$QROOT_PS1" config user.email "test@example.com"
+        git -C "$QROOT_PS1" config user.name "Test"
+        echo "clean" > "$QROOT_PS1/file.txt"
+        git -C "$QROOT_PS1" add file.txt
+        git -C "$QROOT_PS1" commit -q -m "initial"
+        resp=$(invoke_hook_ps1_from "$QROOT_PS1" "git commit -m empty")
+        assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $(git -C "$QROOT_PS1" rev-parse --show-toplevel):")" "1" "review-reminders.ps1's denial naming a root with a quote is valid JSON and keeps the path intact"
+      fi
+      ;;
+  esac
+else
+  echo "  SKIP: no python3/python to parse JSON; the deny-output JSON cases are not run"
+fi
+rm -rf "$TMPDIR_EMPTY"
+
+# WHY: the pwsh blocks above skip quietly, so a host without pwsh drops every ps1 assertion and
+# still exits 0. PMB_REQUIRE_PARITY=1 (CI) makes that fatal, as tests/test-pmb-journal.sh does.
+# The python3 blocks skip the same way, though without python3 other cases here already fail.
+if [ "${PMB_REQUIRE_PARITY:-0}" = "1" ]; then
+  command -v pwsh >/dev/null 2>&1 || assert_contains "pwsh-missing" "pwsh-present" "PMB_REQUIRE_PARITY=1 but pwsh is not on PATH -- the ps1 halves of this file did not run"
+  command -v python3 >/dev/null 2>&1 || assert_contains "python3-missing" "python3-present" "PMB_REQUIRE_PARITY=1 but python3 is not on PATH -- the python3 cases of this file did not run"
 fi
 
 print_summary
