@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     PreToolUse hook — agent spawn count advisory.
 .DESCRIPTION
@@ -25,20 +25,24 @@ try {
             try {
                 $ts = [datetime]::ParseExact($Matches[1], 'yyyy-MM-dd HH:mm', $null)
                 if (([datetime]::Now - $ts).TotalMinutes -gt $maxAge) { $depth = 0 }
-            } catch {}
+            } catch { Write-Verbose "Could not parse stored timestamp; leaving depth unchanged." }
         }
     }
 
+    # WHY systemMessage-only JSON and the "in this checkout" wording: see the sh twin.
+    # EscapeNonAscii writes the "≤" as \u2264, so the JSON is pure ASCII and survives pwsh's
+    # non-UTF-8 stdout encoding on Windows (which turns it into "?" otherwise).
     if ($depth -ge $budgetLimit) {
-        Write-Host "[WARN] Agent spawn count: $($depth + 1) this session (budget: ≤$budgetLimit per standards/PERFORMANCE-BUDGET.md)"
-        Write-Host "       High agent volume increases prompt-injection surface. Consider consolidating tasks."
+        [ordered]@{
+            systemMessage = "[WARN] Agent spawn count: $($depth + 1) in this checkout since the last 2-hour break (budget: ≤$budgetLimit per standards/PERFORMANCE-BUDGET.md). High agent volume increases prompt-injection surface. Consider consolidating tasks."
+        } | ConvertTo-Json -Compress -EscapeHandling EscapeNonAscii | Write-Output
     }
 
     $ts = Get-Date -Format 'yyyy-MM-dd HH:mm'
-    try { Set-Content -Path $depthFile -Value "depth=$($depth + 1)`ntimestamp=$ts" -NoNewline -ErrorAction Stop } catch {}
+    try { Set-Content -Path $depthFile -Value "depth=$($depth + 1)`ntimestamp=$ts" -NoNewline -ErrorAction Stop } catch { Write-Verbose "Could not persist $depthFile; depth tracking will reset next run." }
 
     exit 0
 } catch {
-    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] delegation-depth-check.ps1: $_" -ErrorAction SilentlyContinue } catch {}
+    try { Add-Content ".pmb-hook-errors.log" "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HOOK] delegation-depth-check.ps1: $_" -ErrorAction SilentlyContinue } catch { Write-Verbose "Could not write .pmb-hook-errors.log; ignoring." }
     exit 0
 }

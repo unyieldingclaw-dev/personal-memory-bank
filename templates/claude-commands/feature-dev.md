@@ -21,6 +21,9 @@ mb plan promote .claude/plans/YYYY-MM-DD-<feature-slug>.md
 
 Do not commit `.claude/plans/` files. Do not load all plans at session start.
 
+**Phase 3.5 — Independent Plan Review (advisory, not one of the 7 phases — does not count against "do not skip phases")**
+For plans with real consequence: dispatch a fresh Agent with no context from writing the plan, on a capable model, to verify it against its spec and the current repo state. Fix `Blocking: true` findings; disclose others. See `standards/WORKFLOW.md` for the full mechanism.
+
 **Phase 4 — Implement**
 Execute the plan using superpowers:subagent-driven-development (preferred) or superpowers:executing-plans. TDD: write failing test → implement → verify passing → commit after each unit.
 
@@ -35,3 +38,5 @@ Run /security-review on the current diff. Resolve all [CRITICAL] and [HIGH] find
 git add <specific changed files>
 git commit -m "feat: <what was built and why>"
 ```
+
+Stage in a command of its own, then commit: the commit review gate runs before a chained `git add` or `git commit -a` stages anything, and refuses while any tracked change is unstaged. To commit only some files, set the rest aside with a tagged stash (`git stash push -m <unique-tag> -- <paths>`), re-run `/code-review` on what remains, and commit. Then restore them with `git stash apply <sha>` (the SHA from `git stash list --format='%H %gs'`) and drop that entry by its current `stash@{n}`. The stash stack is shared across worktrees, so never use a bare `git stash pop`.

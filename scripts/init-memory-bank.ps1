@@ -25,6 +25,7 @@
     .\init-memory-bank.ps1 -ProjectPath "C:\Projects\MyApp" -Force
 #>
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Force', Justification='Read by the nested Copy-Template function via script-scope chaining -- PSScriptAnalyzer cannot see usage inside a separately-scoped function body.')]
 param(
     [string]$ProjectPath = ".",
     [switch]$SkipCursor,

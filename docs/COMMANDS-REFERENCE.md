@@ -12,12 +12,12 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 |---------|--------------|----------------------|
 | `mb init` | Scaffold memory-bank/ in the current project | Creates 5 memory-bank files, `CLAUDE.md`, `.claude/settings.json`, hook scripts, slash commands, and `standards/` files. Writes `.pmb-version`. Skips files that already exist. |
 | `mb status` | Quick state check | 5 signals: Initialized, Core Memory Present, Active Context Current, Standards Available, Tasks Present. Green ✓ per signal; ⚠ items surface in an Attention section with remediation hint. |
-| `mb doctor` | Full 20-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. Absorbs `validate`, `audit`, and `budget` checks. Writes `.pmb-checksums` on each run. |
+| `mb doctor` | Full 25-point diagnostic + startup context | See [mb doctor Checks](#mb-doctor-checks) below. Absorbs `validate`, `audit`, and `budget` checks. Rewrites `.pmb-checksums` on every run, in the running shell's hex case — see [Known limitation](#known-limitation--integrity-checksums-are-not-portable-across-shells). **`mb doctor --check`** runs the same checks but never writes `.pmb-checksums` (the working tree is left unchanged), so a mismatch keeps being reported until it is accepted with `mb verify-integrity`; it prints `Integrity check mode: .pmb-checksums not modified` to confirm. This is what the pre-push hook runs. Exit codes are the same in both modes: 1 for a fatal finding, 0 otherwise. |
 | `mb query <TAG>` | Search memory-bank by tag or section header | Lists files with matching tags or `##` headings. Supports partial hierarchical match (`mb query auth` matches `auth/session`). |
 | `mb clean` | Memory bank maintenance | Slim check for `activeContext.md`; prints guided cleanup prompt (archive + compact + update). Absorbs `compact`, `update`, `archive`, `slim`. |
-| `mb commit` | Stage and commit memory-bank/ changes | Runs `git add memory-bank/` + `git commit`; checks for subworktree and refuses if detected. |
-| `mb upgrade` / `mb update` | Propagate latest governance templates | Overwrites template-owned files (hook scripts, slash commands, `.claude/settings.json`, Cursor rules); shows advisory diff for `CLAUDE.md`; creates missing `standards/` files; installs pre-push hook; writes `.pmb-version`; soft remote version check. Run `mb upgrade --dry-run` to preview. Absorbs `install-hooks`. (`mb update` is an alias — both run the same upgrade logic.) |
-| `mb verify-integrity` | Check and refresh file checksums | Compares current SHA-256 hashes of memory-bank/ files against `.pmb-checksums`. Reports any external modifications as WARN. Always refreshes checksums. |
+| `mb commit` | Stage and commit memory-bank/ changes | Runs `git add memory-bank/` + `git commit -- memory-bank/`, so nothing else already staged is swept in; exits 1 if the commit fails. Refuses in a git subworktree and from a subdirectory (run it from the repository root). |
+| `mb upgrade` / `mb update` | Propagate latest governance templates | Overwrites template-owned files (hook scripts, slash commands, `.claude/settings.json`, Cursor rules); shows advisory diff for `CLAUDE.md`; creates missing `standards/` files; installs pre-push hook; reconciles `.gitignore` against the canonical mb entry list (append-only, and the only tracked file upgrade writes); writes `.pmb-version`; soft remote version check. Run `mb upgrade --dry-run` to preview. Absorbs `install-hooks`. (`mb update` is an alias — both run the same upgrade logic.) |
+| `mb verify-integrity` | Check and refresh file checksums | Compares current SHA-256 hashes of memory-bank/ files against `.pmb-checksums`. Reports any external modifications as WARN. Always refreshes checksums — this is the explicit accept step after reviewing a mismatch that `mb doctor --check` reported. **Not reliable across shells** — see [Known limitation](#known-limitation--integrity-checksums-are-not-portable-across-shells). |
 | `mb help` | Show command list | Prints all primary commands with one-line descriptions and examples. |
 
 **Deprecated commands** (still work as redirects, not shown in `mb help`):
@@ -29,6 +29,41 @@ Run from any project directory where `mb init` has been run. On Windows: `mb <co
 | `mb budget` | `mb doctor` |
 | `mb compact` / `mb archive` / `mb slim` | `mb clean` |
 | `mb install-hooks` | `mb upgrade` |
+
+---
+
+### Known limitation — integrity checksums are not portable across shells
+
+`.pmb-checksums` is written in whichever hex case the running shell produces, and the two
+implementations disagree on both halves of the comparison:
+
+| | Hash source | Case written | Comparison | Case-sensitive? |
+|---|---|---|---|---|
+| `mb.sh` | `sha256sum` | lowercase | `[ "$a" != "$b" ]` | **yes** |
+| `mb.ps1` | `Get-FileHash` | UPPERCASE | `-ne` | no |
+
+Both `mb doctor` and `mb verify-integrity` rewrite the baseline at the end of every run
+(`show_doctor`/`Show-Doctor` check 20, `invoke_verify_integrity`/`Invoke-VerifyIntegrity`); only
+`mb doctor --check` skips the write. So a `mb doctor` run under pwsh reports correctly, then
+leaves an UPPERCASE baseline that makes the next run under bash flag **every** memory-bank file as
+"modified outside mb tools" — a false positive, on files that were never touched.
+
+The direction that matters for integrity: **a pwsh-written baseline verified by bash cannot
+distinguish a real external modification**, because every file mismatches regardless. The reverse
+direction (bash baseline, pwsh verifier) silently passes, since `-ne` ignores the case difference.
+
+Until this is fixed, treat an all-files-mismatch result as a shell-alternation artifact rather than
+evidence of tampering. **To tell which shell wrote the current baseline, look at the hex case of the
+entries in `.pmb-checksums`** — lowercase means `mb.sh`, UPPERCASE means `mb.ps1`. The header line
+names only the command (`mb doctor` vs `mb verify-integrity`), which is identical from either shell
+and cannot be used for this. Re-running from the shell that wrote it will verify cleanly.
+
+Under `mb doctor --check` this false positive does not clear itself, because nothing is rewritten:
+it persists until `mb verify-integrity` is run from the shell that will do the checking. The
+pre-push hook's own paths do not alternate shells — on Windows `mb` resolves to `mb.bat`
+(`mb.ps1`), and where `mb` is `install.sh`'s wrapper it is `mb.sh` throughout — so the artifact
+needs a baseline written by one runtime and checked by the other, e.g. `bash scripts/mb.sh` run
+directly after a pwsh `mb doctor`.
 
 ---
 
@@ -144,7 +179,7 @@ These are built into Claude Code and don't require the memory bank system.
 
 ## `mb doctor` Checks
 
-`mb doctor` runs 20 deterministic health checks and prints a startup context observability section. On every run it writes `.pmb-checksums` to establish or refresh the integrity baseline.
+`mb doctor` runs 25 deterministic health checks and prints a startup context observability section. On every run it writes `.pmb-checksums` to establish or refresh the integrity baseline — except under `--check`, which compares only, reports a missing baseline as `[WARN]` instead of creating one, and leaves the working tree unchanged. (The update notifier still refreshes its cache under `~/.mb` in both modes.)
 
 | # | Check | Pass Condition | What to Do on Failure |
 |---|-------|---------------|----------------------|
@@ -153,7 +188,7 @@ These are built into Claude Code and don't require the memory bank system.
 | 2 | Templates | `$MB_HOME/templates/` is reachable | Re-run `install.bat` / `install.sh` from the PMB repo |
 | 3 | Required files | All 5 `memory-bank/` files + `CLAUDE.md` present | Run `mb init` |
 | 4 | Hooks | `PostToolUse` hook in `.claude/settings.json`; hook scripts exist on disk | Run `mb init` or copy from `templates/.claude/settings.json` |
-| 5 | CLAUDE.md drift | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` present in `CLAUDE.md` | Run `mb init` or copy Token Budget section from global `~/.claude/CLAUDE.md` |
+| 5 | Token Budget drift | No instruction file states a compaction threshold that contradicts `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in `.claude/settings.json`. Scans `CLAUDE.md`, `~/.claude/CLAUDE.md`, `standards/MEMORY-BANK.md`. A file stating no number PASSES — deferring by name is correct. `[SKIP]` when settings.json has no value to compare against. | Name the setting instead of copying its value — a restated constant goes stale silently. See the KNOWN LIMITS comment in `mb.sh`'s check 5: an `[OK]` is not proof no constant is restated. |
 | 6 | File sizes | No `memory-bank/` file exceeds its Max line limit | Run `mb clean` |
 | 7 | Handoff | No `handoff.md` in project root | Merge `handoff.md` into memory-bank and delete it |
 | 8 | Compaction integrity | No file at `compaction_generation` ≥ 2; all `lineage:` ancestors exist on disk | Run `mb clean` (compaction prompt) to regenerate from canonical sources |
@@ -168,7 +203,12 @@ These are built into Claude Code and don't require the memory bank system.
 | 17 | Semantic drift signals | No transition/removal language in volatile files (`activeContext.md`, `progress.md`) that may contradict stable files | Review flagged lines against `systemPatterns.md`/`projectbrief.md`; update stable files if decisions changed |
 | 18 | Old stable decisions | All `authority:stable` files reviewed within 180 days | Review decisions and update `last-reviewed` date, or revise if drifted |
 | 19 | Cross-file contradictions | No `authority:` mismatches from expected hierarchy; no negation language under shared `##` headings | Resolve authority conflicts; clarify intentional transitions vs. real contradictions |
-| 20 | Integrity checksums | All memory-bank file SHA-256 hashes match `.pmb-checksums` baseline | Review external edits; checksums refresh automatically on each `mb doctor` run |
+| 20 | Integrity checksums | All memory-bank file SHA-256 hashes match `.pmb-checksums` baseline | If ALL files mismatch at once, suspect the cross-shell false positive first — see [Known limitation](#known-limitation--integrity-checksums-are-not-portable-across-shells). Otherwise review external edits; checksums refresh on each plain run. Under `--check` they do not — accept reviewed edits with `mb verify-integrity` |
+| 21 | Git-vs-reviewed lag | `last-reviewed` frontmatter date is not before the file's last git commit date | Update `last-reviewed` frontmatter or confirm no review is needed |
+| 22 | Completed-but-still-planned | No item marked ✅ complete in `progress.md` still appears as ⏸ planned/pending elsewhere | Resolve the stale planned-item drift before the next compaction |
+| 23 | Stale Next Steps | No `activeContext.md` Next Steps item already appears completed in `progress.md` | Remove it from Next Steps or verify the `progress.md` entry |
+| 24 | Plan hygiene | `docs/plans/` exists; no tracked scratch plans in `.claude/plans/`; all plans have frontmatter; no plan stale 30+ days | Run `mb plan status` for setup; `git rm --cached` tracked scratch plans; add frontmatter; review stale plans |
+| 25 | Agent frontmatter | `.claude/agents/*.md` declare a `name:` field matching the filename (WARN-tier) | Add a `name:` field matching the filename to the agent's frontmatter |
 | — | Startup context | (observability, not a health check) — reports files loaded, estimated tokens, largest contributors, 30-day growth, stale-but-loaded count | Use to decide when files need trimming |
 
 ---
@@ -181,6 +221,6 @@ These are built into Claude Code and don't require the memory bank system.
 | `systemPatterns.md` | 100–180 | 300 | stable |
 | `techContext.md` | 150–250 | 400 | stable |
 | `activeContext.md` | 50–100 | 150 | volatile |
-| `progress.md` | 100–250 | 400 | accumulating |
+| `progress.md` | 100–250 | 600 | accumulating |
 
 When a file exceeds its Max: run `mb clean` to get an AI-guided cleanup prompt.

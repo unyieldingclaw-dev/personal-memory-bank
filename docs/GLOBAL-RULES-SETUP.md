@@ -118,14 +118,21 @@ That's it. Every new project inherits the Memory Bank protocol, security guardra
 
 Add a `CLAUDE.md` to the project root for project-specific instructions. It merges with the global one — project settings take precedence where they conflict.
 
-### AGENTS.md: The Cross-Tool Alternative
+### AGENTS.md: Portable Project Rules, Tool-Specific Global Paths
 
-`AGENTS.md` at `~/.claude/AGENTS.md` works like the global `CLAUDE.md` but is also readable by Cursor, Codex, and Gemini CLI. One file, every tool.
+A project-root `AGENTS.md` is the portable shared location for tools that support the convention;
+Codex loads it natively. Do not use `~/.claude/AGENTS.md` as a universal global path: Claude Code
+uses `~/.claude/CLAUDE.md`, Cursor uses `~/.cursor/rules/`, and Codex uses
+`~/.codex/AGENTS.md`.
 
 ```powershell
-# Windows - global AGENTS.md
-Copy-Item .\templates\AGENTS.md "$env:USERPROFILE\.claude\AGENTS.md"
+# Windows - global Codex AGENTS.md
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex"
+Copy-Item .\templates\AGENTS.md "$env:USERPROFILE\.codex\AGENTS.md"
 ```
+
+Run `mb init` to create the project-root `AGENTS.md` alongside each project's native Claude Code,
+Codex, and Cursor files.
 
 See `docs/CLAUDE-CODE-PLUGINS.md` for the full Claude Code setup including plugins and slash commands.
 

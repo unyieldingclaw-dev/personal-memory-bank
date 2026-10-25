@@ -21,7 +21,7 @@ At the start of every conversation, and again after any context compaction, sile
 
 ## Context Compaction Recovery
 
-Claude Code compacts at ~40% (via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` in settings.json). The `PreCompact` hook fires first and warns if neither the memory bank nor a handoff has been captured this session. A "context was compacted" summary may appear at the top of the conversation.
+Claude Code compacts at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json. The `PreCompact` hook fires first and **blocks** compaction unless: `activeContext.md` has ≥3 substantive content lines AND `progress.md` has an entry dated today. A `handoff.md` **dated today** bypasses the gate; a stale one does not. A "context was compacted" summary may appear at the top of the conversation.
 
 **If you observe a compaction summary:** Re-read ALL `memory-bank/` files immediately, summarize recovered context to the user, confirm where to resume if mid-task. **Do not continue from memory alone.**
 
@@ -105,34 +105,62 @@ This is the single highest-leverage habit for improving output quality.
 ## Tools
 
 - **Hooks** — `.claude/settings.json` enforces rules deterministically (format, lint, block dangerous ops). See `docs/HOOKS-GUIDE.md`.
-- **Agents** — `.claude/agents/` defines specialized subagents (security-reviewer, researcher). Spawn with: "use the security-reviewer agent".
+- **Agents** — `.claude/agents/` defines specialized subagents (security-reviewer, researcher, opposition). Spawn with: "use the security-reviewer agent". `opposition` is dispatched by the review commands, not usually by hand.
 - **MCP** — connect external services via `claude mcp add`. See `standards/MCP-SECURITY.md` before adding any server.
 
 ## Handoff Protocol
 
+**Scope is deliberately narrow.** `memory-bank/` (especially `activeContext.md`'s Next Steps) is the durable, continuously-updated source of truth for priority and rationale — it is supposed to already be current throughout the session, not just at the end (see the Memory Bank rules above). `handoff.md` exists ONLY to capture genuinely ephemeral in-flight state that memory-bank updates wouldn't naturally hold: exactly where an edit was interrupted, uncommitted diff state, what was about to be tested next. Do not use `handoff.md` to re-summarize decisions, priorities, or task ordering — that duplicates memory-bank and risks drifting from it, written under the worst possible conditions for careful synthesis (an imminent compaction or context limit).
+
 When user types "Handoff" or reports context >= 40%:
 
 1. **STOP** all work immediately
-2. **CREATE** `handoff.md` in project root with: accomplishments, files modified, service state, commands to resume, pending tasks, context for next agent
-3. **RESPOND** only: "Handoff ready at `handoff.md`. Start a new conversation."
-4. **STOP** - do not continue
+2. Before writing `handoff.md`, verify `memory-bank/activeContext.md` and `progress.md` are actually current. If stale, update them FIRST — a rich `handoff.md` cannot compensate for a stale memory-bank, since the next session is instructed to treat memory-bank as authoritative, not this file
+3. **CREATE** `handoff.md` in project root, scoped ONLY to: exact in-flight state (file/line being edited, uncommitted diffs, what was about to run next), any running processes/services left in a non-default state, any command needed to resume, and an explicit pointer — "See `memory-bank/activeContext.md`'s Next Steps for priority and rationale; this file covers only what wasn't captured there yet."
+4. **RESPOND** with "Handoff ready at `handoff.md`." and then a fenced, paste-able block carrying the
+   session title, branch, worktree status, and the single first action — the next session is opened
+   by pasting it, so omitting it just makes the user ask. Verify those facts with a command rather
+   than transcribing from memory; a wrong branch there sends the successor into the wrong tree.
+   Close with two or three lines that point at `handoff.md`'s sections instead of restating them.
+5. **STOP** - do not continue
 
 When starting a new conversation:
-1. Check for `handoff.md` — if present, read it FIRST before anything else
-2. Read ALL files in `memory-bank/` to restore full project context
+1. Read ALL files in `memory-bank/` FIRST — this is the authoritative source for priority, rationale, and what's already been tried. Do not treat `handoff.md` as authoritative for these.
+2. Check for `handoff.md` — if present, read it SECOND, treating it only as the narrow ephemeral-state supplement described above, never as a re-summary to synthesize task priority from
 3. Run `/pmb-status` to verify current system state
-4. If a handoff was found: merge its info into Memory Bank, delete `handoff.md`, summarize recovered context to user
-5. Confirm where to resume if mid-task; otherwise continue work
+4. Reconcile: does `handoff.md`'s in-flight state match what `activeContext.md`'s Next Steps implies should be happening? If they conflict, surface the conflict to the user — do not silently pick one
+5. If a handoff was found: merge its info into Memory Bank, delete `handoff.md`, summarize recovered context to user
+6. Confirm where to resume if mid-task; otherwise continue work
 
 ## Token Budget
 
 **Model selection — default to Sonnet, escalate deliberately:**
 - Sonnet handles 90%+ of tasks. Start here every session.
-- Switch to Opus (`/model opus`) only for: complex architecture decisions, large multi-file refactors, deep cross-file debugging. Switch back after.
-- Subagents run on Haiku automatically (set in settings.json) — sufficient for file reads, test runs, and exploration.
+- Switch to Opus (`/model opus`) for work such as: complex architecture decisions, large multi-file refactors, deep cross-file debugging — see the trigger list below for the full set. Switch back after.
+- Subagents default to Haiku (`CLAUDE_CODE_SUBAGENT_MODEL` in settings.json) — sufficient for file reads, test runs, and exploration, and NOT for review judgement. `security-reviewer` pins `sonnet` and `opposition` pins `opus` in their own frontmatter, which overrides that env var (verified 2026-08-26). Do not read this line as blanket permission to run a review cheap.
 
-**Compact at task boundaries — auto-compact fires at 40%:**
-- Auto-compaction is set to fire at 40% context (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40` in settings.json); the `PreCompact` hook warns first if memory bank is stale
+**Claude must PROMPT for escalation — do not wait to be asked.** Escalating at the right moment is a token *saving*, not a spend: a wrong design caught after implementation costs a revert, a debugging pass, and a redesign — many times the price of one careful pass up front. Quality at the front end is the cheaper path. When a trigger below fires, say so explicitly and recommend `/model opus` before continuing.
+
+**Escalate on observable triggers, not on feeling stuck** — a model that is out of its depth is not a reliable judge that it is out of its depth, so these are countable rather than introspective:
+- Cross-branch reconciliation — a rebase/merge with real conflicts, or porting work between long-diverged branches
+- Enforcement or security-boundary changes — hooks, review gates, auth, anything governing what is permitted
+- Multi-file refactors — roughly 5+ files, or any change requiring paired mirrored copies of the same file
+- 3+ failed fix attempts on one bug — that is an architecture signal, not a cue for attempt #4
+- Writing a design spec or implementation plan
+- Cross-platform shell semantics — bash/PowerShell parity, shell quoting/escaping, trap and subshell behavior
+
+**Why this is a prompt and not just guidance:** the failure mode it addresses is a plausible-looking design that survives self-review because the flawed premise is never questioned — exactly the case where the model in the seat is least able to notice it needs help. Observable triggers fire whether or not the model senses difficulty.
+
+**Effort level (`CLAUDE_CODE_EFFORT_LEVEL`) — a separate, cheaper dial than model.** Model sets the capability ceiling; effort sets how much reasoning is spent per turn. They fix different failures:
+- **Raise effort** when the task is well understood but demands care — long verification chains, thorough test design, close log reading, checking many cases.
+- **Raise model** when the risk is a wrong *premise* rather than shallow reasoning — "is this design sound," "what am I not seeing." More effort does not reliably rescue a flawed framing, because the extra reasoning is spent inside the same wrong frame.
+
+Nominal defaults are per-model: `high` for Sonnet, `xhigh` for Opus. **An explicitly set level overrides that default and does not follow a model switch** — switching to Opus leaves effort wherever it was, potentially below Opus's nominal default, with nothing surfacing the mismatch. Note the env var may be named `CLAUDE_EFFORT` rather than `CLAUDE_CODE_EFFORT_LEVEL`, and may be injected by the harness rather than set in any `settings.json` — check with `env | grep -i effort` rather than assuming a config file is authoritative. After `/model opus`, raise effort deliberately; it will not track the model on its own. Downshift just as deliberately: `medium` for routine single-file edits, config changes, and well-specified mechanical work (real token savings, no quality cost); `low` only for formatting and file moves.
+
+**Also check `MAX_THINKING_TOKENS`** (`.claude/settings.json` env block). Exact interaction with model and effort is not verifiable from inside the repo, but it plausibly bounds reasoning depth independently of both — so a raised effort level may still be capped by it. Worth revisiting before deep architecture or security-boundary work.
+
+**Compact at task boundaries — auto-compact fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`:**
+- Auto-compaction fires at the percentage set by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in settings.json; the `PreCompact` hook fires first and **blocks** if the memory bank is stale (see Context Compaction Recovery above for the exact conditions)
 - Compact manually at natural boundaries before that point:
   - After planning: `/compact Focus on decisions and file paths`
   - After debugging: `/compact Focus on what was tried and what worked`

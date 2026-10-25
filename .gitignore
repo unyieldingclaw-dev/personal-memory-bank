@@ -31,6 +31,15 @@ handoff.md
 .pmb-delegation-depth
 .pmb-hook-errors.log
 
+# Review gate markers — single-use, diff-hash-bound tokens written by /code-review and
+# /change-review, consumed by review-reminders.ps1/.sh on the next git commit/push
+.claude/.code-review-ok
+.claude/.change-review-ok
+.claude/.code-review-ok.claimed*
+.claude/.change-review-ok.claimed*
+.claude/.pending-commit-presha
+.claude/.pending-push-presha
+
 # Task contract files — session artifacts, never committed
 .claude/contracts/*.json
 

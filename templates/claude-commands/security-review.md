@@ -6,6 +6,8 @@ allowed-tools:
 description: Scan current diff for security vulnerabilities across 9 patterns
 ---
 
+**Scope note:** this is a fast, standalone scan. It does not write a review-gate marker and does not satisfy this repo's commit/push gate — `/code-review` (for commits) or `/change-review` (for pushes) is unconditionally required regardless of this command's findings, and both already include real Security coverage on every run (`/code-review`'s Security domain is cross-examined by Opposition Review; `/change-review`'s Job 7 has no skip condition and falls back to a related — though not identical — pattern list when its external local-LLM backend is unavailable). Use this for a quick mid-session look, not as a substitute for the full review.
+
 Review the output of `git diff HEAD` for security vulnerabilities. Check every changed line against these 9 patterns:
 
 **[CRITICAL]**

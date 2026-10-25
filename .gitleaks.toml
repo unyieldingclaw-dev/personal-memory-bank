@@ -1,6 +1,13 @@
 # Gitleaks allowlist — add entries here to suppress known false positives.
 # Documentation: https://github.com/gitleaks/gitleaks#configuration
 #
+# WHY [extend]/useDefault is required: gitleaks replaces its built-in ruleset entirely with
+# whatever a repo-root .gitleaks.toml defines, rather than layering on top of it. A config file
+# with only an [[allowlist]] section and no [[rules]] therefore scans with an EMPTY ruleset --
+# found 2026-09-11, verified by planting a fake secret and confirming gitleaks reported clean.
+[extend]
+useDefault = true
+
 # Example entry:
 # [[allowlist]]
 # description = "known safe example value in docs"

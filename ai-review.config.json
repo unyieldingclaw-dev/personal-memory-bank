@@ -1,0 +1,28 @@
+{
+  "agentPolicy": {
+    "security": {
+      "exclude": [
+        "memory-bank/**",
+        "templates/memory-bank/**",
+        "examples/**/memory-bank/**",
+        "docs/**",
+        "templates/docs/**",
+        "standards/**",
+        "templates/standards/**",
+        "fixtures/security/README.md"
+      ]
+    },
+    "adversarial": {
+      "exclude": [
+        "memory-bank/**",
+        "templates/memory-bank/**",
+        "examples/**/memory-bank/**",
+        "docs/**",
+        "templates/docs/**",
+        "standards/**",
+        "templates/standards/**",
+        "fixtures/security/README.md"
+      ]
+    }
+  }
+}

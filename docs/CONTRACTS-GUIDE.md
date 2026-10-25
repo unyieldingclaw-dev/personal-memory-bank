@@ -17,14 +17,11 @@ Task contracts are machine-readable scope declarations Claude writes before touc
   "task": "Human-readable task description",
   "created_at": "2026-05-22T14:00:00Z",
   "expires_at": "2026-05-22T22:00:00Z",
-  "scope": {
-    "files": [
-      "src/auth/user.ts",
-      "src/db/migrations/003_add_verification.sql",
-      "tests/auth.test.ts"
-    ],
-    "operations": ["create", "edit"]
-  },
+  "scope": [
+    { "file": "src/auth/user.ts", "op": "edit" },
+    { "file": "src/db/migrations/003_add_verification.sql", "op": "create" },
+    { "file": "tests/auth.test.ts", "op": "edit" }
+  ],
   "approved_by": "user",
   "status": "active"
 }
@@ -43,21 +40,21 @@ Expired contracts (current time past `expires_at`) are treated as inactive by th
 ## Scope Matching Rules
 
 A write is **in scope** if the target file:
-1. **Exactly matches** a `scope.files` entry, OR
-2. **Starts with** a `scope.files` entry that ends in `/` (directory prefix), OR
-3. **Matches** a `scope.files` entry interpreted as a glob pattern (`fnmatch`)
+1. **Exactly matches** a `scope[].file` entry, OR
+2. **Starts with** a `scope[].file` entry that ends in `/` (directory prefix), OR
+3. **Matches** a `scope[].file` entry interpreted as a glob pattern (`fnmatch`)
 
 Examples:
 ```
-scope.files: ["src/auth/user.ts"]
+scope: [{"file": "src/auth/user.ts"}]
 "src/auth/user.ts"          → IN SCOPE (exact match)
 "src/auth/token.ts"         → OUT OF SCOPE
 
-scope.files: ["src/auth/"]
+scope: [{"file": "src/auth/"}]
 "src/auth/user.ts"          → IN SCOPE (prefix match)
 "src/other/file.ts"         → OUT OF SCOPE
 
-scope.files: ["src/**/*.ts"]
+scope: [{"file": "src/**/*.ts"}]
 "src/auth/user.ts"          → IN SCOPE (glob match)
 "src/db/schema.sql"         → OUT OF SCOPE
 ```
@@ -69,7 +66,7 @@ The hook fires on every Write and Edit tool call (PreToolUse). It:
 - **Prints a WARN** when: target file is outside the declared scope, or contract is expired
 - **Always exits 0** — never blocks writes (WARN tier)
 
-The WARN output is visible in Claude's context so Claude can pause and check with you.
+The WARN is plain text, which Claude Code only records: it never reaches Claude and is not shown in the visible transcript, so currently neither you nor Claude sees it. Tracked in `docs/backlog/check-contract-output-is-plain-stdout.md`.
 
 ## When to Skip Contracts
 

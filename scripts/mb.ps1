@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Memory Bank utility commands.
 
@@ -18,27 +18,391 @@
 # WHY: ValidateSet ensures typos show helpful error messages listing valid commands.
 # Position=0 allows "mb status" instead of requiring "mb -Command status".
 # Default to "help" so running "mb" alone shows usage, not an error.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'DryRun', Justification='Read by nested functions (e.g. Invoke-Upgrade) via script-scope chaining — PSScriptAnalyzer cannot see usage inside a separately-scoped function body.')]
 param(
     [Parameter(Position=0)]
-    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "preflight", "change-check", "help")]
+    [ValidateSet("init", "install-hooks", "validate", "doctor", "status", "audit", "query", "compact", "update", "archive", "slim", "commit", "upgrade", "budget", "clean", "verify-integrity", "plan", "backlog", "preflight", "change-check", "setup", "help")]
     [string]$Command = "help",
     [Parameter(Position=1)]
     [string]$Arg = "",
     [Parameter(Position=2)]
     [string]$Arg2 = "",
+    # WHY needed: "mb backlog add <title> <description>" needs a 4th positional
+    # slot (Command=backlog, Arg=add, Arg2=title, Arg3=description) — no other
+    # command currently needs more than 3.
+    [Parameter(Position=3)]
+    [string]$Arg3 = "",
     # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
     # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
-    [switch]$DryRun
+    [switch]$DryRun,
+    # WHY: same reasoning as $DryRun above — "mb backlog list --all" would otherwise
+    # have PowerShell's binder intercept the bare "--all" token as an attempted
+    # named-parameter bind ("-all") before the script body runs at all, regardless
+    # of quoting. Reproduced directly: without this, `mb backlog list --all` throws
+    # "A parameter cannot be found that matches parameter name 'all'."
+    [switch]$All,
+    # WHY: `mb doctor --check` (compare integrity checksums without rewriting them). Under
+    # `pwsh -File` -- the mb.bat launcher -- the binder takes `--check` as this switch and would
+    # throw without it. Under the call operator (`& mb.ps1 doctor --check`) the same token lands
+    # in positional $Arg instead (measured), so the dispatch below accepts both. That in-process
+    # form serves interactive use only: the pre-push hook cannot use it, because this script
+    # writes with Write-Host, which the hook's `2>&1 | Out-String` capture does not collect
+    # (measured: zero result lines, so UNKNOWN). The hook reaches this file through mb.bat.
+    [switch]$Check
 )
 
 # WHY: $PSScriptRoot is the directory containing mb.ps1 (scripts/).
 # The repo root is one level up; templates/ lives there.
 # $env:MB_HOME overrides this for globally installed mb (via install.bat).
 $RepoRoot = if ($env:MB_HOME) { $env:MB_HOME } else { Split-Path -Parent $PSScriptRoot }
+# WHY: Validate MB_HOME points to a real PMB installation before trusting it for script paths.
+# An attacker-controlled MB_HOME could otherwise load a crafted pick-folder.ps1 or templates.
+# -LiteralPath is load-bearing and cannot weaken this guard, only sharpen it. Without it Test-Path
+# globs, so an MB_HOME containing [ or ] -- legal on Windows -- fails to match its own real
+# templates/ and every mb.ps1 command dies here with a false "templates/ not found", while mb.sh at
+# the same MB_HOME runs normally: measured rc=1 vs rc=0 on a tree whose templates/ was present.
+# The globbing also cuts the other way, which is why this is a security fix and not only a usability
+# one: a wildcard Test-Path can be satisfied by some OTHER directory the pattern happens to match,
+# so the guard could pass for a path that is not the one about to be used. This is one of 118
+# Test-Path CALLS in this file, on 116 distinct lines; 115 still glob and are recorded as audit
+# finding C9. Counted from the PowerShell AST, which is why calls and lines differ -- an earlier
+# version of this comment said "call sites ... measured by excluding comment lines", which names a
+# method (grep -v '^ *#') that yields 116, not the 118 it was attached to. Not fixed here.
+if ($env:MB_HOME -and -not (Test-Path -LiteralPath (Join-Path $RepoRoot 'templates') -PathType Container)) {
+    Write-Host "[ERROR] MB_HOME '$env:MB_HOME' is not a valid PMB installation (templates/ not found)." -ForegroundColor Red
+    exit 1
+}
 
 # WHY: Hardcoded relative path assumes script runs from project root.
 # This matches the expected usage pattern (developers run "mb" from their project).
 $MemoryBankPath = "memory-bank"
+
+# ─── mb setup helpers ────────────────────────────────────────────────────────
+
+function Get-MbMode {
+    param([string]$ProjectPath)
+    if (Test-Path (Join-Path $ProjectPath 'memory-bank') -PathType Container) {
+        return 'upgrade'
+    }
+    return 'init'
+}
+
+# Get-CachedPmbVersion — sets $script:PmbLocalVersion and $script:PmbRemoteVersion.
+#
+# WHY a shared helper instead of inlining in Invoke-Upgrade: the same check now
+# also runs once after every command (see the notifier block near the end of
+# this file), not just inside `mb upgrade`. One helper, one cache, one place to
+# get the TTL/fail-open logic right.
+#
+# WHY cached with a TTL instead of a live fetch every call: a live network call
+# on every single mb invocation would be slow and flaky. Caching for
+# $script:PmbCacheTtlSeconds means the check is nearly free on every call
+# except roughly once per TTL window.
+#
+# WHY $env:MB_VERSION_CACHE_DIR / $env:MB_VERSION_CHECK_URL overrides: lets
+# tests point this at a temp dir and a local/unreachable URL instead of the
+# real user cache and the real GitHub URL. Production code paths never need to
+# set these; they default to the real values.
+#
+# WHY fail open (leave $script:PmbRemoteVersion empty) on any error — network
+# unreachable, malformed cache JSON: this is an optional notice, never a gate.
+# A broken check must never block or slow down real work.
+$script:PmbCacheTtlSeconds = 604800  # 7 days
+
+function Get-CachedPmbVersion {
+    $script:PmbLocalVersion = $null
+    $script:PmbRemoteVersion = $null
+
+    $versionFile = Join-Path $RepoRoot "VERSION"
+    if (-not (Test-Path $versionFile)) { return }
+    $script:PmbLocalVersion = (Get-Content $versionFile -Raw).Trim()
+
+    $cacheDir = if ($env:MB_VERSION_CACHE_DIR) { $env:MB_VERSION_CACHE_DIR } else { Join-Path $HOME ".mb" }
+    $cacheFile = Join-Path $cacheDir "version-check-cache.json"
+    $checkUrl = if ($env:MB_VERSION_CHECK_URL) { $env:MB_VERSION_CHECK_URL } else { "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" }
+    $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+    if (Test-Path $cacheFile) {
+        try {
+            $cache = Get-Content $cacheFile -Raw | ConvertFrom-Json -ErrorAction Stop
+            $ageSeconds = $nowEpoch - [int64]$cache.checkedAtEpoch
+            if ($ageSeconds -ge 0 -and $ageSeconds -lt $script:PmbCacheTtlSeconds -and $cache.remoteVersion) {
+                $script:PmbRemoteVersion = $cache.remoteVersion
+                return
+            }
+        } catch {
+            # WHY silent: a malformed cache file just means we fall through to
+            # a fresh fetch below, same as a missing cache file.
+            Write-Verbose "Could not read/parse version cache '$cacheFile'; fetching fresh."
+        }
+    }
+
+    try {
+        $response = Invoke-WebRequest -Uri $checkUrl -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+        $script:PmbRemoteVersion = $response.Content.Trim()
+    } catch {
+        $script:PmbRemoteVersion = $null
+    }
+
+    # WHY a separate try/catch for the cache write: a write failure here (disk
+    # full, locked file, permission error) must not discard an already-
+    # successful fetch above — folding the write into the fetch's try block
+    # meant a write error's catch would null out a good $script:PmbRemoteVersion.
+    # Mirrors mb.sh, where the write is a fire-and-forget `|| true` that never
+    # touches REMOTE_VERSION.
+    if ($script:PmbRemoteVersion) {
+        try {
+            if (-not (Test-Path $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
+            # WHY write to a temp file in the same directory then rename, instead of Set-Content
+            # on $cacheFile directly: this notifier runs after EVERY command, so two mb
+            # invocations from concurrent sessions against the same project (a scenario this
+            # repo explicitly supports -- see the concurrent-session-claims feature) can race to
+            # write this file at the same TTL-expiry moment. Mirrors mb.sh's identical fix
+            # (mktemp + mv in the same directory).
+            #
+            # WHY [System.IO.File]::Move(...,$true), not the Move-Item cmdlet: empirically
+            # verified in this repo's own PowerShell 7/NTFS environment under concurrent load --
+            # Move-Item -Force produced 105 writer-side IOExceptions and 67+ reader-side
+            # FileNotFoundExceptions out of a few thousand concurrent attempts (it does not wrap
+            # a true atomic rename the way POSIX `mv` does), while the raw .NET
+            # [System.IO.File]::Move 3-arg overload had zero reader errors under identical load.
+            # Impact of the cmdlet's non-atomicity was muted, not eliminated, by the cache
+            # reader already failing open on any read error -- but the raw .NET call is the
+            # actually-atomic primitive and costs nothing extra to call directly.
+            $cacheTmp = Join-Path $cacheDir ([System.IO.Path]::GetRandomFileName())
+            try {
+                @{ checkedAtEpoch = $nowEpoch; remoteVersion = $script:PmbRemoteVersion } | ConvertTo-Json -Compress | Set-Content $cacheTmp -Encoding utf8
+                [System.IO.File]::Move($cacheTmp, $cacheFile, $true)
+            } finally {
+                # WHY: if Set-Content succeeded but File.Move threw (e.g. the destination
+                # is locked by a concurrent reader), $cacheTmp would otherwise leak as debris
+                # in $cacheDir instead of being cleaned up like mb.sh's `rm -f` fallback.
+                if (Test-Path $cacheTmp) { Remove-Item $cacheTmp -Force -ErrorAction SilentlyContinue }
+            }
+        } catch {
+            # WHY silent: caching is best-effort. A write failure just means
+            # the next invocation fetches live again — never a gate.
+            Write-Verbose "Could not write version cache '$cacheFile'; will fetch live next time."
+        }
+    }
+}
+
+# Test-PmbVersionStale — $true when $script:PmbRemoteVersion/$script:PmbLocalVersion
+# (as set by Get-CachedPmbVersion) show a real, non-empty version mismatch.
+#
+# WHY a helper instead of repeating this condition: the same check appears at
+# both call sites (Invoke-Upgrade's WARN and the end-of-script NOTICE below) —
+# a shared predicate means a future fix only needs to be made once. Mirrors
+# pmb_version_is_stale() in scripts/mb.sh (Task 1) for cross-shell consistency.
+function Test-PmbVersionStale {
+    return [bool]($script:PmbRemoteVersion -and $script:PmbLocalVersion -and $script:PmbRemoteVersion -ne $script:PmbLocalVersion)
+}
+
+
+# WHY: Slash-commands and guide-docs are both discovered the same way — "list files under
+# templates/<subdir>, guarded by Test-Path" — and that shape was being hand-copied at every
+# call site (Get-MbUpgradeAnalysis, Invoke-Init, Invoke-Upgrade). A shared helper removes the
+# duplicated guard+enumerate boilerplate; each call site keeps its own target-path mapping,
+# since that part legitimately differs (.claude/commands/ vs docs/).
+function Get-TemplateDirFile {
+    # WHY -Filter is opt-in with a '*' default rather than '*.md': the claude-commands and docs
+    # call sites have always discovered every file in their directory, and narrowing them here
+    # would silently stop delivering any non-.md template they legitimately carry. Only the
+    # .claude/agents site passes '*.md', to match the bash side's glob in scripts/mb.sh (grep for the .claude/agents *.md glob -- no line number, it has been wrong twice).
+    # Found 2026-08-27: the two shells discovered different sets. It was harmless only by
+    # coincidence -- templates/.claude/agents/ happens to contain nothing but .md files -- so a
+    # stray README, .txt, or editor backup dropped there would have been delivered into an
+    # adopter's agents directory by pwsh and not by bash.
+    param([string]$TemplatesDir, [string]$Subdir, [string]$Filter = '*')
+    $dir = Join-Path $TemplatesDir $Subdir
+    if (-not (Test-Path $dir)) { return @() }
+    return @(Get-ChildItem $dir -File -Filter $Filter)
+}
+
+function Get-MbUpgradeAnalysis {
+    param([string]$ProjectPath, [string]$TemplatesDir)
+    $mbPath        = Join-Path $ProjectPath 'memory-bank'
+    $templateMbDir = Join-Path $TemplatesDir 'memory-bank'
+
+    if (-not (Test-Path $templateMbDir)) { return @{ Present = @(); Missing = @(); GovMissing = @() } }
+    $required = Get-ChildItem $templateMbDir -File | Select-Object -ExpandProperty Name
+    $present  = @()
+    $missing  = @()
+    foreach ($name in $required) {
+        if (Test-Path (Join-Path $mbPath $name)) { $present += $name }
+        else                                     { $missing += $name }
+    }
+
+    # WHY: Subset of Invoke-Upgrade's $templateOwned — only hook/settings scripts.
+    # Governance files that need per-project customization (CLAUDE.md, .cursor/rules/) are excluded
+    # because Invoke-Upgrade handles them with advisory-diff logic rather than overwrite.
+    $templateOwned = @(
+        '.claude/settings.json',
+        '.codex/hooks.json',
+        'scripts/dangerous-commands.ps1', 'scripts/dangerous-commands.sh',
+        'scripts/check-contract.ps1',     'scripts/check-contract.sh',
+        'scripts/update-reviewed.ps1',    'scripts/update-reviewed.sh',
+        'scripts/pre-push-check.ps1',     'scripts/pre-push-check.sh',
+        'scripts/delegation-depth-check.ps1', 'scripts/delegation-depth-check.sh',
+        'scripts/pre-compact-check.ps1',  'scripts/pre-compact-check.sh',
+        'scripts/codex-compaction-hook.ps1', 'scripts/codex-compaction-hook.sh',
+        'scripts/review-reminders.ps1',   'scripts/review-reminders.sh',
+        'scripts/review-reminders-post.ps1', 'scripts/review-reminders-post.sh',
+        'scripts/_review-gate-lib.sh',    'scripts/_review-gate-lib.ps1',
+        'scripts/_review-gate-classify.py', 'scripts/_review-gate-classify.ps1',
+        'scripts/_review-gate-merge.py',  'scripts/_review-gate-merge.ps1',
+        'scripts/warn-stale-review-marker.sh', 'scripts/warn-stale-review-marker.ps1',
+        # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
+        'scripts/baseline-health.sh'
+    )
+    $govMissing = @($templateOwned | Where-Object { -not (Test-Path (Join-Path $ProjectPath $_)) })
+    if (-not (Test-Path (Join-Path $ProjectPath 'AGENTS.md'))) { $govMissing += 'AGENTS.md' }
+
+    # WHY: templates/claude-commands/ holds slash commands that are governance artifacts
+    # (change-review, accessibility-review, etc.) installed alongside hook scripts.
+    # Projects initialized before these commands existed won't have them — detect that here.
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir 'claude-commands')) {
+        if (-not (Test-Path (Join-Path $ProjectPath ".claude\commands\$($f.Name)"))) {
+            $govMissing += ".claude/commands/$($f.Name)"
+        }
+    }
+
+    # WHY: templates/docs/ holds guide docs (CONTRACTS-GUIDE.md, HOOKS-GUIDE.md) referenced
+    # from CLAUDE.md's Task Contract Protocol and Tools sections. Projects scaffolded before
+    # this existed have a CLAUDE.md pointing at docs that were never created — detect that here
+    # the same way missing slash commands are detected above.
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir 'docs')) {
+        if (-not (Test-Path (Join-Path $ProjectPath "docs\$($f.Name)"))) {
+            $govMissing += "docs/$($f.Name)"
+        }
+    }
+
+    return @{
+        Present    = $present
+        Missing    = $missing
+        GovMissing = $govMissing
+    }
+}
+
+function Invoke-MbVerify {
+    param([string]$ProjectPath, [string]$TemplatesDir)
+    $a = Get-MbUpgradeAnalysis -ProjectPath $ProjectPath -TemplatesDir $TemplatesDir
+    return @{ Passed = ($a.Missing.Count -eq 0); Missing = $a.Missing }
+}
+
+function Invoke-ExitSetup {
+    param([string]$Msg = '', [string]$Color = 'Yellow')
+    if ($Msg) { Write-Host $Msg -ForegroundColor $Color }
+    Write-Host ""
+    Write-Host "Press any key to close..."
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+}
+
+function Invoke-Setup {
+    $templatesDir = Join-Path $RepoRoot 'templates'
+    if (-not (Test-Path $templatesDir)) {
+        Write-Host "[ERROR] Templates not found at $templatesDir" -ForegroundColor Red
+        Write-Host "        Set MB_HOME or run from the memory-bank repo." -ForegroundColor Yellow
+        Invoke-ExitSetup
+        return
+    }
+
+    Write-Host ""
+    Write-Host "=== PMB Setup ===" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Step 1: Resolve target folder
+    $target = $null
+    if ($Arg -and (Test-Path $Arg -PathType Container)) {
+        $target = (Resolve-Path $Arg).Path
+    } else {
+        if ($Arg) { Write-Host "[WARN] '$Arg' is not a valid directory — opening folder picker." -ForegroundColor Yellow; Write-Host "" }
+        $pickerScript = Join-Path $RepoRoot 'scripts/pick-folder.ps1'
+        $target = pwsh -NoLogo -ExecutionPolicy Bypass -File $pickerScript `
+                       -Description 'Select the project folder to set up with PMB'
+    }
+    if (-not $target) {
+        Invoke-ExitSetup 'No folder selected. Exiting.'
+        return
+    }
+
+    Write-Host "Target: $target" -ForegroundColor Gray
+    Write-Host ""
+
+    # Step 2: Detect mode
+    $mode = Get-MbMode -ProjectPath $target
+
+    if ($mode -eq 'init') {
+        # ── INIT ─────────────────────────────────────────────────────────────
+        Write-Host "No memory-bank found — initializing..." -ForegroundColor Cyan
+        Write-Host ""
+        Invoke-Init -TargetPath $target
+
+    } else {
+        # ── UPGRADE ───────────────────────────────────────────────────────────
+        Write-Host "Memory bank found — analyzing for upgrade..." -ForegroundColor Cyan
+        Write-Host ""
+
+        $analysis = Get-MbUpgradeAnalysis -ProjectPath $target -TemplatesDir $templatesDir
+
+        Write-Host "--- Current State ---" -ForegroundColor Yellow
+        foreach ($f in $analysis.Present)    { Write-Host "  ✅ $f" -ForegroundColor Green }
+        foreach ($f in $analysis.Missing)    { Write-Host "  ❌ $f (missing)" -ForegroundColor Red }
+        if ($analysis.GovMissing.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  Governance files not yet installed:" -ForegroundColor DarkYellow
+            foreach ($f in $analysis.GovMissing | Select-Object -First 5) {
+                Write-Host "    ⚠️  $f" -ForegroundColor DarkYellow
+            }
+            if ($analysis.GovMissing.Count -gt 5) {
+                Write-Host "    ... ($($analysis.GovMissing.Count - 5) more)" -ForegroundColor DarkYellow
+            }
+        }
+
+        # Nothing to do — exit early
+        if ($analysis.Missing.Count -eq 0 -and $analysis.GovMissing.Count -eq 0) {
+            Write-Host ""
+            Write-Host "  ✅ Memory bank is up to date. No changes needed." -ForegroundColor Green
+            Invoke-ExitSetup
+            return
+        }
+
+        Write-Host ""
+        Write-Host "--- Upgrade Plan ---" -ForegroundColor Yellow
+        foreach ($f in $analysis.Missing) {
+            Write-Host "  Will add:      $f (scaffold from template)" -ForegroundColor Green
+        }
+        if ($analysis.GovMissing.Count -gt 0) {
+            Write-Host "  Will install:  $($analysis.GovMissing.Count) governance file(s) (hooks, settings, standards)" -ForegroundColor Cyan
+        }
+
+        Write-Host ""
+        $ans = Read-Host "Proceed with upgrade? (Y/N)"
+        if ($ans -notmatch '^[Yy]') {
+            Invoke-ExitSetup 'Upgrade cancelled.'
+            return
+        }
+
+        Write-Host ""
+        Invoke-Upgrade -ProjectPath $target
+    }
+
+    # Step 3: Verify
+    Write-Host ""
+    Write-Host "--- Verification ---" -ForegroundColor Cyan
+    $verify = Invoke-MbVerify -ProjectPath $target -TemplatesDir $templatesDir
+    if ($verify.Passed) {
+        Write-Host "  ✅ All required memory-bank files present" -ForegroundColor Green
+    } else {
+        Write-Host "  ❌ Missing files after ${mode}:" -ForegroundColor Red
+        foreach ($f in $verify.Missing) { Write-Host "    - $f" -ForegroundColor Red }
+        Write-Host "  Re-run mb-setup.bat to retry." -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    Write-Host "Done. Open Claude Code in $target to start your session." -ForegroundColor Green
+    Invoke-ExitSetup
+}
 
 function Show-Help {
     Write-Host ""
@@ -50,13 +414,16 @@ function Show-Help {
     Write-Host "Commands:"
     Write-Host "  init          Initialize Memory Bank in current project (or: mb init <path>)"
     Write-Host "  doctor        Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
+    Write-Host "                  --check: same checks, never rewrites .pmb-checksums (used by the pre-push hook)"
     Write-Host "  status        Quick state check — initialized, memory, context, standards, tasks"
     Write-Host "  query         Search memory-bank by tag or section header"
     Write-Host "  clean         Memory bank maintenance: slim check + unified cleanup prompt"
     Write-Host "  commit            Stage and commit Memory Bank changes"
     Write-Host "  upgrade           Propagate current governance templates to this project"
+    Write-Host "  setup             Initialize or upgrade a project — folder picker, auto-detects mode"
     Write-Host "  verify-integrity  Check and refresh memory-bank file integrity checksums"
     Write-Host "  plan              Plan management: status, list, promote, archive"
+    Write-Host "  backlog           Backlog management: add, list, show, promote, dismiss, resolve"
     Write-Host "  preflight         Check tool availability for /change-review (git, gh, ai-review-agent)"
     Write-Host "  change-check      Post-change summary: diff stats, file types, /change-review job preview"
     Write-Host "  help              Show this help message"
@@ -124,7 +491,7 @@ function Show-Status {
                 $daysSince = ([datetime]::Today - $reviewedDate).Days
                 if ($daysSince -gt $staleDays) {
                     Write-Host "  " -NoNewline; Write-Host "⚠" -ForegroundColor Yellow -NoNewline; Write-Host " Active Context ($daysSince days)"
-                    $attentionItems.Add("Active Context stale (${daysSince}d, threshold ${staleDays}d) — run 'mb audit'")
+                    $attentionItems.Add("Active Context stale (${daysSince}d, threshold ${staleDays}d) — run 'mb doctor'")
                 } else {
                     Write-Host "  " -NoNewline; Write-Host "✓" -ForegroundColor Green -NoNewline; Write-Host " Active Context Current"
                 }
@@ -228,7 +595,7 @@ function Show-Slim {
 
     $path = Join-Path $MemoryBankPath "activeContext.md"
     if (Test-Path $path) {
-        $lines = (Get-Content $path | Measure-Object -Line).Lines
+        $lines = @(Get-Content $path).Count
         Write-Host "Current size: $lines lines" -ForegroundColor Yellow
         Write-Host "Target: 50-100 lines"
         Write-Host "Maximum: 150 lines"
@@ -262,7 +629,7 @@ function Show-Clean {
     Write-Host "--- Slim Check ---" -ForegroundColor Yellow
     $path = Join-Path $MemoryBankPath "activeContext.md"
     if (Test-Path $path) {
-        $lines = (Get-Content $path | Measure-Object -Line).Lines
+        $lines = @(Get-Content $path).Count
         Write-Host "activeContext.md: $lines lines (target: 50-100, max: 150)"
         if ($lines -gt 150) {
             Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
@@ -273,6 +640,27 @@ function Show-Clean {
         }
     } else {
         Write-Host "Warning: activeContext.md not found" -ForegroundColor Yellow
+    }
+
+    # WHY progress.md is checked here and not only in `mb doctor`: running `mb clean` without also
+    # running `mb doctor` gave a false "maintenance pass complete" impression even when progress.md
+    # was well over its own limit. The bash twin fixed that in Show-Clean (scripts/mb.sh) and the
+    # fix was never mirrored here, so pwsh users kept getting exactly that impression. Same
+    # thresholds as mb doctor's check_size() and pmb-health.yml's MB_FAIL/MB_WARN, kept in sync
+    # deliberately -- tests/test-threshold-parity.sh compares all three statements of them.
+    $progressPath = Join-Path $MemoryBankPath "progress.md"
+    if (Test-Path $progressPath) {
+        $progressLines = @(Get-Content $progressPath).Count
+        Write-Host "progress.md: $progressLines lines (max: 500)"
+        if ($progressLines -gt 500) {
+            Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
+        } elseif ($progressLines -gt 250) {
+            Write-Host "RECOMMENDED: Consider archiving old entries" -ForegroundColor Yellow
+        } else {
+            Write-Host "OK: File is within target range" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "Warning: progress.md not found" -ForegroundColor Yellow
     }
     Write-Host ""
 
@@ -319,21 +707,111 @@ function Invoke-Commit {
     Write-Host ""
     
     # WHY: Detect subworktrees so we refuse memory-bank/ mutations from the wrong root.
-    # git rev-parse --git-common-dir returns the shared .git dir; in the main worktree
-    # that resolves to .git/ inside $PWD. In a subworktree it's a different path.
+    # --git-dir and --git-common-dir name the same directory everywhere EXCEPT a linked
+    # worktree, whose --git-dir is .git/worktrees/<name> under the shared common dir.
     $commonGitDir = git rev-parse --git-common-dir 2>$null
-    $localGitDir  = Join-Path $PWD ".git"
-    if ($commonGitDir -and (Resolve-Path $commonGitDir -ErrorAction SilentlyContinue) -ne (Resolve-Path $localGitDir -ErrorAction SilentlyContinue)) {
+    # An empty $commonGitDir is the definitive not-in-a-repo signal, answered here rather than
+    # inferred from the `git status` call below, which can also fail on an unreadable index.
+    # Checked BEFORE the subworktree comparison because it is the more fundamental case.
+    # "Not a git repository" is the wording `mb doctor`'s Check 1 already uses for this condition
+    # -- at WARN there, ERROR here, because doctor is reporting and this command cannot proceed.
+    # (`mb status` does NOT check git state at all; an earlier version of this comment said it did.)
+    if (-not $commonGitDir) {
+        Write-Host "[ERROR] Not a git repository." -ForegroundColor Red
+        Write-Host "Run mb commit from inside your project's git repository." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+    # Refused from a subdirectory BEFORE the worktree comparison, matching mb.sh. memory-bank/ is
+    # resolved relative to $PWD, so a subdirectory run would inspect <subdir>/memory-bank, find
+    # nothing, and report "No changes" with exit 0 over a dirty memory-bank. Failing to read the
+    # prefix refuses too, for the same reason.
+    $prefix = git rev-parse --show-prefix 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] Could not determine where you are in this repository." -ForegroundColor Red
+        Write-Host ""
+        exit 1
+    }
+    if ($prefix) {
+        Write-Host "[ERROR] mb commit must be run from the repository root." -ForegroundColor Red
+        Write-Host "You are in $($prefix.TrimEnd('/')) -- cd to the repository root and run it again." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+    $gitDir = git rev-parse --git-dir 2>$null
+    # The comparison is --git-dir against --git-common-dir. It replaced --git-common-dir against
+    # Join-Path $PWD .git, which reported a subworktree inside an absorbed submodule (whose .git is
+    # a gitlink FILE) and from any subdirectory -- both measured in both runtimes.
+    #
+    # .Path on BOTH sides is load-bearing, and this line is the whole reason `mb commit` never
+    # worked on Windows. Resolve-Path returns a PathInfo, which has no value equality, so
+    # `$a -ne $b` compares REFERENCES and is unconditionally true -- it returned true even when
+    # both sides resolved to the identical string in a healthy main worktree. The guard therefore
+    # fired in EVERY repository, so `mb commit` refused everywhere and never committed anything
+    # via mb.bat -> pwsh -> here, which is the documented Windows entry point (install.bat).
+    # Measured before and after: current form true/true (main worktree, subworktree); .Path form
+    # false/true, which is the discrimination the comparison was always supposed to make.
+    # Comparing .Path strings matches the bash twin, which compares `cd && pwd -P` output.
+    # Recorded as C5 in docs/superpowers/specs/2026-06-18-mb-commands-audit.md, whose stated root
+    # cause ("symlinks or UNC paths ... in some cases") is wrong -- incidence is 100%.
+    #
+    # -LiteralPath is the second half of the same defect and is equally load-bearing. Without it
+    # Resolve-Path treats its argument as a WILDCARD, so any repo whose path contains [ or ] --
+    # legal on Windows -- resolves to $null on both sides, `.Path` yields $null, and $null -ne
+    # $null is false... except the LOCAL side is what fails first in practice, leaving one real
+    # string against a $null and firing the guard. Measured in a healthy main worktree at a
+    # bracketed path: wildcard Resolve-Path null=True, -LiteralPath null=False; end to end,
+    # mb.ps1 said "You are in a git subworktree" (rc=1) where mb.sh correctly said "No changes"
+    # (rc=0). Fixing only the equality half would have left a narrower version of the same
+    # 100%-for-those-users refusal, and a fresh sh/ps1 exit-code divergence with it.
+    #
+    # BOTH directions occur. Review measured the second one AFTER the paragraph above was written,
+    # which had reasoned the both-null case away as not arising in practice: with a bracket on both
+    # sides (main `main[x]`, subworktree `sub[y]`, both real `git worktree add`) both sides resolve
+    # to $null, $null -ne $null is False, and the guard does NOT fire -- pre-fix pwsh returned rc=0
+    # "No changes" from inside a genuine subworktree. That is a false NEGATIVE, the more dangerous
+    # direction: a refusal that should have fired, silently didn't. A bracket on only one side
+    # leaves one real string and still fires correctly, which is why the false-positive framing
+    # surfaced first and the worse case hid behind it. That both-null case is now refused
+    # explicitly below rather than compared, since $null -ne $null can never fire.
+    $gitDirPath = if ($gitDir) { (Resolve-Path -LiteralPath $gitDir -ErrorAction SilentlyContinue).Path }
+    $commonPath = (Resolve-Path -LiteralPath $commonGitDir -ErrorAction SilentlyContinue).Path
+    if (-not $gitDirPath -or -not $commonPath) {
+        Write-Host "[ERROR] Could not resolve this repository's git directories." -ForegroundColor Red
+        Write-Host "Refusing rather than guessing whether this is a git subworktree." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+    if ($gitDirPath -ne $commonPath) {
         Write-Host "[ERROR] You are in a git subworktree." -ForegroundColor Red
         Write-Host "Commit memory-bank/ from the main worktree root instead." -ForegroundColor Yellow
         Write-Host ""
-        return
+        # ADOPTER-VISIBLE CONTRACT CHANGE: this path returned 0 before the commit that added this
+        # comment (no date here -- git blame supplies it and cannot go stale). Both refusal
+        # paths now exit non-zero, matching mb.sh. A refusal reporting success is a false-success
+        # signal: `mb commit; if ($LASTEXITCODE -eq 0) {...}` treated a refusal as a commit.
+        exit 1
     }
 
-    # WHY: 2>$null suppresses git errors if not in a repo (graceful handling).
-    # --porcelain gives machine-readable output (stable across git versions).
+    # WHY: --porcelain gives machine-readable output (stable across git versions).
+    # The not-in-a-repo case exits above. An earlier version of this comment claimed `2>$null`
+    # was itself "graceful handling if not in a repo" -- it suppresses git's message, not its
+    # exit status. That claim was word-for-word identical in mb.sh, where under `set -e` it was
+    # actively wrong and aborted the command at 128; here it merely fell through to the
+    # misleading "No changes" below. Same false comment, two different wrong behaviours.
+    # $LASTEXITCODE is checked rather than trusting an empty $status: a genuine git failure
+    # (corrupt or unreadable index) and a genuinely clean memory-bank/ BOTH leave $status empty,
+    # and the `-not $status` test below reports the second as "No changes" with exit 0. Reporting
+    # a failed inspection as "nothing to commit" is the same false-success shape the subworktree
+    # branch above exists to remove. Mirrors the `if ! STATUS=$(...)` handler in mb.sh.
     $status = git status --porcelain $MemoryBankPath 2>$null
-    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] git status failed in this repository." -ForegroundColor Red
+        Write-Host "memory-bank/ was NOT inspected — resolve the git error and retry." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+
     if (-not $status) {
         Write-Host "No changes in memory-bank/ to commit" -ForegroundColor Yellow
         return
@@ -350,7 +828,17 @@ function Invoke-Commit {
         git add $MemoryBankPath
         # WHY: "chore:" prefix follows conventional commits, making it clear this
         # is maintenance, not a feature/fix. Helps with changelog generation.
-        git commit -m "chore: Update Memory Bank context"
+        # WHY the pathspec: a bare `git commit` commits the WHOLE index, so anything already staged
+        # for other work rode along inside this chore commit. git treats a trailing path as a
+        # pathspec with or without `--`, so this does not depend on how PowerShell passes `--`.
+        # The exit status is checked because this printed "Committed!" and returned normally even
+        # when a hook rejected the commit.
+        git commit -m "chore: Update Memory Bank context" -- $MemoryBankPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERROR] git commit failed — memory-bank/ was NOT committed." -ForegroundColor Red
+            Write-Host ""
+            exit 1
+        }
         Write-Host ""
         Write-Host "Committed!" -ForegroundColor Green
     } else {
@@ -393,11 +881,74 @@ function Show-Budget {
     Write-Host "    /model opus  ->  /model sonnet               (escalate then return)" -ForegroundColor White
     Write-Host ""
     if ($claudeKB -gt 8) { Write-Host "  CLAUDE.md is large. Trim unused sections." -ForegroundColor Yellow }
-    if ($mbKB -gt 40) { Write-Host "  memory-bank/ is large. Run 'mb slim' or 'mb archive'." -ForegroundColor Yellow }
+    if ($mbKB -gt 40) { Write-Host "  memory-bank/ is large. Run 'mb clean'." -ForegroundColor Yellow }
     Write-Host ""
 }
 
+# Canonical .gitignore entries every mb-managed project needs: the review gate's runtime
+# markers, the integrity baseline, the delegation counter, the ephemeral handoff note, and
+# per-task contracts. All are machine-local state that must never be committed.
+#
+# WHY a shared helper called from BOTH init and upgrade: this list previously lived inline in
+# Invoke-Init only, and Invoke-Upgrade never touched .gitignore at all -- so an entry added
+# here could never reach a project that had already been initialized, however many times it
+# upgraded. Measured across 12 sibling projects on 2026-08-25: `.claude/contracts/*.json` was
+# ignored in PMB and in NONE of five checked adopters, so every project that had ever written
+# a task contract carried permanent untracked noise in `git status`.
+#
+# WHY this list must stay identical to mb.sh's PMB_GITIGNORE_ENTRIES: they had drifted. This
+# file already carried the six review-gate runtime paths and mb.sh did not, so a bash adopter
+# got a dirtier working tree than a pwsh adopter from the same command.
+$PmbGitignoreEntries = @(
+    "handoff.md"
+    ".pmb-hook-errors.log"
+    ".pmb-checksums"
+    ".pmb-delegation-depth"
+    ".claude/.code-review-ok"
+    ".claude/.change-review-ok"
+    ".claude/.code-review-ok.claimed*"
+    ".claude/.change-review-ok.claimed*"
+    ".claude/.pending-commit-presha"
+    ".claude/.pending-push-presha"
+    ".claude/contracts/*.json"
+    # Scratch plan drafts: standards/WORKFLOW.md Phase 3 and /feature-dev call them gitignored,
+    # and `mb doctor` reports a tracked one as an ERROR ([NS-19]).
+    ".claude/plans/"
+)
+
+# Appends any missing canonical entries to <dir>/.gitignore. Returns the list of entries that
+# were (or with -WhatIfOnly, would be) added; an empty array means the file is already complete.
+#
+# WHY an exact whole-line comparison rather than the previous -notmatch regex: these entries
+# contain both `.` and `*`, and a substring/regex match makes ".claude/.code-review-ok"
+# register as already present when only ".claude/.code-review-ok.claimed*" is in the file --
+# silently skipping a needed entry. The list is append-only, so a false miss costs a duplicate
+# line, never a behaviour change.
+function Sync-Gitignore {
+    param([string]$Dir, [switch]$WhatIfOnly)
+    $gitignore = Join-Path $Dir ".gitignore"
+    # TrimEnd, not Trim: a .gitignore line's LEADING whitespace is significant to git, so
+    # `  foo` does not ignore `foo` and must not count as already present. Trailing whitespace
+    # and CR are insignificant and are stripped -- matching mb.sh's sed, which exists because
+    # a CRLF file otherwise misses every entry under real GNU grep.
+    $existing = if (Test-Path $gitignore) {
+        @(Get-Content $gitignore | ForEach-Object { $_.TrimEnd() })
+    } else { @() }
+    $added = @()
+    foreach ($entry in $PmbGitignoreEntries) {
+        if ($existing -cnotcontains $entry) { $added += $entry }
+    }
+    if ($added.Count -eq 0) { return @() }
+    if ($WhatIfOnly) { return $added }
+    if (-not (Test-Path $gitignore)) {
+        Set-Content -Path $gitignore -Value "# Memory Bank"
+    }
+    Add-Content -Path $gitignore -Value "`n# Memory Bank`n$($added -join "`n")"
+    return $added
+}
+
 function Invoke-Init {
+    param([string]$TargetPath = "")
     Write-Host ""
     Write-Host "Memory Bank" -ForegroundColor Cyan
     Write-Host "===========" -ForegroundColor Cyan
@@ -410,10 +961,11 @@ function Invoke-Init {
         return
     }
 
-    if ($Arg) {
-        $resolved = (Resolve-Path $Arg -ErrorAction SilentlyContinue)?.Path
+    $pathArg = if ($TargetPath) { $TargetPath } else { $Arg }
+    if ($pathArg) {
+        $resolved = (Resolve-Path $pathArg -ErrorAction SilentlyContinue)?.Path
         if (-not $resolved) {
-            Write-Host "[ERROR] Path not found: $Arg" -ForegroundColor Red
+            Write-Host "[ERROR] Path not found: $pathArg" -ForegroundColor Red
             return
         }
         $Target = $resolved
@@ -443,13 +995,19 @@ function Invoke-Init {
     # CLAUDE.md
     Copy-IfNew -Src (Join-Path $TemplatesDir "CLAUDE.md") -Dst (Join-Path $Target "CLAUDE.md") -Label "CLAUDE.md"
 
+    # AGENTS.md is the portable project-local instruction surface used by Codex and other tools.
+    Copy-IfNew -Src (Join-Path $TemplatesDir "AGENTS.md") -Dst (Join-Path $Target "AGENTS.md") -Label "AGENTS.md"
+
     # .claude/settings.json
     Copy-IfNew -Src (Join-Path $TemplatesDir ".claude\settings.json") -Dst (Join-Path $Target ".claude\settings.json") -Label ".claude/settings.json"
+
+    # Codex lifecycle wiring. The exact definition still requires user trust in Codex /hooks.
+    Copy-IfNew -Src (Join-Path $TemplatesDir ".codex\hooks.json") -Dst (Join-Path $Target ".codex\hooks.json") -Label ".codex/hooks.json"
 
     # Hook scripts (explicit allowlist — prevents accidental export of future internal files)
     # NOTE: These are the only portable governance scripts exported by mb init.
     # Additions require a corresponding entry in templates/scripts/ AND a CI integrity update.
-    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1")) {
+    foreach ($script in @("dangerous-commands.sh","dangerous-commands.ps1","check-contract.sh","check-contract.ps1","update-reviewed.sh","update-reviewed.ps1","pre-push-check.sh","pre-push-check.ps1","delegation-depth-check.sh","delegation-depth-check.ps1","pre-compact-check.sh","pre-compact-check.ps1","codex-compaction-hook.sh","codex-compaction-hook.ps1","review-reminders.sh","review-reminders.ps1","review-reminders-post.sh","review-reminders-post.ps1","_review-gate-lib.sh","_review-gate-lib.ps1","_review-gate-classify.py","_review-gate-classify.ps1","_review-gate-merge.py","_review-gate-merge.ps1","warn-stale-review-marker.sh","warn-stale-review-marker.ps1")) {
         Copy-IfNew -Src (Join-Path $TemplatesDir "scripts\$script") -Dst (Join-Path $Target "scripts\$script") -Label "scripts/$script"
     }
 
@@ -481,8 +1039,15 @@ function Invoke-Init {
     }
 
     # .claude/commands/
-    foreach ($f in Get-ChildItem (Join-Path $TemplatesDir "claude-commands") -File) {
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "claude-commands")) {
         Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\commands\$($f.Name)") -Label ".claude/commands/$($f.Name)"
+    }
+
+    # .claude/agents/ — auto-discovered; full rationale at the same site in scripts/mb.sh.
+    # -Filter '*.md' is required for parity: Get-TemplateDirFile defaults to '*', which would
+    # deliver stray non-agent files the bash glob skips.
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir ".claude/agents" -Filter "*.md")) {
+        Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target ".claude\agents\$($f.Name)") -Label ".claude/agents/$($f.Name)"
     }
 
     # standards/ files — governance contracts referenced at runtime by commands
@@ -493,19 +1058,14 @@ function Invoke-Init {
         }
     }
 
-    # .gitignore
-    $gitignore = Join-Path $Target ".gitignore"
-    $gitignoreContent = if (Test-Path $gitignore) { Get-Content $gitignore -Raw } else { "" }
-    $gitignoreAdded = @()
-    if ($gitignoreContent -notmatch "handoff\.md") { $gitignoreAdded += "handoff.md" }
-    if ($gitignoreContent -notmatch "\.pmb-hook-errors\.log") { $gitignoreAdded += ".pmb-hook-errors.log" }
-    if ($gitignoreContent -notmatch "\.pmb-checksums") { $gitignoreAdded += ".pmb-checksums" }
-    if ($gitignoreContent -notmatch "\.pmb-delegation-depth") { $gitignoreAdded += ".pmb-delegation-depth" }
+    # docs/ files — guide docs referenced from CLAUDE.md (Task Contract Protocol, Tools section)
+    foreach ($f in (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "docs")) {
+        Copy-IfNew -Src $f.FullName -Dst (Join-Path $Target "docs\$($f.Name)") -Label "docs/$($f.Name)"
+    }
+
+    # .gitignore — see Sync-Gitignore for the canonical entry list and why it is shared.
+    $gitignoreAdded = Sync-Gitignore -Dir $Target
     if ($gitignoreAdded.Count -gt 0) {
-        if (-not (Test-Path $gitignore)) {
-            Set-Content -Path $gitignore -Value "# Memory Bank"
-        }
-        Add-Content -Path $gitignore -Value "`n# Memory Bank`n$($gitignoreAdded -join "`n")"
         $Created += ".gitignore ($($gitignoreAdded -join ', '))"
     }
 
@@ -531,98 +1091,6 @@ function Invoke-Init {
     Write-Host "  Edit memory-bank/projectbrief.md  -- what does this project do?"
     Write-Host "  Edit memory-bank/techContext.md   -- what is your stack?"
     Write-Host "  Run: mb status"
-    Write-Host ""
-}
-
-function Invoke-InstallHooks {
-    # WHY: Separate from mb init so users who already initialized can retrofit the pre-push hook
-    # without re-running init (which would skip everything as already present). mb init handles
-    # new projects; install-hooks handles the retrofit case.
-    Write-Host ""
-    Write-Host "Install Git Hooks" -ForegroundColor Cyan
-    Write-Host "=================" -ForegroundColor Cyan
-    Write-Host ""
-
-    $gitDir = Join-Path $PWD.Path ".git"
-    if (-not (Test-Path $gitDir)) {
-        Write-Host "[ERROR] No .git directory found. Run this from the root of a git repository." -ForegroundColor Red
-        return
-    }
-
-    $TemplatesDir = Join-Path $RepoRoot "templates"
-    if (-not (Test-Path $TemplatesDir)) {
-        Write-Host "[ERROR] Templates not found at $TemplatesDir" -ForegroundColor Red
-        Write-Host "Run install.bat from the memory-bank repo, or set MB_HOME." -ForegroundColor Yellow
-        return
-    }
-
-    $Target = $PWD.Path
-    $Installed = @()
-    $Skipped   = @()
-
-    # Ensure scripts/ exists and pre-push check scripts are present
-    $scriptsDir = Join-Path $Target "scripts"
-    if (-not (Test-Path $scriptsDir)) {
-        if (-not $DryRun) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
-    }
-    foreach ($scriptName in @("pre-push-check.ps1", "pre-push-check.sh", "delegation-depth-check.ps1", "delegation-depth-check.sh")) {
-        $src = Join-Path $TemplatesDir "scripts\$scriptName"
-        $dst = Join-Path $scriptsDir $scriptName
-        if (-not (Test-Path $src)) {
-            Write-Host "[WARN] Template source missing: $src" -ForegroundColor Yellow
-            continue
-        }
-        if (Test-Path $dst) {
-            Write-Host "  [=] scripts/$scriptName (already present)" -ForegroundColor DarkGray
-            $Skipped += "scripts/$scriptName"
-        } else {
-            if ($DryRun) {
-                Write-Host "  [+] scripts/$scriptName (would create)" -ForegroundColor Green
-            } else {
-                Copy-Item -Path $src -Destination $dst -Force
-                Write-Host "  [+] scripts/$scriptName" -ForegroundColor Green
-            }
-            $Installed += "scripts/$scriptName"
-        }
-    }
-
-    # Install .git/hooks/pre-push
-    $hookSrc  = Join-Path $TemplatesDir "hooks\pre-push"
-    $hooksDir = Join-Path $gitDir "hooks"
-    $hookDst  = Join-Path $hooksDir "pre-push"
-
-    if (-not (Test-Path $hookSrc)) {
-        Write-Host "[ERROR] Hook template not found: $hookSrc" -ForegroundColor Red
-        return
-    }
-    if (-not (Test-Path $hooksDir) -and -not $DryRun) {
-        New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
-    }
-
-    if (Test-Path $hookDst) {
-        Write-Host "  [=] .git/hooks/pre-push (already installed)" -ForegroundColor DarkGray
-        Write-Host "      To reinstall: delete .git/hooks/pre-push and re-run mb install-hooks" -ForegroundColor DarkGray
-        $Skipped += ".git/hooks/pre-push"
-    } else {
-        if ($DryRun) {
-            Write-Host "  [+] .git/hooks/pre-push (would install)" -ForegroundColor Green
-        } else {
-            Copy-Item -Path $hookSrc -Destination $hookDst -Force
-            # WHY: git hooks must be executable on Unix; Windows Git for Windows checks the bit too.
-            if ($IsLinux -or $IsMacOS) { chmod +x $hookDst 2>/dev/null }
-            Write-Host "  [+] .git/hooks/pre-push" -ForegroundColor Green
-        }
-        $Installed += ".git/hooks/pre-push"
-    }
-
-    Write-Host ""
-    if ($DryRun) {
-        Write-Host "Dry run — no files written." -ForegroundColor Yellow
-    } elseif ($Installed.Count -gt 0) {
-        Write-Host "Done. The pre-push check will run automatically on every 'git push'." -ForegroundColor Green
-    } else {
-        Write-Host "Hooks already in place — nothing changed." -ForegroundColor DarkGray
-    }
     Write-Host ""
 }
 
@@ -693,12 +1161,21 @@ function Show-Validate {
 # not semantic correctness or workflow compliance.
 # Keep checks deterministic, explainable, and low-noise.
 function Show-Doctor {
+    # -CheckMode: `mb doctor --check` -- compare integrity checksums without rewriting them (check 20).
+    param([switch]$CheckMode)
     Write-Host ""
     Write-Host "Doctor" -ForegroundColor Cyan
     Write-Host "======" -ForegroundColor Cyan
     Write-Host ""
 
     $driftFound = $false
+    # Genuinely fatal conditions only -- set at the six sites below. Deliberately excludes
+    # the checksum-mismatch and startup-context-ceiling [ERROR] lines further down: both are
+    # advisory by this code's own design (checksum drift is explicitly "permitted" per its own
+    # message and is [WARN], not [ERROR], in Invoke-VerifyIntegrity's equivalent check; the
+    # ceiling breach is tracked separately as NS-44). Found 2026-09-19: doctor's exit code was
+    # never set, so CI's "MB Doctor Self-Check" job could never fail. Mirrors scripts/mb.sh.
+    $fatalFound = $false
 
     # 0. Version
     $versionFile = Join-Path $RepoRoot "VERSION"
@@ -723,6 +1200,7 @@ function Show-Doctor {
         Write-Host "[OK]   Templates found (MB_HOME = $RepoRoot)" -ForegroundColor Green
     } else {
         Write-Host "[ERROR] Templates not found — run install.bat from the memory-bank repo" -ForegroundColor Red
+        $fatalFound = $true
     }
 
     # 3. Required files
@@ -734,12 +1212,14 @@ function Show-Doctor {
         Write-Host "[OK]   All memory-bank files present" -ForegroundColor Green
     } else {
         Write-Host "[ERROR] One or more memory-bank files missing — run 'mb init'" -ForegroundColor Red
+        $fatalFound = $true
     }
 
     if (Test-Path "CLAUDE.md") {
         Write-Host "[OK]   CLAUDE.md present" -ForegroundColor Green
     } else {
         Write-Host "[ERROR] CLAUDE.md missing — run 'mb init'" -ForegroundColor Red
+        $fatalFound = $true
     }
 
     # 4. Hooks
@@ -780,6 +1260,38 @@ function Show-Doctor {
                 Write-Host "[WARN] Hook script missing: $h — run 'mb init' to install" -ForegroundColor Yellow
             }
         }
+        # Lib-file existence — hardcoded, not settings.json-derived (see WHY in
+        # scripts/check-review-gate-lib-presence.sh, mb.sh's equivalent check): a
+        # dot-sourced lib is never referenced in settings.json, so the dynamic check above
+        # cannot see it going missing.
+        if ((Test-Path "scripts/review-reminders.ps1") -or (Test-Path "scripts/review-reminders-post.ps1")) {
+            if (-not (Test-Path "scripts/_review-gate-lib.ps1")) {
+                Write-Host "[ERROR] scripts/_review-gate-lib.ps1 missing but scripts/review-reminders.ps1/-post.ps1 present -- the review-gate hook pair is incomplete" -ForegroundColor Red
+                $fatalFound = $true
+            }
+        }
+        if ((Test-Path "scripts/review-reminders.ps1") -and -not (Test-Path "scripts/_review-gate-classify.ps1")) {
+            Write-Host "[ERROR] scripts/_review-gate-classify.ps1 missing but scripts/review-reminders.ps1 present -- global-option command forms can bypass classification" -ForegroundColor Red
+            $fatalFound = $true
+        }
+        if ((Test-Path "scripts/review-reminders.sh") -or (Test-Path "scripts/review-reminders-post.sh")) {
+            if (-not (Test-Path "scripts/_review-gate-lib.sh")) {
+                Write-Host "[ERROR] scripts/_review-gate-lib.sh missing but scripts/review-reminders.sh/-post.sh present -- the review-gate hook pair is incomplete" -ForegroundColor Red
+                $fatalFound = $true
+            }
+        }
+        if ((Test-Path "scripts/review-reminders.sh") -and -not (Test-Path "scripts/_review-gate-classify.py")) {
+            Write-Host "[ERROR] scripts/_review-gate-classify.py missing but scripts/review-reminders.sh present -- global-option command forms can bypass classification" -ForegroundColor Red
+            $fatalFound = $true
+        }
+        # Missing helpers fail closed (every merge is denied), so this is an ERROR for a
+        # silently broken feature, not a security hole.
+        foreach ($pair in @(@('review-reminders.sh', '_review-gate-merge.py'), @('review-reminders.ps1', '_review-gate-merge.ps1'))) {
+            if ((Test-Path "scripts/$($pair[0])") -and -not (Test-Path "scripts/$($pair[1])")) {
+                Write-Host "[ERROR] scripts/$($pair[1]) missing but scripts/$($pair[0]) present -- every gh pr merge will be denied instead of put to the user" -ForegroundColor Red
+                $fatalFound = $true
+            }
+        }
         # Git hooks — versioned via core.hooksPath
         if (Test-Path ".githooks/pre-push") {
             Write-Host "[OK]   .githooks/pre-push present" -ForegroundColor Green
@@ -798,29 +1310,91 @@ function Show-Doctor {
         Write-Host "       Copy templates/.claude/settings.json to enable" -ForegroundColor DarkGray
     }
 
-    # 5. Token Budget drift
-    $globalClaude = Join-Path $env:USERPROFILE ".claude\CLAUDE.md"
-    if ((Test-Path "CLAUDE.md") -and (Test-Path $globalClaude)) {
-        $localContent = Get-Content "CLAUDE.md" -Raw
-        $globalContent = Get-Content $globalClaude -Raw
-        $localHasSentinel = $localContent -match "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
-        $globalHasSentinel = $globalContent -match "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
-        if ($globalHasSentinel -and -not $localHasSentinel) {
-            Write-Host "[WARN] Token Budget section may have drifted from ~/.claude/CLAUDE.md" -ForegroundColor Yellow
-            Write-Host "       Run 'mb init' to refresh or manually copy the Token Budget section" -ForegroundColor DarkGray
-        } elseif ($localHasSentinel) {
-            Write-Host "[OK]   Token Budget section current" -ForegroundColor Green
+    # 5. Token Budget drift — do the instruction files agree with the LIVE setting?
+    #
+    # WHY this compares values and not the presence of a variable name: it used to test only
+    # whether the string CLAUDE_AUTOCOMPACT_PCT_OVERRIDE appeared in both CLAUDE.md files, and
+    # reported "[OK] Token Budget section current" whenever it did. Measured 2026-08-25, that
+    # passed while ~/.claude/CLAUDE.md hardcoded "50%" against a settings.json value of 65 —
+    # a presence check reported as a correctness check. Naming the variable is not the property
+    # worth checking; agreeing with it is. Must stay behaviourally identical to mb.sh's check 5.
+    #
+    # WHY a document that states NO number passes: deferring to the setting by name is the
+    # correct way to write it, and is what the project CLAUDE.md already does. This check exists
+    # to catch a COPIED value that has gone stale, so having nothing to copy is a pass, not a gap.
+    $globalClaude = Join-Path $HOME ".claude/CLAUDE.md"
+    $tbSettings = ".claude/settings.json"
+    $tbTrue = $null
+    if (Test-Path $tbSettings) {
+        # [^\S\r\n] not \s: .NET \s crosses newlines on -Raw input while grep's [[:space:]]
+        # is line-bounded, so the two shells disagreed when the value sat on the next line.
+        # Match() already takes only the first hit, mirroring mb.sh's head -1.
+        $m = [regex]::Match((Get-Content $tbSettings -Raw), '"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"[^\S\r\n]*:[^\S\r\n]*"?(\d{1,3})')
+        if ($m.Success) { $tbTrue = $m.Groups[1].Value }
+    }
+    if (-not $tbTrue) {
+        Write-Host "[SKIP] Token Budget drift — no CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in $tbSettings" -ForegroundColor DarkGray
+    } else {
+        $tbDrift = @()
+        # WHY standards/MEMORY-BANK.md is in this list: it hardcoded the threshold too, and the
+        # first version of this check could not see it. NOTE the boundary, since an earlier draft
+        # of this comment overstated it: the templates/ MIRROR is NOT scanned. In an adopter
+        # standards/MEMORY-BANK.md IS the shipped copy (upgrade copies templates/standards/* into
+        # standards/*), so the gap exists only in the PMB source repo, where a stale constant
+        # could live in templates/ alone. A standards/-vs-templates parity check is tracked
+        # follow-up. Keep in step with mb.sh.
+        foreach ($tbFile in @("CLAUDE.md", $globalClaude, "standards/MEMORY-BANK.md")) {
+            if (-not (Test-Path $tbFile)) { continue }
+            $claims = @()
+            foreach ($line in (Get-Content $tbFile)) {
+                foreach ($mm in [regex]::Matches($line, 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE\s*=\s*(\d{1,3})')) {
+                    $claims += $mm.Groups[1].Value
+                }
+                # The number must follow "at" -- see mb.sh: sharing a line with the feature
+                # name also matched the 40% HANDOFF threshold in the same table. \b keeps the
+                # match from running inside "th(at)/form(at)/gre(at) N%" -- a narrowing that
+                # removes false positives and can add none. Must match mb.sh's '\bat ...'.
+                # KNOWN LIMITS (identical to mb.sh -- its block carries the full reasoning):
+                # (a) a threshold whose digits do NOT follow "at" is invisible, including the
+                # "before 50% auto-compact fires" table form this commit hand-fixed, so [OK] is
+                # not proof no constant is restated; (b) a line legitimately saying "at N%"
+                # about something else while also naming the feature still registers -- \b does
+                # not close that; (c) an earlier draft wrongly claimed the 'auto-compact' gate
+                # had closed (b); (d) templates/standards/MEMORY-BANK.md is not scanned; (e) the
+                # old "project CLAUDE.md lost the section" WARN is gone, nothing replaces it.
+                if ($line -match '(?i)auto-compact') {
+                    foreach ($mm in [regex]::Matches($line, '(?i)\bat [a-z]* *~*(\d{1,3})%')) {
+                        $claims += $mm.Groups[1].Value
+                    }
+                }
+            }
+            foreach ($claim in ($claims | Sort-Object -Unique)) {
+                if ($claim -ne $tbTrue) { $tbDrift += "$tbFile states $claim%" }
+            }
+        }
+        if ($tbDrift.Count -gt 0) {
+            Write-Host "[WARN] Token Budget drift — instruction files disagree with $tbSettings ($tbTrue%)" -ForegroundColor Yellow
+            foreach ($d in $tbDrift) { Write-Host "       $d" }
+            Write-Host "       Name the setting instead of copying its value — a restated constant goes stale silently." -ForegroundColor DarkGray
+        } else {
+            Write-Host "[OK]   Token Budget — no instruction file contradicts $tbSettings ($tbTrue%)" -ForegroundColor Green
         }
     }
 
     # 6. File sizes
     $hasOverLimit = $false
     $sizeSpecs = @(
-        @{Name="projectbrief.md"; Max=150},
-        @{Name="systemPatterns.md"; Max=300},
-        @{Name="techContext.md"; Max=400},
+        # THRESHOLD SOURCE OF TRUTH: .github/workflows/pmb-health.yml's MB_FAIL map. Aligned 2026-08-27
+        # after an audit found THREE divergences, in both directions: progress.md was stricter here (400)
+        # than in CI (600), so `mb doctor` WARNed on files the shipped docs certified compliant; while
+        # projectbrief.md (150 vs 120) and techContext.md (400 vs 300) were LOOSER here than CI, meaning a
+        # clean `mb doctor` could still be followed by a red build. Only the progress.md case had been
+        # recorded. `tests/test-threshold-parity.sh` now fails if these drift from CI again.
+        @{Name="projectbrief.md"; Max=80},
+        @{Name="systemPatterns.md"; Max=120},
+        @{Name="techContext.md"; Max=120},
         @{Name="activeContext.md"; Max=150},
-        @{Name="progress.md"; Max=400}
+        @{Name="progress.md"; Max=500}
     )
     foreach ($s in $sizeSpecs) {
         $p = "memory-bank/$($s.Name)"
@@ -877,6 +1451,7 @@ function Show-Doctor {
                     $ancestor = ($lm.Groups[1].Value.Trim() -replace '@.*', '').Trim()
                     if (-not [string]::IsNullOrWhiteSpace($ancestor) -and -not (Test-Path $ancestor)) {
                         $integrityIssues += @{Level="ERROR"; Msg="memory-bank/$f lineage root missing: $ancestor (recovery impossible)"}
+                        $fatalFound = $true
                     }
                 }
             }
@@ -922,7 +1497,7 @@ function Show-Doctor {
         if ($staleVolatile -gt 0) { $parts += "$staleVolatile volatile/accumulating" }
         if ($staleStable -gt 0) { $parts += "$staleStable stable" }
         $detail = $parts -join ", "
-        Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb audit' for details" -ForegroundColor Yellow
+        Write-Host "[WARN] $staleTotal stale memory-bank file(s) detected ($detail) — run 'mb doctor' for details" -ForegroundColor Yellow
     }
 
     # 10. Placeholder residue
@@ -1020,13 +1595,54 @@ function Show-Doctor {
     }
 
     # 15. Startup context size ceiling — WARN >15 KB, ERROR >25 KB
-    $ceilingFiles = @()
-    if (Test-Path "CLAUDE.md") { $ceilingFiles += "CLAUDE.md" }
-    foreach ($f in @("projectbrief.md","systemPatterns.md","techContext.md","activeContext.md","progress.md")) {
-        $p = "memory-bank/$f"
-        if (Test-Path $p) { $ceilingFiles += $p }
+    # WORKTREE-AWARE -- see the bash twin for the full rationale. A subworktree's own memory-bank
+    # is stale by construction (CLAUDE.md forbids updating it there), so measuring it reported a
+    # phantom 69,594-byte reduction.
+    $startupRoot = "."
+    $commonDir = (& git rev-parse --git-common-dir 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $commonDir) {
+        # -LiteralPath throughout. Resolve-Path, Test-Path, Get-ChildItem and Get-Item all treat
+        # -Path as a WILDCARD, so any repo whose path contains [ or ] silently resolves to nothing.
+        # This Resolve-Path was the loudest instance in the file: it carried no -ErrorAction, so
+        # `Split-Path -Parent $null` threw ParameterBindingValidationException. An earlier draft of
+        # this comment said "alone among the four" -- that was false and review caught it. TWO of
+        # the file's four Resolve-Path call SITES lacked -ErrorAction: this one and the one in
+        # Invoke-Setup (no line number on purpose -- three drafts of the surrounding record carried
+        # mb.ps1 line numbers and all three went stale, the last within minutes of being derived).
+        # Sites, not calls: the AST reports five Resolve-Path calls on
+        # four lines, because the mb commit guard puts two on one line. Do not read this block as
+        # evidence that the others are guarded;
+        # Invoke-Setup's is not, and it is part of audit finding C9.
+        #
+        # The throw is NOT the serious half. Doctor does not die on it -- it prints the stack trace,
+        # carries on with $startupRoot still ".", and so measures the SUBWORKTREE's own memory-bank
+        # rather than the main worktree's, which is precisely the phantom reduction the
+        # WORKTREE-AWARE note above this block exists to prevent. Measured with the main worktree
+        # inflated past the ceiling and the subworktree left small: pre-fix printed
+        # "[OK] Startup context: 0.6 KB" for a tree measuring 27 KB against a 25 KB hard limit
+        # (27,607 B vs a 25,600 B ceiling -- 27 KB in total, not in excess), post-fix printed
+        # the [ERROR], and a non-bracketed path printed the [ERROR] either way -- so the bracket is
+        # the cause, not mere absence. A false OK in a governance check outranks a crash.
+        #
+        # Reachable only from inside a subworktree, since only there does git return an absolute
+        # --git-common-dir instead of a relative `.git`. The other four calls in this check (two
+        # Test-Path, one Get-ChildItem, one Get-Item -- five calls of four cmdlet kinds in total)
+        # never threw at all;
+        # they were the silent half of the same wrong-root measurement.
+        $resolvedCommon = (Resolve-Path -LiteralPath $commonDir -ErrorAction SilentlyContinue).Path
+        if ($resolvedCommon) {
+            $candidate = Join-Path (Split-Path -Parent $resolvedCommon) ""
+            if (Test-Path -LiteralPath (Join-Path $candidate "memory-bank")) { $startupRoot = $candidate }
+        }
     }
-    $ceilingBytes = ($ceilingFiles | ForEach-Object { (Get-Item $_).Length } | Measure-Object -Sum).Sum
+    $ceilingFiles = @()
+    if (Test-Path -LiteralPath (Join-Path $startupRoot "CLAUDE.md")) { $ceilingFiles += (Join-Path $startupRoot "CLAUDE.md") }
+    # Enumerated, not listed -- matches .github/workflows/pmb-health.yml; README.md was in no list.
+    # -Recurse, matching the ls-tree -r baseline below -- see the bash twin for why.
+    foreach ($mb in (Get-ChildItem -LiteralPath (Join-Path $startupRoot "memory-bank") -Filter "*.md" -File -Recurse -ErrorAction SilentlyContinue)) {
+        $ceilingFiles += $mb.FullName
+    }
+    $ceilingBytes = ($ceilingFiles | ForEach-Object { (Get-Item -LiteralPath $_).Length } | Measure-Object -Sum).Sum
     $ceilingKB = [math]::Round($ceilingBytes / 1KB, 1)
     if ($ceilingBytes -gt 25600) {
         Write-Host "[ERROR] Startup context ${ceilingKB} KB exceeds 25 KB limit — compact memory-bank/ immediately" -ForegroundColor Red
@@ -1034,6 +1650,31 @@ function Show-Doctor {
         Write-Host "[WARN] Startup context ${ceilingKB} KB exceeds 15 KB — consider slimming memory-bank/" -ForegroundColor Yellow
     } else {
         Write-Host "[OK]   Startup context: ${ceilingKB} KB (warn: 15 KB, fail: 25 KB)" -ForegroundColor Green
+    }
+    # The 25 KB line above is ADVISORY. What actually fails CI is the ratchet: this aggregate may not
+    # exceed its value on origin/main. Mirrored here for the same reason as the bash twin -- a
+    # threshold enforced only in CI gives no local signal before the build reds. Same six files and
+    # same comparison as .github/workflows/pmb-health.yml; silent when no baseline is reachable.
+    $ratchetBase = 0; $ratchetOk = $true
+    $ratchetPaths = @("CLAUDE.md") + (@(& git ls-tree -r --name-only origin/main -- memory-bank/ 2>$null) | Where-Object { $_ -like "*.md" })
+    # A baseline with CLAUDE.md but zero memory-bank files left $ratchetOk true and produced a
+    # ~94 KB false regression on the ordinary first-adoption shape. Count what was enumerated.
+    $ratchetFiles = 0
+    foreach ($rf in $ratchetPaths) {
+        # git cat-file -s, not `git show`: reconstructing the blob's text and re-encoding it
+        # diverged from the bash twin by 1,698 bytes -- the same character-vs-byte class fixed
+        # earlier in Show-Clean. The blob size is a number git already knows; ask for it.
+        $sz = & git cat-file -s "origin/main:$rf" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $sz) { $ratchetBase += [int]$sz } else { $ratchetOk = $false }
+        if ($rf -like "memory-bank/*") { $ratchetFiles++ }
+    }
+    if ($ratchetFiles -eq 0) { $ratchetOk = $false }
+    if ($ratchetOk -and $ratchetBase -gt 0) {
+        if ($ceilingBytes -gt $ratchetBase) {
+            Write-Host "[WARN] Startup context is $($ceilingBytes - $ratchetBase) bytes above origin/main. PMB's own CI gates on this; an adopter's memory-bank-size.yml does NOT, so treat it as advisory outside PMB." -ForegroundColor Yellow
+        } else {
+            Write-Host "[OK]   Startup-context ratchet: $($ratchetBase - $ceilingBytes) bytes under origin/main" -ForegroundColor Green
+        }
     }
 
     # 16. Hook error log — check for recent hook failures
@@ -1095,7 +1736,7 @@ function Show-Doctor {
         try {
             $days = ([datetime]::Today - [datetime]::ParseExact($lastReviewed, 'yyyy-MM-dd', $null)).Days
             if ($days -gt 180) { $oldStableFindings += @{File=$f; Days=$days; Auth=$authority} }
-        } catch {}
+        } catch { Write-Verbose "Could not parse last-reviewed date '$lastReviewed' for $f; skipping from 180-day check." }
     }
     if ($oldStableFindings.Count -eq 0) {
         Write-Host "[OK]   All stable-authority decisions reviewed within 180 days" -ForegroundColor Green
@@ -1174,17 +1815,30 @@ function Show-Doctor {
             Write-Host "[OK]   Integrity checksums verified — no external modifications detected" -ForegroundColor Green
         } else {
             foreach ($iss in $checksumIssues) { Write-Host "[ERROR] $iss" -ForegroundColor Red }
-            Write-Host "       External edits are permitted — run 'mb doctor' again to refresh checksums after review." -ForegroundColor DarkGray
+            if ($CheckMode) {
+                Write-Host "       Not refreshed (--check). After review, accept with: mb verify-integrity" -ForegroundColor DarkGray
+            } else {
+                Write-Host "       External edits are permitted — run 'mb doctor' again to refresh checksums after review." -ForegroundColor DarkGray
+            }
         }
+    } elseif ($CheckMode) {
+        Write-Host "[WARN] Integrity checksums: no baseline (.pmb-checksums absent); --check does not create one. Run: mb verify-integrity" -ForegroundColor Yellow
     } else {
         Write-Host "[OK]   Integrity checksums — baseline established on this run" -ForegroundColor Green
     }
-    # Always refresh checksums at end of doctor
-    try {
-        $csLines = @("# PMB Checksums — last verified by mb doctor $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
-        foreach ($fname in $currentHashes.Keys | Sort-Object) { $csLines += "$fname=$($currentHashes[$fname])" }
-        Set-Content -Path $checksumFile -Value $csLines -ErrorAction Stop
-    } catch { Write-Host "[WARN] Could not write .pmb-checksums: $_" -ForegroundColor Yellow }
+    # WHY -CheckMode skips the refresh: plain doctor re-baselines here, so a hook that runs it on
+    # every push reports a mismatch exactly once -- in the run that then erases it. Check mode
+    # compares only. The marker line is ASCII and stable because pre-push Check 7 requires it as
+    # proof the read-only path ran (an older mb.sh ignores --check and rewrites silently).
+    if ($CheckMode) {
+        Write-Host "[OK]   Integrity check mode: .pmb-checksums not modified" -ForegroundColor Green
+    } else {
+        try {
+            $csLines = @("# PMB Checksums — last verified by mb doctor $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+            foreach ($fname in $currentHashes.Keys | Sort-Object) { $csLines += "$fname=$($currentHashes[$fname])" }
+            Set-Content -Path $checksumFile -Value $csLines -ErrorAction Stop
+        } catch { Write-Host "[WARN] Could not write .pmb-checksums: $_" -ForegroundColor Yellow }
+    }
 
     # 21. Git-vs-reviewed lag — last-reviewed frontmatter date vs. last git commit date
     $gitLagFindings = @()
@@ -1202,7 +1856,7 @@ function Show-Doctor {
             if ($commitDate -gt $revDate) {
                 $gitLagFindings += [pscustomobject]@{ File = $f; Reviewed = $lastReviewed; Commit = $lastCommit }
             }
-        } catch {}
+        } catch { Write-Verbose "Could not parse a date for $f (reviewed='$lastReviewed', commit='$lastCommit'); skipping git-lag check." }
     }
     if ($gitLagFindings.Count -eq 0) {
         Write-Host "[OK]   Git-vs-reviewed lag — all files reviewed after last commit" -ForegroundColor Green
@@ -1215,7 +1869,7 @@ function Show-Doctor {
     }
 
     # Helper: strip emoji/markers, lowercase, collapse whitespace
-    function Normalize-MbLine([string]$s) {
+    function Format-MbLine([string]$s) {
         ($s -replace '[✅⏸\-\*#]', '' -replace '\s+', ' ').Trim().ToLower()
     }
 
@@ -1231,13 +1885,13 @@ function Show-Doctor {
         $fLines = Get-Content $p
         for ($i = 0; $i -lt $fLines.Count; $i++) {
             if ($fLines[$i] -match '⏸') {
-                $plannedItems += [pscustomobject]@{ Text = $fLines[$i]; NormText = (Normalize-MbLine $fLines[$i]); File = $f; Line = $i + 1 }
+                $plannedItems += [pscustomobject]@{ Text = $fLines[$i]; NormText = (Format-MbLine $fLines[$i]); File = $f; Line = $i + 1 }
             }
         }
     }
     $c22Matches = @(); $c22Seen = @{}
     foreach ($doneLine in $completedLines) {
-        $doneNorm = Normalize-MbLine $doneLine
+        $doneNorm = Format-MbLine $doneLine
         $tokens   = $doneNorm -split '\s+' | Where-Object { $_ }
         if ($tokens.Count -lt 4) { continue }
         for ($i = 0; $i -le $tokens.Count - 4; $i++) {
@@ -1275,11 +1929,11 @@ function Show-Doctor {
             if ($inNextSteps -and $line -match '^\s*[-*]') { $nextStepLines += $line }
         }
     }
-    # Pre-normalize completed lines once to avoid O(n²) Normalize-MbLine calls
-    $completedNorms = $completedLines | ForEach-Object { Normalize-MbLine $_ }
+    # Pre-normalize completed lines once to avoid O(n²) Format-MbLine calls
+    $completedNorms = $completedLines | ForEach-Object { Format-MbLine $_ }
     $c23Matches = @(); $c23Seen = @{}
     foreach ($step in $nextStepLines) {
-        $stepNorm = Normalize-MbLine $step
+        $stepNorm = Format-MbLine $step
         $tokens   = $stepNorm -split '\s+' | Where-Object { $_ }
         if ($tokens.Count -lt 4) { continue }
         for ($i = 0; $i -le $tokens.Count - 4; $i++) {
@@ -1309,6 +1963,153 @@ function Show-Doctor {
         Write-Host "       Structural drift signals detected — run /mb-drift for semantic analysis." -ForegroundColor DarkYellow
     }
 
+    # 24. Plan hygiene — docs/plans/ structure and draft tracking
+    $durableDir = "docs/plans"
+    $scratchDir = ".claude/plans"
+
+    if (Test-Path $durableDir) {
+        Write-Host "[OK]   docs/plans/ exists" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] docs/plans/ not found — run 'mb plan status' for setup" -ForegroundColor Yellow
+    }
+
+    if (Test-Path $scratchDir) {
+        $trackedScratch = @(git ls-files $scratchDir 2>$null)
+        if ($trackedScratch.Count -gt 0) {
+            $fatalFound = $true
+            Write-Host "[ERROR] $($trackedScratch.Count) scratch plan(s) in $scratchDir are tracked by git" -ForegroundColor Red
+            foreach ($f in $trackedScratch) { Write-Host "       $f" }
+            Write-Host "       Fix: git rm --cached $scratchDir/*.md" -ForegroundColor Red
+        } else {
+            Write-Host "[OK]   No tracked scratch plans in $scratchDir" -ForegroundColor Green
+        }
+    }
+
+    if (Test-Path $durableDir) {
+        $missingFmPlans = @()
+        Get-ChildItem -Path $durableDir -Filter "*.md" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
+            # -notmatch '^---' (not exact equality) mirrors bash's `grep -c '^---'`, which
+            # also accepts "----" or "--- trailing text" as a valid frontmatter opener.
+            $firstLine = Get-Content $_.FullName -TotalCount 1
+            if ($firstLine -notmatch '^---') { $missingFmPlans += $_.FullName }
+        }
+        if ($missingFmPlans.Count -gt 0) {
+            Write-Host "[WARN] $($missingFmPlans.Count) plan(s) missing frontmatter:" -ForegroundColor Yellow
+            foreach ($p in $missingFmPlans) { Write-Host "       $p" }
+        } else {
+            Write-Host "[OK]   All plans have frontmatter" -ForegroundColor Green
+        }
+
+        $stalePlans = @()
+        $todayP = Get-Date
+        Get-ChildItem -Path $durableDir -Filter "*.md" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "README.md" } | ForEach-Object {
+            $statusLine = Get-Content $_.FullName | Where-Object { $_ -match '^status:\s*(.+)$' } | Select-Object -First 1
+            if ($statusLine -match '^status:\s*(.+)$') {
+                $status = $matches[1].Trim()
+                if ($status -eq "planned" -or $status -eq "active") {
+                    $lastCommit = (git log -1 --format="%as" -- $_.FullName 2>$null)
+                    if ($lastCommit) {
+                        # WHY: ParseExact throws on any format other than yyyy-MM-dd; wrap so an
+                        # unexpected git date format can't abort the rest of mb doctor.
+                        try {
+                            $commitDate = [datetime]::ParseExact($lastCommit, "yyyy-MM-dd", $null)
+                            $days = ($todayP - $commitDate).Days
+                            if ($days -gt 30) { $stalePlans += "$($_.Name) (${days}d, status:$status)" }
+                        } catch { Write-Verbose "Could not parse commit date '$lastCommit' for $($_.Name); skipping stale-plan check." }
+                    }
+                }
+            }
+        }
+        if ($stalePlans.Count -gt 0) {
+            Write-Host "[WARN] $($stalePlans.Count) plan(s) with no activity in 30+ days:" -ForegroundColor Yellow
+            foreach ($p in $stalePlans) { Write-Host "       $p" }
+        } else {
+            Write-Host "[OK]   No stale plans" -ForegroundColor Green
+        }
+    }
+
+    # 25. Agent frontmatter — .claude/agents/*.md must declare name: matching filename
+    $agentsDir = ".claude/agents"
+    if (Test-Path $agentsDir) {
+        $missingNameAgents = @()
+        $mismatchedNameAgents = @()
+        $unpinnedReviewAgents = @()
+        Get-ChildItem -Path $agentsDir -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $stem = $_.BaseName
+            # Scope to the frontmatter block only, so a body line starting with "name:"
+            # (e.g. example YAML in an agent's own instructions) can't false-match.
+            $content = Get-Content $_.FullName -Raw
+            $fmMatch = [regex]::Match($content, '(?s)^---\r?\n(.+?)\r?\n---')
+            $agentName = ""
+            if ($fmMatch.Success) {
+                $nameMatch = [regex]::Match($fmMatch.Groups[1].Value, '(?m)^name:\s*(.+)$')
+                if ($nameMatch.Success) {
+                    $agentName = $nameMatch.Groups[1].Value.Trim().Trim('"', "'")
+                }
+            }
+            if ([string]::IsNullOrEmpty($agentName)) {
+                $missingNameAgents += $_.FullName
+            } elseif ($agentName -ne $stem) {
+                $mismatchedNameAgents += "$($_.FullName) (name: $agentName, filename: $stem)"
+            }
+            # Review agents that decide whether code ships must PIN a capable model. An unpinned
+            # agent silently inherits CLAUDE_CODE_SUBAGENT_MODEL (haiku in this repo), and a cheap
+            # review that finds nothing is indistinguishable from a thorough one that finds nothing.
+            # Found live 2026-08-26: security-reviewer had no model: field and had been running on
+            # haiku. researcher is deliberately excluded -- haiku IS right for retrieval work.
+            if ($stem -in @('security-reviewer', 'opposition')) {
+                $agentModel = ""
+                if ($fmMatch.Success) {
+                    $modelMatch = [regex]::Match($fmMatch.Groups[1].Value, '(?m)^model:\s*(.+)$')
+                    if ($modelMatch.Success) {
+                        $agentModel = $modelMatch.Groups[1].Value.Trim().Trim('"', "'")
+                    }
+                }
+                if ([string]::IsNullOrEmpty($agentModel)) {
+                    $unpinnedReviewAgents += "$($_.FullName) (no model: -- inherits CLAUDE_CODE_SUBAGENT_MODEL)"
+                } elseif ($agentModel -eq 'haiku') {
+                    $unpinnedReviewAgents += "$($_.FullName) (model: haiku -- cost-optimized, invalid for a review gate)"
+                }
+            }
+        }
+        if ($unpinnedReviewAgents.Count -gt 0) {
+            Write-Host "[WARN] $($unpinnedReviewAgents.Count) review agent(s) not pinned to a capable model:" -ForegroundColor Yellow
+            foreach ($a in $unpinnedReviewAgents) { Write-Host "       $a" }
+        }
+        if ($missingNameAgents.Count -gt 0) {
+            Write-Host "[WARN] $($missingNameAgents.Count) agent(s) missing name: in frontmatter — Claude Code will silently fail to register them:" -ForegroundColor Yellow
+            foreach ($a in $missingNameAgents) { Write-Host "       $a" }
+        }
+        if ($mismatchedNameAgents.Count -gt 0) {
+            Write-Host "[WARN] $($mismatchedNameAgents.Count) agent(s) have name: that doesn't match their filename:" -ForegroundColor Yellow
+            foreach ($a in $mismatchedNameAgents) { Write-Host "       $a" }
+        }
+        if ($missingNameAgents.Count -eq 0 -and $mismatchedNameAgents.Count -eq 0) {
+            Write-Host "[OK]   All agent definitions have name: matching their filename" -ForegroundColor Green
+        }
+
+        # Live/template parity — only applies in the PMB source repo, which ships both
+        # a dogfooded .claude/agents/ and a templates/.claude/agents/ copy.
+        $templateAgentsDir = "templates/.claude/agents"
+        if (Test-Path $templateAgentsDir) {
+            $parityIssues = @()
+            Get-ChildItem -Path $agentsDir -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+                $templatePath = Join-Path $templateAgentsDir $_.Name
+                if (Test-Path $templatePath) {
+                    $liveHash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+                    $templateHash = (Get-FileHash $templatePath -Algorithm SHA256).Hash
+                    if ($liveHash -ne $templateHash) { $parityIssues += $_.Name }
+                }
+            }
+            if ($parityIssues.Count -gt 0) {
+                Write-Host "[WARN] $($parityIssues.Count) agent(s) differ from their templates/.claude/agents/ copy:" -ForegroundColor Yellow
+                foreach ($a in $parityIssues) { Write-Host "       $a" }
+            } else {
+                Write-Host "[OK]   Live agents match templates/.claude/agents/" -ForegroundColor Green
+            }
+        }
+    }
+
     # Startup context — observability section (not a numbered health check)
     Write-Host ""
     Write-Host "  Startup Context"
@@ -1335,7 +2136,7 @@ function Show-Doctor {
                 # the raw string gives an approximation consistent with current-file sizing.
                 $content30d = git show "${commit30d}:${f}" 2>$null
                 if ($content30d) { $total30d += [System.Text.Encoding]::UTF8.GetByteCount($content30d) }
-            } catch {}
+            } catch { Write-Verbose "Could not read historical content for $f at $commit30d; excluding from 30-day growth calc." }
         }
         if ($total30d -gt 0) {
             $growth = [int](($totalBytes - $total30d) * 100 / $total30d)
@@ -1363,6 +2164,13 @@ function Show-Doctor {
     Show-Validate
 
     Show-Budget
+
+    # `exit` (not `return`) terminates the whole process even from inside this function --
+    # matching mb.sh, where `set -e` makes show_doctor's `return 1` abort the script directly
+    # from the dispatch case, skipping the update-notifier block that would otherwise run next.
+    if ($fatalFound) {
+        exit 1
+    }
 }
 
 function Show-Audit {
@@ -1535,7 +2343,7 @@ function Show-Compact {
 
     if ($totalKB -lt 60) {
         Write-Host "memory-bank/ is $totalKB KB — below the 60 KB compaction threshold." -ForegroundColor Green
-        Write-Host "Compaction is most valuable when size > 60 KB and mb audit shows stale files." -ForegroundColor Yellow
+        Write-Host "Compaction is most valuable when size > 60 KB and mb doctor shows stale files." -ForegroundColor Yellow
         Write-Host ""
     }
 
@@ -1570,10 +2378,13 @@ Do not commit the changes until I confirm.
 }
 
 function Invoke-Upgrade {
+    param([string]$ProjectPath = "")
     # WHY: $DryRun is read from the script-level switch parameter rather than
     # checking $Arg for "--dry-run". PS7 parses --dry-run as a named parameter
     # flag, not a positional string; a [switch] is the idiomatic PS7 equivalent.
     $dryRun = $DryRun.IsPresent
+
+    if ($ProjectPath) { Push-Location $ProjectPath }
 
     Write-Host ""
     Write-Host "mb upgrade" -ForegroundColor Cyan
@@ -1596,22 +2407,13 @@ function Invoke-Upgrade {
     }
 
     # Remote version check — soft warning, never blocks upgrade
-    $versionFile = Join-Path $RepoRoot "VERSION"
-    if (Test-Path $versionFile) {
-        $localVersion = (Get-Content $versionFile -Raw).Trim()
-        try {
-            $response = Invoke-WebRequest `
-                -Uri "https://raw.githubusercontent.com/unyieldingclaw-dev/personal-memory-bank/main/VERSION" `
-                -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
-            $remoteVersion = $response.Content.Trim()
-            if ($remoteVersion -ne $localVersion) {
-                Write-Host "[WARN] PMB $localVersion installed locally, $remoteVersion available" -ForegroundColor Yellow
-                Write-Host "       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank" -ForegroundColor Yellow
-                Write-Host ""
-            }
-        } catch {
-            Write-Host "[INFO] Remote version check skipped (unreachable)" -ForegroundColor DarkGray
-        }
+    Get-CachedPmbVersion
+    if (Test-PmbVersionStale) {
+        Write-Host "[WARN] PMB $($script:PmbLocalVersion) installed locally, $($script:PmbRemoteVersion) available" -ForegroundColor Yellow
+        Write-Host "       Consider updating PMB: https://github.com/unyieldingclaw-dev/personal-memory-bank" -ForegroundColor Yellow
+        Write-Host ""
+    } elseif ($script:PmbLocalVersion -and -not $script:PmbRemoteVersion) {
+        Write-Host "[INFO] Remote version check skipped (unreachable)" -ForegroundColor DarkGray
     }
 
     # WHY: Ownership is hardcoded as explicit arrays — NOT a config file.
@@ -1627,6 +2429,8 @@ function Invoke-Upgrade {
         ".cursor/rules/rules-file-integrity.mdc"
         # Claude Code settings — hook wiring, not project-specific
         ".claude/settings.json"
+        # Codex hook wiring — deterministic lifecycle configuration, trusted explicitly in /hooks
+        ".codex/hooks.json"
         # Hook scripts — deterministic enforcement scripts, no project customization
         "scripts/dangerous-commands.sh"
         "scripts/dangerous-commands.ps1"
@@ -1640,29 +2444,27 @@ function Invoke-Upgrade {
         "scripts/delegation-depth-check.ps1"
         "scripts/pre-compact-check.sh"
         "scripts/pre-compact-check.ps1"
-        # Slash commands — governance workflow commands from templates, not project-specific
-        ".claude/commands/code-review.md"
-        ".claude/commands/feature-dev.md"
-        ".claude/commands/security-review.md"
-        ".claude/commands/test-audit.md"
-        ".claude/commands/pmb-status.md"
+        "scripts/codex-compaction-hook.sh"
+        "scripts/codex-compaction-hook.ps1"
+        "scripts/review-reminders.sh"
+        "scripts/review-reminders.ps1"
+        "scripts/review-reminders-post.sh"
+        "scripts/review-reminders-post.ps1"
+        "scripts/_review-gate-lib.sh"
+        "scripts/_review-gate-lib.ps1"
+        "scripts/_review-gate-classify.py"
+        "scripts/_review-gate-classify.ps1"
+        "scripts/_review-gate-merge.py"
+        "scripts/_review-gate-merge.ps1"
+        # Bash-only by design — see the comment on this entry in mb.sh's TEMPLATE_OWNED.
+        "scripts/baseline-health.sh"
+        "scripts/warn-stale-review-marker.sh"
+        "scripts/warn-stale-review-marker.ps1"
         # Git hooks — versioned via core.hooksPath; distributed and updated unconditionally
         ".githooks/pre-push"
         ".githooks/pre-commit"
-    )
-
-    $advisoryDiff = @(
-        # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
-        "CLAUDE.md"
-        # Agent definitions likely contain project-specific tool lists and instructions
-        ".claude/agents/researcher.md"
-        ".claude/agents/security-reviewer.md"
-    )
-
-    # WHY: $advisoryCreate — files that must exist for commands to work at runtime.
-    # Create if missing (unlike $advisoryDiff which skips missing files), but show
-    # a diff rather than silently overwriting if the file has been customized.
-    $advisoryCreate = @(
+        # Standards documents — pure governance substrate; projects do not add custom content here,
+        # so deferring updates until manual review just means they silently fall behind the template.
         "standards/CODE-REVIEW.md"
         "standards/WORKFLOW.md"
         "standards/SECURITY-GUARDRAILS.md"
@@ -1679,6 +2481,66 @@ function Invoke-Upgrade {
         "standards/TRUST-CLASSIFICATION.md"
         "standards/PERFORMANCE-BUDGET.md"
     )
+
+    $advisoryDiff = @(
+        # CLAUDE.md is a user cognition surface — users annotate it with project-specific guidance
+        "CLAUDE.md"
+        # WHY agent definitions are no longer listed here: they moved to $advisoryCreate and are
+        # auto-discovered — see the block below it. $advisoryDiff SKIPS any target missing in the
+        # project, which is precisely wrong for agents: a newly-shipped agent is missing for every
+        # adopter by definition, so it would never be delivered at all.
+    )
+
+    # WHY: $advisoryCreate holds files that must exist at runtime but may legitimately carry
+    # project-local edits (unlike $templateOwned, which is pure governance substrate with no
+    # expected customization). Standards files were moved to $templateOwned — see comment above.
+    $advisoryCreate = @(
+        # Cross-tool instructions may carry project-specific rules; create or diff, never overwrite.
+        "AGENTS.md"
+    )
+
+    # WHY: Slash commands are auto-discovered from templates/claude-commands/ instead of hardcoded —
+    # a static list silently goes stale whenever a new command file is added (accessibility-review.md
+    # and change-review.md shipped in 1.2.0 but were never added to the old hardcoded list, so
+    # mb upgrade never copied them into existing projects). mb init already discovers commands this
+    # way; this keeps upgrade and init on a single source of truth.
+    $templateOwned += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "claude-commands" | ForEach-Object { ".claude/commands/$($_.Name)" })
+
+    # WHY agent definitions are auto-discovered rather than listed: a static list silently goes
+    # stale the moment a new agent is added — the same bug documented for slash commands just above.
+    # It recurred immediately: .claude/agents/opposition.md was added 2026-08-26 and both review
+    # commands were changed to dispatch it BY NAME, while the hardcoded list here still named only
+    # researcher and security-reviewer — so every adopter would have received a review command
+    # referencing an agent mb upgrade never delivered, failing at the Opposition step, which is the
+    # gate's sole authority on whether a change ships.
+    #
+    # WHY $advisoryCreate and not $advisoryDiff, where agents used to live: $advisoryDiff skips a
+    # target missing in the project, and a newly-shipped agent is missing for EVERY adopter, so
+    # listing it there delivers nothing. $advisoryCreate creates when absent and diffs rather than
+    # overwrites when customized. Must stay in sync with scripts/mb.sh's equivalent block.
+    $advisoryCreate += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir ".claude/agents" -Filter "*.md" | ForEach-Object { ".claude/agents/$($_.Name)" })
+
+    # WHY: Guide docs (docs/CONTRACTS-GUIDE.md, docs/HOOKS-GUIDE.md, ...) are referenced from
+    # templates/CLAUDE.md but were never scaffolded into projects — mb init/upgrade had no
+    # mechanism to create them, so every downstream project shipped with dangling references.
+    # Auto-discovering from templates/docs/ (same fix pattern as claude-commands above) means
+    # any doc added there in the future is picked up automatically, no hardcoded list to forget.
+    # WHY $advisoryCreate, not $templateOwned: unlike hook scripts/settings, these are reference
+    # docs a project may reasonably annotate or trim locally — create if missing, diff-and-warn
+    # if customized, never silently overwrite. (Matches scripts/mb.sh's ADVISORY_CREATE treatment
+    # of the same two files — mb.ps1 previously used $templateOwned here, which unconditionally
+    # overwrites, so the same `mb upgrade` command clobbered local edits on Windows but preserved
+    # them on POSIX. Both shells now agree on create-if-missing/diff-if-customized semantics.)
+    $advisoryCreate += (Get-TemplateDirFile -TemplatesDir $TemplatesDir -Subdir "docs" | ForEach-Object { "docs/$($_.Name)" })
+
+    # WHY this one is hardcoded rather than auto-discovered: the loop above only scans
+    # templates/docs/, so a template living under templates/.github/ is never picked up.
+    # Must stay in sync with scripts/mb.sh's ADVISORY_CREATE entry for the same path -- without
+    # it, `mb upgrade` would ship this workflow to POSIX adopters and silently skip Windows
+    # ones, the exact bash/PowerShell distribution asymmetry this repo has been bitten by before.
+    # WHY $advisoryCreate and not $templateOwned: a project may already run its own CI; create
+    # it when absent, diff-and-warn when customized, never overwrite.
+    $advisoryCreate += ".github/workflows/memory-bank-size.yml"
 
     # WHY: Template source paths are NOT a 1:1 mirror of target paths.
     # .cursor/rules/X -> templates/cursor/rules/X (no dot prefix)
@@ -1816,6 +2678,17 @@ function Invoke-Upgrade {
     }
 
 
+    # .gitignore — reconcile the canonical entry list. WHY upgrade does this at all: it did
+    # not before, so any entry added after a project was initialized could never reach it.
+    $giAdded = if ($dryRun) { Sync-Gitignore -Dir "." -WhatIfOnly } else { Sync-Gitignore -Dir "." }
+    if ($giAdded.Count -gt 0) {
+        $marker = if ($dryRun) { "[+?]" } else { "[+]" }
+        $verb = if ($dryRun) { "would add" } else { "added" }
+        Write-Host "$marker .gitignore ($verb`: $($giAdded -join ', '))" -ForegroundColor Green
+    } else {
+        Write-Host "[=] .gitignore (all mb entries present)" -ForegroundColor DarkGray
+    }
+
     # Write .pmb-version — records which PMB version this project was last upgraded with
     $versionFile = Join-Path $RepoRoot "VERSION"
     if ((Test-Path $versionFile) -and (-not $dryRun)) {
@@ -1825,6 +2698,7 @@ function Invoke-Upgrade {
     }
 
     Write-Host ""
+    if ($ProjectPath) { Pop-Location }
 }
 
 function Invoke-VerifyIntegrity {
@@ -2038,7 +2912,7 @@ function Show-PlanStatus {
                 $CommitEpoch = [DateTimeOffset]::Parse($LastCommit).ToUnixTimeSeconds()
                 $Days = [int](($TodayEpoch - $CommitEpoch) / 86400)
                 if ($Days -gt 30) { $StaleCount++ }
-            } catch {}
+            } catch { Write-Verbose "Could not parse commit date '$LastCommit'; skipping stale-count check." }
         }
     }
 
@@ -2100,7 +2974,7 @@ function Show-PlanList {
                     $CommitEpoch = [DateTimeOffset]::Parse($LastCommit).ToUnixTimeSeconds()
                     $Days = [int](($TodayEpoch - $CommitEpoch) / 86400)
                     if ($Days -gt 30) { $StaleFlag = " [STALE ${Days}d]" }
-                } catch {}
+                } catch { Write-Verbose "Could not parse commit date '$LastCommit'; skipping stale-flag check." }
             }
         }
 
@@ -2140,7 +3014,14 @@ function Invoke-PlanPromote {
 
     New-Item -ItemType Directory -Force -Path "docs/plans" | Out-Null
     $Content = Get-Content $Draft -Raw
-    $HasFM = $Content -match '^---'
+    # WHY a closing fence is required: a draft that merely starts with a `---` horizontal rule is
+    # not frontmatter, and editing "inside" it would corrupt the body. Must match mb.sh.
+    $Lines = $Content -split "`r?`n"
+    $FmClose = $null
+    if ($Lines.Count -gt 1 -and $Lines[0].TrimEnd() -eq '---') {
+        $FmClose = 1..($Lines.Count - 1) | Where-Object { $Lines[$_].TrimEnd() -eq '---' } | Select-Object -First 1
+    }
+    $HasFM = $null -ne $FmClose
 
     if (-not $HasFM) {
         $Today = Get-Date -Format 'yyyy-MM-dd'
@@ -2148,15 +3029,314 @@ function Invoke-PlanPromote {
         Set-Content -Path $Dest -Value ($FM + $Content) -NoNewline
         Write-Host "Added frontmatter and promoted to $Dest" -ForegroundColor Green
     } else {
-        Copy-Item $Draft $Dest
-        $Lines = Get-Content $Dest
-        $Updated = $Lines -replace '^status: draft', 'status: planned'
-        Set-Content -Path $Dest -Value $Updated
-        Write-Host "Promoted to $Dest" -ForegroundColor Green
+        # Ensure status is at least 'planned', looking ONLY inside the frontmatter: the old
+        # whole-file -replace also rewrote a body line starting `status: draft`, and left a
+        # frontmatter with no status key (or an empty one) without any status at all.
+        # -cmatch: YAML keys are case-sensitive, and mb.sh's awk matches `status:` exactly.
+        $StatusIdx = 1..($FmClose - 1) | Where-Object { $Lines[$_] -cmatch '^status:' } | Select-Object -First 1
+        $CurrentStatus = ''
+        if ($null -ne $StatusIdx) {
+            $CurrentStatus = ($Lines[$StatusIdx] -replace '^status:', '') -replace '[\s"'']', ''
+        }
+        if ($CurrentStatus -and $CurrentStatus -ne 'draft') {
+            Copy-Item $Draft $Dest
+            Write-Host "Promoted to $Dest (status: $CurrentStatus preserved)" -ForegroundColor Green
+        } else {
+            # Keep the draft's line ending, so a CRLF draft stays CRLF throughout.
+            $Eol = if ($Content -match "`r`n") { "`r`n" } else { "`n" }
+            $Out = [System.Collections.Generic.List[string]]::new()
+            for ($i = 0; $i -lt $Lines.Count; $i++) {
+                if ($null -ne $StatusIdx -and $i -eq $StatusIdx) { $Out.Add('status: planned'); continue }
+                if ($null -eq $StatusIdx -and $i -eq $FmClose) { $Out.Add('status: planned') }
+                $Out.Add($Lines[$i])
+            }
+            Set-Content -Path $Dest -Value ($Out -join $Eol) -NoNewline
+            if ($null -eq $StatusIdx) {
+                Write-Host "Promoted to $Dest (status: planned added)" -ForegroundColor Green
+            } else {
+                $Was = if ($CurrentStatus) { $CurrentStatus } else { 'empty' }
+                Write-Host "Promoted to $Dest (status: $Was → planned)" -ForegroundColor Green
+            }
+        }
+    }
+
+    # Reconcile the originating backlog item (if any) -- see
+    # docs/superpowers/specs/2026-07-14-backlog-design.md "Plan-lifecycle
+    # reconciliation": mb backlog promote (mb.sh) stamps a
+    # "<!-- pmb-backlog-source: <slug> -->" line into the stub body so this
+    # step can find the right backlog item by identity, not by path --
+    # matching on the exact draft path broke the moment the user renamed the
+    # draft while fleshing it out with superpowers:writing-plans, which the
+    # spec calls out as the expected workflow this feature exists to support.
+    #
+    # WHY the exact HTML-comment format instead of a loose phrase match: an
+    # earlier version matched a plain "(Backlog source: x)" line, which reads
+    # as plausible English prose that this very repo's own docs discuss -- an
+    # unanchored match against the whole draft could pick up a decoy mention
+    # instead of the genuine marker, either silently skipping reconciliation
+    # or overwriting an unrelated backlog item that happens to share the
+    # matched slug. Nobody writes "<!-- pmb-backlog-source: x -->" as a
+    # sentence, so matching this exact syntax (anywhere in the file --
+    # position doesn't matter here, since the format itself is what makes an
+    # accidental match implausible) closes that without depending on the
+    # marker staying on any particular line, which further edits during
+    # writing-plans could easily move or remove.
+    if ($Content -match '(?m)^<!-- pmb-backlog-source: ([a-z0-9-]+) -->$') {
+        $BacklogSlug = $Matches[1]
+        $BacklogFile = "docs/backlog/$BacklogSlug.md"
+        if (Test-Path $BacklogFile) {
+            # WHY ForEach-Object + plain string interpolation instead of -replace
+            # with a literal replacement string: -replace (and [regex]::Replace
+            # with a string replacement) treats $1/$&/$$/etc. in the replacement
+            # as regex backreference tokens. $Dest is derived from the
+            # user-chosen plan filename and is never charset-restricted, so a
+            # filename containing '$&' or similar would otherwise corrupt this
+            # line instead of being written literally. Building the new line
+            # with plain interpolation and swapping it in per-line involves no
+            # replacement-string parsing at all, so nothing in $Dest is ever
+            # treated as special.
+            $BacklogLines = Get-Content $BacklogFile
+            $UpdatedBacklog = $BacklogLines | ForEach-Object {
+                if ($_ -match '^related_plan:') { "related_plan: $Dest" } else { $_ }
+            }
+            Set-Content -Path $BacklogFile -Value $UpdatedBacklog
+            Write-Host "Reconciled related_plan in $BacklogFile -> $Dest" -ForegroundColor Green
+        }
     }
 
     Write-Host "Next: git add $Dest && git commit" -ForegroundColor Yellow
     Write-Host ""
+}
+
+# ConvertTo-BacklogSlug / Get-UniqueBacklogSlug / Test-BacklogSlugValid /
+# Invoke-BacklogAdd / Get-BacklogField / Set-BacklogStatus / Resolve-BacklogSlug /
+# Show-BacklogList / Show-BacklogItem / Invoke-BacklogPromote / Invoke-BacklogDismiss /
+# Invoke-BacklogResolve
+# -- PowerShell port of mb.sh's backlog_slugify/backlog_unique_slug/
+# backlog_validate_slug/invoke_backlog_add/backlog_field/backlog_set_status/
+# backlog_resolve_slug/show_backlog_list/show_backlog_item/invoke_backlog_promote/
+# invoke_backlog_dismiss/invoke_backlog_resolve. Mirrors that implementation's behavior and guards
+# (slug charset validation, malformed-frontmatter checks, status:open guard on
+# re-promote) -- see scripts/mb.sh for the original WHY comments on each guard;
+# not re-derived here to avoid drift between the two copies of the same rationale.
+function ConvertTo-BacklogSlug {
+    param([string]$Title)
+    $Slug = ($Title.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
+    if ($Slug.Length -gt 50) { $Slug = $Slug.Substring(0, 50) }
+    return $Slug.TrimEnd('-')
+}
+
+function Get-UniqueBacklogSlug {
+    param([string]$Title)
+    $BaseSlug = ConvertTo-BacklogSlug -Title $Title
+    $Slug = $BaseSlug
+    $N = 2
+    while (Test-Path "docs/backlog/$Slug.md") {
+        $Slug = "$BaseSlug-$N"
+        $N++
+    }
+    return $Slug
+}
+
+# WHY this validation exists and what it closes: identical rationale to mb.sh's
+# backlog_validate_slug -- show/promote/dismiss take a slug straight from argv
+# and use it to build a filesystem path (docs/backlog/<slug>.md,
+# .claude/plans/<date>-<slug>.md). Restricting to [a-z0-9-] closes path-traversal
+# (`..`, `/`) at the single point every subcommand funnels through.
+function Test-BacklogSlugValid {
+    param([string]$Slug)
+    if ([string]::IsNullOrEmpty($Slug)) { return $false }
+    return $Slug -cmatch '^[a-z0-9-]+$'
+}
+
+function Invoke-BacklogAdd {
+    param([string]$Title, [string]$Desc)
+    if (-not $Title) {
+        Write-Host 'Usage: mb backlog add "<title>" ["<description>"]' -ForegroundColor Red
+        exit 1
+    }
+    New-Item -ItemType Directory -Force -Path "docs/backlog" | Out-Null
+    $Slug = Get-UniqueBacklogSlug -Title $Title
+    if (-not $Slug) {
+        Write-Host "Title must contain at least one letter or number: `"$Title`"" -ForegroundColor Red
+        exit 1
+    }
+    $Today = Get-Date -Format 'yyyy-MM-dd'
+    $File = "docs/backlog/$Slug.md"
+    $Lines = @("---", "status: open", "created: $Today", "last-reviewed: $Today", "staleness-threshold: 90d", "related_plan: null", "---", "", "# $Title")
+    if ($Desc) { $Lines += @("", $Desc) }
+    Set-Content -Path $File -Value $Lines
+    Write-Host "Added backlog item: $File" -ForegroundColor Green
+}
+
+function Get-BacklogField {
+    param([string]$Path, [string]$Field)
+    $Line = Select-String -Path $Path -Pattern "^${Field}:" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $Line) { return "" }
+    # WHY -replace '\s' (all whitespace), not .Trim(): matches mb.sh's backlog_field,
+    # which pipes through `tr -d ' \r'` — strips every space/CR in the value, not just
+    # leading/trailing. Current call sites (status/created) never have internal
+    # whitespace, but this keeps the two implementations byte-for-byte equivalent.
+    return (($Line.Line -replace "^${Field}:\s*", '') -replace '\s', '')
+}
+
+# WHY plain -replace is safe here despite the general $&/$1-in-replacement hazard
+# (see Invoke-PlanPromote's WHY comment above): $Status is always one of this
+# file's own hardcoded literals ("promoted"/"dismissed"/"resolved"), never derived
+# from user input, so no replacement-string token injection is reachable through
+# this path.
+function Set-BacklogStatus {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$Path, [string]$Status)
+    if ($PSCmdlet.ShouldProcess($Path, "Set status: $Status")) {
+        $Updated = (Get-Content $Path) -replace '^status:.*', "status: $Status"
+        Set-Content -Path $Path -Value $Updated
+    }
+}
+
+function Resolve-BacklogSlug {
+    param([string]$Slug, [string]$Usage)
+    if (-not $Slug) {
+        Write-Host $Usage -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Test-BacklogSlugValid -Slug $Slug)) {
+        Write-Host "Invalid slug: $Slug" -ForegroundColor Red
+        exit 1
+    }
+    $File = "docs/backlog/$Slug.md"
+    if (-not (Test-Path $File)) {
+        Write-Host "Backlog item not found: $Slug" -ForegroundColor Red
+        exit 1
+    }
+    return $File
+}
+
+function Show-BacklogList {
+    param([switch]$All)
+    Write-Host ""
+    Write-Host "Backlog" -ForegroundColor Cyan
+    Write-Host "=======" -ForegroundColor Cyan
+    $Items = if (Test-Path "docs/backlog") { Get-ChildItem "docs/backlog/*.md" -ErrorAction SilentlyContinue } else { $null }
+    if (-not $Items) {
+        Write-Host 'No backlog items. Add one with: mb backlog add "<title>"' -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+    $TodayEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    foreach ($f in $Items) {
+        $Status = Get-BacklogField -Path $f.FullName -Field "status"
+        if (-not $All -and $Status -ne "open") { continue }
+        $Slug = $f.BaseName
+        $TitleLine = Select-String -Path $f.FullName -Pattern '^# ' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $Title = if ($TitleLine) { $TitleLine.Line -replace '^# ', '' } else { '' }
+        $Created = Get-BacklogField -Path $f.FullName -Field "created"
+        $Age = ""
+        if ($Created) {
+            try {
+                $CreatedEpoch = [DateTimeOffset]::Parse($Created).ToUnixTimeSeconds()
+                # WHY [Math]::Floor, not an [int] cast: PowerShell's / on two Int64s
+                # yields a Double, and [int] on a Double *rounds* to nearest rather than
+                # truncating toward zero — diverging from mb.sh's `$(( ))` integer
+                # division (always truncates). Floor matches bash's behavior exactly.
+                $Days = [Math]::Floor(($TodayEpoch - $CreatedEpoch) / 86400)
+                $Age = " age:${Days}d"
+            } catch { Write-Verbose "Could not parse created date '$Created'; skipping age." }
+        }
+        Write-Host "  $Slug  $Title  status:$Status$Age"
+    }
+    Write-Host ""
+}
+
+function Show-BacklogItem {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog show <slug>"
+    Get-Content $File -Raw
+}
+
+function Invoke-BacklogPromote {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog promote <slug>"
+
+    # WHY @(...): Get-Content returns a scalar System.String, not a 1-element array,
+    # for a file containing exactly one line. Indexing a scalar with [0] returns its
+    # first *character*, not the line — silently misreporting "must start with '---'"
+    # for a genuine single-line "---" file. Forcing array semantics fixes that.
+    $Lines = @(Get-Content $File)
+    if ($Lines.Count -eq 0 -or $Lines[0] -ne '---') {
+        Write-Host "Backlog item has malformed frontmatter (must start with '---'): $File" -ForegroundColor Red
+        exit 1
+    }
+    $DelimCount = ($Lines | Where-Object { $_ -eq '---' }).Count
+    if ($DelimCount -lt 2) {
+        Write-Host "Backlog item has malformed frontmatter (expected two '---' delimiters): $File" -ForegroundColor Red
+        exit 1
+    }
+    if (-not ($Lines | Where-Object { $_ -match '^status:' })) {
+        Write-Host "Backlog item has malformed frontmatter (missing 'status:' field): $File" -ForegroundColor Red
+        exit 1
+    }
+    $CurrentStatus = Get-BacklogField -Path $File -Field "status"
+    if ($CurrentStatus -ne "open") {
+        Write-Host "Cannot promote: $Slug has status '$CurrentStatus' (expected 'open')." -ForegroundColor Red
+        exit 1
+    }
+
+    # WHY a counter loop instead of a single regex/range operation: mirrors
+    # mb.sh's awk extractor exactly -- only the first two '---' lines (the real
+    # frontmatter fences) are ever skipped; any later literal '---' (e.g. a
+    # markdown horizontal rule in the body) falls through to the body once N
+    # reaches 2, instead of being silently eaten.
+    $N = 0
+    $Body = @()
+    foreach ($Line in $Lines) {
+        if ($Line -eq '---' -and $N -lt 2) {
+            $N++
+            continue
+        }
+        if ($N -ge 2) { $Body += $Line }
+    }
+
+    New-Item -ItemType Directory -Force -Path ".claude/plans" | Out-Null
+    $Today = Get-Date -Format 'yyyy-MM-dd'
+    $Stub = ".claude/plans/$Today-$Slug.md"
+    # WHY the trailing "<!-- pmb-backlog-source: $Slug -->" line: see
+    # Invoke-PlanPromote's matching WHY comment above -- Invoke-PlanPromote reads
+    # this marker to reconcile related_plan by identity, surviving a rename.
+    $StubContent = ($Body -join "`n") + "`n`n<!-- pmb-backlog-source: $Slug -->`n"
+    Set-Content -Path $Stub -Value $StubContent -NoNewline
+
+    Set-BacklogStatus -Path $File -Status "promoted"
+    # WHY plain -replace is safe here (unlike Invoke-PlanPromote's $Dest case):
+    # $Stub is built from $Today (fixed format) and $Slug, and $Slug already
+    # passed Test-BacklogSlugValid's [a-z0-9-]-only charset above -- no
+    # replacement-string token ($&/$1/etc.) can appear in it.
+    $UpdatedFileLines = (Get-Content $File) -replace '^related_plan:.*', "related_plan: $Stub"
+    Set-Content -Path $File -Value $UpdatedFileLines
+
+    Write-Host "Seeded plan stub: $Stub" -ForegroundColor Green
+    Write-Host "Next: flesh it out with superpowers:writing-plans, then mb plan promote $Stub" -ForegroundColor Yellow
+}
+
+function Invoke-BacklogDismiss {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog dismiss <slug>"
+    Set-BacklogStatus -Path $File -Status "dismissed"
+    Write-Host "Dismissed: $Slug" -ForegroundColor Green
+}
+
+# Invoke-BacklogResolve -- for an item fixed directly, outside the promote/plan
+# pipeline. Neither existing terminal status fits that case: dismissed means
+# dropped, not done; promoted means a plan stub was seeded, which never
+# happened here. No status guard (unlike promote): resolving has no
+# destructive side effect to guard against -- it only flips the status field,
+# matching dismiss's existing unconditional behavior. Mirrors mb.sh's
+# invoke_backlog_resolve.
+function Invoke-BacklogResolve {
+    param([string]$Slug)
+    $File = Resolve-BacklogSlug -Slug $Slug -Usage "Usage: mb backlog resolve <slug>"
+    Set-BacklogStatus -Path $File -Status "resolved"
+    Write-Host "Resolved: $Slug" -ForegroundColor Green
 }
 
 function Invoke-PlanArchive {
@@ -2191,12 +3371,13 @@ function Invoke-PlanArchive {
 # Run command
 switch ($Command) {
     "init"             { Invoke-Init }
-    "doctor"           { Show-Doctor }
+    "doctor"           { Show-Doctor -CheckMode:($Check.IsPresent -or $Arg -eq '--check') }
     "status"           { Show-Status }
     "query"            { Show-Query -Keyword $Arg }
     "clean"            { Show-Clean }
     "commit"           { Invoke-Commit }
     "upgrade"          { Invoke-Upgrade }
+    "setup"            { Invoke-Setup }
     "verify-integrity" { Invoke-VerifyIntegrity }
     "preflight"        { Show-Preflight }
     "change-check"     { Show-ChangeCheck }
@@ -2215,13 +3396,62 @@ switch ($Command) {
             }
         }
     }
-    # Deprecated aliases — kept for backward compatibility, not shown in help
-    "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow }
-    "validate"      { Write-Host "mb validate is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "audit"         { Write-Host "mb audit is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "budget"        { Write-Host "mb budget is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow }
-    "compact"       { Write-Host "mb compact is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "update"        { Write-Host "mb update is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "archive"       { Write-Host "mb archive is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
-    "slim"          { Write-Host "mb slim is now part of mb clean. Run: mb clean" -ForegroundColor Yellow }
+    "backlog" {
+        $SubCmd = if ($Arg) { $Arg } else { 'list' }
+        switch ($SubCmd) {
+            'add'     { Invoke-BacklogAdd -Title $Arg2 -Desc $Arg3 }
+            'list'    { Show-BacklogList -All:$All }
+            'show'    { Show-BacklogItem -Slug $Arg2 }
+            'promote' { Invoke-BacklogPromote -Slug $Arg2 }
+            'dismiss' { Invoke-BacklogDismiss -Slug $Arg2 }
+            'resolve' { Invoke-BacklogResolve -Slug $Arg2 }
+            default {
+                Write-Host "Unknown backlog subcommand: $SubCmd" -ForegroundColor Red
+                Write-Host "Usage: mb backlog <add|list|show|promote|dismiss|resolve>" -ForegroundColor Yellow
+                exit 1
+            }
+        }
+    }
+    # Deprecated aliases — kept for backward compatibility, not shown in help.
+    #
+    # WHY these exit 2 rather than 0: a shim that prints a notice and returns success is
+    # indistinguishable from a real success to any script reading the exit code. That is
+    # not hypothetical — the pre-push gate called `mb validate` and printed
+    # "[OK] mb validate passed" on every push in every managed project while validating
+    # nothing, because the shim returned 0. Exit 2 means "command moved": humans see the
+    # same notice, scripts can tell it did not run.
+    #
+    # KNOWN CROSS-SHELL DIVERGENCE (pre-existing, not introduced here): `mb update` is a
+    # dead redirect here but a LIVE alias for `invoke_upgrade` in mb.sh, and this file's
+    # redirect text ("part of mb clean") is wrong regardless — update maps to upgrade,
+    # not clean. Exiting 2 makes the divergence detectable instead of silent; it removes
+    # no working behaviour, since this path never upgraded anything. Reconciling which
+    # platform is correct is a deliberate cross-shell decision, not a side effect of this
+    # change — left for that decision.
+    "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow; exit 2 }
+    "validate"      { Write-Host "mb validate is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow; exit 2 }
+    "audit"         { Write-Host "mb audit is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow; exit 2 }
+    "budget"        { Write-Host "mb budget is now part of mb doctor. Run: mb doctor" -ForegroundColor Yellow; exit 2 }
+    "compact"       { Write-Host "mb compact is now part of mb clean. Run: mb clean" -ForegroundColor Yellow; exit 2 }
+    "update"        { Write-Host "mb update is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow; exit 2 }
+    "archive"       { Write-Host "mb archive is now part of mb clean. Run: mb clean" -ForegroundColor Yellow; exit 2 }
+    "slim"          { Write-Host "mb slim is now part of mb clean. Run: mb clean" -ForegroundColor Yellow; exit 2 }
+}
+
+# Update notifier — runs after every command except upgrade (has its own WARN
+# above) and help (no need to nag on a bare help lookup). Cached/fail-open via
+# Get-CachedPmbVersion — see that function's WHY comments for the reasoning.
+#
+# WHY "update" isn't excluded here the way mb.sh excludes it: mb.sh's "update" case still
+# dispatches to Invoke-Upgrade's bash equivalent, so without an exclusion it would
+# double-print that command's own [WARN] followed immediately by this [NOTICE]. This
+# PowerShell "update" case (~line 2573) only prints a one-line deprecation notice pointing at
+# `mb clean` — it never calls Invoke-Upgrade — so no double-print exists here and no exclusion
+# is needed. Documented explicitly so a future sync of this exclusion list between the two
+# scripts doesn't add "update" here by copy-paste assumption without re-checking this.
+if ($Command -ne "upgrade" -and $Command -ne "help") {
+    Get-CachedPmbVersion
+    if (Test-PmbVersionStale) {
+        Write-Host "[NOTICE] PMB $($script:PmbLocalVersion) installed, $($script:PmbRemoteVersion) available — run: mb upgrade" -ForegroundColor Yellow
+    }
 }

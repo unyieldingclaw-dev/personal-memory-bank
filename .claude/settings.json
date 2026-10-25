@@ -2,7 +2,7 @@
   "model": "sonnet",
   "env": {
     "MAX_THINKING_TOKENS": "10000",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "40",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "65",
     "CLAUDE_CODE_SUBAGENT_MODEL": "haiku",
     "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1"
   },
@@ -16,6 +16,24 @@
             "command": "pwsh -NonInteractive -File scripts/update-reviewed.ps1 2>/dev/null || bash scripts/update-reviewed.sh 2>/dev/null || true"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NonInteractive -File scripts/review-reminders-post.ps1 2>/dev/null || bash scripts/review-reminders-post.sh 2>/dev/null || true"
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NonInteractive -File scripts/review-reminders-post.ps1 2>/dev/null || true"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -25,6 +43,10 @@
           {
             "type": "command",
             "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "pwsh -NonInteractive -File scripts/review-reminders.ps1 2>/dev/null || bash scripts/review-reminders.sh 2>/dev/null || true"
           }
         ]
       },
@@ -34,6 +56,10 @@
           {
             "type": "command",
             "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "pwsh -NonInteractive -File scripts/review-reminders.ps1 2>/dev/null || true"
           }
         ]
       },
@@ -43,6 +69,10 @@
           {
             "type": "command",
             "command": "pwsh -NonInteractive -File scripts/check-contract.ps1 2>/dev/null || bash scripts/check-contract.sh 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "pwsh -NonInteractive -File scripts/warn-stale-review-marker.ps1 2>/dev/null || bash scripts/warn-stale-review-marker.sh 2>/dev/null || true"
           }
         ]
       },
@@ -61,7 +91,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/pre-compact-check.ps1 2>/dev/null || bash scripts/pre-compact-check.sh 2>/dev/null || true"
+            "command": "if command -v pwsh >/dev/null 2>&1; then pwsh -NonInteractive -File scripts/pre-compact-check.ps1 2>/dev/null; else bash scripts/pre-compact-check.sh 2>/dev/null; fi"
           }
         ]
       }
@@ -87,6 +117,14 @@
       "Bash(python -m mypy *)",
       "Bash(python -m ruff *)",
       "Bash(bash tests/*.sh)"
+    ],
+    "ask": [
+      "Bash(gh pr merge:*)",
+      "PowerShell(gh pr merge:*)"
+    ],
+    "deny": [
+      "mcp__ccd_pr__set_auto_merge",
+      "mcp__plugin_engineering_github__merge_pull_request"
     ]
   }
 }
