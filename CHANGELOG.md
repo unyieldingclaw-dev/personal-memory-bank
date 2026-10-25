@@ -36,7 +36,7 @@ Versions **0.1.0 (2026-04-29) through 1.2.1 (2026-08-03)** live in
 had reached 901 lines against the 800-line hard cap in `.github/workflows/pmb-health.yml`'s File
 Size job — with only 8 lines of headroom before this change.
 
-Version **1.3.0 (2026-10-24)** lives in `docs/archive/changelog-1.3.0.md`. It was archived in the
+Version **1.3.0 (2026-10-25)** lives in `docs/archive/changelog-1.3.0.md`. It was archived in the
 same change that cut it: its 755-line section left this file at exactly the 800-line cap.
 
 New released sections belong **here**, not in that archive: directly below `## [Unreleased]`, which

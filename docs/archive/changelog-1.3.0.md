@@ -1,4 +1,4 @@
-# CHANGELOG archive — 1.3.0 (2026-10-24)
+# CHANGELOG archive — 1.3.0 (2026-10-25)
 
 Release notes for 1.3.0, moved out of `CHANGELOG.md` in the same change that cut the release.
 
@@ -10,9 +10,9 @@ inline in `CHANGELOG.md`, it would have left no headroom for the next entry.
 **Scope:** what `main` held when 1.3.0 was cut. The session-claims items in `CHANGELOG.md`'s
 "Pending — NOT part of any release" section are not part of this release and are not copied here.
 The subsection headings below repeat (`### Changed` three times, `### Fixed` twice) because entries
-were added to `[Unreleased]` from 2026-08-03 to 2026-10-24; they are kept as written.
+were added to `[Unreleased]` from 2026-08-03 to 2026-10-25; they are kept as written.
 
-## [1.3.0] - 2026-10-24
+## [1.3.0] - 2026-10-25
 
 ### Changed
 - **The agent can merge a pull request when the user clicks Allow.** `gh pr merge` was denied
