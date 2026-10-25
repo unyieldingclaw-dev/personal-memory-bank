@@ -22,6 +22,10 @@
   Fixed.
 
 ### Fixed
+- **`mb upgrade --dry-run` did not work on Windows.** Through the `mb.bat` launcher (`pwsh -File`)
+  it threw "A parameter cannot be found that matches parameter name '-dry-run'"; only `-DryRun`
+  worked. Called as `& mb.ps1 upgrade --dry-run`, it ran a REAL upgrade and wrote template files.
+  `mb.ps1` now accepts both spellings in both forms. `tests/mb-upgrade-dry-run.Tests.ps1`.
 - **The commit review gate approved commits that held only part of the reviewed change.** The
   marker binds a hash of `git diff HEAD`, the working tree, but a commit records the index, so a
   change left partly unstaged still matched. On 2026-10-16 a merge finished with `git add` on only
@@ -547,29 +551,8 @@
   have silently downgraded the `opus` pin added to prevent exactly that. Both now specify `opus`.
 
 ### Documentation
-- **Recorded a cross-project provenance gap.** The ACR session holds a memory-bank entry attributing
-  a specific `ai-review-agent` timeout measurement (a 616 s agent runtime against a 282,240 ms
-  ceiling) to a brief from this project. That measurement exists nowhere in PMB — not in
-  `memory-bank/`, `docs/`, `docs/archive/`, or the ACR brief in the operator's Downloads. It was
-  reported back as unsourced rather than reconstructed from the formula, and ACR was advised to
-  re-derive it with instrumentation rather than treat it as evidence.
-- `memory-bank/activeContext.md` stated `progress.md` was at "599/60,000 — ZERO bytes of headroom,
-  deadlock is live". The file was well under both caps by then; the claim was stale from the
-  moment the relocation landed, in the same branch that left the paragraph unedited. No
-  replacement byte count is recorded here — two attempts to pin one went stale inside this very
-  branch, so the number is left to `wc -c` and the CI caps. Its `mb.sh:831` /
-  `mb.ps1:1090` citations were also simply wrong (`mb.sh:409,410,967`, `mb.ps1:1189`).
-- `memory-bank/progress.md` recorded the relocation as taking the file to a specific byte count.
-  Two successive attempts to state that number (40,063, then 46,956) were each already stale when
-  written, because entries kept being appended after the measurement. No byte count is recorded in
-  any of the three files any more — the relocation's effect is stated as bytes REMOVED (20,953),
-  which does not decay, and current size is left to `wc -c` and the CI caps.
-- New `[NS-42]` (write-rate control — eviction is symptom relief; the file grew +24,355 bytes in
-  three days and `docs/archive/` already holds 149,711 relocated bytes) and `[NS-43]` (the review
-  gate structurally forbids commit-splitting, and its purely textual matcher denies any command
-  that merely mentions a guarded pattern).
-- Agent definitions now carry a scope caveat: their `Bash(...)` entries declare intent and were
-  observed not to constrain Bash in practice, so they must not be relied on as a security boundary.
+- Entries of 2026-08-27 moved verbatim to `docs/archive/changelog-unreleased-2026-08-27-documentation.md`
+  to keep this file under its 800-line cap. Still unreleased: carry them into the next release.
 
 ### Security
 - **`scripts/dangerous-commands.ps1` (and its `templates/` mirror) now decodes hook stdin with an

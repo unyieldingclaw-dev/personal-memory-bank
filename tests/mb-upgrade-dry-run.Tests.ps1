@@ -57,4 +57,32 @@ Describe "mb upgrade dry run (subprocess, real CLI binding)" {
             Pop-Location
         }
     }
+
+    # WHY a git fixture: the tests above have no .git, so Invoke-Upgrade's `if (Test-Path ".git")`
+    # block -- `git config core.hooksPath` and deleting the old .git/hooks/pre-push shim -- never
+    # ran in them. Those two guards were the ones that read the switch's spelling (`$DryRun`)
+    # rather than the local, so they were the lines a rename could break unseen.
+    It "leaves core.hooksPath and an old .git/hooks/pre-push alone under call-operator --dry-run" {
+        $project = New-DryRunProject
+        Push-Location $project
+        try {
+            git init -q 2>$null
+            git config core.hooksPath original-hooks
+            $oldHook = Join-Path $project '.git/hooks/pre-push'
+            New-Item -ItemType Directory -Path (Split-Path $oldHook) -Force | Out-Null
+            Set-Content -LiteralPath $oldHook -Value 'exec scripts/pre-push-check.sh'
+
+            $command = "& '$($script:MbScript -replace "'", "''")' upgrade --dry-run"
+            $output = (& pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $command 2>&1) -join "`n"
+
+            # Positive proof the block ran: the would-be messages only print inside it.
+            $output | Should -Match 'core\.hooksPath \(would set'
+            $output | Should -Match '\.git/hooks/pre-push \(would remove'
+            git config core.hooksPath | Should -Be 'original-hooks'
+            Test-Path -LiteralPath $oldHook | Should -Be $true
+            @(Get-ChildItem -LiteralPath $project -Force).Name | Sort-Object | Should -Be @('.git', 'memory-bank')
+        } finally {
+            Pop-Location
+        }
+    }
 }

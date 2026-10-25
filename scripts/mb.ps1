@@ -32,9 +32,9 @@ param(
     # command currently needs more than 3.
     [Parameter(Position=3)]
     [string]$Arg3 = "",
-    # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
-    # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
-    # The 'dry-run' alias is load-bearing: under `pwsh -File` (the mb.bat launcher) the binder
+    # WHY: under `pwsh -File` PowerShell parses --dry-run as a named parameter flag, not a
+    # positional string (under the call operator it lands in $Arg instead -- see Invoke-Upgrade).
+    # A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag. The 'dry-run' alias is load-bearing: under `pwsh -File` (the mb.bat launcher) the binder
     # looks up `--dry-run` as a parameter named `dry-run`, which the switch name alone does not
     # match -- measured: "A parameter cannot be found that matches parameter name '-dry-run'".
     # `--all` and `--check` never needed one because their names already match.
@@ -2389,6 +2389,10 @@ function Invoke-Upgrade {
     # $Arg instead -- the split `mb doctor --check` documents at its param. Reading only the
     # switch made that second form run a REAL upgrade when a preview was asked for (measured:
     # template files written into the project).
+    # Every guard below must read this local, never the switch. Variable names are
+    # case-insensitive, so `$DryRun` here already resolves to this local -- which is why the two
+    # git guards that spelled it that way still worked, and why renaming the local would have
+    # silently pointed them back at the switch and run `git config` during a preview.
     $dryRun = $DryRun.IsPresent -or $Arg -eq '--dry-run'
 
     if ($ProjectPath) { Push-Location $ProjectPath }
@@ -2596,7 +2600,7 @@ function Invoke-Upgrade {
     if (Test-Path ".git") {
         $currentHooksPath = git config core.hooksPath 2>$null
         if ($currentHooksPath -ne ".githooks") {
-            if (-not $DryRun) {
+            if (-not $dryRun) {
                 git config core.hooksPath .githooks
                 Write-Host "[+] core.hooksPath set to .githooks" -ForegroundColor Green
             } else {
@@ -2608,7 +2612,7 @@ function Invoke-Upgrade {
         # Migration cleanup: remove old PMB shim from .git/hooks/pre-push
         $oldHook = ".git/hooks/pre-push"
         if ((Test-Path $oldHook) -and ((Get-Content $oldHook -Raw) -match "pre-push-check")) {
-            if (-not $DryRun) {
+            if (-not $dryRun) {
                 Remove-Item $oldHook -Force
                 Write-Host "[~] .git/hooks/pre-push (removed — migrated to .githooks/)" -ForegroundColor Green
             } else {
