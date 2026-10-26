@@ -1,5 +1,10 @@
 # Changelog
 
+**Changes merged since the last release are not in this file.** Each pull request adds a fragment
+to [`changelog.d/`](changelog.d/), and `bash scripts/changelog-assemble.sh --preview` prints them.
+A release folds them into a new section under `[Unreleased]`, which stays empty. The rule is in
+`standards/WORKFLOW.md`, Phase 7.
+
 ## [Unreleased]
 
 ## Pending — NOT part of any release

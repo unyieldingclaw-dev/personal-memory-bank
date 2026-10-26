@@ -46,6 +46,7 @@ run_suite "codex-compaction-hooks" "$REPO_ROOT/tests/test-codex-compaction-hooks
 run_suite "mirror-parity"        "$REPO_ROOT/tests/test-mirror-parity.sh"
 run_suite "baseline-health"     "$REPO_ROOT/tests/test-baseline-health.sh"
 run_suite "ai-review-config"    "$REPO_ROOT/tests/test-ai-review-config.sh"
+run_suite "changelog-fragments" "$REPO_ROOT/tests/test-changelog-fragments.sh"
 
 # ── completeness: every tracked test suite must be registered above ──────────────────
 # WHY: the list above is hand-maintained, which is the THIRD instance of the stale-hardcoded
