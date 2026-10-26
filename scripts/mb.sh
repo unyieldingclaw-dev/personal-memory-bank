@@ -1995,7 +1995,8 @@ invoke_upgrade() {
         ".cursor/rules/security.mdc"
         ".cursor/rules/code-review.mdc"
         ".cursor/rules/rules-file-integrity.mdc"
-        # Claude Code settings — hook wiring, not project-specific
+        # Claude Code settings — hook wiring is template-owned, but the permission lists are
+        # project policy: merged by _upgrade_settings below, never overwritten
         ".claude/settings.json"
         # Codex hook wiring — deterministic lifecycle configuration, trusted explicitly in /hooks
         ".codex/hooks.json"
@@ -2149,7 +2150,175 @@ invoke_upgrade() {
         esac
     }
 
-    # Process TEMPLATE_OWNED — overwrite unconditionally if stale
+    # WHY a line count on dry run: "would update" alone let local edits to template-owned files
+    # (standards, commands, hook scripts) be overwritten unseen. git diff --no-index gives the
+    # same numbers in both runtimes; without git the count is simply omitted.
+    _upgrade_numstat() {
+        local ns
+        ns=$(git diff --no-index --numstat -- "$1" "$2" 2>/dev/null | head -1)
+        set -- $ns
+        if [ "${1:-}" = "-" ]; then echo ", binary"
+        elif [ -n "${2:-}" ]; then echo ", +$1/-$2 lines"
+        fi
+    }
+
+    # WHY settings.json is merged, not overwritten: its permission lists are project policy. An
+    # adopter's deny rules (signing bypass, --no-verify, gh pr merge) were silently deleted by the
+    # wholesale copy this replaces. Rules (design v3, union + detection, no provenance file):
+    #   - permissions.allow/deny/ask/additionalDirectories = template entries + every project entry
+    #     the template lacks. Nothing a project wrote there is dropped.
+    #   - permissions.disableBypassPermissionsMode is kept (it only hardens).
+    #   - Everything else comes from the template. Project-only keys are dropped as before -- they
+    #     include disableAllHooks, apiKeyHelper and enableAllProjectMcpServers, which would switch
+    #     the governance off -- but each one is now named.
+    #   - Kept rules are listed on every upgrade, with [!] flags for rules PMB once shipped and has
+    #     since withdrawn, rules that mention "merge" (the merge gate cannot see MCP tools), and
+    #     bare-tool or "*" allows. Detection, not removal: provenance cannot be known with certainty.
+    # Any failure (no runnable python, invalid JSON) leaves the file untouched -- never a fallback
+    # to overwriting. scripts/mb.ps1's Merge-UpgradeSettingsFile implements the same rules; the two
+    # produce byte-identical files.
+    _upgrade_settings() {
+        local src="$1" target="$2" py="" c tmp errf report rc count
+        # WHY execute, not command -v: on Windows python3 can be a Store alias stub that exists on
+        # PATH but cannot run anything.
+        for c in python3 python; do
+            if "$c" -c 'import json' >/dev/null 2>&1; then py="$c"; break; fi
+        done
+        if [ -z "$py" ]; then
+            echo -e "${RED}[!] $target not updated: no runnable python3/python to merge its permissions -- merge $src by hand${NC}"
+            return
+        fi
+        tmp="$(dirname "$target")/.settings.json.mb-upgrade.$$"
+        errf="$tmp.err"
+        # WHY "|| rc=$?": set -e would otherwise end mb upgrade on the merge's status codes.
+        rc=0
+        report=$("$py" - "$src" "$target" "$tmp" "$REPO_ROOT" 2>"$errf" <<'PYEOF'
+import json, re, subprocess, sys
+src, tgt, out, home = sys.argv[1:5]
+LISTS = ("allow", "deny", "ask", "additionalDirectories")
+KEEP = ("disableBypassPermissionsMode",)
+def fail(msg):
+    sys.stderr.write(msg + "\n"); sys.exit(2)
+def load(path, what):
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception as e:
+        fail("%s is not valid JSON (%s)" % (what, e.__class__.__name__))
+    if not isinstance(data, dict):
+        fail("%s is not a JSON object" % what)
+    perms = data.get("permissions", {})
+    if not isinstance(perms, dict):
+        fail("%s: permissions is not an object" % what)
+    for k in LISTS:
+        v = perms.get(k, [])
+        if not isinstance(v, list) or not all(isinstance(e, str) for e in v):
+            fail("%s: permissions.%s is not a list of strings" % (what, k))
+    return data
+T = load(src, "template"); P = load(tgt, "project file")
+dump = lambda o: json.dumps(o, indent=2, ensure_ascii=False) + "\n"
+# Key-order-sensitive on purpose: mb.ps1 compares serialized text, so both runtimes must agree.
+same = lambda a, b: dump(a) == dump(b)
+M = json.loads(json.dumps(T))
+MP = M.setdefault("permissions", {}); PP = P.get("permissions", {})
+kept, flags, notes = [], [], []
+for k, v in PP.items():
+    if k in LISTS:
+        have = list(MP.get(k, []))
+        for e in v:
+            if e not in have:
+                have.append(e); kept.append((k, e))
+        MP[k] = have
+    elif k in KEEP and k not in MP:
+        MP[k] = v; kept.append(("permissions", k))
+    elif k not in MP:
+        notes.append("dropped permissions.%s (only the permission lists and %s are kept)" % (k, KEEP[0]))
+    elif not same(v, MP[k]):
+        notes.append("replaced permissions.%s with the template's" % k)
+for k, v in P.items():
+    if k == "permissions":
+        continue
+    if k not in T:
+        notes.append("dropped top-level key %s (not in the template)" % k)
+        continue
+    if isinstance(v, dict) and isinstance(T[k], dict):
+        for sk in v:
+            if sk not in T[k]:
+                notes.append("dropped %s.%s (not in the template)" % (k, sk))
+    if not same(v, T[k]):
+        notes.append("replaced %s with the template's" % k)
+if kept:
+    tmpl = set(e for k in LISTS for e in T.get("permissions", {}).get(k, []))
+    retired = None
+    try:
+        shallow = subprocess.run(["git", "-C", home, "rev-parse", "--is-shallow-repository"],
+                                 capture_output=True, text=True, encoding="utf-8")
+        log = subprocess.run(["git", "-C", home, "log", "-p", "--format=", "--",
+                              "templates/.claude/settings.json"],
+                             capture_output=True, text=True, encoding="utf-8")
+        if shallow.returncode == 0 and shallow.stdout.strip() == "false" and log.returncode == 0:
+            retired = set()
+            for line in log.stdout.splitlines():
+                m = re.match(r'^-\s*("(?:[^"\\]|\\.)*")\s*,?\s*$', line)
+                if m:
+                    retired.add(json.loads(m.group(1)))
+    except OSError:
+        pass
+    if retired is None:
+        notes.append("retired-rule check unavailable: no full PMB git history at %s" % home)
+    for k, e in kept:
+        if retired and e in retired and e not in tmpl:
+            flags.append("[!] PMB no longer ships this rule; kept -- remove it if unneeded: %s %s" % (k, e))
+        if k == "allow" and re.search("merge", e, re.I):
+            flags.append("[!] kept allow rule mentions merge -- check it is not a merge route the merge gate cannot see: %s" % e)
+        if k == "allow" and (re.fullmatch(r"[A-Za-z]\w*", e) and not e.startswith("mcp__")
+                             or re.fullmatch(r"\w+\((:?\*)?\)", e)):
+            flags.append("[!] kept allow rule is broad: %s" % e)
+sys.stdout.reconfigure(encoding="utf-8")
+print(len(kept))
+for k, e in kept:
+    print("kept %s: %s" % (k, e))
+for line in flags + notes:
+    print(line)
+if same(M, P):
+    sys.exit(10)
+if same(M, T):
+    with open(src, "rb") as f:
+        data = f.read()
+    with open(out, "wb") as f:
+        f.write(data)
+else:
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(dump(M))
+with open(out, encoding="utf-8") as f:
+    if json.load(f) != M:
+        fail("merged file did not read back identically")
+PYEOF
+) || rc=$?
+        count=$(printf '%s\n' "$report" | head -1)
+        report=$(printf '%s\n' "$report" | tail -n +2)
+        if [ "$rc" -ne 0 ] && [ "$rc" -ne 10 ]; then
+            echo -e "${RED}[!] $target not updated: $(head -1 "$errf" 2>/dev/null | tr -d '\r') -- merge $src by hand${NC}"
+            rm -f "$tmp" "$errf"
+            return
+        fi
+        rm -f "$errf"
+        if [ "$rc" -eq 10 ]; then
+            echo -e "${GRAY}[=] $target (unchanged; keeps $count project permission rules)${NC}"
+        elif [ "$DRY_RUN" = true ]; then
+            echo -e "${YELLOW}[~?] $target (would update$(_upgrade_numstat "$target" "$tmp"); keeps $count project permission rules)${NC}"
+        else
+            mv -f "$tmp" "$target"
+            echo -e "${YELLOW}[~] $target (updated; kept $count project permission rules)${NC}"
+        fi
+        [ -n "$report" ] && printf '%s\n' "$report" | tr -d '\r' | sed 's/^/      /'
+        if [ "$rc" -eq 0 ] && [ "$DRY_RUN" = true ]; then
+            git diff --no-index -- "$target" "$tmp" 2>/dev/null | sed 's/^/      /'
+        fi
+        rm -f "$tmp"
+    }
+
+    # Process TEMPLATE_OWNED — overwrite unconditionally if stale (settings.json: merged instead)
     for target in "${TEMPLATE_OWNED[@]}"; do
         src="$(_upgrade_src "$target")"
         if [ ! -f "$src" ]; then
@@ -2166,9 +2335,11 @@ invoke_upgrade() {
             fi
         elif cmp -s "$src" "$target"; then
             echo -e "${GRAY}[=] $target (unchanged)${NC}"
+        elif [ "$target" = ".claude/settings.json" ]; then
+            _upgrade_settings "$src" "$target"
         else
             if [ "$DRY_RUN" = true ]; then
-                echo -e "${YELLOW}[~?] $target (would update)${NC}"
+                echo -e "${YELLOW}[~?] $target (would update$(_upgrade_numstat "$target" "$src"))${NC}"
             else
                 cp "$src" "$target"
                 echo -e "${YELLOW}[~] $target (updated)${NC}"

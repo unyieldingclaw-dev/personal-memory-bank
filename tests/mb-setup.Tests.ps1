@@ -487,3 +487,190 @@ Describe "Show-Doctor --check is read-only (subprocess)" -ForEach @(
         $result.ExitCode | Should -Be 1
     }
 }
+
+# WHY: mb upgrade force-copied .claude/settings.json, silently deleting an adopter's deny rules
+# (signing bypass, --no-verify, PR merges) -- found in the AI-Code-Review-Agent repo's dry run,
+# 2026-10-24. Merge-UpgradeSettingsFile is tested in-process (a full upgrade costs about a minute), and
+# against the Python merge embedded in mb.sh, which must produce byte-identical files and lines.
+Describe "Merge-UpgradeSettingsFile" {
+    BeforeAll {
+        # WHY captured before dot-sourcing: mb.ps1 resets $script:SjRoot to $env:MB_HOME when set, which
+        # can name a different PMB checkout than the one under test.
+        $script:SjRoot = Split-Path $PSScriptRoot -Parent
+        . (Join-Path $script:SjRoot 'scripts/mb.ps1') -Command help 2>$null
+        $script:SjTemplate = Join-Path $script:SjRoot 'templates/.claude/settings.json'
+        $script:SjDir = New-TestProject -Base $TestDrive -Name 'settings-merge'
+        New-Item -ItemType Directory -Path (Join-Path $script:SjDir '.claude') -Force | Out-Null
+        $script:MergeDeny = 'Bash(gh pr ' + 'merge *)'
+
+        # Same fixture as tests/test-mb-upgrade.sh: BOM + CRLF, project rules in every list, a
+        # one-element ask list, a non-ASCII rule, keys that must not survive, and flag triggers.
+        function New-SjFixture([string]$Path) {
+            $s = Get-Content $script:SjTemplate -Raw | ConvertFrom-Json
+            $p = $s.permissions
+            $p.allow = [object[]](@($p.allow[0..2]) + @('Bash(npm ci)', 'Bash', 'mcp__gh__merge_pull_request', "Bash(echo caf$([char]0xE9))", 'Bash(retired-thing)'))
+            $p.deny = [object[]]@($script:MergeDeny)
+            $p | Add-Member ask ([object[]]@('Bash(rm *)'))
+            $p | Add-Member additionalDirectories ([object[]]@('../shared'))
+            $p | Add-Member disableBypassPermissionsMode 'disable'
+            $p | Add-Member defaultMode 'acceptEdits'
+            $s | Add-Member disableAllHooks $true
+            $s | Add-Member apiKeyHelper 'helper.sh'
+            $s.env | Add-Member PROJECT_ONLY '1'
+            $s.hooks.PSObject.Properties.Remove('Stop')
+            $text = (ConvertTo-Json -InputObject $s -Depth 100) -replace "`r?`n", "`r`n"
+            [IO.File]::WriteAllText($Path, $text, [Text.UTF8Encoding]::new($true))
+        }
+
+        # Runs the Python merge exactly as mb.sh embeds it.
+        $mbSh = Get-Content (Join-Path $script:SjRoot 'scripts/mb.sh') -Raw
+        $script:PyMerge = Join-Path $TestDrive 'merge.py'
+        $m = [regex]::Match($mbSh, "(?s)<<'PYEOF'\r?\n(import json, re, subprocess, sys.*?)\r?\nPYEOF")
+        $m.Success | Should -BeTrue
+        [IO.File]::WriteAllText($script:PyMerge, $m.Groups[1].Value + "`n")
+        # Same interpreter probe as mb.sh: Windows runners may have only one of the two names.
+        $script:Py = @('python3', 'python') | Where-Object { & $_ -c 'import json' 2>$null; $LASTEXITCODE -eq 0 } | Select-Object -First 1
+        $script:Py | Should -Not -BeNullOrEmpty
+        # WHY pin UTF-8: the merge prints UTF-8, but PowerShell decodes native output with
+        # [Console]::OutputEncoding, a legacy code page when no console is attached.
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        function Invoke-PyMerge([string]$Target, [string]$Out, [string]$MbHome) {
+            $lines = @(& $script:Py $script:PyMerge $script:SjTemplate $Target $Out $MbHome 2>$null)
+            return @{ Code = $LASTEXITCODE; Count = [int]$lines[0]; Lines = @($lines | Select-Object -Skip 1) }
+        }
+    }
+
+    BeforeEach {
+        $script:Sj = Join-Path $script:SjDir '.claude/settings.json'
+        $script:Out = Join-Path $script:SjDir '.claude/merged.json'
+        Remove-Item $script:Out -ErrorAction SilentlyContinue
+        New-SjFixture $script:Sj
+    }
+
+    It "keeps every project permission rule, drops weakening keys, and names both" {
+        $r = Merge-UpgradeSettingsFile -Src $script:SjTemplate -Target $script:Sj -Out $script:Out -MbHome $script:SjRoot
+        $r.Code | Should -Be 0
+        $r.Count | Should -Be 9
+        $m = Get-Content $script:Out -Raw | ConvertFrom-Json
+        $t = Get-Content $script:SjTemplate -Raw | ConvertFrom-Json
+        $m.permissions.deny | Should -Contain $script:MergeDeny
+        foreach ($e in $t.permissions.deny) { $m.permissions.deny | Should -Contain $e }
+        foreach ($e in $t.permissions.allow) { $m.permissions.allow | Should -Contain $e }
+        $m.permissions.allow | Should -Contain 'Bash(npm ci)'
+        $m.permissions.allow | Should -Contain "Bash(echo caf$([char]0xE9))"
+        $m.permissions.disableBypassPermissionsMode | Should -Be 'disable'
+        $m.permissions.PSObject.Properties.Name | Should -Not -Contain 'defaultMode'
+        $m.PSObject.Properties.Name | Should -Not -Contain 'disableAllHooks'
+        $m.PSObject.Properties.Name | Should -Not -Contain 'apiKeyHelper'
+        (ConvertTo-Json $m.hooks -Depth 100) | Should -BeExactly (ConvertTo-Json $t.hooks -Depth 100)
+        (ConvertTo-Json $m.env -Depth 100) | Should -BeExactly (ConvertTo-Json $t.env -Depth 100)
+        $raw = Get-Content $script:Out -Raw
+        $raw | Should -Match '"ask": \[\s*"Bash\(rm \*\)"\s*\]'
+        $raw | Should -Not -Match "`r"
+        [IO.File]::ReadAllBytes($script:Out)[0] | Should -Not -Be 0xEF
+        $r.Lines | Should -Contain "kept deny: $($script:MergeDeny)"
+        $r.Lines | Should -Contain 'dropped top-level key disableAllHooks (not in the template)'
+        $r.Lines | Should -Contain 'dropped env.PROJECT_ONLY (not in the template)'
+        $r.Lines | Should -Contain "replaced hooks with the template's"
+        ($r.Lines -join "`n") | Should -Match 'dropped permissions\.defaultMode'
+        ($r.Lines -join "`n") | Should -Match '\[!\] kept allow rule mentions merge .*mcp__gh__merge_pull_request'
+        $r.Lines | Should -Contain '[!] kept allow rule is broad: Bash'
+        ($r.Lines -join "`n") | Should -Not -Match 'PMB no longer ships'
+    }
+
+    It "reports Code 10 and writes nothing when run on its own output" {
+        $null = Merge-UpgradeSettingsFile -Src $script:SjTemplate -Target $script:Sj -Out $script:Out -MbHome $script:SjRoot
+        Move-Item $script:Out $script:Sj -Force
+        $r2 = Merge-UpgradeSettingsFile -Src $script:SjTemplate -Target $script:Sj -Out $script:Out -MbHome $script:SjRoot
+        $r2.Code | Should -Be 10
+        Test-Path $script:Out | Should -BeFalse
+    }
+
+    It "leaves invalid JSON alone with a reason" {
+        Set-Content $script:Sj '{ "permissions": { "deny": ["Bash(x)"], }'
+        $r = Merge-UpgradeSettingsFile -Src $script:SjTemplate -Target $script:Sj -Out $script:Out -MbHome $script:SjRoot
+        $r.Code | Should -Be 2
+        $r.Error | Should -Match '^project file is not valid JSON'
+        Test-Path $script:Out | Should -BeFalse
+    }
+
+    It "flags a rule PMB shipped and later withdrew, with the same lines as the Python merge" {
+        $home2 = Join-Path $TestDrive 'pmb-home'
+        New-Item -ItemType Directory -Path (Join-Path $home2 'templates/.claude') -Force | Out-Null
+        $tf = Join-Path $home2 'templates/.claude/settings.json'
+        Push-Location $home2
+        try {
+            git init -q; git config user.email t@t; git config user.name T; git config commit.gpgsign false
+            $old = Get-Content $script:SjTemplate -Raw | ConvertFrom-Json
+            $old.permissions.allow = [object[]](@($old.permissions.allow) + 'Bash(retired-thing)')
+            Set-Content $tf (ConvertTo-Json $old -Depth 100)
+            git add -A; git commit -q -m old
+            Copy-Item $script:SjTemplate $tf -Force
+            git add -A; git commit -q -m new
+        } finally { Pop-Location }
+        $r = Merge-UpgradeSettingsFile -Src $script:SjTemplate -Target $script:Sj -Out $script:Out -MbHome $home2
+        $r.Lines | Should -Contain '[!] PMB no longer ships this rule; kept -- remove it if unneeded: allow Bash(retired-thing)'
+        $py = Invoke-PyMerge $script:Sj (Join-Path $script:SjDir '.claude/py.json') $home2
+        ($py.Lines -join "`n") | Should -BeExactly ($r.Lines -join "`n")
+    }
+
+    It "matches the Python merge byte for byte (<Name>)" -TestCases @(
+        @{ Name = 'fixture'; Edit = $null }
+        @{ Name = 'empty lists and object'; Edit = { param($s) $s.permissions.allow = [object[]]@(); $s.permissions | Add-Member ask ([object[]]@()); $s | Add-Member statusLine ([pscustomobject]@{}) } }
+        @{ Name = 'one-element allow, non-ASCII and escapes'; Edit = { param($s) $s.permissions.allow = [object[]]@("Bash(caf$([char]0xE9) <&> 'q')") } }
+    ) {
+        if ($Edit) {
+            $s = Get-Content $script:SjTemplate -Raw | ConvertFrom-Json
+            & $Edit $s
+            [IO.File]::WriteAllText($script:Sj, (ConvertTo-Json $s -Depth 100), [Text.UTF8Encoding]::new($false))
+        }
+        $pyOut = Join-Path $script:SjDir '.claude/py.json'
+        Remove-Item $pyOut -ErrorAction SilentlyContinue
+        $r = Merge-UpgradeSettingsFile -Src $script:SjTemplate -Target $script:Sj -Out $script:Out -MbHome $script:SjRoot
+        $py = Invoke-PyMerge $script:Sj $pyOut $script:SjRoot
+        $py.Code | Should -Be $r.Code
+        $py.Count | Should -Be $r.Count
+        ($py.Lines -join "`n") | Should -BeExactly ($r.Lines -join "`n")
+        if ($r.Code -eq 0) {
+            (Get-FileHash $pyOut).Hash | Should -Be (Get-FileHash $script:Out).Hash
+        }
+    }
+}
+
+# WHY subprocess: Invoke-Upgrade calls exit and changes location. One project carries the dry run,
+# the update and the idempotent re-run, since each run costs about a minute.
+Describe "Invoke-Upgrade settings.json merge (subprocess)" {
+    It "dry-runs without writing, keeps a project deny rule, then re-runs as unchanged" {
+        $proj = New-TestProject -Base $TestDrive -Name 'upgrade-settings'
+        $mbScript = Join-Path $RepoRoot 'scripts/mb.ps1'
+        $deny = 'Bash(gh pr ' + 'merge *)'
+        Push-Location $proj
+        try {
+            git init -q 2>$null; git config user.email t@t 2>$null; git config user.name T 2>$null
+            git commit -q --allow-empty -m init 2>$null
+            $env:MB_HOME = $RepoRoot
+            & pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript init 2>&1 | Out-Null
+            $sj = Join-Path $proj '.claude/settings.json'
+            $s = Get-Content $sj -Raw | ConvertFrom-Json
+            $s.permissions.deny = [object[]](@($s.permissions.deny) + $deny)
+            $s | Add-Member disableAllHooks $true
+            [IO.File]::WriteAllText($sj, (ConvertTo-Json $s -Depth 100), [Text.UTF8Encoding]::new($false))
+            $before = (Get-FileHash $sj).Hash
+
+            $dry = (& pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript upgrade -DryRun 2>&1) -join "`n"
+            $dry | Should -Match '\[~\?\] \.claude/settings\.json \(would update, \+\d+/-\d+ lines; keeps 1 project permission rules\)'
+            $dry | Should -Match '-\s+"disableAllHooks": true'
+            (Get-FileHash $sj).Hash | Should -Be $before
+
+            $out = (& pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript upgrade 2>&1) -join "`n"
+            $out | Should -Match '\[~\] \.claude/settings\.json \(updated; kept 1 project permission rules\)'
+            (Get-Content $sj -Raw | ConvertFrom-Json).permissions.deny | Should -Contain $deny
+
+            $again = (& pwsh -NoLogo -ExecutionPolicy Bypass -File $mbScript upgrade 2>&1) -join "`n"
+            $again | Should -Match '\[=\] \.claude/settings\.json \(unchanged; keeps 1 project permission rules\)'
+        } finally {
+            Remove-Item Env:\MB_HOME -ErrorAction SilentlyContinue
+            Pop-Location
+        }
+    }
+}

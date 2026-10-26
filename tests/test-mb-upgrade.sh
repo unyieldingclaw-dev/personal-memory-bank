@@ -375,4 +375,153 @@ for f in $SHORTCUT_DOCS; do
 done
 assert_equals "$stale_shortcut" "" "no chat-shortcut doc mentions mb update"
 
+# ── settings.json: permissions are merged, never overwritten ─────────────────
+# WHY: settings.json was force-copied, which silently deleted an adopter's deny rules (signing
+# bypass, --no-verify, gh pr merge) on upgrade -- found in the AI-Code-Review-Agent repo's dry run,
+# 2026-10-24. Each mb upgrade costs about a minute here, so one fixture carries every case: a BOM
+# and CRLF file (Windows editors), project rules in every list, a one-element ask list (must stay
+# an array), a non-ASCII rule, governance-weakening keys that must NOT survive, and flag triggers.
+echo ""
+echo "--- settings.json: upgrade merges permissions ---"
+
+TMPDIR_SJ="$(mktemp -d 2>/dev/null || mktemp -d -t mb-settings-merge)"
+trap 'rm -rf "$TMPDIR_SJ"' EXIT
+setup_test_project "$TMPDIR_SJ"
+SJ="$TMPDIR_SJ/.claude/settings.json"
+SJ_FIXTURE="$TMPDIR_SJ/fixture-settings.json"
+python3 - "$REPO_ROOT/templates/.claude/settings.json" "$SJ_FIXTURE" <<'PYEOF'
+import json, sys
+s = json.load(open(sys.argv[1], encoding="utf-8"))
+p = s["permissions"]
+p["allow"] = p["allow"][:3] + ["Bash(npm ci)", "Bash", "mcp__gh__merge_pull_request", "Bash(echo café)", "Bash(retired-thing)"]
+p["deny"] = ["Bash(gh pr merge *)"]
+p["ask"] = ["Bash(rm *)"]
+p["additionalDirectories"] = ["../shared"]
+p["disableBypassPermissionsMode"] = "disable"
+p["defaultMode"] = "acceptEdits"
+s["disableAllHooks"] = True
+s["apiKeyHelper"] = "helper.sh"
+s["env"]["PROJECT_ONLY"] = "1"
+del s["hooks"]["Stop"]
+text = json.dumps(s, indent=2, ensure_ascii=False).replace("\n", "\r\n")
+open(sys.argv[2], "w", encoding="utf-8-sig", newline="").write(text)
+PYEOF
+cp "$SJ_FIXTURE" "$SJ"
+
+# Prints one key=value line per property the assertions below check.
+_sj_facts() {
+    python3 - "$1" "$REPO_ROOT/templates/.claude/settings.json" <<'PYEOF'
+import json, sys
+m = json.load(open(sys.argv[1], encoding="utf-8-sig")); t = json.load(open(sys.argv[2], encoding="utf-8"))
+p = m.get("permissions", {})
+print("deny_project=%s" % ("Bash(gh pr merge *)" in p.get("deny", [])))
+print("deny_template=%s" % all(e in p.get("deny", []) for e in t["permissions"]["deny"]))
+print("allow_project=%s" % ("Bash(npm ci)" in p.get("allow", [])))
+print("allow_template=%s" % all(e in p.get("allow", []) for e in t["permissions"]["allow"]))
+print("allow_nonascii=%s" % ("Bash(echo café)" in p.get("allow", [])))
+print("ask=%s" % json.dumps(p.get("ask")))
+print("dirs=%s" % json.dumps(p.get("additionalDirectories")))
+print("bypass=%s" % p.get("disableBypassPermissionsMode"))
+print("defaultMode=%s" % ("defaultMode" in p))
+print("disableAllHooks=%s" % ("disableAllHooks" in m))
+print("apiKeyHelper=%s" % ("apiKeyHelper" in m))
+print("hooks_equal=%s" % (m.get("hooks") == t["hooks"]))
+print("env_equal=%s" % (m.get("env") == t["env"]))
+raw = open(sys.argv[1], "rb").read()
+print("bom=%s crlf=%s" % (raw.startswith(b"\xef\xbb\xbf"), b"\r\n" in raw))
+PYEOF
+}
+
+output=$(cd "$TMPDIR_SJ" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "settings merge: mb upgrade exits 0"
+facts=$(_sj_facts "$SJ")
+assert_contains "$output" "\[~\] .claude/settings.json (updated; kept 9 project permission rules)" "settings merge: reports update and kept-rule count"
+assert_contains "$facts" "deny_project=True" "settings merge: project deny rule survives"
+assert_contains "$facts" "deny_template=True" "settings merge: template deny rules added"
+assert_contains "$facts" "allow_project=True" "settings merge: project allow rule survives"
+assert_contains "$facts" "allow_template=True" "settings merge: template allow rules present"
+assert_contains "$facts" "allow_nonascii=True" "settings merge: non-ASCII rule survives a BOM+CRLF file"
+assert_contains "$facts" 'ask=\["Bash(rm \*)"\]' "settings merge: one-element ask list stays an array"
+assert_contains "$facts" 'dirs=\["../shared"\]' "settings merge: additionalDirectories survives"
+assert_contains "$facts" "bypass=disable" "settings merge: disableBypassPermissionsMode survives"
+assert_contains "$facts" "defaultMode=False" "settings merge: permissions.defaultMode dropped"
+assert_contains "$facts" "disableAllHooks=False" "settings merge: disableAllHooks dropped"
+assert_contains "$facts" "apiKeyHelper=False" "settings merge: apiKeyHelper dropped"
+assert_contains "$facts" "hooks_equal=True" "settings merge: hooks come from the template"
+assert_contains "$facts" "env_equal=True" "settings merge: env comes from the template"
+assert_contains "$facts" "bom=False crlf=False" "settings merge: written as UTF-8 without BOM, LF"
+assert_contains "$output" "kept deny: Bash(gh pr merge \*)" "settings merge: kept deny rule is named"
+assert_contains "$output" "dropped top-level key disableAllHooks" "settings merge: dropped disableAllHooks is named"
+assert_contains "$output" "dropped permissions.defaultMode" "settings merge: dropped defaultMode is named"
+assert_contains "$output" "dropped env.PROJECT_ONLY" "settings merge: dropped env key is named"
+assert_contains "$output" "replaced hooks with the template's" "settings merge: replaced hooks are named"
+assert_contains "$output" "\[!\] kept allow rule mentions merge.*mcp__gh__merge_pull_request" "settings merge: MCP merge allow flagged"
+assert_contains "$output" "\[!\] kept allow rule is broad: Bash$" "settings merge: bare-tool allow flagged"
+assert_not_contains "$output" "PMB no longer ships" "settings merge: nothing flagged as retired against the real history"
+SJ_MERGED_HASH=$(git hash-object "$SJ")
+
+# A second run must recognise its own output: no rewrite, no "updated".
+output=$(cd "$TMPDIR_SJ" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_contains "$output" "\[=\] .claude/settings.json (unchanged; keeps 9 project permission rules)" "settings merge: second run reports unchanged"
+assert_equals "$(git hash-object "$SJ")" "$SJ_MERGED_HASH" "settings merge: second run leaves the file byte-identical"
+
+echo ""
+echo "--- settings.json: --dry-run shows the merge, writes nothing; retired rules flagged ---"
+# WHY a scratch PMB home: no rule has ever been removed from the real template, so the retired-rule
+# flag needs a history where one was. Only templates/ and VERSION are copied (git ls-files, never
+# the worktree itself, whose .git pointer would let commits land in the real branch).
+FAKE_HOME="$TMPDIR_SJ/pmb-home"
+mkdir -p "$FAKE_HOME"
+(cd "$REPO_ROOT" && git ls-files templates VERSION | tar -cf - -T -) | (cd "$FAKE_HOME" && tar -xf -)
+(
+    set -e
+    cd "$FAKE_HOME"
+    git init -q
+    git config user.email "test@test.com"; git config user.name "Test"; git config commit.gpgsign false
+    cp templates/.claude/settings.json "$TMPDIR_SJ/current-template.json"
+    python3 - templates/.claude/settings.json <<'PYEOF'
+import json, sys
+s = json.load(open(sys.argv[1], encoding="utf-8"))
+s["permissions"]["allow"].append("Bash(retired-thing)")
+open(sys.argv[1], "w", encoding="utf-8", newline="\n").write(json.dumps(s, indent=2) + "\n")
+PYEOF
+    git add -A; git commit -q -m "ship retired-thing"
+    cp "$TMPDIR_SJ/current-template.json" templates/.claude/settings.json
+    git add -A; git commit -q -m "withdraw retired-thing"
+)
+cp "$SJ_FIXTURE" "$SJ"
+CMD_FILE="$(cd "$TMPDIR_SJ" && ls .claude/commands/*.md | head -1)"
+printf 'local edit\n' >> "$TMPDIR_SJ/$CMD_FILE"
+SJ_BEFORE=$(git hash-object "$SJ"); CMD_BEFORE=$(git hash-object "$TMPDIR_SJ/$CMD_FILE")
+output=$(cd "$TMPDIR_SJ" && MB_HOME="$FAKE_HOME" bash "$MB" upgrade --dry-run 2>&1)
+assert_equals "$(git hash-object "$SJ")" "$SJ_BEFORE" "dry run: settings.json untouched"
+assert_equals "$(git hash-object "$TMPDIR_SJ/$CMD_FILE")" "$CMD_BEFORE" "dry run: edited command file untouched"
+assert_contains "$output" "\[~?\] .claude/settings.json (would update, +[0-9]*/-[0-9]* lines; keeps 9 project permission rules)" "dry run: settings.json line counts and kept count"
+assert_contains "$output" "\[~?\] $CMD_FILE (would update, +0/-1 lines)" "dry run: template-owned file shows its line counts"
+assert_contains "$output" "^      -  \"disableAllHooks\": true," "dry run: merged diff shows the dropped key"
+assert_contains "$output" "\[!\] PMB no longer ships this rule; kept -- remove it if unneeded: allow Bash(retired-thing)" "dry run: retired template rule flagged"
+assert_equals "$(cd "$TMPDIR_SJ/.claude" && ls -a | grep -c 'mb-upgrade')" "0" "dry run: no temp file left behind"
+
+echo ""
+echo "--- settings.json: invalid JSON is left untouched ---"
+printf '{ "permissions": { "deny": ["Bash(gh pr merge *)"], }\n' > "$SJ"
+SJ_BEFORE=$(git hash-object "$SJ")
+output=$(cd "$TMPDIR_SJ" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_exit_zero $? "invalid JSON: mb upgrade still exits 0"
+assert_contains "$output" "\[!\] .claude/settings.json not updated: project file is not valid JSON" "invalid JSON: [!] names the reason"
+assert_equals "$(git hash-object "$SJ")" "$SJ_BEFORE" "invalid JSON: file untouched"
+
+echo ""
+echo "--- settings.json: no runnable python leaves the file untouched ---"
+# WHY a stub that exists but fails: the Windows Store python3 alias is on PATH yet runs nothing,
+# so a command -v check would pass and the merge would fall through.
+STUB="$TMPDIR_SJ/stub-bin"; mkdir -p "$STUB"
+printf '#!/bin/sh\nexit 9009\n' > "$STUB/python3"; cp "$STUB/python3" "$STUB/python"; chmod +x "$STUB/python3" "$STUB/python"
+cp "$SJ_FIXTURE" "$SJ"
+SJ_BEFORE=$(git hash-object "$SJ")
+assert_equals "$(PATH="$STUB:$PATH" command -v python3)" "$STUB/python3" "no python: the stub shadows python3 (non-vacuous)"
+output=$(cd "$TMPDIR_SJ" && PATH="$STUB:$PATH" MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
+assert_contains "$output" "\[!\] .claude/settings.json not updated: no runnable python3/python" "no python: [!] names the reason"
+assert_equals "$(git hash-object "$SJ")" "$SJ_BEFORE" "no python: file untouched"
+
 print_summary
