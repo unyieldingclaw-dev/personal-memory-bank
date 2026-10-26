@@ -2263,8 +2263,10 @@ function Show-Query {
 
 # WHY settings.json is merged, not overwritten: its permission lists are project policy, and the
 # wholesale copy this replaces silently deleted an adopter's deny rules. Same rules as mb.sh's
-# _upgrade_settings (see its comment); the two must produce byte-identical files and identical
-# report lines. Returns @{ Code = 0 (Out written) | 10 (already merged) | 2 (Error); Count; Lines }.
+# _upgrade_settings (see its comment, which also lists the known divergences on unusual input); the
+# two must produce byte-identical files and identical report lines for every shape the parity tests
+# in tests/mb-setup.Tests.ps1 pin.
+# Returns @{ Code = 0 (Out written) | 10 (already merged) | 2 (Error); Count; Lines }.
 function Merge-UpgradeSettingsFile {
     param([string]$Src, [string]$Target, [string]$Out, [string]$MbHome)
     $lists = @('allow', 'deny', 'ask', 'additionalDirectories')
@@ -2273,12 +2275,17 @@ function Merge-UpgradeSettingsFile {
     function Test-Key($obj, [string]$key) { return ($obj.PSObject.Properties.Name -ccontains $key) }
     function ConvertTo-Dump($obj) { return ((ConvertTo-Json -InputObject $obj -Depth 100) -replace "`r`n", "`n") + "`n" }
     function Read-SettingsFile([string]$path, [string]$what) {
+        $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8
+        if ([string]::IsNullOrWhiteSpace($raw)) { return "$what is not valid JSON (empty)" }
         try {
-            $obj = Get-Content -LiteralPath $path -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
+            # WHY -NoEnumerate: the pipeline would unroll a one-element top-level array into its element.
+            $obj = ConvertFrom-Json -InputObject $raw -NoEnumerate -ErrorAction Stop
         } catch {
             return "$what is not valid JSON ($($_.Exception.GetType().Name))"
         }
-        if ($obj -isnot [pscustomobject]) { return "$what is not a JSON object" }
+        # WHY the full type name: the [pscustomobject] accelerator is PSObject, which every value
+        # matches -- a file holding 42 or true would pass and be overwritten with the template.
+        if ($obj -isnot [System.Management.Automation.PSCustomObject]) { return "$what is not a JSON object" }
         if (Test-Key $obj 'permissions') {
             $perms = $obj.permissions
             if ($perms -isnot [pscustomobject]) { return "${what}: permissions is not an object" }
@@ -2312,7 +2319,10 @@ function Merge-UpgradeSettingsFile {
                 foreach ($e in $v) {
                     if (-not $have.Contains($e)) { $have.Add($e); $kept.Add(@($k, $e)) }
                 }
-                $MP | Add-Member -NotePropertyName $k -NotePropertyValue ([object[]]$have.ToArray()) -Force
+                # WHY assign when present: Add-Member -Force re-adds the property at the end, which
+                # reorders permissions and breaks byte parity with the Python merge.
+                if (Test-Key $MP $k) { $MP.$k = [object[]]$have.ToArray() }
+                else { $MP | Add-Member -NotePropertyName $k -NotePropertyValue ([object[]]$have.ToArray()) }
             } elseif ($k -ceq $keep -and -not (Test-Key $MP $k)) {
                 $MP | Add-Member -NotePropertyName $k -NotePropertyValue $v
                 $kept.Add(@('permissions', $k))

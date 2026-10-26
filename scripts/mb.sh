@@ -2164,7 +2164,8 @@ invoke_upgrade() {
 
     # WHY settings.json is merged, not overwritten: its permission lists are project policy. An
     # adopter's deny rules (signing bypass, --no-verify, gh pr merge) were silently deleted by the
-    # wholesale copy this replaces. Rules (design v3, union + detection, no provenance file):
+    # wholesale copy this replaces. Rules (union + detection; no provenance file, so nothing a
+    # project wrote can be misclassified and removed):
     #   - permissions.allow/deny/ask/additionalDirectories = template entries + every project entry
     #     the template lacks. Nothing a project wrote there is dropped.
     #   - permissions.disableBypassPermissionsMode is kept (it only hardens).
@@ -2173,16 +2174,22 @@ invoke_upgrade() {
     #     the governance off -- but each one is now named.
     #   - Kept rules are listed on every upgrade, with [!] flags for rules PMB once shipped and has
     #     since withdrawn, rules that mention "merge" (the merge gate cannot see MCP tools), and
-    #     bare-tool or "*" allows. Detection, not removal: provenance cannot be known with certainty.
-    # Any failure (no runnable python, invalid JSON) leaves the file untouched -- never a fallback
-    # to overwriting. scripts/mb.ps1's Merge-UpgradeSettingsFile implements the same rules; the two
-    # produce byte-identical files.
+    #     allows that are a bare tool name or Tool(), Tool(*), Tool(:*). Detection, not removal:
+    #     provenance cannot be known with certainty.
+    # Any failure (no runnable python, invalid JSON, a non-object file) leaves the file untouched --
+    # never a fallback to overwriting. scripts/mb.ps1's Merge-UpgradeSettingsFile implements the same
+    # rules and writes byte-identical files for the shapes tests/mb-setup.Tests.ps1's parity cases
+    # pin. Known divergences, all on unusual input: PowerShell escapes U+2028/U+0085 and upper-cases
+    # exponents; it refuses case-variant keys and ISO-date-string rules; Python refuses UTF-16.
+    # tests/mb-setup.Tests.ps1 extracts the heredoc below by its first line and the PYEOF terminator.
     _upgrade_settings() {
         local src="$1" target="$2" py="" c tmp errf report rc count
         # WHY execute, not command -v: on Windows python3 can be a Store alias stub that exists on
-        # PATH but cannot run anything.
+        # PATH but cannot run anything. WHY -I (isolated mode): mb upgrade runs in the project
+        # directory, and without -I a project's own json.py or subprocess.py would be imported and
+        # run in place of the standard library. It also rejects Python 2, which has no -I.
         for c in python3 python; do
-            if "$c" -c 'import json' >/dev/null 2>&1; then py="$c"; break; fi
+            if "$c" -I -c 'import json' >/dev/null 2>&1; then py="$c"; break; fi
         done
         if [ -z "$py" ]; then
             echo -e "${RED}[!] $target not updated: no runnable python3/python to merge its permissions -- merge $src by hand${NC}"
@@ -2192,7 +2199,7 @@ invoke_upgrade() {
         errf="$tmp.err"
         # WHY "|| rc=$?": set -e would otherwise end mb upgrade on the merge's status codes.
         rc=0
-        report=$("$py" - "$src" "$target" "$tmp" "$REPO_ROOT" 2>"$errf" <<'PYEOF'
+        report=$("$py" -I - "$src" "$target" "$tmp" "$REPO_ROOT" 2>"$errf" <<'PYEOF'
 import json, re, subprocess, sys
 src, tgt, out, home = sys.argv[1:5]
 LISTS = ("allow", "deny", "ask", "additionalDirectories")

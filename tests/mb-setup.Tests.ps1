@@ -508,7 +508,7 @@ Describe "Merge-UpgradeSettingsFile" {
         function New-SjFixture([string]$Path) {
             $s = Get-Content $script:SjTemplate -Raw | ConvertFrom-Json
             $p = $s.permissions
-            $p.allow = [object[]](@($p.allow[0..2]) + @('Bash(npm ci)', 'Bash', 'mcp__gh__merge_pull_request', "Bash(echo caf$([char]0xE9))", 'Bash(retired-thing)'))
+            $p.allow = [object[]](@($p.allow[0..2]) + @('Bash(npm ci)', 'Bash', 'mcp__gh__merge_pull_request', "Bash(echo caf$([char]0xE9))", 'Bash(retired-thing)', 'mcp__x__Merge_PR', 'Bash(*)'))
             $p.deny = [object[]]@($script:MergeDeny)
             $p | Add-Member ask ([object[]]@('Bash(rm *)'))
             $p | Add-Member additionalDirectories ([object[]]@('../shared'))
@@ -529,13 +529,13 @@ Describe "Merge-UpgradeSettingsFile" {
         $m.Success | Should -BeTrue
         [IO.File]::WriteAllText($script:PyMerge, $m.Groups[1].Value + "`n")
         # Same interpreter probe as mb.sh: Windows runners may have only one of the two names.
-        $script:Py = @('python3', 'python') | Where-Object { & $_ -c 'import json' 2>$null; $LASTEXITCODE -eq 0 } | Select-Object -First 1
+        $script:Py = @('python3', 'python') | Where-Object { & $_ -I -c 'import json' 2>$null; $LASTEXITCODE -eq 0 } | Select-Object -First 1
         $script:Py | Should -Not -BeNullOrEmpty
         # WHY pin UTF-8: the merge prints UTF-8, but PowerShell decodes native output with
         # [Console]::OutputEncoding, a legacy code page when no console is attached.
         [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
         function Invoke-PyMerge([string]$Target, [string]$Out, [string]$MbHome) {
-            $lines = @(& $script:Py $script:PyMerge $script:SjTemplate $Target $Out $MbHome 2>$null)
+            $lines = @(& $script:Py -I $script:PyMerge $script:SjTemplate $Target $Out $MbHome 2>$null)
             return @{ Code = $LASTEXITCODE; Count = [int]$lines[0]; Lines = @($lines | Select-Object -Skip 1) }
         }
     }
@@ -550,7 +550,7 @@ Describe "Merge-UpgradeSettingsFile" {
     It "keeps every project permission rule, drops weakening keys, and names both" {
         $r = Merge-UpgradeSettingsFile -Src $script:SjTemplate -Target $script:Sj -Out $script:Out -MbHome $script:SjRoot
         $r.Code | Should -Be 0
-        $r.Count | Should -Be 9
+        $r.Count | Should -Be 11
         $m = Get-Content $script:Out -Raw | ConvertFrom-Json
         $t = Get-Content $script:SjTemplate -Raw | ConvertFrom-Json
         $m.permissions.deny | Should -Contain $script:MergeDeny
@@ -574,8 +574,28 @@ Describe "Merge-UpgradeSettingsFile" {
         $r.Lines | Should -Contain "replaced hooks with the template's"
         ($r.Lines -join "`n") | Should -Match 'dropped permissions\.defaultMode'
         ($r.Lines -join "`n") | Should -Match '\[!\] kept allow rule mentions merge .*mcp__gh__merge_pull_request'
+        ($r.Lines -join "`n") | Should -Match '\[!\] kept allow rule mentions merge .*mcp__x__Merge_PR'
+        ($r.Lines -join "`n") | Should -Not -Match 'mentions merge .*Bash\(gh'
         $r.Lines | Should -Contain '[!] kept allow rule is broad: Bash'
+        $r.Lines | Should -Contain '[!] kept allow rule is broad: Bash(*)'
         ($r.Lines -join "`n") | Should -Not -Match 'PMB no longer ships'
+    }
+
+    It "leaves a file that is not a JSON object alone (<Name>)" -TestCases @(
+        @{ Name = 'number'; Text = '42' }
+        @{ Name = 'boolean'; Text = 'true' }
+        @{ Name = 'empty'; Text = '' }
+        @{ Name = 'empty array'; Text = '[]' }
+        @{ Name = 'one-object array'; Text = '[{"permissions": {}}]' }
+        @{ Name = 'string'; Text = '"just a string"' }
+    ) {
+        [IO.File]::WriteAllText($script:Sj, $Text)
+        $r = Merge-UpgradeSettingsFile -Src $script:SjTemplate -Target $script:Sj -Out $script:Out -MbHome $script:SjRoot
+        $r.Code | Should -Be 2
+        $r.Error | Should -Match '^project file is not (valid JSON|a JSON object)'
+        Test-Path $script:Out | Should -BeFalse
+        $py = Invoke-PyMerge $script:Sj (Join-Path $script:SjDir '.claude/py.json') $script:SjRoot
+        $py.Code | Should -Be 2
     }
 
     It "reports Code 10 and writes nothing when run on its own output" {
@@ -618,6 +638,8 @@ Describe "Merge-UpgradeSettingsFile" {
         @{ Name = 'fixture'; Edit = $null }
         @{ Name = 'empty lists and object'; Edit = { param($s) $s.permissions.allow = [object[]]@(); $s.permissions | Add-Member ask ([object[]]@()); $s | Add-Member statusLine ([pscustomobject]@{}) } }
         @{ Name = 'one-element allow, non-ASCII and escapes'; Edit = { param($s) $s.permissions.allow = [object[]]@("Bash(caf$([char]0xE9) <&> 'q')") } }
+        # The most common real upgrade: a project still on an older template that had no deny list.
+        @{ Name = 'older template without deny'; Edit = { param($s) $s.permissions.PSObject.Properties.Remove('deny') } }
     ) {
         if ($Edit) {
             $s = Get-Content $script:SjTemplate -Raw | ConvertFrom-Json
@@ -633,6 +655,10 @@ Describe "Merge-UpgradeSettingsFile" {
         ($py.Lines -join "`n") | Should -BeExactly ($r.Lines -join "`n")
         if ($r.Code -eq 0) {
             (Get-FileHash $pyOut).Hash | Should -Be (Get-FileHash $script:Out).Hash
+        }
+        if ($Name -eq 'older template without deny') {
+            # Nothing project-specific survives, so both runtimes must hand back the template's bytes.
+            (Get-FileHash $script:Out).Hash | Should -Be (Get-FileHash $script:SjTemplate).Hash
         }
     }
 }

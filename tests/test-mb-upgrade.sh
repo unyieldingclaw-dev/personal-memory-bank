@@ -393,7 +393,7 @@ python3 - "$REPO_ROOT/templates/.claude/settings.json" "$SJ_FIXTURE" <<'PYEOF'
 import json, sys
 s = json.load(open(sys.argv[1], encoding="utf-8"))
 p = s["permissions"]
-p["allow"] = p["allow"][:3] + ["Bash(npm ci)", "Bash", "mcp__gh__merge_pull_request", "Bash(echo café)", "Bash(retired-thing)"]
+p["allow"] = p["allow"][:3] + ["Bash(npm ci)", "Bash", "mcp__gh__merge_pull_request", "Bash(echo café)", "Bash(retired-thing)", "mcp__x__Merge_PR", "Bash(*)"]
 p["deny"] = ["Bash(gh pr merge *)"]
 p["ask"] = ["Bash(rm *)"]
 p["additionalDirectories"] = ["../shared"]
@@ -432,10 +432,15 @@ print("bom=%s crlf=%s" % (raw.startswith(b"\xef\xbb\xbf"), b"\r\n" in raw))
 PYEOF
 }
 
+# WHY a planted module: the merge runs python in the project directory; without -I a project's own
+# subprocess.py would be imported and executed in place of the standard library's.
+printf 'open("PLANTED-MODULE-RAN", "w").close()\n' > "$TMPDIR_SJ/subprocess.py"
 output=$(cd "$TMPDIR_SJ" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
 assert_exit_zero $? "settings merge: mb upgrade exits 0"
+assert_file_not_exists "$TMPDIR_SJ/PLANTED-MODULE-RAN" "settings merge: a project's own subprocess.py is never imported"
+rm -f "$TMPDIR_SJ/subprocess.py"
 facts=$(_sj_facts "$SJ")
-assert_contains "$output" "\[~\] .claude/settings.json (updated; kept 9 project permission rules)" "settings merge: reports update and kept-rule count"
+assert_contains "$output" "\[~\] .claude/settings.json (updated; kept 11 project permission rules)" "settings merge: reports update and kept-rule count"
 assert_contains "$facts" "deny_project=True" "settings merge: project deny rule survives"
 assert_contains "$facts" "deny_template=True" "settings merge: template deny rules added"
 assert_contains "$facts" "allow_project=True" "settings merge: project allow rule survives"
@@ -456,13 +461,16 @@ assert_contains "$output" "dropped permissions.defaultMode" "settings merge: dro
 assert_contains "$output" "dropped env.PROJECT_ONLY" "settings merge: dropped env key is named"
 assert_contains "$output" "replaced hooks with the template's" "settings merge: replaced hooks are named"
 assert_contains "$output" "\[!\] kept allow rule mentions merge.*mcp__gh__merge_pull_request" "settings merge: MCP merge allow flagged"
+assert_contains "$output" "\[!\] kept allow rule mentions merge.*mcp__x__Merge_PR" "settings merge: merge flag is case-insensitive"
+assert_not_contains "$output" "mentions merge.*Bash(gh" "settings merge: a kept deny rule is never merge-flagged (allow only)"
 assert_contains "$output" "\[!\] kept allow rule is broad: Bash$" "settings merge: bare-tool allow flagged"
+assert_contains "$output" "\[!\] kept allow rule is broad: Bash(\*)$" "settings merge: Tool(*) allow flagged"
 assert_not_contains "$output" "PMB no longer ships" "settings merge: nothing flagged as retired against the real history"
 SJ_MERGED_HASH=$(git hash-object "$SJ")
 
 # A second run must recognise its own output: no rewrite, no "updated".
 output=$(cd "$TMPDIR_SJ" && MB_HOME="$REPO_ROOT" bash "$MB" upgrade 2>&1)
-assert_contains "$output" "\[=\] .claude/settings.json (unchanged; keeps 9 project permission rules)" "settings merge: second run reports unchanged"
+assert_contains "$output" "\[=\] .claude/settings.json (unchanged; keeps 11 project permission rules)" "settings merge: second run reports unchanged"
 assert_equals "$(git hash-object "$SJ")" "$SJ_MERGED_HASH" "settings merge: second run leaves the file byte-identical"
 
 echo ""
@@ -496,7 +504,7 @@ SJ_BEFORE=$(git hash-object "$SJ"); CMD_BEFORE=$(git hash-object "$TMPDIR_SJ/$CM
 output=$(cd "$TMPDIR_SJ" && MB_HOME="$FAKE_HOME" bash "$MB" upgrade --dry-run 2>&1)
 assert_equals "$(git hash-object "$SJ")" "$SJ_BEFORE" "dry run: settings.json untouched"
 assert_equals "$(git hash-object "$TMPDIR_SJ/$CMD_FILE")" "$CMD_BEFORE" "dry run: edited command file untouched"
-assert_contains "$output" "\[~?\] .claude/settings.json (would update, +[0-9]*/-[0-9]* lines; keeps 9 project permission rules)" "dry run: settings.json line counts and kept count"
+assert_contains "$output" "\[~?\] .claude/settings.json (would update, +[0-9][0-9]*/-[0-9][0-9]* lines; keeps 11 project permission rules)" "dry run: settings.json line counts and kept count"
 assert_contains "$output" "\[~?\] $CMD_FILE (would update, +0/-1 lines)" "dry run: template-owned file shows its line counts"
 assert_contains "$output" "^      -  \"disableAllHooks\": true," "dry run: merged diff shows the dropped key"
 assert_contains "$output" "\[!\] PMB no longer ships this rule; kept -- remove it if unneeded: allow Bash(retired-thing)" "dry run: retired template rule flagged"
