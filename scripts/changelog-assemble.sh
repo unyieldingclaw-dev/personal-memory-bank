@@ -22,10 +22,12 @@
 #     first-seen order, and fragments in filename order within a heading;
 #   - inserts "## [X.Y.Z] - DATE" directly under "## [Unreleased]", which must be empty;
 #   - deletes the fragments it folded (changelog.d/README.md stays).
-# It does not bump VERSION, archive older sections, or stage anything.
+# It does not bump VERSION, archive older sections (CHANGELOG.md's "Released history" says when),
+# or stage anything.
 set -euo pipefail
 # WHY C collation: the glob below decides fragment order within a heading, and that order must not
-# depend on the release-cutter's locale.
+# depend on the release-cutter's locale. Not covered by the test suite: proving it needs a non-C
+# locale installed on the machine running the tests.
 export LC_ALL=C
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -72,15 +74,35 @@ if [ -d "$FRAG_DIR" ]; then
     done
 fi
 
-# A fragment is "### Heading" lines with content under them, and nothing else at heading level 1 or
-# 2: those would split the release section they are pasted into.
+# A fragment is one or more "### Name" headings, each with content under it, and no "#" or "##"
+# line: those would split the release section they are pasted into. A nameless heading would lose
+# its content in assemble, and an empty one would vanish from it, so both are refused.
+# WHY "##?" and not "#{1,2}": mawk 1.3.4 20200120 (Ubuntu 22.04, Debian 12) reads the interval
+# braces as literal text, which let a ## line through in review.
+# WHY strip \r: Git Bash's awk drops it and a Linux awk keeps it, and a kept \r defeats every
+# end-of-line pattern below. Committed fragments are LF (.gitattributes), so this only matters for an
+# uncommitted one.
 for f in "${FRAGS[@]+"${FRAGS[@]}"}"; do
     err="$(awk '
-        /^#{1,2}[ \t]/  { print "line " NR ": only ### headings belong in a fragment"; failed = 1; exit }
-        /^### /         { seen = 1; next }
-        /^[ \t]*$/      { next }
-        !seen           { print "line " NR ": text before the first ### heading"; failed = 1; exit }
-        END             { if (!failed && !seen) print "no ### heading" }
+        # exit still runs END, which therefore checks "failed" before reporting anything itself.
+        function fail(msg) { print msg; failed = 1; exit }
+                          { sub(/\r$/, "") }
+        /^##?([ \t]|$)/   { fail("line " NR ": only ### headings belong in a fragment (even inside a code fence)") }
+        /^###[ \t]*$/     { fail("line " NR ": ### heading has no name") }
+        /^###\t/          { fail("line " NR ": put a space, not a tab, after ###") }
+        /^### / {
+            if (seen && !content) fail("line " head ": ### heading has nothing under it")
+            seen = 1; content = 0; head = NR; next
+        }
+        /^[ \t]*$/        { next }
+        !seen             { fail("line " NR ": text before the first ### heading") }
+        # Any other line is content under the current heading.
+                          { content = 1 }
+        END {
+            if (failed) exit
+            if (!seen) print "no ### heading"
+            else if (!content) print "line " head ": ### heading has nothing under it"
+        }
     ' "$f")"
     [ -z "$err" ] || die "changelog.d/$(basename "$f"): $err"
 done
@@ -105,6 +127,7 @@ assemble() {
             if (chunk != "") body[cur] = body[cur] (body[cur] == "" ? "" : "\n") chunk
             nbuf = 0
         }
+        { sub(/\r$/, "") }
         FNR == 1 { flush(); cur = "" }
         /^### / {
             flush()
@@ -169,8 +192,17 @@ awk -v section="$SECTION" '
 ' "$CHANGELOG" > "$NEW" \
     || die "CHANGELOG.md's [Unreleased] section has entries; move them into a changelog.d/ fragment first"
 
+# WHY check the result rather than trust the guards above: the heading count is grep and the
+# insertion is awk, and the two can disagree. Found in review, without this check: with a CRLF
+# CHANGELOG.md under mawk, grep's [[:space:]] matches the \r and awk's [ \t] does not, so awk passes
+# the file through unchanged, and the fragments are then deleted with their notes written nowhere.
+grep -qF "## [$VERSION] - $DATE" "$NEW" \
+    || die "could not find where to insert the section (CRLF line endings?); CHANGELOG.md and changelog.d/ are unchanged"
+
 mv "$NEW" "$CHANGELOG"
-rm -f "${FRAGS[@]}"
+rm -f "${FRAGS[@]}" \
+    || die "CHANGELOG.md now has [$VERSION], but some fragments could not be deleted. Delete the fragment files still in changelog.d/ by hand (keep README.md); do not re-run, which would fold them in again"
 
 echo "Folded ${#FRAGS[@]} fragment(s) into CHANGELOG.md as [$VERSION] - $DATE."
-echo "Next: review CHANGELOG.md, bump VERSION, and stage CHANGELOG.md and changelog.d/."
+echo "Next: review CHANGELOG.md, archive old sections if it nears the size cap (see 'Released history'),"
+echo "bump VERSION, and stage CHANGELOG.md and changelog.d/."

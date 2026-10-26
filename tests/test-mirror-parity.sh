@@ -215,8 +215,8 @@ done
 # so pin the divergence to that single paragraph: any other changed line fails here.
 # WHY a second, live-only divergence: Phase 7's "Changelog:" paragraph tells PRs to write
 # changelog.d/ fragments. That only works with scripts/changelog-assemble.sh, which adopters do not
-# get, so the template must not carry it. It is pinned to exactly one live-side line. Blank lines
-# are left out of the "no other line" count because inserting a paragraph adds a blank one.
+# get, so the template must not carry it. It is pinned to exactly one live-side line, plus the one
+# live-side blank line that inserting a paragraph adds; any other blank-line difference fails.
 echo ""
 echo "--- WORKFLOW.md differs only in the Phase 3.5 \"Why\" and Phase 7 \"Changelog\" paragraphs ---"
 WF_WHY='^[<>] \*\*Why:\*\* self-review, however adversarial'
@@ -226,6 +226,8 @@ assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE "$WF_WHY")" "2" \
     "WORKFLOW.md: the Phase 3.5 \"Why\" line is the allowed divergence (one line each side)"
 assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE "$WF_CHANGELOG")" "1" \
     "WORKFLOW.md: the Phase 7 \"Changelog\" line is live-only (one line, live side)"
+assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE '^< ?$') $(printf '%s\n' "$WF_DIFF" | grep -cE '^> ?$')" "1 0" \
+    "WORKFLOW.md: the only blank-line difference is the one the Changelog paragraph adds (live side)"
 assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -vE "$WF_WHY|$WF_CHANGELOG" | grep -vcE '^[<>] ?$')" "0" \
     "WORKFLOW.md: no other line differs between live and template (Phase 3 stays in sync)"
 
