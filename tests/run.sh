@@ -31,6 +31,7 @@ run_suite "mb doctor"            "$REPO_ROOT/tests/test-mb-doctor.sh"
 run_suite "review-gate-lib-presence" "$REPO_ROOT/tests/test-review-gate-lib-presence.sh"
 run_suite "review-gate-lib"          "$REPO_ROOT/tests/test-review-gate-lib.sh"
 run_suite "review-reminders"     "$REPO_ROOT/tests/test-review-reminders.sh"
+run_suite "merge-gate"           "$REPO_ROOT/tests/test-merge-gate.sh"
 run_suite "mb-version-notifier"  "$REPO_ROOT/tests/test-mb-version-notifier.sh"
 run_suite "update-reviewed"      "$REPO_ROOT/tests/test-update-reviewed.sh"
 run_suite "dangerous-commands"   "$REPO_ROOT/tests/test-dangerous-commands.sh"
@@ -46,6 +47,7 @@ run_suite "codex-compaction-hooks" "$REPO_ROOT/tests/test-codex-compaction-hooks
 run_suite "mirror-parity"        "$REPO_ROOT/tests/test-mirror-parity.sh"
 run_suite "baseline-health"     "$REPO_ROOT/tests/test-baseline-health.sh"
 run_suite "ai-review-config"    "$REPO_ROOT/tests/test-ai-review-config.sh"
+run_suite "changelog-fragments" "$REPO_ROOT/tests/test-changelog-fragments.sh"
 
 # ── completeness: every tracked test suite must be registered above ──────────────────
 # WHY: the list above is hand-maintained, which is the THIRD instance of the stale-hardcoded

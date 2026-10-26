@@ -708,6 +708,7 @@ invoke_init() {
                   review-reminders-post.sh review-reminders-post.ps1 \
                   _review-gate-lib.sh _review-gate-lib.ps1 \
                   _review-gate-classify.py _review-gate-classify.ps1 \
+                  _review-gate-merge.py _review-gate-merge.ps1 \
                   warn-stale-review-marker.sh warn-stale-review-marker.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
@@ -2147,6 +2148,8 @@ invoke_upgrade() {
         "scripts/_review-gate-lib.ps1"
         "scripts/_review-gate-classify.py"
         "scripts/_review-gate-classify.ps1"
+        "scripts/_review-gate-merge.py"
+        "scripts/_review-gate-merge.ps1"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
         # Review helper, not a hook. Bash-only ON PURPOSE: it works by extracting check bodies out
@@ -2164,9 +2167,10 @@ invoke_upgrade() {
         # not genericized: its Phase 3 described a superseded plan flow, so force-overwriting would
         # have replaced a correct governance file with a known-wrong one. [NS-19] fixed that
         # template, and test-mirror-parity.sh now pins WORKFLOW.md's remaining divergence to named
-        # regions (Phase 3.5, PMB's live-only Pre-Approval Protocol, two table rows). The overwrite
-        # would still discard an adopter's own edits to standards/, and three of the fifteen stay on
-        # test-mirror-parity.sh's STD_DIVERGE_OK allowlist, which asserts they must KEEP diverging.
+        # regions (Phase 3.5, PMB's live-only Pre-Approval Protocol and Phase 7 Changelog line, two
+        # table rows). The overwrite would still discard an adopter's own edits to standards/, and
+        # three of the fifteen stay on test-mirror-parity.sh's STD_DIVERGE_OK allowlist, which
+        # asserts they must KEEP diverging.
         #
         # The two runtimes therefore disagree, deliberately and visibly: mb.ps1 force-overwrites
         # standards, mb.sh does not. That disagreement is now pinned by an assertion in

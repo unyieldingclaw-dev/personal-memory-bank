@@ -2,7 +2,8 @@
 # pmb-journal.sh — per-session journal for concurrent sessions working one repository.
 #
 # Spec: docs/superpowers/specs/2026-09-26-multi-session-memory-design.md (sections 4.1-4.3).
-# Twin: scripts/pmb-journal.ps1 — same commands, same on-disk layout, same limits.
+# Twin: scripts/pmb-journal.ps1 — same commands, same on-disk layout, same limits, except for the
+# known differences listed in the spec (section 4.1, "Twin parity").
 #
 # WHY a standalone script rather than an `mb` subcommand: `mb` runs MB_HOME's mb.ps1 (the main
 # checkout, on whatever branch it holds), prints an update notice that can make a 2 s network call,
@@ -335,7 +336,10 @@ pmb_write_cmd() {
     # WHY the subshell: pmb_publish reports failure through `die`, which exits, so only a subshell
     # lets the cleanup run. A failed start publish must not leave the sentinel behind, or the
     # session never gets a start marker.
-    if ( set -o noclobber; : > "$sdir/started" ) 2>/dev/null; then
+    # WHY the -e test: noclobber refuses only an existing regular file and opens anything else, so a
+    # FIFO here would block. An entry of any type means the session started, as CreateNew decides in
+    # the ps1 twin; one swapped in between the test and the open is a same-user race (spec S3).
+    if [ ! -e "$sdir/started" ] && ( set -o noclobber; : > "$sdir/started" ) 2>/dev/null; then
         ( pmb_publish "$sdir" start "" "session start" ) >/dev/null || { rm -f "$sdir/started"; exit 1; }
     fi
     rec=$(pmb_publish "$sdir" "$kind" "$ns" "$body") || exit 1
@@ -656,8 +660,12 @@ pmb_gate_identify() {
 # pmb_gate_env DIR SID — the two environment conditions that block a manual /compact (spec section
 # 4.3): DIR exists but is not a directory, or a probe write into DIR/tmp fails PMB_GATE_PROBES times.
 # Returns the block's status on either, else 0. Each block reports the path and the OS error.
+# WHY a new random name for each attempt: noclobber opens an existing FIFO, so a FIFO planted at a
+# predictable probe name would block the hook; one at a name drawn per attempt needs a same-user race
+# (spec S3). WHY not mktemp: the gate would then need a tool the ps1 twin does not, and the twins
+# would decide differently on a host without it.
 pmb_gate_env() {
-    local dir="$1" sid="$2" i err=""
+    local dir="$1" sid="$2" i p err=""
     if [ -e "$dir" ] && [ ! -d "$dir" ]; then
         # The write the journal needs, made to fail: its message is the OS error (ENOTDIR).
         err=$(mkdir "$dir/tmp" 2>&1)
@@ -666,7 +674,8 @@ pmb_gate_env() {
     fi
     mkdir -p "$dir/tmp" 2>/dev/null
     for ((i = 1; i <= PMB_GATE_PROBES; i++)); do
-        if err=$( ( : > "$dir/tmp/.probe.$$" ) 2>&1 ); then rm -f "$dir/tmp/.probe.$$"; return 0; fi
+        p="$dir/tmp/.probe.$$.$RANDOM$RANDOM"
+        if err=$( ( set -o noclobber; : > "$p" ) 2>&1 ); then rm -f "$p"; return 0; fi
         [ "$i" -lt "$PMB_GATE_PROBES" ] && sleep "$PMB_GATE_PROBE_DELAY"
     done
     pmb_gate_block "$sid" env "cannot write to $dir/tmp (tried $PMB_GATE_PROBES times: ${err:-unknown error}). Fix: restore write access to $dir/tmp."
@@ -726,8 +735,11 @@ pmb_gate_once() {
     fi
     # WHY fail open when the block cannot be recorded: gate-blocked is what lets the repeated
     # /compact pass, so a block that cannot write it would repeat forever -- the deadlock the
-    # once-only rule exists to prevent.
-    if ! { mkdir -p "$sdir" && [ ! -L "$sdir/gate-blocked" ] && printf '%s\n' "$marker" > "$sdir/gate-blocked"; } 2>/dev/null; then
+    # once-only rule exists to prevent. An existing gate-blocked that is not a regular file (a FIFO,
+    # whose open blocks the hook, or a device) cannot record it either, and is never opened.
+    if ! { mkdir -p "$sdir" && [ ! -L "$sdir/gate-blocked" ] \
+           && { [ ! -e "$sdir/gate-blocked" ] || [ -f "$sdir/gate-blocked" ]; } \
+           && printf '%s\n' "$marker" > "$sdir/gate-blocked"; } 2>/dev/null; then
         printf 'pmb-journal gate: cannot record the block in %s/gate-blocked; allowing (fail-open)\n' "$sdir" >&2
         return 0
     fi

@@ -25,6 +25,8 @@ template's.
 - **2026-10-16:** commit 2's cases in Testing; Known Limitations 5, 11 and 12; the promotion
   checklist's items from commit 2's two reviews (§5); and "on Windows" on every 600 s claim
   (marked once, at Known Limitation 5).
+- **2026-10-26:** the `WORKFLOW.md` region pin gains Phase 7's live-only Changelog line, which
+  main added after this branch forked (§5).
 
 ## Problem
 
@@ -323,7 +325,8 @@ protocol text still covers these asks. Spikes 3 and 4 are removed with it.
   `tests/test-mirror-parity.sh` that pins the live/template divergence to the single Phase 3.5 "Why"
   line, so the protocol section fails it. The plan (Task 8 Step 3b) replaces that pin with one that
   names the intended divergence as regions: the Phase 3.5 section, the live-only Pre-Approval
-  Protocol section, and the two table rows. Every line outside them must still match, which keeps
+  Protocol section, and the two table rows (amended 2026-10-26: also Phase 7's live-only Changelog
+  line and the blank line after it). Every line outside them must still match, which keeps
   the [NS-19] guarantee that Phase 3 stays in sync. **Unlike the settings.json exemption below, it is
   undated**, because it guards prose, not wiring. It is tied to the trial through an assertion that
   `scripts/pre-approval-check.*` exists, so deleting the hook while leaving the protocol text fails.

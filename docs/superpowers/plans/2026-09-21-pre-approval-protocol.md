@@ -26,7 +26,7 @@ Read it before starting; this plan does not re-derive its decisions.
 
 Amendments 1–7 were approved by the user before execution, on 2026-10-14. Amendments 8 and 9 were
 found by the first execution attempt that day, amendment 10 is a user decision of 2026-10-15, and
-amendments 11 and 12 are user decisions of 2026-10-16.
+amendments 11 and 12 are user decisions of 2026-10-16, and amendment 13 one of 2026-10-26.
 
 A pre-execution drift check against `origin/main` found one blocking break and several smaller
 ones. It had two review passes: the author's own, and an Opus `opposition` pass that returned
@@ -198,6 +198,19 @@ contract on 2026-10-14. Each change is also marked where it lands.
       - correctness F12: covered by the Tasks 4–10 code-block note, and commit 2's message was
         written separately and names the fixes;
       - opposition OPP-1: it concerns the orchestrator's notes, not the repo.
+13. **Third sync with `origin/main`, in one reviewed merge commit** (2026-10-26; the user named #67
+    next to merge). Main had moved 27 commits, to `a384084`. Two conflicts:
+    - `CHANGELOG.md`: since #97, PRs add a `changelog.d/` fragment instead. Main's file is taken
+      whole, and this branch's one entry moves to `changelog.d/feat-pre-approval-protocol.md`.
+      The 1.3.0 archive correctly holds none of this branch's text.
+    - `tests/test-mirror-parity.sh`: #97 added a live-only Phase 7 "Changelog:" line to
+      `WORKFLOW.md`, pinned through the old line-based pin this branch replaced. The region pin
+      gains that line as a region: once live, never in the template, followed by a blank line.
+      The `scripts/mb.sh` comment and spec §5 name it.
+    - The trial exemption is re-dated to 2026-10-26 plus 21 days, `2026-11-16`: the `2026-11-05`
+      date would have left 10 days of trial (the `/change-review` Opposition's condition 1).
+    - The merge is CONFIRM-tier, so the user ran `git merge --no-ff --no-commit`; the resolution
+      was reviewed in full before the commit.
 
 ---
 
@@ -2030,9 +2043,9 @@ EOF
 Pushing, opening a PR and merging are **each** separate approvals from the user. Ask for each one,
 with Findings and a Recommendation.
 
-**Before the push, re-check the exemption's expiry date** (review finding L2). Commit 2 set it to
-2026-10-15 plus 21 days, `2026-11-05` (amendment 10, re-dating Task 7 Step 4's value). Each day
-the merge lands after 2026-10-15 uses up a day of the 7-day grace, and a merge after 2026-10-22
+**Before the push, re-check the exemption's expiry date** (review finding L2). Amendment 13 set it to
+2026-10-26 plus 21 days, `2026-11-16` (amendment 10's `2026-11-05` had slipped). Each day the
+merge lands after 2026-10-26 uses up a day of the 7-day grace, and a merge after 2026-11-02
 (`expiry - 14 days`) leaves less than 14 days of trial. If merge is unlikely by then, move the date
 in a new commit through the gate, not an amend.
 

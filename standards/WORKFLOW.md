@@ -158,7 +158,11 @@ git add <specific files — never git add -A blindly>
 git commit -m "feat: <what was built and why in one line>"
 ```
 
+Stage in a command of its own, then commit: the commit review gate runs before a chained `git add` or `git commit -a` stages anything, and refuses while any tracked change is unstaged. To commit only some files, set the rest aside with a tagged stash (`git stash push -m <unique-tag> -- <paths>`), re-run `/code-review` on what remains, and commit. Then restore them with `git stash apply <sha>` (the SHA from `git stash list --format='%H %gs'`) and drop that entry by its current `stash@{n}`. The stash stack is shared across worktrees, so never use a bare `git stash pop`.
+
 Never commit `.env`, credentials, or unrelated changes.
+
+**Changelog:** do not edit `CHANGELOG.md`. Add `changelog.d/<branch-slug>.md` (the branch name with each `/` replaced by `-`, so `feat/foo` writes `feat-foo.md`) holding `### Added`, `### Changed`, `### Fixed` (and similar) headings with bullets under them. Name it after the branch, not the PR, because the PR number does not exist at the first commit. **Why:** every PR used to add lines at the top of `[Unreleased]`, so concurrent PRs conflicted there and each sync of `main` changed the push gate's diff hash. A release folds the fragments into `CHANGELOG.md` and deletes them with `bash scripts/changelog-assemble.sh <X.Y.Z>`; `--preview` prints the unreleased notes.
 
 ---
 

@@ -93,17 +93,15 @@ the caller's locale and then under `LC_ALL=C`, because each alone misses a bypas
 counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
 row inherits its matcher's locale rule, which can change what it matches.
 
-**Platform requirement (sh hook): a grep with `-z`, such as GNU grep.** The regex rows run on every
-command, and a grep that cannot evaluate them makes the hook refuse rather than pass. BusyBox grep
-rejects `-z` (measured), so on Alpine with bash but without pwsh every Bash command prompts. Without
-bash as well, the hook wiring's `|| true` fallback runs no guard at all. Install PowerShell, or
-bash with GNU grep, there. Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
+**Platform requirement (sh hook):** stated once, with what each missing piece costs, in
+`standards/SECURITY-GUARDRAILS.md` under "Platform requirement (sh hook)". Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
 a grep that supports `-z` but caps bounds there can still compile every row. The test suite fails on
 any row above 255.
 
 **Why `$1` is not simply folded per call:** that costs a `printf | tr` subshell per matcher *call*,
 roughly 25 per invocation, on a hook that runs on every single Bash tool call — measured at
-1.07s → 2.33s per invocation. Folding the two subjects once costs two subshells total.
+1.07s → 2.33s per invocation. Folding the subjects once costs two subshells total, three when the
+command holds a carriage return.
 
 The shipped test suites assert this structurally, so the fail-open trap is a red test rather than a
 silent hole: no matcher may match against an unfolded view, and no pattern argument may contain an
@@ -116,6 +114,13 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 { "matcher": "Bash",       "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
 { "matcher": "PowerShell", "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true" }
 ```
+
+**Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
+`timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
+out does not block the tool call: its output is discarded and the call continues through the
+normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
+later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default.
 
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
@@ -221,7 +226,7 @@ Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and em
 
 ### 7. Review Gate (`PreToolUse` — Bash tool)
 
-Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is denied unconditionally — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
+Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is put to the user as a permission prompt in one exact form and denied in every other — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
 
 **Marker files (single-use per diff, gitignored):**
 
@@ -230,9 +235,11 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 
 **Why a hash, not an empty marker:** an empty marker is trivially fakeable with `touch` — anyone, or a rushed agent, can satisfy the gate without reviewing anything. Binding the marker to a hash of the exact diff means it only authorizes committing/pushing that specific diff; if the working tree changes after the review, the hash no longer matches and the gate re-engages. The hook recomputes the same hash fresh and compares it to the marker's stored value before allowing the commit/push through.
 
-**Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps. The marker is consumed (renamed away and deleted) whether or not its hash matches — a stale marker from a diff that has since changed doesn't linger; a fresh review is required either way.
+**A commit must be fully staged (added 2026-10-19):** the hash covers `git diff HEAD`, which is the working tree, but a commit records the index, so a commit holding only part of the reviewed change would still match. The commit gate therefore also refuses, before claiming the marker, while any tracked change is unstaged (`git diff --quiet --no-ext-diff --no-textconv` fails; the two flags stop a textconv filter or an exit-code-trusted external diff driver from hiding a difference). Stage in a command of its own before committing: the hook runs before a chained `git add X && git commit` stages anything, and before `git commit -a` does, so both are refused whenever tracked changes are unstaged. The check holds at hook time only. Not covered yet: commits that name paths (`git commit <path>`, `--only`), `--amend`, `--patch`, a chained command that edits or stages files before its `git commit`, `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` set in the command's environment, and content a textconv filter or external diff driver hides from the reviewed diff itself (the marker still hashes plain `git diff HEAD`, so the two flags guard only the staging check).
 
-**`gh pr merge` — unconditional deny, no marker:** unlike commit/push, this isn't a hash check — it always denies, no override, not even an explicit user instruction in the conversation. By merge time the diff already passed the commit gate, push gate, and CI; the remaining gap is authorization, not diff integrity, and a hash can't encode "the user meant this right now." This hook only ever sees commands the agent itself runs, so an unconditional deny is total: the user always runs `gh pr merge` directly.
+**Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps. Only the path that allows the command consumes the marker: on a hash mismatch it is renamed back unconsumed, so a denial by this gate never burns an earned review (a later hook or a declined permission prompt can still burn it, because the allowing path has already consumed the marker; see the claim-then-restore comment in `review-reminders.sh`).
+
+**`gh pr merge` — a permission prompt for one exact form, deny for everything else:** unlike commit/push, this isn't a hash check. By merge time the diff already passed the commit gate, push gate, and CI; the remaining gap is authorization — the user deciding, now, to merge this PR — which no agent-written marker can encode, but Claude Code's own Allow/Deny prompt can. The hook returns `"ask"` only for exactly `gh pr merge <N> -R <owner/repo> --squash --match-head-commit <40-hex SHA>` (or `--merge`), with the repo listed in `.claude/merge-gate.json`, from the main agent, in default/acceptEdits/auto mode, when no settings file configures a `PermissionRequest` hook or an allow rule wide enough to run a merge silently. Everything else — other flags, chained commands, subagents, other modes, a missing or crashing helper — is denied. **One gap:** if the hook process itself fails (in both shells for the Bash matcher; the PowerShell matcher runs pwsh only), the wiring's `|| true` gives no decision, and the call goes to Claude Code's normal permission flow. `permissions.ask` rules for `Bash(gh pr merge:*)` and `PowerShell(gh pr merge:*)` are meant to make that case prompt too, for those spellings only (the REST route `gh api …/pulls/N/merge` matches neither); whether they prompt in auto mode is not yet measured. Put them in `.claude/settings.local.json` or your user settings, not `.claude/settings.json`, whose `permissions` block `mb upgrade` overwrites. **Create `.claude/merge-gate.json` (`{"repos": ["owner/repo"]}`) to enable it; without it every merge is denied, as before.** Logic: `scripts/_review-gate-merge.py` / `.ps1`.
 
 ### 8. Review Gate Failure Recovery (`PostToolUse` — Bash tool)
 
@@ -304,10 +311,11 @@ Relatedly, deprecated redirect shims exit **2** ("command moved") rather than 0,
 only an exit code can tell that nothing ran. Aliases that still perform real work keep exit 0 —
 check the implementation before assuming a deprecated name is inert.
 
-**`.githooks/pre-commit`** — three-check gate before every `git commit`:
+**`.githooks/pre-commit`** — four-check gate before every `git commit`:
 - **Blocks** if `handoff.md` is staged (`handoff.md` is ephemeral and must not be committed)
 - **Blocks** `memory-bank/` changes committed from a linked git worktree. `memory-bank/` is edited and committed only in the main worktree; `mb commit` refuses in a linked worktree, and this is the check a plain `git commit` reaches. It covers `git commit`, `commit -a`, `commit -- <path>`, renames out of `memory-bank/`, and any casing of the directory name. When finishing a conflicted merge, files whose staged content matches the merged branch (`MERGE_HEAD`) pass, since they were not edited here; anything else in `memory-bank/` is refused, with `git checkout MERGE_HEAD -- <path>` as the way to take the merged version. A git submodule is its own main worktree and is not affected. Any error inside the check refuses rather than passes. It applies whether or not a project's `CLAUDE.md` states the rule.
 - **Warns** if `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is missing from `.claude/settings.json` (token budget auto-compaction may not be configured)
+- **Runs the repo's format check, if it has one**, last, so it cannot change the checks' verdicts, and refuses the commit if the script changes what is staged. See *The format check* below.
 
 **Known gaps in the worktree check.** It is a tripwire on the `git commit` path, not a complete boundary: git does not record which worktree an edit was made in, so no hook can be one.
 - **Which commands run `pre-commit`** (measured on git 2.55, each hook logging to a file): `git commit`, including one that concludes a conflicted merge; `git merge --continue`; and `git cherry-pick --continue` / `git revert --continue` after a conflict. These create commits without it: a clean `git merge` (runs `pre-merge-commit` instead, so a clean `git pull` too), a clean `git cherry-pick` or `git revert`, `git rebase --continue`, `git am` (runs `pre-applypatch` instead), and plumbing such as `git commit-tree` with `git update-ref`.
@@ -318,6 +326,14 @@ check the implementation before assuming a deprecated name is inert.
 - A merge trusts `MERGE_HEAD`: content inherited from any merged branch passes, including branches whose `memory-bank/` commits skipped this check. Taking the merged branch's version with `git checkout MERGE_HEAD -- <path>` also discards your own branch's side of that file, which matters when your branch carries `memory-bank/` commits of its own. Octopus merges are untested; by the hook's logic they are compared against the first merged head only, which refuses rather than passes.
 - In a bare repository with worktrees, every worktree is a linked one, so `memory-bank/` cannot be committed anywhere without skipping the hook. `mb commit` and `CLAUDE.md`'s `--git-common-dir/../memory-bank/` path already assumed a main worktree; this check turns that assumption into a hard block.
 - It checks commits, not edits. Editing `memory-bank/` in a linked worktree is still against the rule, but is only caught when committed.
+
+**The format check.** A repo opts in by adding `.githooks/format-check`. It is repo-owned: `mb upgrade` replaces only `pre-commit` and `pre-push` in `.githooks/`. With no such file the step does nothing and prints nothing.
+- **What the hook does.** It lists the staged regular files and pipes them to `bash .githooks/format-check` on stdin, NUL-terminated, from the top of the working tree. The script needs no executable bit. Exit 0 lets the commit through; any other exit refuses it, naming the script and exit code. The script is not run when nothing is left to check (a deletion-only commit, for instance). The script must not change what is staged: the checks above ran on the index before it, so if the staged tree differs afterwards (a formatter that re-adds what it fixed, a `git add -u`) the commit is refused. After a plain `git commit`, what the script staged stays staged, and committing again runs every check on it. `git commit -a` and `git commit -- <path>` commit through a temporary index that git discards on refusal, so only the script's edits on disk remain.
+- **Which files.** Added, modified and type-changed files whose staged mode is a regular file (`100644`/`100755`). Renamed and copied files are checked under their new path whatever `diff.renames` is set to. Deleted files, submodules and symlinks are not passed. `commit -a` and `commit -- <path>` get exactly what they commit. Finishing a conflicted merge checks every file the merge brings in, since CI will see them too. `--amend` checks only what is newly staged.
+- **Why stdin, not arguments.** No command-line length limit; no path can be read as an option; and nothing is rewritten. Git for Windows' bash rewrites path-like arguments it passes to a native program (`x=/y.json` arrives as `x=C:/Program Files/Git/y.json`), but it never touches stdin.
+- **The script inherits git's hook environment**, including `GIT_INDEX_FILE` while `commit -a` or `commit -- <path>` runs. Git calls in the script therefore see the index being committed, and a git call aimed at a different repository needs that variable cleared.
+- **A prettier example** for Node repos is in your clone of Personal Memory Bank (the folder you installed from), under `templates/examples/format-check/`: copy both `format-check` and `format-check.mjs` into `.githooks/`, then run your repo's own prettier on the copied `format-check.mjs` (or list `.githooks/` in `.prettierignore`). It ships in prettier 3's default style, so under any other style the commit that adds it would be refused by the check itself. It checks each file's *staged* content with the repo's own prettier, through prettier's API in one process. Checking the file on disk instead blocks CRLF checkouts on Windows (`core.autocrlf=true`, Git for Windows' default) that CI passes, and passes a file fixed on disk but not re-staged that CI fails. It reports "not formatted" and "could not parse" separately. If prettier or node is not installed it warns and lets the commit through, since CI still runs; it never falls back to `npx`, which can pick up a global prettier of another version and whose Windows shims mangle file names. It targets npm and pnpm layouts: under Yarn Plug'n'Play it reads prettier as not installed.
+- **Not covered.** A format failure refuses the commit after any `/code-review` has run, and the fix changes the diff, so the review gate asks for a new review. Skipping the hook skips this step with the rest of it.
 
 ### Migration from `.git/hooks/`
 
