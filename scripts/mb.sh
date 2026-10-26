@@ -3144,6 +3144,20 @@ show_change_check() {
     echo ""
 }
 
+# WHY refuse rather than ignore: only invoke_upgrade reads --dry-run. Every other command ignored
+# it (doctor, status) or took it as a value (init's path, query's keyword), so a requested preview
+# could run for real. `update` is exempt because it is a live alias for invoke_upgrade here.
+# Every argument after the command is checked, not just $ARG: plan and backlog take a subcommand
+# first and init takes a path, so `mb backlog add t --dry-run` carries the flag in $4.
+DRY_RUN_REQUESTED=false
+for _arg in "${@:2}"; do
+    [ "$_arg" = "--dry-run" ] && DRY_RUN_REQUESTED=true
+done
+if [ "$DRY_RUN_REQUESTED" = true ] && [ "$COMMAND" != "upgrade" ] && [ "$COMMAND" != "update" ]; then
+    echo -e "${RED}[ERROR] --dry-run is only supported by 'mb upgrade', not 'mb $COMMAND'. Nothing was run.${NC}"
+    exit 1
+fi
+
 case "$COMMAND" in
     init)              invoke_init ;;
     doctor)            show_doctor ;;
