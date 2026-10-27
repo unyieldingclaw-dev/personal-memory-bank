@@ -3379,6 +3379,17 @@ function Invoke-PlanArchive {
     Write-Host ""
 }
 
+# WHY refuse rather than ignore: $DryRun binds on every command (it is script-level, and its
+# 'dry-run' alias makes `--dry-run` bind under `pwsh -File` too), but only Invoke-Upgrade reads
+# it -- so `mb init --dry-run` ran a REAL init while the user asked for a preview. Under the call
+# operator the same token lands in whichever positional slot it occupies instead
+# (`& mb.ps1 backlog add t --dry-run` puts it in $Arg3), so every slot is checked. Only the literal
+# flag is refused, so a real positional value (`mb init <path>`) is unaffected.
+if ($Command -ne 'upgrade' -and ($DryRun.IsPresent -or '--dry-run' -in @($Arg, $Arg2, $Arg3))) {
+    Write-Host "[ERROR] --dry-run is only supported by 'mb upgrade', not 'mb $Command'. Nothing was run." -ForegroundColor Red
+    exit 1
+}
+
 # Run command
 switch ($Command) {
     "init"             { Invoke-Init }
