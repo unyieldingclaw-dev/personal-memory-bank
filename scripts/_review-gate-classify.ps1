@@ -17,11 +17,26 @@ $script:ReviewGateXargsWithArg = @('-a', '--arg-file', '-E', '--eof', '-I', '--r
 $script:ReviewGateSshWithArg = @('-B', '-b', '-c', '-D', '-E', '-e', '-F', '-I', '-i', '-J',
     '-L', '-l', '-m', '-O', '-o', '-P', '-p', '-Q', '-R', '-S', '-W', '-w')
 
+# PowerShell's -eq, -ceq, -contains, -ccontains and -in, and the string overloads of StartsWith and
+# EndsWith, compare by culture, which ignores characters such as U+00AD (soft hyphen) and equates
+# look-alikes: @('-I') -ccontains ('-I' + [char]0xAD) is True, and so is [char]0x207D -in @('(')
+# (measured, pwsh 7.6). The first made this twin skip `git` in `xargs -I<U+00AD> git commit` as an
+# option argument; the second split `git -c a.b=c<U+207D>x commit` before its verb. Both commits
+# ran, and the Python twin, which compares code points, denied both. So every comparison here is
+# ordinal (the -match regexes aside: they only add matches); characters are compared as [int], since
+# char -eq ignores case. tests/test-review-gate-classify-parity.sh parses this file and refuses a
+# culture-aware comparison.
+function Test-ReviewGateSame([string]$A, [string]$B) { return [string]::Equals($A, $B, [System.StringComparison]::Ordinal) }
+function Test-ReviewGateOneOf([string]$Text, [string[]]$List) {
+    foreach ($x in $List) { if ([string]::Equals($Text, $x, [System.StringComparison]::Ordinal)) { return $true } }
+    return $false
+}
+
 function Get-ReviewGateBaseName {
     param([string]$Token)
     $trimmed = $Token.Trim([char[]]@('"', "'")) -replace '\\', '/'
     $base = ($trimmed -split '/')[-1].ToLowerInvariant()
-    if ($base.EndsWith('.exe')) { $base = $base.Substring(0, $base.Length - 4) }
+    if ($base.EndsWith('.exe', [System.StringComparison]::Ordinal)) { $base = $base.Substring(0, $base.Length - 4) }
     return $base
 }
 
@@ -32,7 +47,7 @@ function Get-ReviewGateLeadingExecutable {
         $token = $Tokens[$i]
         $bare = $token.Trim([char[]]@('"', "'"))
         if ($token -match '^[A-Za-z_][A-Za-z0-9_]*=' -or
-            $script:ReviewGateWrappers -contains (Get-ReviewGateBaseName $bare)) {
+            (Test-ReviewGateOneOf (Get-ReviewGateBaseName $bare) $script:ReviewGateWrappers)) {
             $i++
             continue
         }
@@ -50,16 +65,17 @@ function Get-ReviewGateGitVerb {
     $i = 0
     while ($i -lt $Tokens.Count) {
         $token = $Tokens[$i]
-        if ($script:ReviewGateGlobalWithArg -ccontains $token) {
+        if (Test-ReviewGateOneOf $token $script:ReviewGateGlobalWithArg) {
             $i += 2
             continue
         }
-        if ($token.StartsWith('--') -and $token.Contains('=') -and
-            $script:ReviewGateGlobalWithArg -ccontains $token.Split('=', 2)[0]) {
+        if ($token.StartsWith('--', [System.StringComparison]::Ordinal) -and $token.Contains('=') -and
+            (Test-ReviewGateOneOf $token.Split('=', 2)[0] $script:ReviewGateGlobalWithArg)) {
             $i++
             continue
         }
-        if ($script:ReviewGateGlobalFlags -contains $token -or $token.StartsWith('-')) {
+        if ((Test-ReviewGateOneOf $token $script:ReviewGateGlobalFlags) -or
+            $token.StartsWith('-', [System.StringComparison]::Ordinal)) {
             $i++
             continue
         }
@@ -91,7 +107,7 @@ function Get-ReviewGateGitContextPath {
     $i = 0
     while ($i -lt $Tokens.Count) {
         $token = $Tokens[$i].Trim([char[]]@('"', "'"))
-        if ($token -ceq '-C') {
+        if (Test-ReviewGateSame $token '-C') {
             if ($i + 1 -ge $Tokens.Count) {
                 return [PSCustomObject]@{ Paths = @(); Unsupported = $true }
             }
@@ -105,19 +121,20 @@ function Get-ReviewGateGitContextPath {
             continue
         }
         $option = $token.Split('=', 2)[0]
-        if ($option -in @('--git-dir', '--work-tree')) {
+        if (Test-ReviewGateOneOf $option @('--git-dir', '--work-tree')) {
             return [PSCustomObject]@{ Paths = @(); Unsupported = $true }
         }
-        if ($script:ReviewGateGlobalWithArg -ccontains $token) {
+        if (Test-ReviewGateOneOf $token $script:ReviewGateGlobalWithArg) {
             $i += 2
             continue
         }
-        if ($token.StartsWith('--') -and $token.Contains('=') -and
-            $script:ReviewGateGlobalWithArg -ccontains $option) {
+        if ($token.StartsWith('--', [System.StringComparison]::Ordinal) -and $token.Contains('=') -and
+            (Test-ReviewGateOneOf $option $script:ReviewGateGlobalWithArg)) {
             $i++
             continue
         }
-        if ($script:ReviewGateGlobalFlags -contains $token -or $token.StartsWith('-')) {
+        if ((Test-ReviewGateOneOf $token $script:ReviewGateGlobalFlags) -or
+            $token.StartsWith('-', [System.StringComparison]::Ordinal)) {
             $i++
             continue
         }
@@ -129,11 +146,11 @@ function Get-ReviewGateGitContextPath {
 function Get-ReviewGateVerdictFromInvocation {
     param([string]$Executable, [string[]]$Rest)
     $base = Get-ReviewGateBaseName $Executable
-    if ($base -eq 'git') {
+    if (Test-ReviewGateSame $base 'git') {
         $verb = Get-ReviewGateGitVerb $Rest
-        if ($verb -eq 'commit') { return 'COMMIT' }
-        if ($verb -eq 'push') { return 'PUSH' }
-    } elseif ($base -eq 'gh') {
+        if (Test-ReviewGateSame $verb 'commit') { return 'COMMIT' }
+        if (Test-ReviewGateSame $verb 'push') { return 'PUSH' }
+    } elseif (Test-ReviewGateSame $base 'gh') {
         $flat = (($Rest | ForEach-Object { $_.Trim([char[]]@('"', "'")) }) -join ' ')
         if ($flat -match '^pr\s+merge(?:\s|$)') { return 'MERGE' }
         if ($flat -match '^api(?:\s|$)' -and $flat -match '/pulls/\d+/merge') { return 'MERGE' }
@@ -144,8 +161,8 @@ function Get-ReviewGateVerdictFromInvocation {
 function ConvertFrom-ReviewGateOuterQuote {
     param([string]$Value)
     $value = $Value.Trim()
-    if ($value.Length -ge 2 -and $value[0] -eq $value[$value.Length - 1] -and
-        $value[0] -in @([char]34, [char]39)) {
+    if ($value.Length -ge 2 -and [int]$value[0] -eq [int]$value[$value.Length - 1] -and
+        ([int]$value[0] -eq 34 -or [int]$value[0] -eq 39)) {
         return $value.Substring(1, $value.Length - 2)
     }
     return $value
@@ -154,21 +171,21 @@ function ConvertFrom-ReviewGateOuterQuote {
 function Get-ReviewGateDollarParen {
     param([string]$Text, [int]$Start)
     $depth = 1
-    $quote = [char]0
+    $quote = 0
     $escaped = $false
     for ($i = $Start; $i -lt $Text.Length; $i++) {
-        $ch = $Text[$i]
+        $c = [int]$Text[$i]
         if ($escaped) { $escaped = $false; continue }
-        if ($ch -eq [char]92 -and $quote -ne [char]39) { $escaped = $true; continue }
-        if ($quote -ne [char]0) {
-            if ($ch -eq $quote) { $quote = [char]0 }
+        if ($c -eq 92 -and $quote -ne 39) { $escaped = $true; continue }
+        if ($quote -ne 0) {
+            if ($c -eq $quote) { $quote = 0 }
             continue
         }
-        if ($ch -in @([char]34, [char]39)) { $quote = $ch; continue }
-        if ($ch -eq '$' -and $i + 1 -lt $Text.Length -and $Text[$i + 1] -eq '(') {
+        if ($c -eq 34 -or $c -eq 39) { $quote = $c; continue }
+        if ($c -eq 36 -and $i + 1 -lt $Text.Length -and [int]$Text[$i + 1] -eq 40) {
             $depth++; $i++; continue
         }
-        if ($ch -eq ')') {
+        if ($c -eq 41) {
             $depth--
             if ($depth -eq 0) {
                 return [PSCustomObject]@{ Body = $Text.Substring($Start, $i - $Start); End = $i }
@@ -182,10 +199,10 @@ function Get-ReviewGateBacktickBody {
     param([string]$Text, [int]$Start)
     $escaped = $false
     for ($i = $Start; $i -lt $Text.Length; $i++) {
-        $ch = $Text[$i]
+        $c = [int]$Text[$i]
         if ($escaped) { $escaped = $false; continue }
-        if ($ch -eq [char]92) { $escaped = $true; continue }
-        if ($ch -eq [char]96) {
+        if ($c -eq 92) { $escaped = $true; continue }
+        if ($c -eq 96) {
             return [PSCustomObject]@{ Body = $Text.Substring($Start, $i - $Start); End = $i }
         }
     }
@@ -197,46 +214,49 @@ function Split-ReviewGateCommand {
     $segments = [System.Collections.Generic.List[string]]::new()
     $nested = [System.Collections.Generic.List[string]]::new()
     $buffer = [System.Text.StringBuilder]::new()
-    $quote = [char]0
+    $quote = 0
     $escaped = $false
     $i = 0
     while ($i -lt $Command.Length) {
         $ch = $Command[$i]
+        $c = [int]$ch
         if ($escaped) {
             [void]$buffer.Append($ch); $escaped = $false; $i++; continue
         }
-        if ($ch -eq [char]92 -and $quote -ne [char]39) {
+        if ($c -eq 92 -and $quote -ne 39) {
             [void]$buffer.Append($ch); $escaped = $true; $i++; continue
         }
-        if ($quote -eq [char]39) {
+        if ($quote -eq 39) {
             [void]$buffer.Append($ch)
-            if ($ch -eq [char]39) { $quote = [char]0 }
+            if ($c -eq 39) { $quote = 0 }
             $i++; continue
         }
-        if ($ch -eq [char]34) {
+        if ($c -eq 34) {
             [void]$buffer.Append($ch)
-            $quote = if ($quote -eq [char]34) { [char]0 } else { [char]34 }
+            $quote = if ($quote -eq 34) { 0 } else { 34 }
             $i++; continue
         }
-        if ($ch -eq '$' -and $i + 1 -lt $Command.Length -and $Command[$i + 1] -eq '(') {
+        if ($c -eq 36 -and $i + 1 -lt $Command.Length -and [int]$Command[$i + 1] -eq 40) {
             $sub = Get-ReviewGateDollarParen $Command ($i + 2)
             foreach ($part in @(Split-ReviewGateCommand $sub.Body)) { $nested.Add($part) }
             [void]$buffer.Append(' ')
             $i = $sub.End + 1
             continue
         }
-        if ($ch -eq [char]96) {
+        if ($c -eq 96) {
             $sub = Get-ReviewGateBacktickBody $Command ($i + 1)
             foreach ($part in @(Split-ReviewGateCommand $sub.Body)) { $nested.Add($part) }
             [void]$buffer.Append(' ')
             $i = $sub.End + 1
             continue
         }
-        if ($quote -eq [char]34) { [void]$buffer.Append($ch); $i++; continue }
+        if ($quote -eq 34) { [void]$buffer.Append($ch); $i++; continue }
 
-        $doubleOperator = $i + 1 -lt $Command.Length -and
-            $Command.Substring($i, 2) -in @('&&', '||')
-        $singleOperator = $ch -in @(';', '&', '|', "`r", "`n", '(', ')')
+        # && and || (38, 124); then ; & | CR LF ( ) (59 38 124 13 10 40 41).
+        $doubleOperator = ($c -eq 38 -or $c -eq 124) -and $i + 1 -lt $Command.Length -and
+            [int]$Command[$i + 1] -eq $c
+        $singleOperator = $c -eq 59 -or $c -eq 38 -or $c -eq 124 -or $c -eq 13 -or $c -eq 10 -or
+            $c -eq 40 -or $c -eq 41
         if ($doubleOperator -or $singleOperator) {
             $segment = $buffer.ToString().Trim()
             if ($segment) { $segments.Add($segment) }
@@ -244,7 +264,7 @@ function Split-ReviewGateCommand {
             $i += if ($doubleOperator) { 2 } else { 1 }
             continue
         }
-        if ($ch -in @([char]34, [char]39)) { $quote = $ch }
+        if ($c -eq 34 -or $c -eq 39) { $quote = $c }
         [void]$buffer.Append($ch)
         $i++
     }
@@ -257,53 +277,54 @@ function Get-ReviewGateNestedCommand {
     param([string]$Executable, [string[]]$Rest)
     $base = Get-ReviewGateBaseName $Executable
     $bare = @($Rest | ForEach-Object { $_.Trim([char[]]@('"', "'")) })
-    if ($script:ReviewGateShellLaunchers -contains $base) {
+    if (Test-ReviewGateOneOf $base $script:ReviewGateShellLaunchers) {
         for ($i = 0; $i + 1 -lt $bare.Count; $i++) {
             $option = $bare[$i]
-            if ($option.StartsWith('-') -and -not $option.StartsWith('--') -and
+            if ($option.StartsWith('-', [System.StringComparison]::Ordinal) -and
+                -not $option.StartsWith('--', [System.StringComparison]::Ordinal) -and
                 $option.Substring(1).Contains('c')) {
                 return ,(ConvertFrom-ReviewGateOuterQuote $Rest[$i + 1])
             }
         }
         return @()
     }
-    if ($script:ReviewGatePowerShellLaunchers -contains $base) {
+    if (Test-ReviewGateOneOf $base $script:ReviewGatePowerShellLaunchers) {
         for ($i = 0; $i -lt $bare.Count; $i++) {
-            if ($bare[$i].ToLowerInvariant() -in @('-c', '-command') -and $i + 1 -lt $Rest.Count) {
+            if ((Test-ReviewGateOneOf $bare[$i].ToLowerInvariant() @('-c', '-command')) -and $i + 1 -lt $Rest.Count) {
                 return ,(ConvertFrom-ReviewGateOuterQuote (($Rest | Select-Object -Skip ($i + 1)) -join ' '))
             }
         }
         return @()
     }
-    if ($base -eq 'cmd') {
+    if (Test-ReviewGateSame $base 'cmd') {
         for ($i = 0; $i -lt $bare.Count; $i++) {
-            if ($bare[$i].ToLowerInvariant() -in @('/c', '/k') -and $i + 1 -lt $Rest.Count) {
+            if ((Test-ReviewGateOneOf $bare[$i].ToLowerInvariant() @('/c', '/k')) -and $i + 1 -lt $Rest.Count) {
                 return ,(ConvertFrom-ReviewGateOuterQuote (($Rest | Select-Object -Skip ($i + 1)) -join ' '))
             }
         }
         return @()
     }
-    if ($base -eq 'ssh') {
+    if (Test-ReviewGateSame $base 'ssh') {
         $i = 0
         while ($i -lt $Rest.Count) {
             $option = $bare[$i]
-            if ($option -eq '--') { $i++; break }
-            if (-not $option.StartsWith('-')) { break }
-            $i += if ($script:ReviewGateSshWithArg -ccontains $option -and $i + 1 -lt $Rest.Count) { 2 } else { 1 }
+            if (Test-ReviewGateSame $option '--') { $i++; break }
+            if (-not $option.StartsWith('-', [System.StringComparison]::Ordinal)) { break }
+            $i += if ((Test-ReviewGateOneOf $option $script:ReviewGateSshWithArg) -and $i + 1 -lt $Rest.Count) { 2 } else { 1 }
         }
         if ($i + 1 -lt $Rest.Count) {
             return ,(ConvertFrom-ReviewGateOuterQuote (($Rest | Select-Object -Skip ($i + 1)) -join ' '))
         }
         return @()
     }
-    if ($base -eq 'xargs') {
+    if (Test-ReviewGateSame $base 'xargs') {
         $i = 0
         while ($i -lt $Rest.Count) {
             $option = $bare[$i]
-            if ($option -eq '--') { $i++; break }
-            if (-not $option.StartsWith('-')) { break }
+            if (Test-ReviewGateSame $option '--') { $i++; break }
+            if (-not $option.StartsWith('-', [System.StringComparison]::Ordinal)) { break }
             $name = $option.Split('=', 2)[0]
-            $i += if ($script:ReviewGateXargsWithArg -ccontains $name -and
+            $i += if ((Test-ReviewGateOneOf $name $script:ReviewGateXargsWithArg) -and
                 -not $option.Contains('=') -and $i + 1 -lt $Rest.Count) { 2 } else { 1 }
         }
         if ($i -lt $Rest.Count) {
@@ -311,8 +332,8 @@ function Get-ReviewGateNestedCommand {
         }
         return @()
     }
-    if ($base -eq 'busybox' -and $Rest.Count -gt 0 -and
-        $script:ReviewGateShellLaunchers -contains (Get-ReviewGateBaseName $Rest[0])) {
+    if ((Test-ReviewGateSame $base 'busybox') -and $Rest.Count -gt 0 -and
+        (Test-ReviewGateOneOf (Get-ReviewGateBaseName $Rest[0]) $script:ReviewGateShellLaunchers)) {
         return ,(ConvertFrom-ReviewGateOuterQuote ($Rest -join ' '))
     }
     return @()
@@ -330,7 +351,7 @@ function Get-ReviewGateGuardedInvocation {
         if ($null -eq $leading) { continue }
         $verdict = Get-ReviewGateVerdictFromInvocation $leading.Executable $leading.Rest
         if ($verdict) {
-            $gitContext = if ((Get-ReviewGateBaseName $leading.Executable) -eq 'git') {
+            $gitContext = if (Test-ReviewGateSame (Get-ReviewGateBaseName $leading.Executable) 'git') {
                 Get-ReviewGateGitContextPath $leading.Rest
             } else { [PSCustomObject]@{ Paths = @(); Unsupported = $false } }
             $guardedInvocations.Add([PSCustomObject]@{
@@ -376,7 +397,7 @@ function Get-ReviewGateVerdictFromPayload {
     return Get-ReviewGateCommandVerdict $command
 }
 
-if ($MyInvocation.InvocationName -ne '.') {
+if (-not (Test-ReviewGateSame $MyInvocation.InvocationName '.')) {
     try {
         $raw = [Console]::In.ReadToEnd()
         Get-ReviewGateVerdictFromPayload $raw
