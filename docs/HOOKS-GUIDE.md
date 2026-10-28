@@ -341,8 +341,9 @@ warning, so `ENFORCE=true` blocks until then. A missing baseline (fresh clone or
 `.pmb-checksums` is gitignored) is reported as `[INFO]` and does not count.
 
 Relatedly, deprecated redirect shims now exit **2** ("command moved") rather than 0, so a script
-reading only an exit code can tell that nothing ran. `mb update` is deliberately excluded — it is a
-live alias for the upgrade path, not a redirect.
+reading only an exit code can tell that nothing ran. `mb update` is deliberately excluded in
+`mb.sh`, where it is a live alias for the upgrade path; in `mb.ps1` it is a redirect and exits 2
+like the others.
 
 **`.githooks/pre-commit`** — four-check gate before every `git commit`:
 - **Blocks** if `handoff.md` is staged (`handoff.md` is ephemeral and must not be committed)
