@@ -2073,8 +2073,10 @@ EOF
 }
 
 invoke_upgrade() {
+    # WHY DRY_RUN_REQUESTED, not $ARG: the dispatch guard sets it from every argument, and reading
+    # $2 alone made `mb upgrade x --dry-run` run a REAL upgrade (measured).
     DRY_RUN=false
-    if [ "$ARG" = "--dry-run" ]; then
+    if [ "$DRY_RUN_REQUESTED" = true ]; then
         DRY_RUN=true
     fi
 
