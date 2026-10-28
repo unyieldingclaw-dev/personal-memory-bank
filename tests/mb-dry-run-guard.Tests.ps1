@@ -52,13 +52,15 @@ Describe "mb.ps1 refuses --dry-run outside upgrade (subprocess, real CLI binding
         @{ Route = 'File';     CliArgs = @('status', '--dry-run') }
         @{ Route = 'File';     CliArgs = @('help', '--dry-run') }
         @{ Route = 'File';     CliArgs = @('backlog', 'add', 't', '--dry-run') }
-        # Under the call operator the token lands in a positional slot: $Arg for the first two,
-        # $Arg2 / $Arg3 for the rest.
-        @{ Route = 'Operator'; CliArgs = @('init', '--dry-run') }
-        @{ Route = 'Operator'; CliArgs = @('query', '--dry-run') }
-        @{ Route = 'Operator'; CliArgs = @('init', '.', '--dry-run') }
-        @{ Route = 'Operator'; CliArgs = @('plan', 'list', '--dry-run') }
-        @{ Route = 'Operator'; CliArgs = @('backlog', 'add', 't', '--dry-run') }
+        # WHY update is refused here: in mb.ps1 it is only a redirect notice (it never calls
+        # Invoke-Upgrade), unlike mb.sh where it is a live upgrade alias and stays exempt.
+        @{ Route = 'File';     CliArgs = @('update', '--dry-run') }
+        # Under the call operator the token lands in the positional slot it occupies.
+        @{ Route = 'Operator'; CliArgs = @('init', '--dry-run') }               # $Arg
+        @{ Route = 'Operator'; CliArgs = @('query', '--dry-run') }              # $Arg
+        @{ Route = 'Operator'; CliArgs = @('init', '.', '--dry-run') }          # $Arg2
+        @{ Route = 'Operator'; CliArgs = @('plan', 'list', '--dry-run') }       # $Arg2
+        @{ Route = 'Operator'; CliArgs = @('backlog', 'add', 't', '--dry-run') } # $Arg3
     ) {
         $result = Invoke-MbRoute -Route $Route -CliArgs $CliArgs
         $result.ExitCode | Should -Be 1

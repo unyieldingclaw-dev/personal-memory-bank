@@ -348,4 +348,15 @@ setup_test_project "$TMPDIR_DRYGUARD"
 output=$(cd "$TMPDIR_DRYGUARD" && MB_HOME="$REPO_ROOT" bash "$MB" update --dry-run 2>&1)
 assert_contains "$output" "dry run" "mb update --dry-run is still a dry run"
 
+# WHY: upgrade/update read --dry-run only from $2 before, so a flag after another argument ran a
+# REAL upgrade (measured: .claude/, .githooks/, standards/ written). A bare memory-bank/ shows it.
+for cmd in upgrade update; do
+    TMPDIR_DRYLATE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-dry-late)"
+    mkdir -p "$TMPDIR_DRYLATE/memory-bank"
+    output=$(cd "$TMPDIR_DRYLATE" && MB_HOME="$REPO_ROOT" bash "$MB" "$cmd" x --dry-run 2>&1 </dev/null)
+    assert_contains "$output" "dry run" "mb $cmd x --dry-run is a dry run"
+    assert_equals "$(ls -A "$TMPDIR_DRYLATE")" "memory-bank" "mb $cmd x --dry-run wrote nothing"
+    rm -rf "$TMPDIR_DRYLATE"
+done
+
 print_summary

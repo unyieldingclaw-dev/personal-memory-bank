@@ -45,11 +45,17 @@ Describe "mb upgrade dry run (subprocess, real CLI binding)" {
         }
     }
 
-    It "treats --dry-run as a dry run under the call operator, where it binds to positional `$Arg" {
+    # WHY the later positions: the token lands in whichever positional slot it occupies, and
+    # reading only $Arg made `upgrade x --dry-run` run a REAL upgrade (measured).
+    It "treats '<Line>' as a dry run under the call operator, where --dry-run binds positionally" -ForEach @(
+        @{ Line = 'upgrade --dry-run' }
+        @{ Line = 'upgrade x --dry-run' }
+        @{ Line = 'upgrade x y --dry-run' }
+    ) {
         $project = New-DryRunProject
         Push-Location $project
         try {
-            $command = "& '$($script:MbScript -replace "'", "''")' upgrade --dry-run"
+            $command = "& '$($script:MbScript -replace "'", "''")' $Line"
             $output = (& pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $command 2>&1) -join "`n"
             $output | Should -Match 'dry run'
             @(Get-ChildItem -LiteralPath $project -Force).Name | Should -Be @('memory-bank')

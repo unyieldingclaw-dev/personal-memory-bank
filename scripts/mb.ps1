@@ -2393,7 +2393,9 @@ function Invoke-Upgrade {
     # case-insensitive, so `$DryRun` here already resolves to this local -- which is why the two
     # git guards that spelled it that way still worked, and why renaming the local would have
     # silently pointed them back at the switch and run `git config` during a preview.
-    $dryRun = $DryRun.IsPresent -or $Arg -eq '--dry-run'
+    # Every positional slot is read, as the dispatch guard does: `& mb.ps1 upgrade x --dry-run`
+    # puts the token in $Arg2, and reading $Arg alone ran a REAL upgrade there (measured).
+    $dryRun = $DryRun.IsPresent -or '--dry-run' -in @($Arg, $Arg2, $Arg3)
 
     if ($ProjectPath) { Push-Location $ProjectPath }
 
