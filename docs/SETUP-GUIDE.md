@@ -243,7 +243,7 @@ advisory and cannot guarantee the gate.
 
 Use quick commands:
 - `mb status` - Quick state check (initialized, memory fresh, standards loaded, tasks tracked)
-- `mb update` - Update files after changes
+- `update memory bank` - Ask the AI to update Memory Bank files after changes
 
 ### Ending a Session
 

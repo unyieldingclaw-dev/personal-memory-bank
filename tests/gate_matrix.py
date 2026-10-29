@@ -1,6 +1,6 @@
 """Behaviour matrix for the restructured review gate.
 
-Runs the real hook script with a real payload on stdin and reports ALLOW / DENY, so every
+Runs the real hook script with a real payload on stdin and reports ALLOW / DENY / ASK, so every
 row is executed rather than reasoned about. Invoked via subprocess (not a shell pipe) because
 this repo's BLOCK tier refuses `<anything> | bash <script>` and cannot distinguish a local
 script from a downloaded one.
@@ -108,17 +108,19 @@ def shell_path():
     return shutil.which('bash') or 'bash'
 
 
-def sh(args, cwd=ROOT, stdin=None):
-    return subprocess.run(args, cwd=cwd, input=stdin, capture_output=True)
+def sh(args, cwd=ROOT, stdin=None, env=None):
+    return subprocess.run(args, cwd=cwd, input=stdin, capture_output=True, env=env)
 
 
 def git(*a):
     return sh(['git'] + list(a)).stdout.decode().strip()
 
 
-def run_hook(cmd, tool='Bash'):
-    payload = json.dumps({'tool_name': tool, 'tool_input': {'command': cmd}}).encode()
-    p = sh([shell_path(), HOOK], stdin=payload)
+def run_hook(cmd, tool='Bash', extra=None, env=None):
+    data = {'tool_name': tool, 'tool_input': {'command': cmd}}
+    data.update(extra or {})
+    payload = json.dumps(data).encode()
+    p = sh([shell_path(), HOOK], stdin=payload, env=env)
     out = p.stdout.decode()
     if '"permissionDecision":"deny"' in out:
         reason = ''
@@ -127,6 +129,10 @@ def run_hook(cmd, tool='Bash'):
         except Exception:
             pass
         return 'DENY', reason
+    # A merge can now be put to the user. Reported separately so that a regression from ask to
+    # no decision -- which reads as ALLOW here -- cannot pass a check expecting ASK.
+    if '"permissionDecision":"ask"' in out:
+        return 'ASK', ''
     return 'ALLOW', ''
 
 
@@ -367,11 +373,26 @@ check('OPP6-1: partly-staged denial keeps marker', True, os.path.exists(MARKER))
 subprocess.run(['git', 'add', 'README.md'], cwd=ROOT, capture_output=True, check=True)
 clear(MARKER)
 
-# 10. merge is refused unconditionally, with no marker and no lib needed
+# 10. a merge needs no marker and no lib; every form but the canonical one is denied
 shutil.move(LIB, LIB + '.hidden')
 d, r = run_hook('gh pr m%s 25' % 'erge')
 check('merge denied even with lib missing', 'DENY', d, r[:60])
 shutil.move(LIB + '.hidden', LIB)
+
+# 10a. The canonical form is put to the user. Its own project and config directories, so neither
+# ROOT's settings files nor the user's real ones decide the row, and a payload with a mode that
+# can show a prompt.
+mg_dir = tempfile.mkdtemp(prefix='gate-matrix-merge-').replace('\\', '/')
+os.makedirs(os.path.join(mg_dir, 'proj', '.claude'))
+os.makedirs(os.path.join(mg_dir, 'cfg'))
+with open(os.path.join(mg_dir, 'proj', '.claude', 'merge-gate.json'), 'w') as fh:
+    json.dump({'repos': ['acme/web.app']}, fh)
+mg_env = {k: v for k, v in os.environ.items() if k not in ('GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR')}
+mg_env.update(CLAUDE_PROJECT_DIR=mg_dir + '/proj', CLAUDE_CONFIG_DIR=mg_dir + '/cfg')
+d, _ = run_hook('gh pr m%s 12 -R acme/web.app --squash --match-head-commit %s' % ('erge', '0' * 40),
+                extra={'permission_mode': 'default'}, env=mg_env)
+check('canonical merge asked', 'ASK', d)
+shutil.rmtree(mg_dir, ignore_errors=True)
 
 # 10b. HOLE F: root unresolvable + guarded verb -> must DENY. Run the hook with its cwd
 # OUTSIDE any git repository, which is what `git rev-parse --show-toplevel` failing looks

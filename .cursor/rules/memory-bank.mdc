@@ -79,7 +79,7 @@ Recognize these shortcuts and respond accordingly:
 
 | Command | Action |
 |---------|--------|
-| `mb update` | Update all relevant Memory Bank files based on current session |
+| `update memory bank` | Update all relevant Memory Bank files based on current session |
 | `mb status` | Show file sizes, last updated timestamps, and health check |
 | `mb clean` | Trim activeContext.md to essentials and archive old progress.md entries (subsumes the former `mb compact`) |
 | `mb commit` | Stage and commit all Memory Bank changes |

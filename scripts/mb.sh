@@ -708,6 +708,7 @@ invoke_init() {
                   review-reminders-post.sh review-reminders-post.ps1 \
                   _review-gate-lib.sh _review-gate-lib.ps1 \
                   _review-gate-classify.py _review-gate-classify.ps1 \
+                  _review-gate-merge.py _review-gate-merge.ps1 \
                   warn-stale-review-marker.sh warn-stale-review-marker.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
@@ -2072,8 +2073,10 @@ EOF
 }
 
 invoke_upgrade() {
+    # WHY DRY_RUN_REQUESTED, not $ARG: the dispatch guard sets it from every argument, and reading
+    # $2 alone made `mb upgrade x --dry-run` run a REAL upgrade (measured).
     DRY_RUN=false
-    if [ "$ARG" = "--dry-run" ]; then
+    if [ "$DRY_RUN_REQUESTED" = true ]; then
         DRY_RUN=true
     fi
 
@@ -2147,6 +2150,8 @@ invoke_upgrade() {
         "scripts/_review-gate-lib.ps1"
         "scripts/_review-gate-classify.py"
         "scripts/_review-gate-classify.ps1"
+        "scripts/_review-gate-merge.py"
+        "scripts/_review-gate-merge.ps1"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
         # Review helper, not a hook. Bash-only ON PURPOSE: it works by extracting check bodies out
@@ -3140,6 +3145,20 @@ show_change_check() {
     echo -e "  Run ${CYAN}/change-review${NC} to start the full 9-job review."
     echo ""
 }
+
+# WHY refuse rather than ignore: only invoke_upgrade reads --dry-run. Every other command ignored
+# it (doctor, status) or took it as a value (init's path, query's keyword), so a requested preview
+# could run for real. `update` is exempt because it is a live alias for invoke_upgrade here.
+# Every argument after the command is checked, not just $ARG: plan and backlog take a subcommand
+# first and init takes a path, so `mb backlog add t --dry-run` carries the flag in $4.
+DRY_RUN_REQUESTED=false
+for _arg in "${@:2}"; do
+    [ "$_arg" = "--dry-run" ] && DRY_RUN_REQUESTED=true
+done
+if [ "$DRY_RUN_REQUESTED" = true ] && [ "$COMMAND" != "upgrade" ] && [ "$COMMAND" != "update" ]; then
+    echo -e "${RED}[ERROR] --dry-run is only supported by 'mb upgrade', not 'mb $COMMAND'. Nothing was run.${NC}"
+    exit 1
+fi
 
 case "$COMMAND" in
     init)              invoke_init ;;

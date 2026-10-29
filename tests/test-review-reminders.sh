@@ -893,6 +893,25 @@ else
   echo "  SKIP: pwsh is not installed; the ps1 half of the empty-diff root message is not run"
 fi
 
+# WHY spawn outside any repository: in every case above the hook's working directory IS the root,
+# so a hint naming the working directory instead of the resolved root would pass them all.
+# python3 because the bash twin resolves a cd only through _review-gate-classify.py.
+if command -v python3 >/dev/null 2>&1; then
+  TMPDIR_OUTSIDE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-outside)"
+  ceiling="$(dirname "$TMPDIR_OUTSIDE")"
+  resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_from "review-reminders.sh" "$TMPDIR_OUTSIDE" "git commit -m empty")
+  assert_contains "$resp" "repository root could not be resolved" "review-reminders.sh resolves no root from the outside spawn directory (fixture check)"
+  resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_from "review-reminders.sh" "$TMPDIR_OUTSIDE" "cd \\\"$root_empty\\\" && git commit -m empty")
+  assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.sh's empty-diff denial names the quoted cd's repository, not the hook's working directory"
+  if command -v pwsh >/dev/null 2>&1; then
+    resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_ps1_from "$TMPDIR_OUTSIDE" "cd \\\"$root_empty\\\" && git commit -m empty")
+    assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.ps1's empty-diff denial names the quoted cd's repository, not the hook's working directory"
+  fi
+  rm -rf "$TMPDIR_OUTSIDE"
+else
+  echo "  SKIP: python3 is not installed; the bash twin cannot resolve a cd, so the outside-spawn case is not run"
+fi
+
 # ── deny output stays valid JSON when the reason carries quotes or backslashes ────────────
 # WHY: review-reminders.sh printed the reason into a JSON string unescaped, so the unresolved-root
 # denial (which quotes cd "<repo>") was invalid JSON, and so would be any denial naming a
@@ -919,10 +938,12 @@ if [ -n "$PY" ]; then
   reason=$(invoke_hook_from "review-reminders.sh" "$TMPDIR_EMPTY" "git commit -m empty" | json_reason)
   assert_contains "$reason" 'start the command with cd "<repo>" &&' "review-reminders.sh's empty-diff denial advises the quoted cd the resolvers accept"
   assert_not_contains "$reason" 'git-dir' "review-reminders.sh's empty-diff denial does not offer --git-dir as a root source"
+  assert_not_contains "$reason" 'work-tree' "review-reminders.sh's empty-diff denial does not offer --work-tree as a root source"
   if command -v pwsh >/dev/null 2>&1; then
     reason=$(invoke_hook_ps1_from "$TMPDIR_EMPTY" "git commit -m empty" | json_reason)
     assert_contains "$reason" 'start the command with cd "<repo>" &&' "review-reminders.ps1's empty-diff denial advises the quoted cd the resolvers accept"
     assert_not_contains "$reason" 'git-dir' "review-reminders.ps1's empty-diff denial does not offer --git-dir as a root source"
+    assert_not_contains "$reason" 'work-tree' "review-reminders.ps1's empty-diff denial does not offer --work-tree as a root source"
   fi
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Windows forbids quotes in file names; the quoted-root JSON case runs on Linux and macOS only" ;;
@@ -934,9 +955,24 @@ if [ -n "$PY" ]; then
       echo "clean" > "$QROOT/file.txt"
       git -C "$QROOT" add file.txt
       git -C "$QROOT" commit -q -m "initial"
+      # WHY rev-parse and not $QROOT: the hook names git's toplevel, which on macOS is the
+      # /private/var form of mktemp's /var path.
+      qroot_top=$(git -C "$QROOT" rev-parse --show-toplevel)
       resp=$(invoke_hook_from "review-reminders.sh" "$QROOT" "git commit -m empty")
       assert_contains "$resp" "no diff to review" "review-reminders.sh denies the empty-diff commit in a quoted-name repo (fixture check)"
-      assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $QROOT:")" "1" "review-reminders.sh's denial naming a root with a quote and a backslash is valid JSON and keeps the path intact"
+      assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $qroot_top:")" "1" "review-reminders.sh's denial naming a root with a quote and a backslash is valid JSON and keeps the path intact"
+      # A raw tab or newline inside a JSON string is invalid JSON, so deny() drops control characters.
+      CROOT="$TMPDIR_EMPTY/c$(printf '\t')t$(printf '\nn')"
+      git init -q -b main "$CROOT"
+      git -C "$CROOT" config user.email "test@example.com"
+      git -C "$CROOT" config user.name "Test"
+      echo "clean" > "$CROOT/file.txt"
+      git -C "$CROOT" add file.txt
+      git -C "$CROOT" commit -q -m "initial"
+      croot_stripped=$(git -C "$CROOT" rev-parse --show-toplevel | tr -d '\t\n')
+      resp=$(invoke_hook_from "review-reminders.sh" "$CROOT" "git commit -m empty")
+      assert_contains "$resp" "no diff to review" "review-reminders.sh denies the empty-diff commit in a repo whose name has a tab and a newline (fixture check)"
+      assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $croot_stripped:")" "1" "review-reminders.sh's denial naming a root with a tab and a newline is valid JSON, with those characters dropped"
       # WHY a quote-only path for ps1: pwsh on Linux reads the `\` in its working directory as a
       # path separator, so it resolves no root there at all and denies with the unresolved-root
       # message instead (measured 2026-10-19; it fails closed).
@@ -949,7 +985,7 @@ if [ -n "$PY" ]; then
         git -C "$QROOT_PS1" add file.txt
         git -C "$QROOT_PS1" commit -q -m "initial"
         resp=$(invoke_hook_ps1_from "$QROOT_PS1" "git commit -m empty")
-        assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $QROOT_PS1:")" "1" "review-reminders.ps1's denial naming a root with a quote is valid JSON and keeps the path intact"
+        assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $(git -C "$QROOT_PS1" rev-parse --show-toplevel):")" "1" "review-reminders.ps1's denial naming a root with a quote is valid JSON and keeps the path intact"
       fi
       ;;
   esac
@@ -957,5 +993,13 @@ else
   echo "  SKIP: no python3/python to parse JSON; the deny-output JSON cases are not run"
 fi
 rm -rf "$TMPDIR_EMPTY"
+
+# WHY: the pwsh blocks above skip quietly, so a host without pwsh drops every ps1 assertion and
+# still exits 0. PMB_REQUIRE_PARITY=1 (CI) makes that fatal, as tests/test-pmb-journal.sh does.
+# The python3 blocks skip the same way, though without python3 other cases here already fail.
+if [ "${PMB_REQUIRE_PARITY:-0}" = "1" ]; then
+  command -v pwsh >/dev/null 2>&1 || assert_contains "pwsh-missing" "pwsh-present" "PMB_REQUIRE_PARITY=1 but pwsh is not on PATH -- the ps1 halves of this file did not run"
+  command -v python3 >/dev/null 2>&1 || assert_contains "python3-missing" "python3-present" "PMB_REQUIRE_PARITY=1 but python3 is not on PATH -- the python3 cases of this file did not run"
+fi
 
 print_summary
