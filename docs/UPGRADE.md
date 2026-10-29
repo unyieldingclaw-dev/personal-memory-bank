@@ -90,4 +90,6 @@ Your memory-bank files are never at risk — they're in your project's git histo
 
 ## Version History
 
-See [CHANGELOG.md](../CHANGELOG.md) for what changed in each version.
+See [CHANGELOG.md](../CHANGELOG.md) for what changed in each version. Changes merged since the last
+release are not there yet: they are in [`changelog.d/`](../changelog.d/), one file per pull request,
+until the next release folds them into CHANGELOG.md.

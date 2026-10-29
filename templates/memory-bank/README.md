@@ -37,7 +37,7 @@ At 40% context, type "Handoff" and the AI will:
 4. New AI reads `handoff.md` and continues
 
 ### Quick Commands
-- `mb update` - Update all Memory Bank files
+- `update memory bank` - Ask the AI to update all Memory Bank files
 - `mb status` - Show file sizes and health
 - `mb clean` - Trim activeContext.md
 
