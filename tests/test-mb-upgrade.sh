@@ -315,4 +315,48 @@ PS_GI="$(_gi_entries "$REPO_ROOT/scripts/mb.ps1" '^[$]PmbGitignoreEntries = @[(]
 assert_contains "$SH_GI" "contracts" "mb.sh gitignore entry list was extracted (non-vacuous)"
 assert_equals "$PS_GI" "$SH_GI" "mb.ps1 and mb.sh gitignore entry lists are identical"
 
+echo ""
+echo "--- --dry-run is refused outside upgrade/update ---"
+# The rationale lives at the guard in scripts/mb.sh; mb.ps1's guard is covered by
+# tests/mb-dry-run-guard.Tests.ps1. The later-position lines are the forms where the flag is not $2.
+TMPDIR_DRYGUARD="$(mktemp -d 2>/dev/null || mktemp -d -t mb-dry-guard)"
+# WHY both: each EXIT trap in this file replaces the last, and TMPDIR_GIDRY is still unremoved.
+trap 'rm -rf "$TMPDIR_DRYGUARD" "$TMPDIR_GIDRY"' EXIT
+mkdir -p "$TMPDIR_DRYGUARD/memory-bank"
+while read -r line; do
+    # shellcheck disable=SC2086  # word-splitting $line into arguments is the point
+    # </dev/null: the loop's stdin is the case list, which a command run unguarded must not eat.
+    output=$(cd "$TMPDIR_DRYGUARD" && MB_HOME="$REPO_ROOT" bash "$MB" $line 2>&1 </dev/null)
+    assert_equals "$?" "1" "mb $line exits 1"
+    # The pattern omits the leading "--dry-run": assert_contains hands it to grep as an argument.
+    assert_contains "$output" "dry-run is only supported by 'mb upgrade', not 'mb ${line%% *}'" \
+        "mb $line names the command in its error"
+done <<'EOF'
+init --dry-run
+doctor --dry-run
+status --dry-run
+query --dry-run
+help --dry-run
+init . --dry-run
+plan list --dry-run
+backlog add t --dry-run
+EOF
+assert_equals "$(ls -A "$TMPDIR_DRYGUARD")" "memory-bank" "refused --dry-run commands wrote nothing"
+
+# WHY: update is a live upgrade alias in mb.sh, so its --dry-run must keep working.
+setup_test_project "$TMPDIR_DRYGUARD"
+output=$(cd "$TMPDIR_DRYGUARD" && MB_HOME="$REPO_ROOT" bash "$MB" update --dry-run 2>&1)
+assert_contains "$output" "dry run" "mb update --dry-run is still a dry run"
+
+# WHY: upgrade/update read --dry-run only from $2 before, so a flag after another argument ran a
+# REAL upgrade (measured: .claude/, .githooks/, standards/ written). A bare memory-bank/ shows it.
+for cmd in upgrade update; do
+    TMPDIR_DRYLATE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-dry-late)"
+    mkdir -p "$TMPDIR_DRYLATE/memory-bank"
+    output=$(cd "$TMPDIR_DRYLATE" && MB_HOME="$REPO_ROOT" bash "$MB" "$cmd" x --dry-run 2>&1 </dev/null)
+    assert_contains "$output" "dry run" "mb $cmd x --dry-run is a dry run"
+    assert_equals "$(ls -A "$TMPDIR_DRYLATE")" "memory-bank" "mb $cmd x --dry-run wrote nothing"
+    rm -rf "$TMPDIR_DRYLATE"
+done
+
 print_summary

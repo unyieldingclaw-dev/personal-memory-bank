@@ -32,8 +32,13 @@ param(
     # command currently needs more than 3.
     [Parameter(Position=3)]
     [string]$Arg3 = "",
-    # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
-    # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
+    # WHY: under `pwsh -File` PowerShell parses --dry-run as a named parameter flag, not a
+    # positional string (under the call operator it lands in $Arg instead -- see Invoke-Upgrade).
+    # A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag. The 'dry-run' alias is load-bearing: under `pwsh -File` (the mb.bat launcher) the binder
+    # looks up `--dry-run` as a parameter named `dry-run`, which the switch name alone does not
+    # match -- measured: "A parameter cannot be found that matches parameter name '-dry-run'".
+    # `--all` and `--check` never needed one because their names already match.
+    [Alias('dry-run')]
     [switch]$DryRun,
     # WHY: same reasoning as $DryRun above — "mb backlog list --all" would otherwise
     # have PowerShell's binder intercept the bare "--all" token as an attempted
@@ -2379,10 +2384,18 @@ Do not commit the changes until I confirm.
 
 function Invoke-Upgrade {
     param([string]$ProjectPath = "")
-    # WHY: $DryRun is read from the script-level switch parameter rather than
-    # checking $Arg for "--dry-run". PS7 parses --dry-run as a named parameter
-    # flag, not a positional string; a [switch] is the idiomatic PS7 equivalent.
-    $dryRun = $DryRun.IsPresent
+    # WHY both: under `pwsh -File` (mb.bat) --dry-run binds to the script-level $DryRun switch;
+    # under the call operator (`& mb.ps1 upgrade --dry-run`) the same token lands in positional
+    # $Arg instead -- the split `mb doctor --check` documents at its param. Reading only the
+    # switch made that second form run a REAL upgrade when a preview was asked for (measured:
+    # template files written into the project).
+    # Every guard below must read this local, never the switch. Variable names are
+    # case-insensitive, so `$DryRun` here already resolves to this local -- which is why the two
+    # git guards that spelled it that way still worked, and why renaming the local would have
+    # silently pointed them back at the switch and run `git config` during a preview.
+    # Every positional slot is read, as the dispatch guard does: `& mb.ps1 upgrade x --dry-run`
+    # puts the token in $Arg2, and reading $Arg alone ran a REAL upgrade there (measured).
+    $dryRun = $DryRun.IsPresent -or '--dry-run' -in @($Arg, $Arg2, $Arg3)
 
     if ($ProjectPath) { Push-Location $ProjectPath }
 
@@ -2589,7 +2602,7 @@ function Invoke-Upgrade {
     if (Test-Path ".git") {
         $currentHooksPath = git config core.hooksPath 2>$null
         if ($currentHooksPath -ne ".githooks") {
-            if (-not $DryRun) {
+            if (-not $dryRun) {
                 git config core.hooksPath .githooks
                 Write-Host "[+] core.hooksPath set to .githooks" -ForegroundColor Green
             } else {
@@ -2601,7 +2614,7 @@ function Invoke-Upgrade {
         # Migration cleanup: remove old PMB shim from .git/hooks/pre-push
         $oldHook = ".git/hooks/pre-push"
         if ((Test-Path $oldHook) -and ((Get-Content $oldHook -Raw) -match "pre-push-check")) {
-            if (-not $DryRun) {
+            if (-not $dryRun) {
                 Remove-Item $oldHook -Force
                 Write-Host "[~] .git/hooks/pre-push (removed — migrated to .githooks/)" -ForegroundColor Green
             } else {
@@ -3368,6 +3381,17 @@ function Invoke-PlanArchive {
     Write-Host ""
 }
 
+# WHY refuse rather than ignore: $DryRun binds on every command (it is script-level, and its
+# 'dry-run' alias makes `--dry-run` bind under `pwsh -File` too), but only Invoke-Upgrade reads
+# it -- so `mb init --dry-run` ran a REAL init while the user asked for a preview. Under the call
+# operator the same token lands in whichever positional slot it occupies instead
+# (`& mb.ps1 backlog add t --dry-run` puts it in $Arg3), so every slot is checked. Only the literal
+# flag is refused, so a real positional value (`mb init <path>`) is unaffected.
+if ($Command -ne 'upgrade' -and ($DryRun.IsPresent -or '--dry-run' -in @($Arg, $Arg2, $Arg3))) {
+    Write-Host "[ERROR] --dry-run is only supported by 'mb upgrade', not 'mb $Command'. Nothing was run." -ForegroundColor Red
+    exit 1
+}
+
 # Run command
 switch ($Command) {
     "init"             { Invoke-Init }
@@ -3422,10 +3446,9 @@ switch ($Command) {
     # same notice, scripts can tell it did not run.
     #
     # KNOWN CROSS-SHELL DIVERGENCE (pre-existing, not introduced here): `mb update` is a
-    # dead redirect here but a LIVE alias for `invoke_upgrade` in mb.sh, and this file's
-    # redirect text ("part of mb clean") is wrong regardless — update maps to upgrade,
-    # not clean. Exiting 2 makes the divergence detectable instead of silent; it removes
-    # no working behaviour, since this path never upgraded anything. Reconciling which
+    # dead redirect here but a LIVE alias for `invoke_upgrade` in mb.sh. Exiting 2 makes
+    # the divergence detectable instead of silent; it removes no working behaviour, since
+    # this path never upgraded anything. Reconciling which
     # platform is correct is a deliberate cross-shell decision, not a side effect of this
     # change — left for that decision.
     "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow; exit 2 }
@@ -3445,10 +3468,11 @@ switch ($Command) {
 # WHY "update" isn't excluded here the way mb.sh excludes it: mb.sh's "update" case still
 # dispatches to Invoke-Upgrade's bash equivalent, so without an exclusion it would
 # double-print that command's own [WARN] followed immediately by this [NOTICE]. This
-# PowerShell "update" case (~line 2573) only prints a one-line deprecation notice pointing at
-# `mb clean` — it never calls Invoke-Upgrade — so no double-print exists here and no exclusion
-# is needed. Documented explicitly so a future sync of this exclusion list between the two
-# scripts doesn't add "update" here by copy-paste assumption without re-checking this.
+# PowerShell "update" case (in the switch above) only prints a one-line deprecation notice
+# pointing at `mb upgrade` — it never calls Invoke-Upgrade — so no double-print exists here
+# and no exclusion is needed. Documented explicitly so a future sync of this exclusion list
+# between the two scripts doesn't add "update" here by copy-paste assumption without
+# re-checking this.
 if ($Command -ne "upgrade" -and $Command -ne "help") {
     Get-CachedPmbVersion
     if (Test-PmbVersionStale) {

@@ -167,6 +167,8 @@ Stage in a command of its own, then commit: the commit review gate runs before a
 
 Never commit `.env`, credentials, or unrelated changes.
 
+**Changelog:** do not edit `CHANGELOG.md`. Add `changelog.d/<branch-slug>.md` (the branch name with each `/` replaced by `-`, so `feat/foo` writes `feat-foo.md`) holding `### Added`, `### Changed`, `### Fixed` (and similar) headings with bullets under them. Name it after the branch, not the PR, because the PR number does not exist at the first commit. **Why:** every PR used to add lines at the top of `[Unreleased]`, so concurrent PRs conflicted there and each sync of `main` changed the push gate's diff hash. A release folds the fragments into `CHANGELOG.md` and deletes them with `bash scripts/changelog-assemble.sh <X.Y.Z>`; `--preview` prints the unreleased notes.
+
 ---
 
 ## Quick Reference
