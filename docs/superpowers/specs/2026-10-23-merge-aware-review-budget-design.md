@@ -453,7 +453,8 @@ Cheapest and most reversible first. Measure before building the expensive part.
    (commit or push). Until then the only evidence is #78: two conflicted syncs (S2) and one clean
    one (S0, 7e839fd). *First measurement taken early on 2026-10-30: build neither yet (§10).*
 5. **What to build next depends on step 4's measurement** (strict is kept, per OQ-1):
-   - **Clean syncs still common** (many S0): build the push-gate S0/S1 pass, the CI backstop and
+   - **Clean syncs still common** (many S0; count local syncs that reach a gate, not GitHub
+     Update-branch merges, which pass through none, §10): build the push-gate S0/S1 pass, the CI backstop and
      the templates opt-in **in one PR** (§3.4, §3.8). The pass relies on the backstop. First
      close the OPEN items in §10's round-2 list, including AD-F1, SEC-F1 and B3 (fixed in form
      only). Opus review.
@@ -635,14 +636,16 @@ method and equal the notes' figures. Finding labels F1-F6 are the 2026-10-30 opp
 are not the F-numbers used earlier in this spec.
 
 - **Counts.** Scope: merge commits on PRs #78, #88, #89, #93-#96, #98, #99 and #103 (2026-10-20 to
-  2026-10-30), 21 in all. `git log --all --merges --since=2026-10-19` lists 49, so this is a sample.
-  The merges it omits include 8abc850 and bb53065, both local, clean and overlapping enforcement
-  paths, so neither would be an S0 pass. Of the 21, 20 are syncs of `main` and c9bfba1 is a
-  reconcile merge from the PR's own remote branch. 14 of the 20 were made by GitHub's "Update
+  2026-10-30), 22 in all (`git log --merges <PR head> ^origin/main` per PR). `git log --all
+  --merges --since=2026-10-19` lists about 50 (49 when first counted; the number is
+  time-dependent and includes stash commits), so this is a sample. The merges it omits include
+  8abc850 and bb53065, both local, clean and overlapping enforcement paths, so neither would be an
+  S0 pass. Of the 22, 21 are syncs of `main` and c9bfba1 is a
+  reconcile merge from the PR's own remote branch. 15 of the 21 were made by GitHub's "Update
   branch" (`git log -1 --format=%cn`: `GitHub`; subject `Merge branch 'main' into …`). The other 6
   were local (`Merge remote-tracking branch 'origin/main' …`). GitHub's merges ran no local gate.
-  By the §3.2 classes there are 13 S0 (12 GitHub plus c873d0c), 3 S1 and 4 S2. The opposition's
-  "13 of 18" did not reproduce as a GitHub count. It may be this S0 count.
+  By the §3.2 classes there are 14 S0 (13 GitHub plus c873d0c), 3 S1 and 4 S2. The opposition's
+  "13 of 18" did not reproduce: it matches none of these counts (21 syncs, 15 GitHub-made, 14 S0).
 - **F1 (High). Update branch is free only while the PR branch has no unpushed local work.**
   The #78 race is the counter-example. GitHub made 335974e at 2026-10-26 20:38:16Z with parents
   dc8dcb6 and a384084, while the local commits 9185ea7 (18:12:56Z) and d48b0d3 were unpushed.
@@ -652,11 +655,11 @@ are not the F-numbers used earlier in this spec.
   narrowed accordingly: Update branch only on the PR about to merge, and never while its session
   has unpushed commits.
 - **F2 (Medium). Conflicts still happen.** `git merge-tree --write-tree --name-only` finds 4 of
-  the 20 syncs conflicted: 4e62cff, dc8dcb6 and a76f0d9 in `CHANGELOG.md`, and f1cbabd in
+  the 21 syncs conflicted: 4e62cff, dc8dcb6 and a76f0d9 in `CHANGELOG.md`, and f1cbabd in
   `tests/run.sh`. All 4 were local, because GitHub's Update branch is unavailable on a conflicted
   branch. All 4 predate the changelog fragments (#97, merged 2026-10-26T16:45:49Z, 8d21b56; `git merge-base
   --is-ancestor 8d21b56 <merge>` exits 1 for all four). Since fragments:
-  - 14e4ce4 (`feat/pre-approval-protocol`, local-only, outside the PR set above, 2026-10-26
+  - 14e4ce4 (`feat/pre-approval-protocol`, made locally, outside the PR set above, 2026-10-26
     23:24:43Z) conflicted in `CHANGELOG.md` and `tests/test-mirror-parity.sh`. Its resolution diff
     is 76,076 B against a commit-gate scope of 919,380 B (`git diff 14e4ce4^1 14e4ce4 | wc -c`).
   - #94 conflicted in the `tests/run.sh` registry and was DIRTY when measured. It has the SEC-F1
@@ -678,7 +681,7 @@ are not the F-numbers used earlier in this spec.
   reliably high. The case for the commit gate is now frequency, plus a cheaper lever (below).
 - **F5 (Low). Lazy sync (OQ-1) was not followed on 2026-10-29 and 10-30.** GitHub merged `main` into
   #88 (317979d) and #89 (b5bee6c) 14 s apart on 10-29, then into #89 again (7c4f0c1) and #103
-  (9a71145) on 10-30. These were clean and ran no local gate, but the rule is not being applied.
+  (9a71145, then again a661040) on 10-30. These were clean and ran no local gate, but the rule is not being applied.
 - **F6 (Medium, new defect). The §3.8 CI backstop would fail #78's real history.** c9bfba1's P2 is
   335974e, a commit that exists only on the PR branch. `git merge-base --is-ancestor` exits 1 for
   both 335974e and c9bfba1 against origin/main, and 6ecda5a (the #78 squash, 2026-10-27) is a
@@ -687,7 +690,7 @@ are not the F-numbers used earlier in this spec.
 - **The push-gate S0 pass would have saved no reviews in this window.** Of the 6 local syncs, 4 were
   conflicted (S2) and 9185ea7 overlapped `CHANGELOG.md` and `tests/run.sh` (not S0). The one clean,
   non-overlapping local merge, c873d0c, reached the remote only inside the c9bfba1 push, which is
-  class N and does not qualify for the pass. The 14 GitHub merges are made on the remote and
+  class N and does not qualify for the pass. The 15 GitHub merges are made on the remote and
   pass through no local gate. That is a cost finding: the pass is a relaxation of review, so it
   never had a security case. The §3.8 backstop is needed only if the pass is built.
 
