@@ -15,7 +15,7 @@
 # WHY auto-discovery instead of a hardcoded list of the six rule files: a hand-maintained list would
 # repeat the stale-hardcoded-list bug this repo has shipped twice — `ADVISORY_DIFF` hardcoded two agent
 # paths so `mb upgrade` would never have delivered a new agent, itself a repeat of the slash-command
-# list bug documented in 1.2.0. tests/run.sh carries a completeness check for the same reason.
+# list bug documented in 1.2.0. tests/run.sh enumerates its suites for the same reason.
 # Discovering from the filesystem means a rule file added later is covered for free.
 #
 # WHY the check runs in BOTH directions, stated precisely: a live `.mdc` with no template behind it is
