@@ -209,27 +209,60 @@ for name in $STD_DIVERGE_OK; do
     fi
 done
 
-# WHY a narrower check for WORKFLOW.md: the anti-rot loop above only proves the pair differs
-# SOMEWHERE, and the one intended difference (the Phase 3.5 "Why" paragraph, generic in the
-# template) keeps that green forever. [NS-19] was Phase 3 drifting apart behind exactly that cover,
-# so pin the divergence to that single paragraph: any other changed line fails here.
-# WHY a second, live-only divergence: Phase 7's "Changelog:" paragraph tells PRs to write
-# changelog.d/ fragments. That only works with scripts/changelog-assemble.sh, which adopters do not
-# get, so the template must not carry it. It is pinned to exactly one live-side line, plus the one
-# live-side blank line that inserting a paragraph adds; any other blank-line difference fails.
+# WHY a pin for WORKFLOW.md on top of the anti-rot loop above: that loop only proves the pair
+# differs SOMEWHERE, so any intended difference keeps it green forever. [NS-19] was Phase 3
+# drifting apart behind exactly that cover. So the intended differences are named as regions, and
+# every line outside them must match:
+#   - the Phase 3.5 section (live: a pointer to the Pre-Approval Protocol; template: the advisory
+#     plan-review step), up to its closing `---`;
+#   - the live-only `## Pre-Approval Protocol` section, which must be followed directly by
+#     `## Context Management` (a region still open at end of file counts as a heading inside it,
+#     so the section cannot hide at EOF with drift after it). It is PMB-only during its trial
+#     (docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md, section 5);
+#   - the Phase 3.5 Quick Reference row, and the plan-review row of the Claude Code Integration table;
+#   - Phase 7's live-only "Changelog:" line, which tells PRs to write changelog.d/ fragments. That
+#     works only with scripts/changelog-assemble.sh, which adopters do not get, so the template must
+#     not carry it. It must be followed by a blank line (the one inserting a paragraph adds); any
+#     other line there counts as a heading inside it, so no other blank-line difference passes.
+# Each region must be found exactly as often as expected on each side, and may not contain a new
+# heading (inner=0), so neither a renamed heading nor a section slipped inside a region widens the
+# exemption. A live file overwritten by the template (mb.ps1 force-overwrites standards/) fails too,
+# because its protocol section is gone.
+# Accepted holes: the CONTENT inside the regions, chiefly the template's Phase 3.5 and the two rows,
+# is unconstrained, since it has no live twin left; pinning it would need a frozen hash, the
+# decaying absolute this file argues against further down.
+# UNDATED, unlike the settings.json trial exemption, because it guards prose, not wiring. Only the
+# hook-presence assertion ties it to the trial: deleting the hook while leaving the protocol text,
+# which says the hook enforces it, fails here. When the protocol is promoted into templates/ or
+# removed, rewrite this block, and resolve the dated settings.json trial exemption further down in
+# the same decision.
 echo ""
-echo "--- WORKFLOW.md differs only in the Phase 3.5 \"Why\" and Phase 7 \"Changelog\" paragraphs ---"
-WF_WHY='^[<>] \*\*Why:\*\* self-review, however adversarial'
-WF_CHANGELOG='^< \*\*Changelog:\*\* do not edit `CHANGELOG.md`'
-WF_DIFF="$(diff "$STD_LIVE/WORKFLOW.md" "$STD_TMPL/WORKFLOW.md" | grep -E '^[<>] ')"
-assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE "$WF_WHY")" "2" \
-    "WORKFLOW.md: the Phase 3.5 \"Why\" line is the allowed divergence (one line each side)"
-assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE "$WF_CHANGELOG")" "1" \
-    "WORKFLOW.md: the Phase 7 \"Changelog\" line is live-only (one line, live side)"
-assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE '^< ?$') $(printf '%s\n' "$WF_DIFF" | grep -cE '^> ?$')" "1 0" \
-    "WORKFLOW.md: the only blank-line difference is the one the Changelog paragraph adds (live side)"
-assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -vE "$WF_WHY|$WF_CHANGELOG" | grep -vcE '^[<>] ?$')" "0" \
-    "WORKFLOW.md: no other line differs between live and template (Phase 3 stays in sync)"
+echo "--- WORKFLOW.md differs only in its named regions ---"
+wf_regions() {
+    awk '
+        { sub(/\r$/, "") }
+        skip == "phase35"  { if ($0 ~ /^#/) inner++; if ($0 != "---") next; skip = "" }
+        skip == "protocol" { if ($0 !~ /^## /) { if ($0 ~ /^#/) inner++; next }; skip = ""; if ($0 != "## Context Management") inner++ }
+        skip == "changelog" { skip = ""; if ($0 == "") next; inner++ }
+        /^\*\*Changelog:\*\* do not edit `CHANGELOG\.md`/ { chg++; skip = "changelog"; next }
+        /^### Phase 3\.5 /                 { p35++; skip = "phase35"; print "<phase 3.5>"; next }
+        $0 == "## Pre-Approval Protocol"  { proto++; skip = "protocol"; next }
+        /^\| 3\.5 /                        { r35++; print "<row 3.5>"; next }
+        /^\| Independent Plan Review / || /^\| Pre-Approval Protocol \|/ { rrev++; print "<row review>"; next }
+        { print }
+        END { if (skip == "protocol" || skip == "changelog") inner++; printf "regions: phase35=%d protocol=%d row35=%d rowreview=%d changelog=%d inner=%d\n", p35, proto, r35, rrev, chg, inner }
+    ' "$1"
+}
+WF_LIVE_R="$(wf_regions "$STD_LIVE/WORKFLOW.md" 2>/dev/null)"
+WF_TMPL_R="$(wf_regions "$STD_TMPL/WORKFLOW.md" 2>/dev/null)"
+assert_equals "$(printf '%s\n' "$WF_LIVE_R" | tail -n 1)" "regions: phase35=1 protocol=1 row35=1 rowreview=1 changelog=1 inner=0" \
+    "WORKFLOW.md (live): each named region found exactly once, no heading inside, protocol closed by ## Context Management"
+assert_equals "$(printf '%s\n' "$WF_TMPL_R" | tail -n 1)" "regions: phase35=1 protocol=0 row35=1 rowreview=1 changelog=0 inner=0" \
+    "WORKFLOW.md (template): each named region found, no protocol section, no Changelog line, no heading inside"
+[ -n "$WF_LIVE_R" ] && [ "$(printf '%s\n' "$WF_LIVE_R" | sed '$d')" = "$(printf '%s\n' "$WF_TMPL_R" | sed '$d')" ]
+assert_exit_zero "$?" "WORKFLOW.md: every line outside the named regions is identical (Phase 3 stays in sync)"
+[ -f "$REPO_ROOT/scripts/pre-approval-check.sh" ] && [ -f "$REPO_ROOT/scripts/pre-approval-check.ps1" ]
+assert_exit_zero "$?" "WORKFLOW.md: the hook its live protocol section names (scripts/pre-approval-check.*) exists"
 
 # ── AGENTS.md delivery surfaces: PMB-specific live file + generic portable template ─────
 echo ""
@@ -389,6 +422,37 @@ SJ_LIVE="$REPO_ROOT/.claude/settings.json"
 SJ_TMPL="$REPO_ROOT/templates/.claude/settings.json"
 assert_file_exists "$SJ_TMPL" "settings.json: template exists"
 if [ -f "$SJ_LIVE" ] && [ -f "$SJ_TMPL" ]; then
+    # ── PMB-only trial exemption: the pre-approval-check Stop hook ───────────────────────────
+    # WHY: docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md runs this hook as a
+    # PMB-only trial, so it is deliberately absent from templates/ (adopters would otherwise get a
+    # hook that blocks about a third of turn endings, through mb upgrade's force-overwrite, with no
+    # trial). Exactly one live `"command":` line may differ, and only in the Stop entry: the one that
+    # runs scripts/pre-approval-check. It is compared as if it were the template's paused-popup line.
+    # Every other line, and every (event, matcher, commands) triple, is still compared as before.
+    # REMOVE THIS BLOCK at trial end, whether the hook is promoted into templates/ or deleted. The
+    # count assertions below make a stale exemption fail rather than silently widen.
+    SJ_LIVE_CMP="$(mktemp)"
+    pa_live_n=$(grep -c 'scripts/pre-approval-check\.' "$SJ_LIVE" 2>/dev/null)
+    pa_tmpl_n=$(grep -c '"command":.*Claude has paused and is waiting for input' "$SJ_TMPL" 2>/dev/null)
+    [ "${pa_live_n:-0}" -eq 1 ] && [ "${pa_tmpl_n:-0}" -eq 1 ]
+    assert_exit_zero "$?" "settings.json: trial exemption matches exactly one live pre-approval line ($pa_live_n) and one template popup line ($pa_tmpl_n)"
+    pa_tmpl_line=$(grep '"command":.*Claude has paused and is waiting for input' "$SJ_TMPL")
+    PA_TMPL_LINE="$pa_tmpl_line" awk '/scripts\/pre-approval-check\./ { print ENVIRON["PA_TMPL_LINE"]; next } { print }' "$SJ_LIVE" > "$SJ_LIVE_CMP"
+    SJ_LIVE="$SJ_LIVE_CMP"
+    # The date is 2026-10-26 plus 21 days: a 14-day trial plus a 7-day grace, counted from that day
+    # (re-dated from 2026-11-05 when the merge slipped; plan amendment 13). Each day the merge lands
+    # after 2026-10-26 uses up a day of the grace. A merge after 2026-11-02 (the expiry minus 14
+    # days) leaves less than 14 days of trial, so re-date it if the merge slips
+    # past that day (plan Task 11 checks). When the date passes, CI fails until the exemption is
+    # resolved: remove this block (hook promoted into templates/ or deleted), or move the date
+    # deliberately. Resolve the undated WORKFLOW.md region pin above in the same decision. A WARN
+    # would not do: this repo recorded one being ignored (2026-08-12).
+    # A date left as the placeholder fails too (review finding L1). If the template's popup line is
+    # removed, or loses the text "Claude has paused and is waiting for input", rewrite this block: the
+    # swap depends on that line (review finding L3).
+    PA_TRIAL_EXPIRES="2026-11-16"
+    [[ "$PA_TRIAL_EXPIRES" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [[ "$(date +%Y-%m-%d)" < "$PA_TRIAL_EXPIRES" ]]
+    assert_exit_zero "$?" "settings.json: pre-approval trial exemption has not expired (expires $PA_TRIAL_EXPIRES)"
     sj_live_cmds=$(grep -c '"command":' "$SJ_LIVE" 2>/dev/null || printf '0')
     [ "$sj_live_cmds" -gt 0 ]
     assert_exit_zero "$?" "settings.json: live file declares at least one hook command ($sj_live_cmds)"
@@ -441,6 +505,7 @@ PYEOF
     else
         echo "  SKIP: settings.json structural hook compare (python3 not installed on this machine)"
     fi
+    rm -f "$SJ_LIVE_CMP"
 fi
 
 print_summary

@@ -29,14 +29,19 @@ BeforeAll {
 }
 
 Describe "mb upgrade dry run (subprocess, real CLI binding)" {
-    It "accepts <Spelling> through pwsh -File and writes nothing" -ForEach @(
-        @{ Spelling = '--dry-run' }
-        @{ Spelling = '-DryRun' }
+    # WHY the `x` rows: `pwsh -File` is the installed mb.bat route, where the switch binds by name in
+    # any position -- this pins that a preview after another argument stays a preview there too.
+    It "accepts '<Line>' through pwsh -File and writes nothing" -ForEach @(
+        @{ Line = 'upgrade --dry-run' }
+        @{ Line = 'upgrade -DryRun' }
+        @{ Line = 'upgrade x --dry-run' }
+        @{ Line = 'upgrade x -DryRun' }
     ) {
         $project = New-DryRunProject
         Push-Location $project
         try {
-            $output = (& pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:MbScript upgrade $Spelling 2>&1) -join "`n"
+            $cliArgs = $Line -split ' '
+            $output = (& pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:MbScript @cliArgs 2>&1) -join "`n"
             $output | Should -Not -Match 'A parameter cannot be found'
             $output | Should -Match 'dry run'
             @(Get-ChildItem -LiteralPath $project -Force).Name | Should -Be @('memory-bank')
@@ -45,11 +50,17 @@ Describe "mb upgrade dry run (subprocess, real CLI binding)" {
         }
     }
 
-    It "treats --dry-run as a dry run under the call operator, where it binds to positional `$Arg" {
+    # WHY the later positions: the token lands in whichever positional slot it occupies, and
+    # reading only $Arg made `upgrade x --dry-run` run a REAL upgrade (measured).
+    It "treats '<Line>' as a dry run under the call operator, where --dry-run binds positionally" -ForEach @(
+        @{ Line = 'upgrade --dry-run' }
+        @{ Line = 'upgrade x --dry-run' }
+        @{ Line = 'upgrade x y --dry-run' }
+    ) {
         $project = New-DryRunProject
         Push-Location $project
         try {
-            $command = "& '$($script:MbScript -replace "'", "''")' upgrade --dry-run"
+            $command = "& '$($script:MbScript -replace "'", "''")' $Line"
             $output = (& pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $command 2>&1) -join "`n"
             $output | Should -Match 'dry run'
             @(Get-ChildItem -LiteralPath $project -Force).Name | Should -Be @('memory-bank')
@@ -82,6 +93,29 @@ Describe "mb upgrade dry run (subprocess, real CLI binding)" {
             Test-Path -LiteralPath $oldHook | Should -Be $true
             @(Get-ChildItem -LiteralPath $project -Force).Name | Sort-Object | Should -Be @('.git', 'memory-bank')
         } finally {
+            Pop-Location
+        }
+    }
+
+    # WHY a positive control: every case above asserts "nothing written", which a flag that was
+    # always on would also satisfy. A plain upgrade must still really write.
+    It "still runs a real upgrade for '<Line>' with no --dry-run" -ForEach @(
+        @{ Line = 'upgrade' }
+        @{ Line = 'upgrade x' }
+    ) {
+        $project = New-DryRunProject
+        Push-Location $project
+        $savedCache = $env:MB_VERSION_CACHE_DIR; $savedUrl = $env:MB_VERSION_CHECK_URL
+        try {
+            # Keep the version check off the network and out of the real ~/.mb cache.
+            $env:MB_VERSION_CACHE_DIR = Join-Path $TestDrive 'mb-cache'
+            $env:MB_VERSION_CHECK_URL = 'http://127.0.0.1:9/VERSION'
+            $cliArgs = $Line -split ' '
+            $output = (& pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:MbScript @cliArgs 2>&1) -join "`n"
+            $output | Should -Not -Match 'dry run'
+            Test-Path -LiteralPath (Join-Path $project '.pmb-version') | Should -Be $true
+        } finally {
+            $env:MB_VERSION_CACHE_DIR = $savedCache; $env:MB_VERSION_CHECK_URL = $savedUrl
             Pop-Location
         }
     }

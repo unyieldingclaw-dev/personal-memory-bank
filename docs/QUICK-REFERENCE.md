@@ -184,5 +184,5 @@ Skip to Implement for: single-file fixes, typos, config changes.
 ## Daily Workflow
 
 ```
-Start Session -> AI reads Memory Bank automatically -> Work on tasks (use /feature-dev for new features) -> If context gets full -> Update Memory Bank, then type "Handoff" -> Start new chat -> Read Memory Bank first and handoff second -> When done for the day -> "mb update" -> Commit
+Start Session -> AI reads Memory Bank automatically -> Work on tasks (use /feature-dev for new features) -> If context gets full -> Update Memory Bank, then type "Handoff" -> Start new chat -> Read Memory Bank first and handoff second -> When done for the day -> "update memory bank" -> Commit
 ```
