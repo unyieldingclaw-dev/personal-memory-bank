@@ -9,6 +9,8 @@ Committed `3ea5eae` after a full `/code-review` (five domains plus opposition: A
 - **Revision 5's full design** — every deferred mechanism, plus rounds 1–5 — is preserved out of the
   repository at
   `C:/Users/Mizzo/Claude/pmb-session-artifacts/2026-09-26/multi-session-design/rev5-full-design.md`.
+- **Amendments from 2026-10-23 on** edit the text in place. The commit message records the date and
+  the review, not an inline tag; `git log -L` recovers the history. Tags written before then stay.
 
 **This spec:** (amended 2026-09-30, Plan A review)
 - supersedes triage chip P's approach (having the gate read the main worktree's `memory-bank/`);
@@ -174,67 +176,27 @@ sha=$(git rev-parse --verify -q refs/remotes/origin/main) || sha=
 - **Switching it on or off** takes a reviewed PR, since the working tree is never read.
 
 **Repo-local commands.** Nothing calls a bare `mb` (F18). Everything names
-`bash "$(git rev-parse --show-toplevel)/scripts/mb.sh" …`, or the PowerShell equivalent. `mb.sh` and
-`mb.ps1` change as follows (superseded by the Plan A amendment directly below; amended 2026-09-30, Plan A review):
-- they resolve their data files (such as `scripts/secret-patterns.txt`) from their own directory, not
-  `MB_HOME`;
-- they skip the update notice for `journal`, `sessions` and `snapshots`;
-- `mb.ps1` declares the new parameters.
+`bash "$(git rev-parse --show-toplevel)/scripts/mb.sh" …`, or the PowerShell equivalent.
 
 **Amended 2026-09-29 (Plan A):** the journal commands live in a standalone twin,
 `scripts/pmb-journal.{sh,ps1}`, not in `mb.sh`/`mb.ps1`. A standalone script avoids all four `mb`
 problems in F18/F19 — the `MB_HOME` data path, the update notice, `mb.ps1`'s parameter binding and
 pwsh's start-up cost — instead of patching each one. Everywhere this spec says
 `mb.sh journal …`, read `pmb-journal.sh …`; `sessions --show <sid>` is `pmb-journal.sh show <sid>`.
-Plans B and D should follow the same pattern for `sessions` and `snapshots` (user-approved
-2026-09-29).
+Plans B and D follow the same pattern for `sessions` and `snapshots` (user-approved 2026-09-29).
+A command that goes into `mb.sh`/`mb.ps1` instead must resolve its data files (such as
+`scripts/secret-patterns.txt`) from its own directory, not `MB_HOME`; skip the update notice; and
+have `mb.ps1` declare its parameters (F18).
 
-**Twin parity (amended 2026-10-14, Task 6 review; 2026-10-16 and 2026-10-17, FIFO-hardening
-reviews).** The two twins are built to make the same decisions, return the same exit codes and
+**Twin parity.** The two twins are built to make the same decisions, return the same exit codes and
 write the same bytes to `pmb/`. The parity tests check this for the cases they cover; it is not
-proven in general. These are the differences known today:
-- **Text arguments under `pwsh -File`.** pwsh parses every argument before the PowerShell twin
-  sees it. It drops an argument that is exactly `--%`. On Linux, it turns invalid UTF-8 into
-  U+FFFD. An argument that starts with `-` it can split at a colon, drop, refuse to start on, or
-  turn into a flag the twin then obeys, such as `--file:<path>` or `--session:<id>`. As a result,
-  the PowerShell twin can record different text from the sh twin, or another file's
-  contents, or a secret the sh twin refuses. It can also refuse text the sh twin records. In every
-  case measured, the same text passed with `--file` gave both twins the same bytes and exit code.
-  The measurements used pwsh 7.4.7 and 7.6.6; the UTF-8 case used 7.4.7 only.
-- **Windows, with a Git Bash FIFO** (Regular files, below).
-- **A Linux or macOS host with neither `/usr/bin/test` nor `/bin/test`**, or whose binary cannot
-  be run (Regular files, below).
-- **Message text only.**
-  - Paths in messages take each shell's form: `C:/...` from .NET and git, `/c/...` or `/tmp/...`
-    from Git Bash.
-  - An OS error inside a message is the platform's own text, .NET's or the shell tool's. So is the
-    error for a secret pattern that cannot be applied: a .NET regex error, not a grep exit code.
-  - The first usage line names `pmb-journal.ps1`.
+proven in general. The differences known today are listed in
+[`2026-09-26-multi-session-memory-twin-differences.md`](2026-09-26-multi-session-memory-twin-differences.md).
+Add new ones there, not here.
 
-**Regular files (amended 2026-10-16, Plan A and FIFO-hardening reviews; 2026-10-18 and -19, reviews
-of #63 and #65).** Both twins refuse to open a FIFO or a device, since opening a FIFO blocks the hook.
-Before reading a file, the sh twin uses its built-in `[ -f ]`. .NET reports a FIFO as an existing
-file, so on Linux and macOS the PowerShell twin runs the first of `/usr/bin/test` and `/bin/test`
-that exists, found once per process. Alpine ships only `/usr/bin/test`. Windows needs no binary. If
-neither exists, or the one found cannot be run, the twin throws rather than refusing every file.
-It throws the first time it checks a file that exists and is not a link; a missing file still
-reads as not regular, with no throw. Its behaviour then differs from the sh twin's (a known
-difference listed under Twin parity, above):
-- `show` of a session with at least one record prints its header, then the error, and exits 1;
-- `note --file` and `import-handoff` print the error and exit 1;
-- the claim report is skipped without a message, and the claim itself still exits 0;
-- the gate fails open on every compaction that reads a record or `gate-blocked`. Run as the hook,
-  it prints `[HOOK ERROR]` on stdout and logs the error to `.pmb-hook-errors.log`. Run as
-  `pmb-journal.ps1 gate`, it warns on stderr.
-
-When a FIFO or other non-regular file sits at `gate-blocked`, it is neither read nor written, so the
-block cannot be recorded and the gate fails open (§4.3). The first write creates `started` only when
-nothing is at that name (an entry of any type means the session started; sh's `noclobber` alone
-would open a FIFO), and the gate's probe creates its file in `tmp/` under a fresh random name. On
-Linux, a FIFO at `started` or at the probe's old name `.probe.<pid>` hangs neither twin (tested).
-Names are tested before they are opened (e.g. records, `gate-blocked`, and in the sh twin
-`started`), so a FIFO swapped in between can still block; S3 puts such same-user writes out of
-scope. On Windows, pwsh sees a Git Bash FIFO only as a `<name>.lnk` file. macOS is not in CI.
+**Regular files.** Both twins refuse to open a FIFO or a device, since opening a FIFO blocks the hook.
+The companion file above covers how each twin tests for a FIFO or device, what each caller does when
+the PowerShell twin cannot run that test, and which FIFO cases the refusal does not cover.
 
 **Inert without this code.** A branch, or an adopter, that lacks `scripts/pmb-journal.sh`
 runs today's behaviour:
@@ -746,47 +708,22 @@ Details are in `rev5-full-design.md`.
 
 **Full review of revision 6 (two fresh reviewers).**
 - **Premises and buildability: Request Changes.** One blocking finding and six High ones. The blocking
-  one: this repository's `mb.sh` is not shipped to adopters. The High ones:
-  - no writer for `end`;
-  - untracked directories not captured;
-  - command-guard forms missed;
-  - the pwsh latency budget;
-  - the main checkout invisible;
-  - the ratchet's baseline side;
-  - the flag read falling back to the index.
+  one: this repository's `mb.sh` is not shipped to adopters. The High ones: no writer for `end`;
+  untracked directories not captured; command-guard forms missed; the pwsh latency budget; the main
+  checkout invisible; the ratchet's baseline side; the flag read falling back to the index.
 - **Security: Request Changes.** It raised two Critical claims:
   - "`git add -f` can stage snapshots" — **false** (F13, author's probe);
   - "session ids can be forged" — **true, but pre-existing in kind**, so S3 was restated honestly rather
     than claiming a boundary.
 
-  Its High and Medium findings were all accepted:
-  - restore containment;
-  - `stash pop`, `gc --prune`, `reflog expire` and `branch -D`;
-  - the fetch-refspec guard;
-  - case-insensitive secret matching;
-  - field validation;
-  - a minimum gate body length;
-  - the exfiltration caveat.
+  Its High and Medium findings were all accepted: restore containment; `stash pop`, `gc --prune`,
+  `reflog expire` and `branch -D`; the fetch-refspec guard; case-insensitive secret matching; field
+  validation; a minimum gate body length; the exfiltration caveat.
 
 **The author re-verified by command:** F13, F17, F23, and the CONFIRM deny semantics.
 
-**How the findings map into revision 7:**
-- **Scope and inertness:** §4.1, M6, A12.
-- **`end` writer:** §4.2.
-- **`--untracked-files=all`:** §4.4b.
-- **Command-guard table:** §4.4a; the `origin/*` rule was cut.
-- **Summary script:** now bash-first (§4.2).
-- **Main-checkout move:** §5.
-- **Ratchet baseline:** §4.7.
-- **Flag guard against an empty SHA:** §4.1.
-- **Co-tenancy notice:** reworded (§4.2).
-- **Instructions:** they now ship in the flag PR (§4.7).
-- **Cursor limits:** §10.
-- **`mb.sh` internals:** §4.1.
-- **Record details:** `--file`, seq, meta file, `start` writer, NS-id grammar.
-- **Restore:** new target only, plus a `list` command.
-- **Cap overflow:** skips the largest files first.
-- **Summary:** ASCII only.
+**How the findings map into revision 7:** a list of section pointers, cut 2026-10-19 for the 800-line
+CI cap. It is kept verbatim in this file at `d751b73`.
 
 **Revision 7 has not been reviewed.** This repository's own record warns that folding reviewer
 suggestions in round after round manufactures new defects. Revision 7's text is therefore checked at

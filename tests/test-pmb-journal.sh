@@ -78,8 +78,8 @@ pmbdir() { printf '%s/pmb' "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" 
 jr() { local d="$1"; shift; ( cd "$d" && bash "$J" "$@" ); }                  # run, keep output
 jcode() { local d="$1"; shift; ( cd "$d" && bash "$J" "$@" >/dev/null 2>&1; echo $? ); }
 # skip_links WHAT — the loud SKIP for a case that needs a link this machine cannot make (Git Bash on
-# Windows without Developer Mode). WHY a switch: PMB_REQUIRE_SYMLINKS=1, set wherever CI can make links,
-# turns the skip into a failure, so a lost link fixture cannot pass silently (C6.8).
+# Windows without Developer Mode). WHY a switch: PMB_REQUIRE_SYMLINKS=1, set in CI (its Linux runner
+# makes links), turns the skip into a failure, so a lost link fixture cannot pass silently (C6.8).
 skip_links() {
     echo "  SKIP: symbolic links cannot be created here; $1"
     if [ "${PMB_REQUIRE_SYMLINKS:-0}" = "1" ]; then
@@ -116,6 +116,11 @@ make_repo "$T/flagcrlf" none
 ( cd "$T/flagcrlf" && printf 'journal=on\r\nother=1\r\n' > .pmb-features && git add .pmb-features \
   && git commit -qm flag && git update-ref refs/remotes/origin/main HEAD )
 assert_equals "$(PATH="$T/posixgrep:$PATH" jcode "$T/flagcrlf" mode)" "0" "a .pmb-features with CRLF line ends still reads as on (grep that keeps the CR)"
+# A NUL byte, as in a UTF-16 file: bash's $(...) drops it, so the flag line still reads as on.
+make_repo "$T/flagnul" none
+( cd "$T/flagnul" && printf 'journal=on\000\n' > .pmb-features && git add .pmb-features \
+  && git commit -qm flag && git update-ref refs/remotes/origin/main HEAD )
+assert_equals "$(jcode "$T/flagnul" mode 2>/dev/null)" "0" "a .pmb-features with a NUL byte still reads as on"
 # F17: an empty revision reads the INDEX. A staged .pmb-features must not turn the flag on.
 make_repo "$T/staged" none; git -C "$T/staged" update-ref -d refs/remotes/origin/main
 printf 'journal=on\n' > "$T/staged/.pmb-features"; git -C "$T/staged" add .pmb-features
@@ -1005,7 +1010,9 @@ make_repo "$T/gatetmp" on
 PT="$(pmbdir "$T/gatetmp")"; mkdir -p "$PT" && printf 'not a dir\n' > "$PT/tmp"
 out="$(cd "$T/gatetmp" && payload sessGATE_05 | CLAUDE_CODE_SESSION_ID=sessGATE_05 PMB_GATE_PROBE_DELAY=0 bash "$J" gate 2>/dev/null)"; code=$?
 assert_equals "$code" "2" "pmb/tmp not writable after 3 probes: block"
-assert_contains "$out" "cannot write to" "the block names the unwritable-tmp condition"
+# WHY `..*/tmp (tried`: a bare "cannot write to" stays green when the path is dropped from the block
+# (J5-1). `..*` is BRE for one or more (grep reads `+` as a literal), so an empty dir fails too.
+assert_contains "$out" "cannot write to ..*/tmp (tried" "the block names the unwritable-tmp condition and its path"
 # WHY a token only the OS can produce: "[^)]" also matched the "(unknown error)" fallback (as in the
 # not-a-directory case above).
 assert_contains "$out" "tried 3 times: .*\.probe\..*Not a directory)" "the unwritable-tmp block reports the OS error"
@@ -1071,10 +1078,11 @@ if have_fifo "$T/fifo/probe-cap"; then
 else
     skip_fifo "the probe-file FIFO case is not run"
 fi
-# The probe needs no mktemp, as the ps1 twin's needs no external tool: on a host without it, a manual
-# /compact is decided the same way by both twins. WHY a PATH of links: mktemp cannot be uninstalled for
-# a test, so the gate runs on a PATH holding every other command (nm_ = no-mktemp; the first PATH entry
-# with a name wins). Linux and macOS only: Git Bash without Developer Mode makes no links (skip_links).
+# The probe needs no mktemp, as the ps1 twin's needs no external tool: on a host without it, both twins
+# still probe, so the first manual /compact is decided the same way. Later ones can differ, because the
+# sh twin's compact marker is written through mktemp. WHY a PATH of links: mktemp cannot be uninstalled
+# for a test, so the gate runs on a PATH holding every other command (nm_ = no-mktemp; the first PATH
+# entry with a name wins). Linux and macOS only: Git Bash without Developer Mode makes no links.
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) echo "  SKIP: the no-mktemp gate case runs on Linux and macOS only" ;;
     *)
@@ -1090,8 +1098,31 @@ case "$(uname -s)" in
         assert_equals "$(PATH="$T/nomktemp" bash -c 'command -v mktemp || echo none')" "none" "the no-mktemp PATH has no mktemp (fixture check)"
         ( cd "$T/gate" && CLAUDE_CODE_SESSION_ID=sessNOMKT1 bash "$J" note 'a note so the manual gate passes once its probe has run' ) >/dev/null
         out="$(cd "$T/gate" && payload sessNOMKT1 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT1 tmo bash "$J" gate 2>"$T/nomk.err"; echo "rc=$?")"
-        assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=0" "no mktemp, manual /compact with a record: the probe still runs and the gate passes"
+        assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=0" "no mktemp, manual /compact with a record: the gate passes"
         assert_equals "$(cat "$T/nomk.err")" "" "no mktemp: the gate prints nothing on stderr"
+        # WHY an unwritable tmp/ as well: with a writable one, a gate that silently skipped its probe
+        # without mktemp would pass the two assertions above too. Both twins must still block.
+        make_repo "$T/nomkgate" on
+        # One session per twin, so nothing the sh call records can decide the ps1 one.
+        for sid in sessNOMKT2 sessNOMKT3; do
+            ( cd "$T/nomkgate" && CLAUDE_CODE_SESSION_ID=$sid bash "$J" note 'a note, so only the probe can block this manual gate' ) >/dev/null
+        done
+        NMP="$(pmbdir "$T/nomkgate")"
+        rmdir "$NMP/tmp" && printf 'not a dir\n' > "$NMP/tmp"
+        assert_equals "$([ -f "$NMP/tmp" ] && echo file || echo not-file)" "file" "the no-mktemp block case: pmb/tmp is a file (fixture check)"
+        out="$(cd "$T/nomkgate" && payload sessNOMKT2 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT2 PMB_GATE_PROBE_DELAY=0 tmo bash "$J" gate 2>/dev/null; echo "rc=$?")"
+        assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=2" "no mktemp, pmb/tmp not writable: the sh gate still probes and blocks"
+        # WHY `(tried` and not just `..*/tmp`: the message ends "Fix: restore write access to $dir/tmp",
+        # so an unanchored `..*/tmp` still matches through that tail when the first path is dropped.
+        # `..*`, not `.*`, so an empty $dir fails too (BRE: grep reads `+` as a literal).
+        assert_contains "$out" "cannot write to ..*/tmp (tried" "no mktemp, pmb/tmp not writable: the sh block names the unwritable tmp/"
+        if command -v pwsh >/dev/null 2>&1; then
+            out="$(cd "$T/nomkgate" && payload sessNOMKT3 | PATH="$T/nomktemp" CLAUDE_CODE_SESSION_ID=sessNOMKT3 PMB_GATE_PROBE_DELAY=0 tmo pwsh -NoProfile -NonInteractive -File scripts/pmb-journal.ps1 gate 2>/dev/null; echo "rc=$?")"
+            assert_equals "$(printf '%s\n' "$out" | tail -n 1)" "rc=2" "no mktemp, pmb/tmp not writable: the ps1 gate blocks as the sh gate does"
+            assert_contains "$out" "cannot write to ..*/tmp (tried" "no mktemp, pmb/tmp not writable: the ps1 block names the unwritable tmp/"
+        else
+            echo "  SKIP: pwsh is not installed; the ps1 half of the no-mktemp block case is not run (PMB_REQUIRE_PARITY=1 makes a missing pwsh fatal below)"
+        fi
         ;;
 esac
 mkdir -p "$G/sessions" && printf 'x\n' > "$G/sessions/sessFILE_001"
@@ -1375,7 +1406,7 @@ if command -v pwsh >/dev/null 2>&1; then
     shape() { printf '%s' "${1##*/}" | sed 's/^[^-]*-//; s/-[0-9a-f]\{6\}\.md$//'; }
 
     # mode: the flag is read only through refs/remotes/origin/main's SHA, as in the sh twin.
-    for f in on:0 off:1 none:1 noref:1 staged:1 shadow:1 shadowtag:1 flagbom:0 flagcrlf:0 'a b:0'; do
+    for f in on:0 off:1 none:1 noref:1 staged:1 shadow:1 shadowtag:1 flagbom:0 flagcrlf:0 flagnul:0 'a b:0'; do
         assert_equals "$(pjc "$T/${f%:*}" mode)" "${f##*:}" "ps1 mode agrees with sh: ${f%:*} exits ${f##*:}"
     done
     # A6.2: the flag file is read as bytes. WHY a cp437 console: it is the Windows default, and a BOM
@@ -1869,7 +1900,7 @@ if command -v pwsh >/dev/null 2>&1; then
         echo "pmb-file-payload-session-flag=$(yn 'note "<text>" --session sessGM_31$' "$T/gm.err")"
         make_repo "$D-tmp" on; mkdir -p "$(pmbdir "$D-tmp")" && printf 'not a dir\n' > "$(pmbdir "$D-tmp")/tmp"
         echo "tmp-file=$(PMB_GATE_PROBE_DELAY=0 gm_gate "$D-tmp" "$(payload sessGM_32)" sessGM_32)"
-        echo "tmp-file-named=$(yn 'cannot write to' "$T/gm.out")"
+        echo "tmp-file-named=$(yn 'cannot write to ..*/tmp (tried' "$T/gm.out")"
         echo "tmp-file-os-error=$(yn 'tried 3 times: [^)]*\.probe\.[0-9]' "$T/gm.out")"
         echo "tmp-file-unknown=$(yn 'unknown error' "$T/gm.out")"
         echo "tmp-file-no-hatch=$(yn 'run /compact again' "$T/gm.out")"
@@ -1986,6 +2017,13 @@ sessions-file=0'
     gm_twin=sh;  assert_equals "$(gm_gate "$T/pgtext" "$(payload sessXHATCH1)" sessXHATCH1)" "0" "a block by ps1 lets the sh twin's repeat pass (one gate-blocked format)"
     gm_twin=sh;  gm_gate "$T/pgtext" "$(payload sessXHATCH2)" sessXHATCH2 >/dev/null
     gm_twin=ps1; assert_equals "$(gm_gate "$T/pgtext" "$(payload sessXHATCH2)" sessXHATCH2)" "0" "a block by sh lets the ps1 twin's repeat pass"
+    # A NUL byte in gate-blocked: the sh twin's `read` drops it, so the repeat still passes in both twins.
+    for tw in sh ps1; do
+        gm_twin=$tw; gm_gate "$T/pgtext" "$(payload "sessXNUL_$tw")" "sessXNUL_$tw" >/dev/null
+        g="$(pmbdir "$T/pgtext")/sessions/sessXNUL_$tw/gate-blocked"; m="$(head -c 16 "$g" | tr -d '\n')"
+        printf '%s\000\n' "$m" > "$g"
+        assert_equals "$(gm_gate "$T/pgtext" "$(payload "sessXNUL_$tw")" "sessXNUL_$tw")" "0" "$tw gate: a repeat passes when gate-blocked holds a NUL byte"
+    done
     ( cd "$T/pgtext" && CLAUDE_CODE_SESSION_ID=sessXSHARE1 bash "$J" note "$(head -c 40 /dev/zero | tr '\0' 'n')" ) >/dev/null
     gm_twin=ps1; assert_equals "$(gm_gate "$T/pgtext" "$(payload sessXSHARE1)" sessXSHARE1)" "0" "ps1 gate: 40 bytes written by the sh twin pass -- shared on-disk format"
 
@@ -2150,6 +2188,211 @@ sessions-file=0'
             fi
         done
     done
+    # Arguments pwsh alters (spec section 4.1, "Twin parity", first bullet): pwsh -File splits a dash-led
+    # argument at a colon and drops `--%` and a trailing `-x:`, and Linux turns invalid UTF-8 into U+FFFD.
+    # The sh twin sees them as given, so the PowerShell twin must refuse them, never store other text.
+    # altered DESC SID ARGS... — ps1 refuses ARGS as altered (exit 1, the message) and writes nothing.
+    altered() {
+        local desc="$1" sid="$2" before p; shift 2
+        before="$(files_under "$(pmbdir "$T/on")")"
+        p="$(twin_run ps1 "$T/on" "$sid" "$@")"
+        assert_equals "${p%%|*}" "rc=1" "ps1 refuses an argument pwsh altered: $desc"
+        assert_contains "$p" "pwsh changed the arguments before the script saw them" "ps1 names the alteration: $desc"
+        assert_equals "$(files_under "$(pmbdir "$T/on")")" "$before" "ps1 writes nothing for an altered argument: $desc"
+    }
+    # rcof OUT — the exit code from the "rc=N" line that ends OUT.
+    rcof() { printf '%s' "${1##*rc=}"; }
+    lbody='and a body that is long enough to be a record'
+    altered "a dash-led argument with a colon (split)" sessALT0001 note '- Done: wrote the migration and its tests'
+    s="$(twin_run sh "$T/on" sessALT0002 note '- Done: wrote the migration and its tests')"
+    assert_equals "${s%%|*}" "rc=0" "sh records a dash-led argument with a colon"
+    assert_equals "$(grep -cF -- '- Done: wrote the migration and its tests' "$(newest "$T/on" sessALT0002)")" "1" "sh keeps the colon of a dash-led argument"
+    # The split drops the colon a key-value secret pattern needs, so ps1 stored what sh refuses.
+    assert_contains "$(twin_run sh "$T/on" sessALT0003 note "- password: $hp")" "matches a secret pattern" "sh refuses a dash-led key: value secret"
+    altered "a dash-led key: value secret (the split loses the colon a pattern needs)" sessALT0004 note "- password: $hp"
+    # --file:<path> and --session:<id> become real flags in ps1: another file's text, another session.
+    altered "--file:<path> (pwsh makes it the --file flag)" sessALT0005 note '--file:../utf8.txt'
+    s="$(twin_run sh "$T/on" sessALT0006 note '--file:../utf8.txt')"
+    assert_equals "${s%%|*}" "rc=0" "sh records --file:<path> as text"
+    assert_equals "$(grep -cF -- '--file:../utf8.txt' "$(newest "$T/on" sessALT0006)")" "1" "sh stores --file:<path> literally, not the file"
+    altered "--session:<id> with no session id set (pwsh makes it the flag)" - note '--session:sessINJECT01' "$lbody"
+    assert_equals "$(ls -1 "$(pmbdir "$T/on")/sessions" | grep -c '^sessINJECT01$')" "0" "ps1 creates no session from --session:<id>"
+    altered "a trailing -x: (dropped)" sessALT0007 note "$lbody" '-x:'
+    altered "--% between words (dropped)" sessALT0007 note 'a body' '--%' "$lbody"
+    altered "a leading en dash, which pwsh reads as a dash (split)" sessALT0007 note "$(printf '\342\200\223')x:y $lbody"
+    altered "-x: as the --session value" sessALT0007 note --session '-abcdefgh:' "$lbody"
+    for c in "show --own -x:" "import-handoff --% ../h.md"; do   # $c unquoted: each case is a command line
+        altered "$c" sessALT0007 $c
+        assert_equals "$(twin_run sh "$T/on" sessALT0007 $c | cut -d'|' -f1)" "rc=1" "sh refuses it too: $c"
+    done
+    # A first word pwsh drops or splits is no command, so both twins print usage. Only `--%` exercises
+    # ps1's first-word check: `-x:` arrives as `-x`, which is no command either, so it prints usage
+    # with or without the check (it stays as a parity case).
+    for w in '--%' '-x:'; do
+        before="$(files_under "$(pmbdir "$T/on")")"
+        s="$(twin_run sh "$T/on" sessALT0008 "$w" note "$lbody")"; p="$(twin_run ps1 "$T/on" sessALT0008 "$w" note "$lbody")"
+        assert_equals "${p//pmb-journal.ps1/pmb-journal.sh}" "$s" "ps1 and sh print the same usage for a first word pwsh drops or splits: $w"
+        assert_equals "${p%%|*}" "rc=1" "ps1 exits 1 for a first word pwsh drops or splits: $w"
+        assert_equals "$(files_under "$(pmbdir "$T/on")")" "$before" "neither twin writes anything for a first word pwsh drops or splits: $w"
+    done
+    # pwsh -Command re-parses the words: ps1 refuses; sh has no such mode. The second case keeps the
+    # number of words and changes one ($PSHOME expands to a path), so a count alone cannot catch it.
+    pcmd() { ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessALT0010 pwsh -NoProfile -NonInteractive -Command "$(pnat "$T/on/scripts/pmb-journal.ps1")" "$@" </dev/null 2>&1; echo "rc=$?" ); }
+    out="$(pcmd note 'the price is $x today' "$lbody")"
+    assert_equals "$(rcof "$out")" "1" "ps1 refuses arguments pwsh -Command re-parsed into more words"
+    assert_contains "$out" "pwsh changed the arguments before the script saw them" "ps1 names a -Command re-parse into more words"
+    out="$(pcmd note '$PSHOME' 'tail')"
+    assert_equals "$(rcof "$out")" "1" "ps1 refuses a word pwsh -Command expanded in place"
+    assert_contains "$out" "pwsh changed the arguments before the script saw them" "ps1 names a word pwsh -Command expanded in place"
+    # `& <path>` and the words after it, joined into one -Command string: the element `& <path>` has the
+    # script's file name, so ps1 finds itself there and the comparison still decides. (Unquoted: $T
+    # holds no space.) $lbody unquoted on purpose: one word per argument, which the re-parse keeps.
+    pamp() { ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessALT0014 pwsh -NoProfile -NonInteractive -Command "& $(pnat "$T/on/scripts/pmb-journal.ps1")" "$@" </dev/null 2>&1; echo "rc=$?" ); }
+    assert_equals "$(rcof "$(pamp note $lbody)")" "0" "ps1 found in an & -Command string records plain words"
+    for w in '-x:y' 'a,b'; do
+        out="$(pamp note "$w" $lbody)"
+        assert_equals "$(rcof "$out")" "1" "ps1 found in an & -Command string refuses what the re-parse changed: $w"
+        assert_contains "$out" "pwsh changed the arguments before the script saw them" "ps1 found in an & -Command string names the change: $w"
+    done
+    # Dash-led text that pwsh passes intact is stored by both twins, byte for byte.
+    pair dashitem note '- an item with no colon, which pwsh passes intact to the script'
+    pair dashx note '-x' "then text: $lbody"
+    pair endash note "$(printf '\342\200\223') an en-dash item with no colon, which pwsh passes intact"
+    # U+FFFD: pwsh's stand-in for bytes that are not valid UTF-8, so ps1 cannot tell it from them.
+    p="$(twin_run ps1 "$T/on" sessALT0011 note "a U+FFFD $(printf '\357\277\275') $lbody")"
+    assert_equals "${p%%|*}" "rc=1" "ps1 refuses an argument that holds U+FFFD"
+    assert_contains "$p" "holds U+FFFD" "ps1 names U+FFFD"
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Git Bash hands pwsh.exe an invalid byte as another, valid character (spec 4.1); the invalid-byte case runs on Linux" ;;
+        *)  p="$(twin_run ps1 "$T/on" sessALT0012 note "a bad $(printf '\377') byte $lbody")"
+            assert_equals "${p%%|*}" "rc=1" "ps1 refuses an argument with a byte that is not valid UTF-8"
+            assert_contains "$p" "holds U+FFFD" "ps1 refuses invalid UTF-8 as U+FFFD"
+            assert_contains "$(twin_run sh "$T/on" sessALT0012 note "a bad $(printf '\377') byte $lbody")" "not valid UTF-8" "sh refuses the same argument as invalid UTF-8" ;;
+    esac
+    # Without the original command line nothing shows what pwsh did to the words, so ps1 refuses every
+    # command that reads arguments, whatever they hold, and names the ways that work. Commands that read
+    # none still run.
+    unproven='no element of the process command line is this script'
+    # refused_unproven DESC OUT BEFORE — OUT ends in rc=1 and gives the reason; the journal still lists BEFORE.
+    refused_unproven() {
+        assert_equals "$(rcof "$2")" "1" "ps1 refuses without its original arguments: $1"
+        assert_contains "$2" "$unproven" "ps1 says why it refuses: $1"
+        assert_contains "$2" "from Bash use scripts/pmb-journal.sh; from PowerShell run pwsh -File scripts/pmb-journal.ps1 <command>" "ps1 names the ways that work: $1"
+        assert_equals "$(files_under "$(pmbdir "$T/on")")" "$3" "ps1 writes nothing without its original arguments: $1"
+    }
+    # fb ARRAY — Invoke-PmbMain called in-process, as a pwsh that dot-sourced the twin; "rc=N" last.
+    fb() { CLAUDE_CODE_SESSION_ID=sessFALL001 pdot "$T/on" "exit (Invoke-PmbMain @($1) \$null)" 2>&1; echo "rc=$?"; }
+    printf '# Handoff\n\nIn-flight state from the fallback test, worth one journal record.\n' > "$T/on/handoff-fb.md"
+    for c in "'note', 'a plain body $lbody'" "'note', '--file', '../utf8.txt'" "'show'" "'show', '--own'" "'import-handoff', 'handoff-fb.md'"; do
+        before="$(files_under "$(pmbdir "$T/on")")"
+        refused_unproven "in-process $c" "$(fb "$c")" "$before"
+    done
+    out="$(fb "'start'")"
+    assert_equals "$(rcof "$out")" "0" "ps1 in-process still runs a command that reads no arguments"
+    assert_equals "$(printf '%s
+' "$out" | grep -cE '^[0-9a-f]{32}$')" "1" "ps1 in-process start prints a session id"
+    # The U+FFFD check on arguments that do equal the original. A lone surrogate cannot be put on a
+    # command line from here, so Get-PmbArgProblem is called directly, with a plain control.
+    out="$(pdot "$T/on" "\$a = 'a lone ' + [char]0xD800 + ' surrogate'; Get-PmbArgProblem @(\$a) @('note', \$a)" 2>&1)"
+    assert_contains "$out" "holds U+FFFD" "ps1 refuses a lone surrogate"
+    assert_equals "$(pdot "$T/on" "Get-PmbArgProblem @('plain') @('note', 'plain')" 2>&1)" "" "ps1 finds nothing wrong with plain words that equal the original"
+    assert_contains "$(pdot "$T/on" "Get-PmbArgProblem @('a' + [char]0xAD) @('note', 'a')" 2>&1)" "pwsh changed the arguments" "ps1 compares its arguments with the original byte for byte, not by culture"
+    # pwsh -CommandWithArgs splits words as -File does, and no command-line element is the script (its
+    # path sits inside the quoted string), so altered words cannot be told from plain ones: all refused.
+    cwa() { ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessFALL003 pwsh -NoProfile -NonInteractive -CommandWithArgs "& '$(pnat "$T/on/scripts/pmb-journal.ps1")' @args" "$@" </dev/null 2>&1; echo "rc=$?" ); }
+    for c in 'note|--file:../utf8.txt' "note|--session:sessINJECT03|$lbody" "note|- Done: split here $lbody" "note|--%|plain words $lbody" "note|plain words $lbody"; do
+        IFS='|' read -ra a <<< "$c"
+        before="$(files_under "$(pmbdir "$T/on")")"
+        refused_unproven "-CommandWithArgs ${c//|/ }" "$(cwa "${a[@]}")" "$before"
+    done
+    # One -Command string run by Invoke-Expression, the shape of Claude Code's PowerShell tool: the
+    # PowerShell parser splits an unquoted -x:y (a quoted one arrives intact), and ps1 cannot tell which.
+    # (pwsh -Command exits 0 after Invoke-Expression whatever the script returned, hence the explicit exit.)
+    ptool() { ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessFALL004 pwsh -NoProfile -NonInteractive -Command "Invoke-Expression -Command '& ''$(pnat "$T/on/scripts/pmb-journal.ps1")'' $1'; exit \$LASTEXITCODE" </dev/null 2>&1; echo "rc=$?" ); }
+    for c in "note -x:y $lbody" "note ''- Done: quoted text $lbody''"; do
+        before="$(files_under "$(pmbdir "$T/on")")"
+        refused_unproven "Invoke-Expression of: $c" "$(ptool "$c")" "$before"
+    done
+    # A wrapper run by pwsh -File: the words it passes on were parsed for it, so even plain ones are
+    # refused. wrap.ps1 runs one fixed note; wrapargs.ps1 passes on its own arguments.
+    printf "& '%s' note 'a plain body %s'\nexit \$LASTEXITCODE\n" "$(pnat "$T/on/scripts/pmb-journal.ps1")" "$lbody" > "$T/wrap.ps1"
+    printf "& '%s' @args\nexit \$LASTEXITCODE\n" "$(pnat "$T/on/scripts/pmb-journal.ps1")" > "$T/wrapargs.ps1"
+    # wr PATH ARGS... — PATH run by pwsh -File with ARGS; output, then "rc=N".
+    wr() { local w="$1"; shift; ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessFALL002 pwsh -NoProfile -NonInteractive -File "$w" "$@" </dev/null 2>&1; echo "rc=$?" ); }
+    for c in "$T/wrap.ps1" "$T/wrapargs.ps1|note|a plain body passed on $lbody" "$T/wrapargs.ps1|note|--file:../utf8.txt"; do
+        IFS='|' read -ra a <<< "$c"
+        before="$(files_under "$(pmbdir "$T/on")")"
+        refused_unproven "a wrapper: ${a[0]##*/} ${a[*]:1}" "$(wr "${a[@]}")" "$before"
+    done
+    # On Linux pwsh -File also runs a file with no .ps1 extension, with the same parsing.
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Windows pwsh -File refuses a file with no .ps1 extension; the extensionless wrapper runs on Linux" ;;
+        *)  cp "$T/wrapargs.ps1" "$T/wrapx"
+            for c in "note|--file:../utf8.txt" "note|plain words $lbody"; do
+                IFS='|' read -ra a <<< "$c"
+                before="$(files_under "$(pmbdir "$T/on")")"
+                refused_unproven "an extensionless wrapper: ${c//|/ }" "$(wr "$T/wrapx" "${a[@]}")" "$before"
+            done ;;
+    esac
+    # pwsh runs the script under paths that end in /. (on Windows also \., a trailing dot or space), so
+    # ps1 must still find itself there: plain text is recorded, and --file:<path> is refused as altered.
+    sps=('/.'); case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*) sps+=('\.' '.' ' ') ;;
+        *)  # Linux pwsh runs pmb-journal.ps1\. too, but the element keeps the backslash, so ps1 refuses it.
+            before="$(files_under "$(pmbdir "$T/on")")"
+            refused_unproven "pmb-journal.ps1\. on Linux" "$( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessALT0013 pwsh -NoProfile -NonInteractive -File "$T/on/scripts/pmb-journal.ps1\." note "a plain body $lbody" </dev/null 2>&1; echo "rc=$?" )" "$before"
+            echo "  SKIP: only Windows runs pmb-journal.ps1 with a trailing dot or space; those spellings run there" ;;
+    esac
+    # tsp SPELLING ARGS... — the script run by pwsh -File under its path plus SPELLING; output, then "rc=N".
+    tsp() { local sp="$1"; shift; ( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessALT0013 pwsh -NoProfile -NonInteractive -File "$(pnat "$T/on/scripts/pmb-journal.ps1")$sp" "$@" </dev/null 2>&1; echo "rc=$?" ); }
+    for sp in "${sps[@]}"; do
+        out="$(tsp "$sp" note '--file:../utf8.txt')"
+        assert_equals "$(rcof "$out")" "1" "ps1 started as pmb-journal.ps1[$sp] refuses --file:<path>"
+        assert_contains "$out" "pwsh changed the arguments before the script saw them" "ps1 started as pmb-journal.ps1[$sp] still finds its original arguments"
+        assert_equals "$(rcof "$(tsp "$sp" note "a plain body $lbody")")" "0" "ps1 started as pmb-journal.ps1[$sp] records plain text"
+    done
+    # The FIRST element with the script's name is the one compared: a later argument of that name (here
+    # the script's own path, given to import-handoff) is plain text, refused for its name, not as changed.
+    out="$(twin_run ps1 "$T/on" sessALT0016 import-handoff "$T/on/scripts/pmb-journal.ps1")"
+    assert_contains "$out" "converts only a file named handoff" "ps1 compares the words after the first element with its name"
+    assert_not_contains "$out" "pwsh changed the arguments" "ps1 does not take a later argument with its name for itself"
+    # The name is matched without regard to case: Windows starts `& ./scripts/PMB-JOURNAL.PS1` as this
+    # script, and for that relative spelling $PSCommandPath holds the name as it is on disk while the
+    # command-line element keeps the caller's case (measured; an absolute spelling keeps it in both).
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            out="$( cd "$T/on" && CLAUDE_CODE_SESSION_ID=sessALT0017 pwsh -NoProfile -NonInteractive -Command "& ./scripts/PMB-JOURNAL.PS1" note $lbody </dev/null 2>&1; echo "rc=$?" )"
+            assert_equals "$(rcof "$out")" "0" "ps1 started as PMB-JOURNAL.PS1 still finds itself and records plain words" ;;
+        *)  echo "  SKIP: names differ by case only on a case-insensitive file system; the PMB-JOURNAL.PS1 case runs on Windows" ;;
+    esac
+    # `--%` before a command that reads no arguments: ps1 finds the dropped word on the command line and
+    # prints usage as the sh twin does.
+    s="$(twin_run sh "$T/on" sessALT0018 '--%' start)"; p="$(twin_run ps1 "$T/on" sessALT0018 '--%' start)"
+    assert_equals "${p//pmb-journal.ps1/pmb-journal.sh}" "$s" "ps1 and sh print the same usage for --% start"
+    assert_equals "${p%%|*}" "rc=1" "ps1 exits 1 for --% start"
+
+    # Words that differ from a flag, a command or a kind only by a character culture comparison ignores
+    # (U+00AD, a soft hyphen) are text to the sh twin, which compares bytes; the PowerShell twin must agree.
+    shy="$(printf '\302\255')"
+    pair shyfile note "--file${shy}" ../utf8.txt
+    assert_equals "$(grep -cF -- "--file${shy} ../utf8.txt" "$(newest "$T/on" sessPWP_shyfile)")" "1" "ps1 stores --file<U+00AD> as text, not the file"
+    pair shysess note "--session${shy}" sessINJECT04 "$lbody"
+    assert_equals "$(grep -cF -- "--session${shy} sessINJECT04" "$(newest "$T/on" sessPWP_shysess)")" "1" "ps1 stores --session<U+00AD> as text"
+    assert_equals "$(ls -1 "$(pmbdir "$T/on")/sessions" | grep -c '^sessINJECT04$')" "0" "ps1 creates no session from --session<U+00AD>"
+    before="$(files_under "$(pmbdir "$T/on")")"
+    s="$(twin_run sh "$T/on" sessALT0019 "note${shy}" "$lbody")"; p="$(twin_run ps1 "$T/on" sessALT0019 "note${shy}" "$lbody")"
+    assert_equals "${p//pmb-journal.ps1/pmb-journal.sh}" "$s" "ps1 and sh print the same usage for note<U+00AD>"
+    assert_equals "${p%%|*}" "rc=1" "ps1 exits 1 for note<U+00AD>"
+    assert_equals "$(files_under "$(pmbdir "$T/on")")" "$before" "neither twin records anything for note<U+00AD>"
+    same_refusal "$T/on" sessALT0020 "show --own --all<U+00AD>" show --own "--all${shy}"
+    # The PowerShell twin's string comparisons stay ordinal. A guard on the forms it used: outside
+    # comments, no c- or i-prefixed comparison operator, no -eq/-ne/-contains/-in against a literal,
+    # and no string search (StartsWith, EndsWith, IndexOf, LastIndexOf, CompareTo) without Ordinal.
+    culture="$(grep -nE -- '-[ci]?(eq|ne|contains|notcontains|in|notin)[[:space:]]+['"'"'"@]|-[ci](eq|ne|contains|notcontains|in|notin)\b|-(contains|notcontains|in|notin)\b' "$J_PS1" | grep -vE '^[0-9]+:[[:space:]]*#')"
+    search="$(grep -nE '\.(StartsWith|EndsWith|IndexOf|LastIndexOf|CompareTo)\(' "$J_PS1" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -v 'Ordinal')"
+    assert_equals "$culture" "" "the PowerShell twin uses no culture-aware comparison operator"
+    assert_equals "$search" "" "the PowerShell twin uses no culture-aware string search"
+
     # A6.6: the same kinds, and the same usage apart from the script's own name.
     sh_kinds="$(sed -n 's/^PMB_KINDS=" \(.*\) "$/\1/p' "$J")"
     assert_equals "$(pdot "$T/on" 'Write-PmbOut ($PmbKinds -join " ")')" "$sh_kinds" "ps1 and sh accept the same kinds"

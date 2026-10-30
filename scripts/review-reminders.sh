@@ -1,21 +1,23 @@
 #!/usr/bin/env sh
 # PreToolUse hook — blocks git commit/push until the matching review slash command has run,
-# and unconditionally blocks `gh pr merge` outright. /code-review writes
-# .claude/.code-review-ok on an Approve verdict; /change-review writes .claude/.change-review-ok
-# when no finding is Blocking. Each marker authorizes exactly one commit or push attempt for a
-# SPECIFIC diff -- see below.
+# and puts `gh pr merge` to the user as a permission prompt in one canonical form only.
+# /code-review writes .claude/.code-review-ok on an Approve verdict; /change-review writes
+# .claude/.change-review-ok when no finding is Blocking. Each marker authorizes exactly one
+# commit or push attempt for a SPECIFIC diff -- see below.
 #
-# WHY `gh pr merge` gets an unconditional deny instead of a third diff-bound marker: by the
+# WHY a merge gets a permission prompt ("ask") instead of a third diff-bound marker: by the
 # time a PR is mergeable, its diff already passed the commit gate, the push gate, and (per
-# branch protection's required-status-checks with strict:true) CI on the current head -- a
-# third hash gate here would mostly re-verify what's already verified, while adding real
-# fragility (PR-number/--repo parsing, a `gh pr diff` API call inside a hook). The actual gap
-# at merge time isn't diff integrity, it's authorization: merging changes shared history and
-# should never happen without the user deciding to do it in that moment, and a hash can't
-# encode "the user meant this right now." This hook can only ever see commands *this agent*
-# runs -- the user's own terminal is invisible to it -- so an unconditional deny is both
-# correct and total: if this hook fires at all, it's the agent trying to merge, never the
-# user, so there is no legitimate case to allow through.
+# branch protection's required-status-checks with strict:true) CI on the current head. The
+# gap at merge time isn't diff integrity, it's authorization -- the user deciding, in that
+# moment, to merge that PR -- and no marker the agent can write encodes that. The harness's
+# own Allow/Deny prompt is the one per-action approval the agent cannot forge. This replaced
+# an unconditional deny on 2026-10-20, which forced the user to run every merge in a terminal
+# and was never total anyway (escape spellings: docs/backlog/merge-gate-misses-gh-global-
+# flags-graphql-and-powe.md). Measured in the desktop app in auto mode before shipping: the
+# ask stopped for the user's click every time. _review-gate-merge.py decides; only one exact,
+# repo-pinned form with --match-head-commit is ever asked, from the main agent, in a mode
+# that can show a prompt. Everything else still denies. Spec, threat model and the residuals
+# it accepts: docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md.
 #
 # WHY the marker holds a SHA-256 hash of the reviewed diff, not an empty file: an empty
 # marker is trivially fakeable with `touch` -- anyone (or a rushed agent) can satisfy the
@@ -60,8 +62,12 @@
 input=$(cat 2>/dev/null)
 [ -z "$input" ] && exit 0
 
+# WHY escape: the reason is printed inside a JSON string. Unescaped, a `"` (the unresolved-root
+# message's cd "<repo>"), or a `\` or control character in an interpolated repository path, made
+# the whole output invalid JSON (measured 2026-10-19 on the unresolved-root message).
 deny() {
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
+    deny_reason=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$deny_reason"
 }
 
 # CLAIM-THEN-RESTORE. Two properties have to hold at once, and the obvious shapes each give
@@ -122,6 +128,7 @@ classify_payload() {
 
 verdict=$(classify_payload)
 classifier_rc=$?
+verdict_source=classifier
 
 # WHY a fallback rather than exiting 0: a payload we cannot classify is not evidence the call
 # is safe. python3 absent, the classifier missing, or genuinely malformed JSON all land here.
@@ -146,6 +153,7 @@ if [ -z "$verdict" ]; then
     # `tr` is POSIX and needs no python3 -- which matters here specifically, because this whole
     # branch exists for the case where python3 or the classifier is unavailable. A fallback that
     # depended on the thing it is falling back from would be no fallback at all.
+    verdict_source=fallback
     lower=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')
     fallback_count=0
     fallback_verdict=NONE
@@ -164,9 +172,29 @@ if [ "$verdict" = MULTI ]; then
     exit 0
 fi
 
-# A merge needs no root and no marker -- it is refused unconditionally.
+# A merge needs no root and no marker. It is put to the user as a permission prompt only when
+# _review-gate-merge.py answers ASK; anything else -- a fallback verdict, a missing helper, no
+# python3, a crash -- denies. See the WHY at the top of this file.
 if [ "$verdict" = MERGE ]; then
-    deny "This agent never merges pull requests, even with explicit instruction -- merging shared history requires a human to run the command directly. Run the merge command yourself."
+    merge_decision=""
+    if [ "$verdict_source" = classifier ] && [ -f "$(dirname "$0")/_review-gate-merge.py" ]; then
+        merge_decision=$(printf '%s' "$input" | python3 "$(dirname "$0")/_review-gate-merge.py" 2>/dev/null)
+    fi
+    merge_verdict=$(printf '%s\n' "$merge_decision" | sed -n 1p | tr -d '\r')
+    merge_reason=$(printf '%s\n' "$merge_decision" | sed -n 2p | tr -d '\r')
+    if [ "$merge_verdict" = ASK ]; then
+        ask_reason=$(printf '%s' "$merge_reason" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')
+        printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}\n' "$ask_reason"
+        # Written after the decision, and allowed to fail: a convenience record of what was
+        # asked, not of the user's answer. GitHub's "merged by" is the authoritative record.
+        merge_audit=$(printf '%s\n' "$merge_decision" | sed -n 3p | tr -d '\r')
+        printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$merge_audit" \
+            >> "${CLAUDE_PROJECT_DIR:-.}/.claude/merge-asks.log" 2>/dev/null || true
+    elif [ "$merge_verdict" = DENY ] && [ -n "$merge_reason" ]; then
+        deny "$merge_reason"
+    else
+        deny "This agent merges a pull request only after the merge gate has checked it, and the check could not run here (no classifier verdict, python3 or scripts/_review-gate-merge.py unavailable). Merge in the GitHub UI instead."
+    fi
     exit 0
 fi
 
@@ -235,12 +263,36 @@ if ! cd "$root" 2>/dev/null; then
     exit 0
 fi
 
+# WHY name the root in the empty-diff denials: a command whose cd was not its first word
+# (`N=...; cd "<worktree>" && git push`) fell back to the hook's working directory, the main
+# checkout, whose diff was empty -- and the denial gave no hint which tree it had checked.
+# The cd form named here is the one the resolvers accept: quoted, first in the command, then &&
+# (_review-gate-classify.py CD_PREFIX). An unquoted cd falls back to the working directory again.
+root_hint="The gate checked $root: it takes the repository from a quoted cd \"<path>\" && chain at the very start of the command plus any git -C path, else from the hook's working directory. If that is the wrong tree, start the command with cd \"<repo>\" &&."
+
 case "$verdict" in
     COMMIT)
         expected=$(diff_hash HEAD)
         marker="$root/.claude/.code-review-ok"
         if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then
-            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself."
+            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself. $root_hint"
+        elif ! git diff --quiet --no-ext-diff --no-textconv 2>/dev/null; then
+            # The marker binds `git diff HEAD` (working tree vs HEAD), but a commit records the
+            # INDEX, so with part of the reviewed change left unstaged both hashes still match and
+            # the marker would certify content the commit does not contain (OPP6-1). Requiring
+            # index == working tree for tracked files, at hook time, closes that; it cannot see
+            # what a chained command does after this hook returns.
+            # Checked here rather than hashing `git diff --cached HEAD` instead: this hook runs
+            # before `git commit -a` stages anything, so a cached hash would let a partly-staged
+            # -a commit carry unreviewed changes. The price is that `-a` over unstaged changes is
+            # refused too. --no-ext-diff/--no-textconv: a textconv filter, or an external diff
+            # driver with diff.trustExitCode, can report "no difference" for an index and working
+            # tree whose bytes differ (measured with git 2.55: both made --quiet exit 0). Any non-zero
+            # exit, including a git error, refuses. Runs before the claim, so a refusal leaves the
+            # marker for the retry.
+            # Put comments below this elif, never above it: tests/mutate.py anchors on the
+            # empty-diff deny being directly followed by this elif.
+            deny "Review gate: tracked changes are unstaged (or git diff failed), so this commit would not contain everything the review marker certifies. Stage every reviewed change in a separate command first -- this hook runs before any git add chained into the same command, and before git commit -a stages anything -- then commit. To keep part of the change out of this commit (whole files only), set it aside with a tagged stash: git stash push -m <unique-tag> -- <paths>, re-run /code-review on what remains, and commit. Then restore it with git stash apply <sha> (the SHA from git stash list --format='%H %gs') and drop that entry by its current stash@{n}. The stash stack is shared across worktrees, so never use a bare git stash pop. $root_hint"
         elif actual=$(claim_marker "$marker"); then
             if [ "$actual" = "$expected" ]; then
                 drop_marker "$marker"
@@ -265,7 +317,7 @@ case "$verdict" in
         fi
         marker="$root/.claude/.change-review-ok"
         if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then
-            deny "Review gate: there is no diff to review (both origin/main...HEAD and HEAD produced an empty diff, or git diff failed). The hash of an empty diff is a public constant and cannot serve as proof of review."
+            deny "Review gate: there is no diff to review (both origin/main...HEAD and HEAD produced an empty diff, or git diff failed). The hash of an empty diff is a public constant and cannot serve as proof of review. $root_hint"
         elif actual=$(claim_marker "$marker"); then
             if [ "$actual" = "$expected" ]; then
                 drop_marker "$marker"
@@ -279,6 +331,11 @@ case "$verdict" in
         else
             deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
         fi
+        ;;
+    *)
+        # A verdict this hook does not know -- a newer classifier beside an older hook, or
+        # garbage -- must not fall through to exit 0, which is allow.
+        deny "Review gate: unrecognised classifier verdict, so this command cannot be checked. The hook and scripts/_review-gate-classify.py are probably from different versions; run mb upgrade from the main worktree."
         ;;
 esac
 exit 0

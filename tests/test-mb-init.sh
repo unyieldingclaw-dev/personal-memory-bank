@@ -61,7 +61,7 @@ for f in _review-gate-lib.sh _review-gate-lib.ps1; do
   assert_file_exists "$TMPDIR_INIT/scripts/$f" "mb init creates scripts/$f"
 done
 
-for f in _review-gate-classify.py _review-gate-classify.ps1; do
+for f in _review-gate-classify.py _review-gate-classify.ps1 _review-gate-merge.py _review-gate-merge.ps1; do
   assert_file_exists "$TMPDIR_INIT/scripts/$f" "mb init creates scripts/$f"
 done
 

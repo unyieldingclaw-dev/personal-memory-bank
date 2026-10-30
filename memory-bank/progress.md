@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-10-19
+last-reviewed: 2026-10-23
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -13,68 +13,53 @@ lineage: []
 
 # Progress
 
-## 2026-10-19 — PR #63 merged (`d3f87f8`): FIFO-safe journal gate, ps1 regular-file check
+## 2026-10-23 — PR #85 merged (`c2a5d1c`): merge-gate follow-ups; their sessions; an ACR timeout
 
-- What changed is in `d3f87f8`'s message. Carry-overs, and what still gates the flag PR: `[NS-68]`.
-- Funded by moving `[NS-25]` verbatim to `docs/archive/`; that saves bytes, not lines.
+- What changed, the verification figures and the /change-review conditions: the PR #85 body and the messages of
+  `73deeeb`, `dadda3e`, `3439d4b` and `208ab36`. The gate merged its own PR (the user clicked Allow; logged in
+  `.claude/merge-asks.log`). Open conditions and owners: `[NS-65]`.
+- Also 2026-10-23: `[NS-58]` got an owner; ACR 1.15.0's ~307 s "fetch failed" is undici's 300 s headersTimeout
+  (`[NS-48]`).
 
-## 2026-10-18 — C1 Plan A merged (#57, `d751b73`); PreCompact lock-up recorded (#62, `e38620f`)
+## 2026-10-23 — PR #81 merged: the merge deny became a user-clicked permission prompt
 
-- **#57** adds the bash journal and its PowerShell twin, plus a journal-mode PreCompact gate: auto never
-  blocks; a manual one with no new qualifying record is blocked once and passes on repeat (any
-  compaction re-arms it), and its two environment blocks repeat until fixed. Inert until Plan C's
-  flag PR (`[NS-68]`).
-- **Its first Linux CI run hung for about 2 h** on a planted FIFO. On pwsh 7.4.7, `Get-Item` reports a
-  FIFO's `UnixMode` as a regular file, and its provider rewrites `\` to `/`. Fixed in `4738ad5` (PR #57 branch; squashed into `d751b73`) with
-  `/usr/bin/test -f`. The hardening follow-ups are PR #63.
-- **#62** records the 2026-09-27 lock-up in `docs/backlog/`. The dispositions of the four backlog items
-  the C1 spec absorbed are set in this entry's commit.
+- Detail and open items (G1-G3; `327c6c2`, rebased as `73deeeb`, merged in PR #85): `[NS-65]` in `activeContext.md`; spec
+  `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`.
 
-## 2026-10-14 — PR #55 opened (WARN-tier hooks → JSON); its review's findings recorded
+## 2026-10-20 — PRs #77 (`1b086c7`) and #58 (`25515a2`) merged
 
-- PR #55 got `/code-review` Approve and `/change-review` Approve with conditions in its worktree,
-  and is open for the user to merge (`[NS-66]`). Its review found four pre-existing hook defects, now `[NS-67]`.
-- Recorded from the main checkout, since a worktree may not edit `memory-bank/`. Funded by moving
-  "Earlier Work" out verbatim; see its stub below.
+- **#77:** the review gate's empty-diff denial now names the root it checked (`review-reminders` sh/ps1 + templates
+  mirrors); J5-1 path pinned in `tests/test-review-reminders.sh`. Merged 2026-10-19.
+- **#58:** `docs/CLAUDE-CODE-PLUGINS.md` limits external skill-library guidance to actual plugin choices.
 
-## 2026-10-13 — Memory-bank reconciliation committed after an 8-day pause
+## 2026-10-20 — PRs #59 (`5c6f8e4`) and #71 (`2c4088f`) merged
 
-- `/code-review` passed (Opus Approve) once the session resumed. A wiped scratchpad was handled by
-  re-deriving every reviewed figure, so the diff was proven unchanged before Step 5.
-- The merge-gate order is now in [NS-65] (user decision). The archive header's reproducer now cites
-  `3cadb06`; its `47,109` range was true only of the uncommitted working file.
+- **#59:** `update-reviewed.sh` bash fallback: no file loss on a backslash Windows path, stdin read under a
+  native pipe (SQA #25/#26). Its advisory, paths-filtered Windows CI workflow must not become a required check.
+- **#71 (OPP6-1):** the commit gate refuses while any tracked change is unstaged (marker hashes the working
+  tree, a commit records the index; near-miss 2026-10-16). Stage in a separate command; `git commit -a` is
+  refused. Outside-pushed `1be7055c`, `e2b52866` retired by an `-s ours` merge. Follow-ups: `[NS-69]`.
 
-## 2026-10-05 — PRs #51 (`07e3bd2`) and #53 (`3cadb06`, [NS-19]) merged
+## Relocated 2026-10-04 → 2026-10-19 — five sections moved verbatim 2026-10-23
 
-- **#53:** `/change-review` approved it with conditions. The CHANGELOG `mb plan promote` entry
-  blamed `awk`; the shipped bug was `sed -i`. Corrected here. Its parity and test gaps are listed
-  in the PR #53 body.
-- **A reviewer subagent ran `git commit` inside a script file**, which the PreToolUse gate cannot
-  see. It targeted a scratch repo, and the reflog was clean.
-  `docs/backlog/review-gate-is-bypassed-by-a-git-verb-held-in-a-va.md` already measured that case.
-- **`mb verify-integrity` flagged all five files** against a PowerShell-written baseline, which
-  holds uppercase hashes. That is [NS-36], live.
+Moved to `docs/archive/progress-2026-10-04-to-19-c1-plan-a-and-journal-hardening.md` **verbatim**, to fund
+the PR #85 entry under the ratchet. Citation check: that file's header. The original headings are kept
+below, so `progress.md <date>` references still resolve. Three earlier stubs are folded in, with their files.
 
-## 2026-10-04 — `mb doctor --check` and pre-push Check 7 (PR #51)
-
-- Two full `/code-review` rounds. Round 1 was blocked on a test that could not fail (the
-  redundant-match-path trap in `standards/CODE-REVIEW.md`), caught by the Testing domain's
-  mutation run.
-- The worktree-isolation guard refuses `/code-review` Step 5's compound marker command, so the
-  marker was written in separate commands.
-- Correction: `tests/test-mirror-parity.sh` DOES cover `scripts/pre-push-check.*`, through the
-  TEMPLATE_OWNED sweep.
+- **2026-10-19 — PRs #64, #72, #69, #74 and #75 merged**
+- **2026-10-19 — PR #65 merged (`0b67d9d`): no FIFO hang at `started` or the gate probe**
+- **2026-10-19 — PR #63 merged (`d3f87f8`): FIFO-safe journal gate, ps1 regular-file check**
+- **2026-10-18 — C1 Plan A merged (#57, `d751b73`); PreCompact lock-up recorded (#62, `e38620f`)**
+- **2026-10-14 — PR #55 opened (WARN-tier hooks → JSON); its review's findings recorded**
+- **2026-10-13 — Memory-bank reconciliation committed after an 8-day pause**
+  (both: `docs/archive/progress-2026-10-13-and-10-14-reconciliation-and-pr55.md`)
+- **2026-10-05 — PRs #51 (`07e3bd2`) and #53 (`3cadb06`, [NS-19]) merged**: `docs/archive/progress-2026-10-05-prs-51-and-53.md`
+- **2026-10-04 — `mb doctor --check` and pre-push Check 7 (PR #51)**
 
 ## 2026-10-04 — PR #47 merged (`19931dc`); `fix/ns19` rebased onto it
 
-- `fix/ns19-plan-workflow-template` was rebased onto `437d3c1` and `19931dc`, and on 10-05 onto
-  `07e3bd2` (#51). Its `progress.md` and `CHANGELOG.md` conflicts were resolved by date order
-  and by keeping both entries. Its hash citations now name the branch, because a rebase and a
-  squash merge both rewrite hashes.
-- The stale root `handoff.md` (2026-09-25) has landed except for two things: its Codex-sandbox ACR
-  note, carried by PR #48 (still open), and the open decision to track or ignore `.agents/` and
-  `.codex/`. PR #48 tracks only 1 of the 9 `.agents/` files. Delete it only once both have a
-  durable home, and with user confirmation.
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`. Still open: PR #48
+and the track-or-ignore decision for `.agents/`/`.codex/`.
 
 ## 2026-09-30 — PR #49 merged (`584a8e4`); two review-gate escapes open
 
@@ -84,9 +69,7 @@ lineage: []
 
 ## 2026-09-26 — [NS-19] plan workflow fixed; diff-only standards reversed by fleet data
 
-- Pre-approval adversarial review of "make `mb.ps1` diff-only for `standards/`": 7 of 8 adopter repos hold the
-  same OLD shipped blobs (e.g. `CODE-REVIEW.md` `8b9d06c1` in 3 repos, spot-checked), so the harm is stale
-  standards, not lost edits. Diff-only deferred to a design (overwrite only on a known shipped version).
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`.
 
 ## Relocated 2026-09-21 → 2026-09-25 — three sections moved verbatim 2026-10-05
 

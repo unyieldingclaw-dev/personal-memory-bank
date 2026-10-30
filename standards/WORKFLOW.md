@@ -75,22 +75,17 @@ frontmatter already carries a later status, which is kept. The draft stays in `.
 
 ---
 
-### Phase 3.5 — Independent Plan Review (advisory — not one of the 7 counted phases)
+### Phase 3.5 — Independent Plan Review (superseded by the Pre-Approval Protocol)
 
-Not a gate: advisory, not one of the 7 phases. This step is deliberately scoped as a recommended practice inserted between Plan and Implement, not an 8th phase — matching the precedent `.claude/commands/change-review.md`'s own "Step 3.5: Baseline Repo Health" already sets for a non-counted, informational step.
+Superseded by the Pre-Approval Protocol section below (approved 2026-09-21, in force from the merge
+that added it).
+- **Every approval ask** now gets that protocol's pre-ask checks, which Claude runs itself.
+- **The independent review this phase recommended** (a fresh agent with no context from writing the
+  artifact) runs only when the ask hits CLAUDE.md's escalation triggers, through the Opus
+  `opposition` agent. Writing a spec or plan is one of those triggers, so specs and plans still get
+  it.
 
-**Why:** self-review, however adversarial, shares the blind spots of whoever wrote the plan. A 14-task plan for this repo's own review-gate mechanism passed its author's self-review (which found 3 real gaps) — a separately-dispatched agent with no context from writing it then found 8 more real, file:line-verified defects, including a Blocking-severity bug the self-review missed. See `docs/superpowers/specs/2026-08-12-investigation-integrity-design.md`'s "independent review discipline" (mechanism 3) for the full mechanism.
-
-**What happens:**
-- Dispatch a fresh Agent, no context from writing the plan, on a capable model — never a cost-optimized/cheap model (this project's subagent default may be cost-optimized; override it)
-- It independently verifies the plan against its spec and the actual current repo state, including tracing shell-script error-handling behavior and templates/ mirror consistency
-- Findings use this repo's `standards/CODE-REVIEW.md` vocabulary (`VERIFIED`/`INFERRED`/`SPECULATIVE`, `Severity`, `Blocking`)
-- Any `Blocking: true` finding should be fixed before proceeding; non-blocking findings are disclosed in the plan's Design Note, not silently dropped
-- If the review agent itself fails to complete, retry once; if still blocked, disclose to the user and get an explicit decision before proceeding without one
-
-**Output:** A plan verified by someone other than its own author, or an explicit, disclosed decision to proceed without one.
-
-**Recommended for:** any plan with real consequence. Lighter-weight for small or low-risk plans — use judgment, since this step is advisory rather than a hard-and-fast gate.
+The heading stays so existing references to "Phase 3.5" still resolve.
 
 ---
 
@@ -163,7 +158,11 @@ git add <specific files — never git add -A blindly>
 git commit -m "feat: <what was built and why in one line>"
 ```
 
+Stage in a command of its own, then commit: the commit review gate runs before a chained `git add` or `git commit -a` stages anything, and refuses while any tracked change is unstaged. To commit only some files, set the rest aside with a tagged stash (`git stash push -m <unique-tag> -- <paths>`), re-run `/code-review` on what remains, and commit. Then restore them with `git stash apply <sha>` (the SHA from `git stash list --format='%H %gs'`) and drop that entry by its current `stash@{n}`. The stash stack is shared across worktrees, so never use a bare `git stash pop`.
+
 Never commit `.env`, credentials, or unrelated changes.
+
+**Changelog:** do not edit `CHANGELOG.md`. Add `changelog.d/<branch-slug>.md` (the branch name with each `/` replaced by `-`, so `feat/foo` writes `feat-foo.md`) holding `### Added`, `### Changed`, `### Fixed` (and similar) headings with bullets under them. Name it after the branch, not the PR, because the PR number does not exist at the first commit. **Why:** every PR used to add lines at the top of `[Unreleased]`, so concurrent PRs conflicted there and each sync of `main` changed the push gate's diff hash. A release folds the fragments into `CHANGELOG.md` and deletes them with `bash scripts/changelog-assemble.sh <X.Y.Z>`; `--preview` prints the unreleased notes.
 
 ---
 
@@ -174,7 +173,7 @@ Never commit `.env`, credentials, or unrelated changes.
 | 1. Brainstorm | Trivial change | Agreed approach |
 | 2. Spec | No spec needed | docs/specs/*.md |
 | 3. Plan | No spec needed | docs/plans/*.md |
-| 3.5 Independent Plan Review (advisory) | Small/low-risk plan | Verified plan or documented decision to proceed without |
+| 3.5 Independent Plan Review (superseded) | — | See Pre-Approval Protocol |
 | 4. Implement | — | Committed, tested code |
 | 5. Simplify | — | Clean committed code |
 | 6. Security Review | — | Resolved findings |
@@ -188,12 +187,71 @@ If using the Superpowers plugin, each phase maps to a skill:
 |-------|-------|
 | Brainstorm | `superpowers:brainstorming` |
 | Plan | `superpowers:writing-plans` |
-| Independent Plan Review (advisory) | No dedicated skill yet — dispatch a fresh `Agent` (general-purpose or Explore) on a capable model, self-contained prompt |
+| Pre-Approval Protocol | No skill. The procedure is in this file; the `pre-approval-check` Stop hook checks that its sections are present; `opposition` handles escalation-list asks |
 | Implement | `superpowers:executing-plans` or `superpowers:subagent-driven-development` |
 | Simplify | `code-simplifier` plugin |
 | Security Review | `security` plugin or `/security-review` command |
 
 Run `/feature-dev` in Claude Code to trigger the full workflow automatically.
+
+## Pre-Approval Protocol
+
+**Applies to every message that asks the user to approve or choose:** design recommendations, specs,
+plans, task contracts, "should I proceed". It is not a phase: it runs inside whichever phase produces
+the ask, so the workflow stays at 7 phases. It supersedes Phase 3.5. Design and evidence:
+`docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md`.
+
+**Before the ask:**
+
+1. **Run the checks the options depend on.** Execute rather than re-read. Re-derive every number
+   relied on, measure anything performance-relevant, read config instead of assuming it, and check
+   each claim about a file against the file as it is now. Checks must not mutate the shared working
+   tree: cite the last run of `tests/run.sh`, which moves `VERSION` aside, instead of running it
+   mid-ask.
+2. **If the ask hits the trigger list in CLAUDE.md's Token Budget section** ("Escalate on
+   observable triggers"; referenced, not copied here), dispatch the `opposition` agent after step 1.
+   Give it the artifact, the step-1 findings, and the instruction to attack premises and re-derive
+   the load-bearing numbers. Retry once on failure; if it fails again, say so in the findings. Use
+   CLAUDE.md's list, not this file's own **Token Budget** bullet below: that one is narrower, and
+   omits writing a design spec or implementation plan, the trigger this protocol relies on most.
+3. **Fix what is within the thing being proposed.** Anything that would change a decision the user
+   already made goes under the decision instead.
+4. **Send the ask with these sections, in the message's final text block:**
+
+   ```
+   ## Findings
+   | # | Question | How I checked (command or source) | Result |
+
+   ## Recommendation
+   <what I recommend, and why>
+   <holes I could not close>
+   <the decision needed>
+   ```
+
+   - Every row names a re-runnable command or source.
+   - When nothing needed checking, the table still appears, with one row saying so.
+   - When the escalation list fired, one row carries the `opposition` verdict.
+   - A question that is not an approve-or-choose ask still needs a Recommendation.
+   - A Task Contract proposal in CLAUDE.md's format is an approval ask too. Put both sections
+     above its `Type "approved"` line. The hook checks only that they are present somewhere in the
+     message, and sends the proposal back if they are not.
+
+**Enforcement:**
+- **The hook:** `pre-approval-check` (PMB-only; `docs/HOOKS-GUIDE.md` §2) sends back, once, any
+  turn that ends in an ask without these sections.
+- **False positives:** reply `Not an approval ask:` with one line of why. For a clarifying question,
+  reply `No recommendation applies:`.
+- **What it checks:** the hook confirms the sections exist, not that the checks behind them were
+  adequate. Adequacy stays with the `opposition` pass.
+- **What it is not:** a gate.
+  - It checks a turn once; the continuation after a block always passes.
+  - It detects asks heuristically.
+  - It fails open on any error.
+  - It can be switched off (below).
+
+  It adds friction toward the protocol. Running the checks stays Claude's job.
+- **Kill switch:** `"PMB_PRE_APPROVAL": "off"` in the `.claude/settings.json` env block. It
+  takes effect on the next turn.
 
 ## Context Management
 
