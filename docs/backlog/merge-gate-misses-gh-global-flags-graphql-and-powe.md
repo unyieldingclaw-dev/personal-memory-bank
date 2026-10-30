@@ -266,7 +266,7 @@ contract, and a full `/code-review` and `/change-review`.
    them destructively (see the note at the end of this step). What follows is measured state, which
    the spec needs as input; the mechanism is the spec's to choose.
    - **Measured: the Python classifier has no CI-enforced unit coverage; the PowerShell one does.**
-     `tests/run.sh` runs every tracked `tests/test-*.sh`, each with `bash "$script"`. Since PR #94
+     `tests/run.sh` runs every tracked `tests/test-*.sh`, each with `bash "$script"`. Since PR #106
      it enumerates them with `git ls-files` and there is no registration step; that PR retired the
      hand-kept `run_suite` list and the completeness check this step once cited. CI's Pester job
      runs `Invoke-Pester -Path "tests/"`, which picks up `tests/review-gate-classifier.Tests.ps1`.
@@ -299,7 +299,7 @@ contract, and a full `/code-review` and `/change-review`.
      green-by-absence mode that survives any choice of mechanism:
      - A tracked suite of the chosen type must run with no registration step, or a missing
        registration must make `tests/run.sh` fail. A tracked `tests/test-*.sh` already runs that
-       way (PR #94), but the enumeration cannot reach an underscore-named `.py`; on the
+       way (PR #106), but the enumeration cannot reach an underscore-named `.py`; on the
        PowerShell side there is no completeness check at all, and `Invoke-Pester` discovers
        `*.Tests.ps1` by naming convention.
      - A `templates/` twin that drifts from its `scripts/` original must make the suite fail. See
