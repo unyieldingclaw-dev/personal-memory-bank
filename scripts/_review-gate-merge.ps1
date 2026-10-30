@@ -46,6 +46,15 @@ function Get-MergeGateTrimmedText {
     $Text.Trim($script:MergeGateWsChars)
 }
 
+function ConvertTo-MergeGateAsciiLower {
+    # ASCII letters only, as ASCII_LOWER in the .py twin; ToLowerInvariant would also fold the
+    # Kelvin sign to k. Replace(char, char) is ordinal, and 26 native calls cost far less than the
+    # scriptblock per upper-case letter a [regex]::Replace evaluator ran.
+    param([string]$Text)
+    for ($c = 65; $c -le 90; $c++) { $Text = $Text.Replace([char]$c, [char]($c + 32)) }
+    $Text
+}
+
 function Get-MergeGateProbeCommand {
     param([string[]]$Repos)
     $zero = '0' * 40
@@ -99,15 +108,21 @@ function Test-MergeGateCapableRule {
     $r = Get-MergeGateTrimmedText $Rule
     if ($r -cnotmatch '(?s)\A(Bash|PowerShell)(?:\((.*)\))?\z') { return $false }
     if (-not $Matches.ContainsKey(2)) { return $true }
+    $tool = $Matches[1]
     $body = Get-MergeGateTrimmedText $Matches[2]
+    # Both sides, for a PowerShell rule only (WHY in the .py twin's merge_capable).
+    if ([string]::Equals($tool, 'PowerShell', [System.StringComparison]::Ordinal)) {
+        $body = ConvertTo-MergeGateAsciiLower $body
+        $Probes = @(foreach ($p in $Probes) { ConvertTo-MergeGateAsciiLower $p })
+    }
     if ([string]::Equals($body, '*', [System.StringComparison]::Ordinal) -or [string]::Equals($body, ':*', [System.StringComparison]::Ordinal)) { return $true }
     if ($body -cmatch ('\Agh(?:' + $ws + '*\*|:\*)?\z')) { return $true }
     if ($body -cmatch ('\Agh' + $ws + '+(?:api' + $end + '|-)')) { return $true }
     if ($body -cmatch ('\Agh' + $ws + '+pr(?:' + $ws + '*\*|:\*)\z') -or $body -cmatch ('\Agh' + $ws + '+pr' + $ws + '+merge' + $end)) { return $true }
     foreach ($p in $Probes) { if (Test-MergeGateGlob $body $p $Budget) { return $true } }
-    $lower = [regex]::Replace($body, '[A-Z]', { param($m) $m.Value.ToLowerInvariant() })
+    if (-not $body.Contains('*')) { return $false }
     $interp = '\A(?:python3?|py|node|pwsh|powershell|bash|sh|cmd)(?:\.exe)?(?:' + $ws + '.*)?' + $ws + '(?:-c|-e|--eval|-command|-encodedcommand|/c)' + $end
-    return ($body.Contains('*') -and $lower -cmatch $interp)
+    return ((ConvertTo-MergeGateAsciiLower $body) -cmatch $interp)
 }
 
 function Get-MergeGateSettingsFile {
@@ -123,7 +138,9 @@ function Get-MergeGateSettingsFile {
 function Get-ReviewGateMergeDecision {
     param([string]$Raw, [string]$ProjectDir)
 
-    $payload = $Raw | ConvertFrom-Json -ErrorAction Stop
+    # -NoEnumerate, as in ConvertFrom-MergeGateJson: enumerated, a one-element array payload read
+    # as the object inside it and asked, where the .py twin denies.
+    $payload = $Raw | ConvertFrom-Json -NoEnumerate -ErrorAction Stop
     if ($payload -isnot [System.Management.Automation.PSCustomObject]) {
         return Get-MergeGateDenial $script:MergeGateGenericDeny 'payload is not a JSON object'
     }
@@ -154,6 +171,7 @@ function Get-ReviewGateMergeDecision {
     }
     $probes = Get-MergeGateProbeCommand $repos
     $budget = @{ Steps = $script:MergeGateGlobBudget }
+    $kept = [System.Collections.Generic.List[object]]::new()
 
     foreach ($path in (Get-MergeGateSettingsFile $ProjectDir)) {
         if (-not (Test-Path -LiteralPath $path)) { continue }
@@ -188,6 +206,7 @@ function Get-ReviewGateMergeDecision {
             if ($rule -isnot [string] -or (Test-MergeGateCapableRule $rule $probes $budget)) {
                 return Get-MergeGateDenial $script:MergeGateGenericDeny "merge-capable allow rule in: $path"
             }
+            $kept.Add([pscustomobject]@{ Path = $path; Rule = $rule })
         }
     }
 
@@ -202,6 +221,12 @@ function Get-ReviewGateMergeDecision {
         return Get-MergeGateDenial ("This agent merges a pull request only in exactly this form, with nothing before or after it: gh pr merge <N> -R " + $repos[0] + " --squash --match-head-commit <full 40-hex head SHA> (or --merge in place of --squash). Use the PR number and head SHA the user asked for.")
     }
     $m = $Matches
+    # Again with the matched command as the only probe (WHY in the .py twin's main).
+    foreach ($k in $kept) {
+        if (Test-MergeGateCapableRule $k.Rule @($command) $budget) {
+            return Get-MergeGateDenial $script:MergeGateGenericDeny "allow rule matches this merge command in: $($k.Path)"
+        }
+    }
     $desc = Get-MergeGateProperty $toolInput 'description'
     if ($desc.Present -and -not ($desc.Value -is [string] -and [string]::Equals($desc.Value, $script:MergeGateDescription, [System.StringComparison]::Ordinal))) {
         return Get-MergeGateDenial ('Set the tool description to exactly "' + $script:MergeGateDescription + '", or omit it. The prompt shows it, so it must not describe the merge in the agent''s own words.')
