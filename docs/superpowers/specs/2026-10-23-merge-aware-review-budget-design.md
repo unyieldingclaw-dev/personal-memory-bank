@@ -281,6 +281,8 @@ pull_request merge ref, base = `HEAD^1` and the PR head = `HEAD^2`. For every me
   Measured: `git rev-list 1eda52c..07dfd49` contains 33b7517, which is not in base. A usable
   definition names the parent, for example "P2 is an ancestor of a named, gate-reviewed
   stack-parent head". Choosing it is the user's call, and it is needed before step 5.
+- **Also OPEN (§10, F6, 2026-10-30):** a reconcile merge whose P2 is a PR-branch-only commit, such
+  as c9bfba1 with P2 335974e, fails the ancestor rule on a correct, reviewed history.
 
 **Adopters (templates).** The review-gate scripts are mirrored into `templates/scripts/` and
 shipped by `mb upgrade`, but `templates/.github/workflows/` holds only `memory-bank-size.yml`, and
@@ -359,7 +361,8 @@ broken main is visible downstream, not just inconvenient.
 
 **Recommendation:**
 - **Now: A′.** Keep strict and sync lazily. It needs no setting change and leaves the merge gate's
-  premise intact. It cuts the eager O(n²) to about one sync per merge.
+  premise intact. It cuts the eager O(n²) to about one sync per merge. *Narrowed 2026-10-30
+  (§10, F1): never Update branch while the PR's session has unpushed commits.*
 - **Not C on its own.** C drops a premise of a live enforcement layer while main is still the
   distribution channel, and it would not have avoided #78's conflict-driven syncs.
 - **If a stronger cut is wanted later: C′.** It adds the staleness check before strict goes, as an
@@ -448,7 +451,7 @@ Cheapest and most reversible first. Measure before building the expensive part.
    as 1.3.0 (§5.1 a), and adopt lazy syncing (§4 A′).
 4. **Measure for two weeks.** Count syncs, how many conflicted (S2), and **which gate paid**
    (commit or push). Until then the only evidence is #78: two conflicted syncs (S2) and one clean
-   one (S0, 7e839fd).
+   one (S0, 7e839fd). *First measurement taken early on 2026-10-30: build neither yet (§10).*
 5. **What to build next depends on step 4's measurement** (strict is kept, per OQ-1):
    - **Clean syncs still common** (many S0): build the push-gate S0/S1 pass, the CI backstop and
      the templates opt-in **in one PR** (§3.4, §3.8). The pass relies on the backstop. First
@@ -469,7 +472,7 @@ Cheapest and most reversible first. Measure before building the expensive part.
 
 | OQ | Question | Decision |
 |---|---|---|
-| OQ-1 | `strict` up-to-date (§4) | **A′: keep strict, sync lazily.** Only the PR next to merge is synced. No setting change. |
+| OQ-1 | `strict` up-to-date (§4) | **A′: keep strict, sync lazily.** Only the PR next to merge is synced. No setting change. Narrowed 2026-10-30 (§10, F1): and never while its session has unpushed commits. |
 | OQ-2 | First release | **Cut 1.3.0 now** (§5.1 a). The user approves the tag push. |
 | OQ-3 | Panel for scoped reviews (§3.5) | **Full 5 domains plus Opus opposition when the scope touches an enforcement path.** Otherwise correctness and maintainability with a Sonnet opposition. |
 | — | Enforcement paths (defines C4's missing term) | `scripts/`, `.githooks/`, `mb.sh`, `mb.ps1`, `.claude/`, `.github/`, `templates/`, `tests/`, `standards/`, `CLAUDE.md`, `.gitattributes`, `.gitignore`. |
@@ -505,6 +508,12 @@ Cheapest and most reversible first. Measure before building the expensive part.
   - a merge whose P2 is a forged base fails.
 
   A stacked sync stays class N locally (§3.2).
+- **Fixtures added by the 2026-10-30 measurement (§10):**
+  - Backstop: a reconcile merge whose P2 is a PR-branch-only commit that a squash merge left out
+    of main (c9bfba1 with P2 335974e). The expected verdict is OPEN until the OQ-5 definition is
+    chosen.
+  - Push: unpushed local commits, then an Update branch on the remote, then a non-fast-forward
+    rejection. Assert what happens to the push marker (F1).
 
 ## 9. Out of scope
 
@@ -615,3 +624,80 @@ building step 5, not committing this record".
   - `merge.default=union` in `.git/config` turns a conflict into a clean concatenation, and
     `check-attr` still says `unspecified`. So the `merge.*` key check is necessary.
   - A `merge=union` attribute present only in P2's tree was **not** honoured by merge-tree.
+
+**Measurement 2026-10-30 (§6 step 4, taken early; Opus opposition: Agree with changes).**
+Outcome: **build neither gate yet.** The two-week window runs to about 2026-11-08, and this entry
+can be revised when it closes. The raw notes (`sync-measure-*.txt` and
+`opposition-build-or-wait-2026-10-30.md` in the side-session notes folder) are not kept in the repo.
+The git commands under each figure are the durable evidence. Counts, dates, ancestry and conflict
+lists were re-derived with `git` on origin/main e73d92a. Resolution-diff sizes use §3.2's trial-tree
+method and equal the notes' figures. Finding labels F1-F6 are the 2026-10-30 opposition's own and
+are not the F-numbers used earlier in this spec.
+
+- **Counts.** Scope: merge commits on PRs #78, #88, #89, #93-#96, #98, #99 and #103 (2026-10-20 to
+  2026-10-30), 21 in all. `git log --all --merges --since=2026-10-19` lists 49, so this is a sample.
+  The merges it omits include 8abc850 and bb53065, both local, clean and overlapping enforcement
+  paths, so neither would be an S0 pass. Of the 21, 20 are syncs of `main` and c9bfba1 is a
+  reconcile merge from the PR's own remote branch. 14 of the 20 were made by GitHub's "Update
+  branch" (`git log -1 --format=%cn`: `GitHub`; subject `Merge branch 'main' into …`). The other 6
+  were local (`Merge remote-tracking branch 'origin/main' …`). GitHub's merges ran no local gate.
+  By the §3.2 classes there are 13 S0 (12 GitHub plus c873d0c), 3 S1 and 4 S2. The opposition's
+  "13 of 18" did not reproduce as a GitHub count. It may be this S0 count.
+- **F1 (High). Update branch is free only while the PR branch has no unpushed local work.**
+  The #78 race is the counter-example. GitHub made 335974e at 2026-10-26 20:38:16Z with parents
+  dc8dcb6 and a384084, while the local commits 9185ea7 (18:12:56Z) and d48b0d3 were unpushed.
+  c873d0c then re-merged the same main tip (a384084) locally, at 20:45:15Z. The two lines had to be
+  reconciled by c9bfba1 (class N, 2026-10-27), whose P2 is 335974e. The push marker is dropped in
+  PreToolUse, so a push rejected as non-fast-forward burns it. The lazy-sync rule (§4 A′, OQ-1) is
+  narrowed accordingly: Update branch only on the PR about to merge, and never while its session
+  has unpushed commits.
+- **F2 (Medium). Conflicts still happen.** `git merge-tree --write-tree --name-only` finds 4 of
+  the 20 syncs conflicted: 4e62cff, dc8dcb6 and a76f0d9 in `CHANGELOG.md`, and f1cbabd in
+  `tests/run.sh`. All 4 were local, because GitHub's Update branch is unavailable on a conflicted
+  branch. All 4 predate the changelog fragments (#97, merged 2026-10-26T16:45:49Z, 8d21b56; `git merge-base
+  --is-ancestor 8d21b56 <merge>` exits 1 for all four). Since fragments:
+  - 14e4ce4 (`feat/pre-approval-protocol`, local-only, outside the PR set above, 2026-10-26
+    23:24:43Z) conflicted in `CHANGELOG.md` and `tests/test-mirror-parity.sh`. Its resolution diff
+    is 76,076 B against a commit-gate scope of 919,380 B (`git diff 14e4ce4^1 14e4ce4 | wc -c`).
+  - #94 conflicted in the `tests/run.sh` registry and was DIRTY when measured. It is a plain S2.
+    f1cbabd is the SEC-F1 example.
+  - #90 was also DIRTY. #90 and #94 are now CLOSED unmerged (#90 replayed as #104, #94 re-cut as
+    #106, merged e73d92a).
+  - The #106 re-cut itself conflicted on `tests/run.sh` again. The merge 2fc0841 (GitHub, 2026-10-30
+    21:10:57Z) is a web-editor resolution. `git merge-tree` on its parents conflicts in
+    `tests/run.sh`. So a re-cut limits the scope but does not prevent a new conflict.
+- **F3 (Medium). Which syncs paid.** Per the opposition, 9185ea7 and c873d0c were the app's
+  host-side sync, outside every hook (git shows only a local committer). Per the notes, the syncs
+  that cost a review were dc8dcb6 and a76f0d9, both S2 conflicts in the CHANGELOG during the 1.3.0
+  restructure. Their resolution diffs are 67,235 B of 189,957 B and 68,322 B of 137,130 B.
+- **F4 (Medium). The "resolution diff is 35-50% of the full diff" argument is withdrawn as a stable
+  figure.** The ratio is 2.2% for 4e62cff (1,736 of 77,334 B), 2.2% for f1cbabd (6,426 of 289,068
+  B), 35% for dc8dcb6, 50% for a76f0d9 and 8% for 14e4ce4 (76,076 of 919,380 B). It is dispersed, not
+  reliably high. The case for the commit gate is now frequency, plus a cheaper lever (below).
+- **F5 (Low). Lazy sync (OQ-1) was not followed on 2026-10-29 and 10-30.** GitHub merged `main` into
+  #88 (317979d) and #89 (b5bee6c) 14 s apart on 10-29, then into #89 again (7c4f0c1) and #103
+  (9a71145) on 10-30. These were clean and ran no local gate, but the rule is not being applied.
+- **F6 (Medium, new defect). The §3.8 CI backstop would fail #78's real history.** c9bfba1's P2 is
+  335974e, a commit that exists only on the PR branch. `git merge-base --is-ancestor` exits 1 for
+  both 335974e and c9bfba1 against origin/main, and 6ecda5a (the #78 squash, 2026-10-27) is a
+  child of a384084. So "P2 is an ancestor of base" fails a PR that was reviewed and correct. The
+  backstop needs the F1 reconcile case specified before it can be built.
+- **The push-gate S0 pass would have saved no reviews in this window.** Of the 6 local syncs, 4 were
+  conflicted (S2) and 9185ea7 overlapped `CHANGELOG.md` and `tests/run.sh` (not S0). The one clean,
+  non-overlapping local merge, c873d0c, reached the remote only inside the c9bfba1 push, which is
+  class N and does not qualify for the pass. The 14 GitHub merges are made on the remote and
+  pass through no local gate. That is a cost finding: the pass is a relaxation of review, so it
+  never had a security case. The §3.8 backstop is needed only if the pass is built.
+
+**Resulting practice (recommended 2026-10-30 by the measuring session and the Opus opposition; it
+becomes the decision when the user merges this PR; no code).**
+1. For a conflicted PR, re-cut it from `origin/main`, or resolve the conflict in GitHub's web
+   editor. Do not merge `main` into it locally. Re-cutting makes the commit-gate scope the PR's own
+   change: for #94 that was 14,704 B (`git diff $(git merge-base origin/main 311799b) 311799b |
+   wc -c`) against 135,650 B for its last sync merge (`git diff 311799b^1 311799b | wc -c`). Limits:
+   a web-editor resolution is a GitHub-made commit that neither the commit gate nor the push gate
+   sees (2fc0841), so for a conflict in an enforcement path (§7) re-cutting is the option that keeps
+   the review. A re-cut can conflict again.
+2. "Update branch" only on the PR about to merge, and never while its session has unpushed commits.
+3. Do not build the commit-gate S2 slice, the push-gate S0/S1 pass or the §3.8 backstop yet. Revisit
+   at about 2026-11-08 with the same counts.
