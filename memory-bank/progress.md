@@ -13,6 +13,14 @@ lineage: []
 
 # Progress
 
+## 2026-10-30 — PRs #99–#103 (`mb --dry-run`/`mb update`) and #67 (`[NS-59]`) merged
+
+- **#99 (`73048b2`) – #102 (`d7f2450`):** `mb` refuses `--dry-run` except on `upgrade` (and mb.sh's `update` alias),
+  which honour it in any position; the chat shortcut is now "update memory bank", the CLI keeps `mb update`. Detail: PR bodies.
+- **#103 (`dd4b532`):** cleanup, test pins; its PR body's "Non-blocking follow-ups" are open.
+- **#67 (`2b8a9fc`):** Pre-Approval Protocol trial. **The user owns the 2026-11-16 `PA_TRIAL_EXPIRES` decision:
+  promote it to `templates/` or withdraw it.** First steps: `[NS-59]`.
+
 ## 2026-10-29 — PR #78 merged; v1.3.0 released; merge-aware review spec merged
 
 - **PR #78 (`6ecda5a`, 2026-10-27):** the ps1 review-gate classifier compares ordinally; two measured commits
