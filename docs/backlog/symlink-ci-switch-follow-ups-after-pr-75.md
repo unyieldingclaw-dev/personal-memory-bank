@@ -29,9 +29,11 @@ checked against that tree on 2026-10-30.
    18 failures. Nothing re-checks that if a later edit makes a helper fail open.
 3. **The ps1 dangling-link sentinel case has no `skip_links` fallback.**
    `tests/test-pmb-journal.sh:2087` creates `sessSTLNK_02/started` with `ln -s` and does not check
-   whether it worked. If the link cannot be made (Git Bash without Developer Mode), the assertion
-   at `:2090` still fails, so the case fails closed. But the message, "sessSTLNK_02's start
-   sentinel counts as started", does not say that the fixture is what is missing. Its sh twin
-   (`:675`) does call `skip_links`.
+   whether it worked. If the link cannot be made, the assertion at `:2090` still fails, so the
+   case fails closed. Git Bash never reaches this case: `:2035-2037` skip the whole ps1 FIFO block
+   there (MINGW/MSYS/CYGWIN). Any other host with `pwsh`, `mkfifo` and `timeout` does, as PR #75's
+   Linux Docker run with `ln -s` broken did. The message, "sessSTLNK_02's start sentinel counts as
+   started", does not say that the fixture is what is missing. Its sh twin (`:675`) does call
+   `skip_links`.
 
 None of these blocks the C1 flag PR (`[NS-68]`).
