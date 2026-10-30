@@ -211,6 +211,10 @@ case_ deny "description with U+200B appended"     'p(C, tool_input_extra={"descr
 case_ deny "mode with U+200B appended"            'p(C, "default" + chr(0x200b))' "$R_MODE"
 case_ deny "a decoy command key with U+200B, placed first" \
   'dict(p(C), tool_input={"command" + chr(0x200b): C, "command": C + " --admin"})' "$R_FORM"
+# ConvertFrom-Json without -NoEnumerate read a one-element array as the object inside it, so the
+# .ps1 twin asked (measured 2026-10-23). No reason substring: the bash hook's classifier gives an
+# array no verdict, so that twin denies earlier, through its fallback.
+case_ deny "a payload that is a one-element array" '[p(C)]'
 
 echo "--- a command that only mentions a merge is not a merge ---"
 case_ none "echo of the canonical command"        'p("echo " + C)'
@@ -264,6 +268,43 @@ for rule in 'Bash(git *)' 'Bash(gh pr view *)' 'Bash(npm run *)' 'Bash(gh apix *
   put_allow "$LOCAL" "$rule"
   expect ask "unrelated allow rule leaves the prompt: $rule" "$F"
 done
+# The probes use PR 1 and a zero SHA, so each of these misses all of them. They match only the
+# asked command, #12 at a SHA ending in 7, which every rule is matched against after the full match.
+for rule in 'Bash(gh pr m* 12*)' 'Bash(*pr merge 12*)' 'Bash(* 12 -R *)' 'Bash(*--match-head-commit 0123*)' \
+            'Bash(gh p*7)' 'PowerShell(gh p*7)'; do
+  put_allow "$LOCAL" "$rule"
+  expect deny "allow rule that matches only the asked command: $rule" "$F" "" "$R_GENERIC"
+  assert_not_contains "$LAST_OUT_SH$LAST_OUT_PS1" "settings.local" "deny for '$rule' names no settings file (both twins)"
+done
+for rule in 'Bash(gh pr m* 77*)' 'Bash(gh p*8)'; do
+  put_allow "$LOCAL" "$rule"
+  expect ask "the same shape for another PR or SHA leaves the prompt: $rule" "$F"
+done
+# Every file's rules, and every rule in a file, reach that pass: the matching rule sits between
+# two unrelated ones, in each file in turn, while the other two files hold an unrelated rule.
+for target in "$CFG/settings.json" "$PROJ/.claude/settings.json" "$LOCAL"; do
+  for other in "$CFG/settings.json" "$PROJ/.claude/settings.json" "$LOCAL"; do put_allow "$other" 'Bash(npm run *)'; done
+  python3 -c 'import json,sys; json.dump({"permissions": {"allow": sys.argv[2:]}}, open(sys.argv[1], "w"))' \
+    "$target" 'Bash(git status)' 'Bash(gh pr m* 12*)' 'Bash(npm run *)'
+  expect deny "a rule that matches only the asked command, second of three in ${target#"$TMP_MG"/}" "$F" "" "$R_GENERIC"
+done
+rm -f "$CFG/settings.json" "$PROJ/.claude/settings.json"
+# Matches only the canonical --squash probe (PR 1 with -R), not the asked command (#12).
+put_allow "$LOCAL" 'Bash(gh pr m* 1 -R acme/web.app --squash*)'
+expect deny "allow rule that matches only the canonical --squash probe" "$F" "" "$R_GENERIC"
+# Claude Code matches PowerShell rules case-insensitively (code.claude.com/docs/en/permissions,
+# PowerShell section), so both twins fold ASCII case on both sides for them; Bash rules stay
+# case-exact. The first four are caught by a shape or a probe, the last two only by the asked
+# command, and the last one only with the command folded too (it holds -R).
+for rule in 'PowerShell(GH *)' 'PowerShell(Gh pr merge *)' 'PowerShell(G*)' 'PowerShell(*SQUASH*)' \
+            'PowerShell(GH PR M* 12*)' 'PowerShell(GH PR M* 12 -R ACME/WEB.APP *)'; do
+  put_allow "$LOCAL" "$rule"
+  expect deny "PowerShell allow rule in another case: $rule" "$F" "" "$R_GENERIC"
+done
+for rule in 'Bash(GH *)' 'Bash(GH PR M* 12*)' 'PowerShell(GH PR M* 77*)'; do
+  put_allow "$LOCAL" "$rule"
+  expect ask "a Bash rule in another case, or a PowerShell rule for another PR, leaves the prompt: $rule" "$F"
+done
 # The long s case-folds to s in Python's Unicode IGNORECASE but not in .NET's, so the interpreter
 # check folds ASCII letters only, in both twins.
 put_allow_expr "$LOCAL" '"Bash(ba" + chr(0x17f) + "h -c *)"'
@@ -304,6 +345,10 @@ python3 -c 'import json,sys; json.dump({"permissions": {"allow": ["Bash(*" + "0"
 expect deny "rules that exhaust the wildcard step budget deny" "$F" "" "$R_GENERIC"
 python3 -c 'import json,sys; json.dump({"permissions": {"allow": ["Bash(*" + "0" * 39 + "x)"] * 50}}, open(sys.argv[1], "w"))' "$LOCAL"
 expect ask "the same rules within the budget still ask" "$F"
+# 460 fit the budget for the probes alone (177,560 steps) but not with the asked-command pass
+# (225,400), so they deny only while that pass spends the same budget.
+python3 -c 'import json,sys; json.dump({"permissions": {"allow": ["Bash(*" + "0" * 39 + "x)"] * 460}}, open(sys.argv[1], "w"))' "$LOCAL"
+expect deny "the asked-command pass spends the same step budget" "$F" "" "$R_GENERIC"
 
 echo "--- settings and allowlist are read as strict JSON, alike in both twins ---"
 # ConvertFrom-Json alone accepted each of these, and Python accepted NaN; a one-element array
