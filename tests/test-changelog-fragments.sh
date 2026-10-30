@@ -54,15 +54,10 @@ new_tree() {
 }
 
 # Two fragments that between them cover heading order, fragment order within a heading, a heading
-# outside Keep a Changelog's set, a wrapped bullet and stray blank lines.
+# outside Keep a Changelog's set, a wrapped bullet, stray blank lines, and a heading with a trailing
+# space (printf, so no editor strips it) that must still merge with the plain one.
 add_fragments() {
-    cat > "$1/changelog.d/b-second.md" <<'EOF'
-### Documentation
-- docs from b
-
-### Added
-- added from b
-EOF
+    printf '### Documentation\n- docs from b\n\n### Added \n- added from b\n' > "$1/changelog.d/b-second.md"
     cat > "$1/changelog.d/a-first.md" <<'EOF'
 
 ### Fixed
@@ -207,6 +202,29 @@ T="$(new_tree mixed)"; add_fragments "$T"
 expect_refusal "$T" "--preview combined with a version" "usage" --preview 1.4.0
 
 echo ""
+echo "--- a fragment that cannot be deleted ---"
+# A failing rm shim, first on PATH, refuses only changelog.d/ paths so the script's temp-file cleanup
+# still works. The section is already written by then, so the error must say so and say not to cut
+# another version, which would fold the same fragments in again.
+T="$(new_tree rm-fails)"; add_fragments "$T"
+mkdir -p "$TMP_ROOT/rm-shim"
+REAL_RM="$(command -v rm)"
+cat > "$TMP_ROOT/rm-shim/rm" <<EOF
+#!/usr/bin/env bash
+case "\$*" in *changelog.d/*) exit 1 ;; esac
+exec "$REAL_RM" "\$@"
+EOF
+chmod +x "$TMP_ROOT/rm-shim/rm"
+ERR="$(PATH="$TMP_ROOT/rm-shim:$PATH" bash "$T/scripts/changelog-assemble.sh" 1.4.0 --date 2026-11-01 2>&1 >/dev/null)"
+assert_exit_nonzero "$?" "a cut whose fragments cannot be deleted fails"
+# No "[1.4.0]" in the needle: assert_contains greps a regex, where the brackets are a class.
+assert_contains "$ERR" "but some fragments could not be deleted" "a failed delete says the section was written"
+assert_contains "$ERR" "do not re-run for another version" "a failed delete says not to cut another version"
+grep -qF "## [1.4.0] - 2026-11-01" "$T/CHANGELOG.md"
+assert_exit_zero "$?" "a failed delete leaves the written section in CHANGELOG.md"
+assert_file_exists "$T/changelog.d/a-first.md" "a failed delete leaves the fragments for hand deletion"
+
+echo ""
 echo "--- malformed fragments are named, in --preview too ---"
 # expect_bad_fragment <desc> <file name> <reason> <content>
 expect_bad_fragment() {
@@ -216,6 +234,9 @@ expect_bad_fragment() {
     out="$(bash "$t/scripts/changelog-assemble.sh" --preview 2>&1)"
     assert_exit_nonzero "$?" "$1: --preview fails"
     assert_contains "$out" "changelog.d/$2" "$1: the error names the file"
+    # WHY: the validator's END runs after fail() exits, and without its "failed" check it adds a
+    # second, wrong reason (e.g. "no ### heading" after a failure on line 1).
+    assert_equals "$(printf '%s\n' "$out" | grep -c '')" "1" "$1: the error is one line"
     expect_refusal "$t" "$1" "$3" 1.4.0
 }
 expect_bad_fragment "text before the first heading" "pre.md" "text before" "- orphan bullet\n### Added\n- x\n"
@@ -236,6 +257,10 @@ expect_bad_fragment "a non-.md file" "note.txt" "not a fragment" "### Added\n- x
 
 echo ""
 echo "--- line endings ---"
+# WHY these can pass with the \r strips deleted: they only bite on an awk that keeps \r, such as
+# Linux CI's. Git Bash's awk drops it on read. To run them for real on Windows, put first on PATH
+# (as a POSIX path, via cygpath -u) a directory holding an "awk" shim that runs
+#   exec /usr/bin/gawk -v BINMODE=3 "$@"
 # A CRLF fragment must merge with an LF one under the same heading, and must not carry \r through.
 T="$(new_tree crlf-frag)"
 printf '### Added\r\n- crlf bullet\r\n' > "$T/changelog.d/a-crlf.md"

@@ -31,8 +31,8 @@ approaches the cap again, move the oldest sections to a **new** archive file nam
 it holds (`changelog-<version>.md` or `changelog-<first>-to-<last>.md`). A release whose own
 section would leave this file without headroom moves there in the change that cuts it, as 1.3.0
 did. Never append to an existing one: `docs/archive/README.md` and `standards/MEMORY-BANK.md` both
-require one topic or period per file, and
-`pmb-health.yml` exempts `docs/archive/` from its *byte* caps because archives do not grow.
+require one topic or period per file, and `pmb-health.yml` exempts `docs/archive/` from its *byte*
+caps because archives do not grow.
 Note the 800-line markdown cap still applies there — `docs/archive/*.md` is inside the File Size
 job's scope — so appending would eventually red the build in the archive too, which is precisely the
 failure this move exists to stop repeating. An earlier version of this pointer said the opposite,

@@ -127,6 +127,7 @@ assemble() {
             if (chunk != "") body[cur] = body[cur] (body[cur] == "" ? "" : "\n") chunk
             nbuf = 0
         }
+        # Pairs with the \r strip in the validator above, for the same reason: keep the two in step.
         { sub(/\r$/, "") }
         FNR == 1 { flush(); cur = "" }
         /^### / {
@@ -201,7 +202,7 @@ grep -qF "## [$VERSION] - $DATE" "$NEW" \
 
 mv "$NEW" "$CHANGELOG"
 rm -f "${FRAGS[@]}" \
-    || die "CHANGELOG.md now has [$VERSION], but some fragments could not be deleted. Delete the fragment files still in changelog.d/ by hand (keep README.md); do not re-run, which would fold them in again"
+    || die "CHANGELOG.md now has [$VERSION], but some fragments could not be deleted. Delete the fragment files still in changelog.d/ by hand (keep README.md); do not re-run for another version, which would fold them in again"
 
 echo "Folded ${#FRAGS[@]} fragment(s) into CHANGELOG.md as [$VERSION] - $DATE."
 echo "Next: review CHANGELOG.md, archive old sections if it nears the size cap (see 'Released history'),"

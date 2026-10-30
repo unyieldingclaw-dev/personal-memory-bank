@@ -6,7 +6,8 @@ Release notes for changes merged since the last release, one file per pull reque
   release section will read.
 - **Write one:** see `standards/WORKFLOW.md`, Phase 7. The file is `<branch-slug>.md` and holds
   `### Added` / `### Changed` / `### Fixed` (and similar) headings with bullets. No line may start
-  with `#` or `##` followed by a space or nothing, even inside a code fence: the script does not
-  parse fences.
+  with `#` or `##` followed by a space, a tab or the end of the line, even inside a code fence: the
+  script does not parse fences. A `###` heading with no name, or with nothing under it, is refused
+  too.
 - **Release:** `bash scripts/changelog-assemble.sh <X.Y.Z>` folds them into `CHANGELOG.md` and
   deletes them. This file stays.

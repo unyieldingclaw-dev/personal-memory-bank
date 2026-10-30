@@ -216,7 +216,8 @@ done
 # WHY a second, live-only divergence: Phase 7's "Changelog:" paragraph tells PRs to write
 # changelog.d/ fragments. That only works with scripts/changelog-assemble.sh, which adopters do not
 # get, so the template must not carry it. It is pinned to exactly one live-side line, plus the one
-# live-side blank line that inserting a paragraph adds; any other blank-line difference fails.
+# live-side blank line that inserting a paragraph adds. A change in the number of blank-line
+# differences fails (placement is not checked).
 echo ""
 echo "--- WORKFLOW.md differs only in the Phase 3.5 \"Why\" and Phase 7 \"Changelog\" paragraphs ---"
 WF_WHY='^[<>] \*\*Why:\*\* self-review, however adversarial'
@@ -227,7 +228,7 @@ assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE "$WF_WHY")" "2" \
 assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE "$WF_CHANGELOG")" "1" \
     "WORKFLOW.md: the Phase 7 \"Changelog\" line is live-only (one line, live side)"
 assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -cE '^< ?$') $(printf '%s\n' "$WF_DIFF" | grep -cE '^> ?$')" "1 0" \
-    "WORKFLOW.md: the only blank-line difference is the one the Changelog paragraph adds (live side)"
+    "WORKFLOW.md: one blank-line difference, live side, as the Changelog paragraph adds (count only; placement is not checked)"
 assert_equals "$(printf '%s\n' "$WF_DIFF" | grep -vE "$WF_WHY|$WF_CHANGELOG" | grep -vcE '^[<>] ?$')" "0" \
     "WORKFLOW.md: no other line differs between live and template (Phase 3 stays in sync)"
 
