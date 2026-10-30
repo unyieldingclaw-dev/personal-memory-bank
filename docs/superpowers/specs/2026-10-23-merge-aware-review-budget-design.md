@@ -659,8 +659,10 @@ are not the F-numbers used earlier in this spec.
   - 14e4ce4 (`feat/pre-approval-protocol`, local-only, outside the PR set above, 2026-10-26
     23:24:43Z) conflicted in `CHANGELOG.md` and `tests/test-mirror-parity.sh`. Its resolution diff
     is 76,076 B against a commit-gate scope of 919,380 B (`git diff 14e4ce4^1 14e4ce4 | wc -c`).
-  - #94 conflicted in the `tests/run.sh` registry and was DIRTY when measured. It is a plain S2.
-    f1cbabd is the SEC-F1 example.
+  - #94 conflicted in the `tests/run.sh` registry and was DIRTY when measured. It has the SEC-F1
+    shape (a conflict in `tests/run.sh` plus clean overlap in `tests/test-mirror-parity.sh`), as does
+    2fc0841. 14e4ce4 has it too: its clean overlap includes `.claude/settings.json` and
+    `scripts/mb.sh`.
   - #90 was also DIRTY. #90 and #94 are now CLOSED unmerged (#90 replayed as #104, #94 re-cut as
     #106, merged e73d92a).
   - The #106 re-cut itself conflicted on `tests/run.sh` again. The merge 2fc0841 (GitHub, 2026-10-30
