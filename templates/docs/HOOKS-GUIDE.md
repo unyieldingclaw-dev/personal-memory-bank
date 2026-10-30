@@ -130,7 +130,8 @@ PMB's own `.claude/settings.json` runs a single Stop hook, `scripts/pre-approval
 two jobs:
 - it enforces PMB's Pre-Approval Protocol: a turn ending in an approve-or-choose ask must carry a
   Findings section and a Recommendation, and a turn ending in any other question a Recommendation;
-- it shows a detached "Claude has paused" notification that, on Windows, closes itself after 600 s.
+- it shows a detached "Claude has paused" notification that, on Windows, is set to close itself
+  after 600 s; popups have been seen still open well past that, cause unknown.
 
 **A pass means the sections exist, not that the checks behind them were good.** Ask detection is a
 heuristic trigger, and adequacy stays with the Reviewer/Opponent layer.
