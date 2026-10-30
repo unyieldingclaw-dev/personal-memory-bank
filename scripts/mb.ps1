@@ -6,7 +6,7 @@
     Quick commands for managing Memory Bank files.
 
 .PARAMETER Command
-    The command to run: status, update, archive, slim, commit, budget
+    The command to run. Run `mb help` for the list; Show-Help is its single source.
 
 .EXAMPLE
     .\mb.ps1 status
@@ -548,78 +548,6 @@ function Show-Status {
         Write-Host $label -ForegroundColor Yellow
     } else {
         Write-Host "0 Issues" -ForegroundColor Green
-    }
-    Write-Host ""
-}
-
-# WHY: Show-Update / Show-Archive / Show-Slim print terminal instructions instead of
-# living as documentation files. The friction of opening a browser or README mid-session
-# is exactly the moment developers skip the Memory Bank discipline -- surfacing the
-# canonical AI prompt at the shell (copy-paste ready) is what makes the workflow stick.
-# These commands are guidance, not automation, because the actual edits require AI
-# judgement about what to keep vs. archive; the script can't safely do that itself.
-function Show-Update {
-    Write-Host ""
-    Write-Host "Update Memory Bank" -ForegroundColor Cyan
-    Write-Host "==================" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "To update Memory Bank, tell the AI:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host '  "Update memory-bank files with the progress from this session"' -ForegroundColor White
-    Write-Host ""
-    Write-Host "The AI will update:" -ForegroundColor Yellow
-    Write-Host "  - activeContext.md  (current focus, next steps)"
-    Write-Host "  - progress.md       (completed items)"
-    Write-Host "  - techContext.md    (if dependencies changed)"
-    Write-Host "  - systemPatterns.md (if new patterns established)"
-    Write-Host ""
-}
-
-function Show-Archive {
-    Write-Host ""
-    Write-Host "Archive Old Content" -ForegroundColor Cyan
-    Write-Host "===================" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "To archive old content from activeContext.md:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "1. Move detailed session history to docs/archive/ (see docs/archive/README.md for naming)"
-    Write-Host "2. Keep only current state in activeContext.md"
-    Write-Host "3. Completed 'Next Steps' should move to progress.md"
-    Write-Host ""
-    Write-Host "Tell the AI:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host '  "Archive old content from activeContext.md to docs/archive/"' -ForegroundColor White
-    Write-Host ""
-}
-
-function Show-Slim {
-    Write-Host ""
-    Write-Host "Slim activeContext.md" -ForegroundColor Cyan
-    Write-Host "=====================" -ForegroundColor Cyan
-    Write-Host ""
-
-    $path = Join-Path $MemoryBankPath "activeContext.md"
-    if (Test-Path $path) {
-        $lines = @(Get-Content $path).Count
-        Write-Host "Current size: $lines lines" -ForegroundColor Yellow
-        Write-Host "Target: 50-100 lines"
-        Write-Host "Maximum: 150 lines"
-        Write-Host ""
-
-        if ($lines -gt 150) {
-            Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
-        } elseif ($lines -gt 100) {
-            Write-Host "RECOMMENDED: Consider trimming" -ForegroundColor Yellow
-        } else {
-            Write-Host "File is within target range" -ForegroundColor Green
-        }
-
-        Write-Host ""
-        Write-Host "To slim the file, tell the AI:" -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host '  "Trim activeContext.md to essentials - move history to docs/archive/"' -ForegroundColor White
-    } else {
-        Write-Host "Error: activeContext.md not found" -ForegroundColor Red
     }
     Write-Host ""
 }
@@ -2330,55 +2258,6 @@ function Show-Query {
         Write-Host "No matches for '$Keyword' in tags or section headers." -ForegroundColor Yellow
         Write-Host "Check your tag vocabulary in standards/MEMORY-BANK.md." -ForegroundColor Yellow
     }
-    Write-Host ""
-}
-
-function Show-Compact {
-    Write-Host ""
-    Write-Host "Memory Compaction" -ForegroundColor Cyan
-    Write-Host "=================" -ForegroundColor Cyan
-    Write-Host ""
-
-    # WHY: Check audit state first — compacting healthy files wastes effort.
-    $totalBytes = 0
-    if (Test-Path $MemoryBankPath) {
-        $totalBytes = (Get-ChildItem $MemoryBankPath -File | Measure-Object -Property Length -Sum).Sum
-    }
-    $totalKB = [math]::Round($totalBytes / 1KB, 1)
-
-    if ($totalKB -lt 60) {
-        Write-Host "memory-bank/ is $totalKB KB — below the 60 KB compaction threshold." -ForegroundColor Green
-        Write-Host "Compaction is most valuable when size > 60 KB and mb doctor shows stale files." -ForegroundColor Yellow
-        Write-Host ""
-    }
-
-    Write-Host "Paste this prompt to the AI to compact your memory:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "---" -ForegroundColor DarkGray
-    Write-Host @"
-Read all files in memory-bank/ in this authority order:
-  1. projectbrief.md (immutable — never remove)
-  2. systemPatterns.md
-  3. techContext.md
-  4. activeContext.md
-  5. progress.md
-
-Then compact the memory bank:
-  - Identify and remove duplicate decisions (keep the most recent / authoritative copy)
-  - Flag and surface any contradictions between files for my review
-  - Remove entries from activeContext.md that are already captured in progress.md
-  - Remove progress.md entries for work completed more than 6 months ago (archive them to docs/archive/ using filename progress-YYYY-MM-<topic>.md)
-  - Condense verbose descriptions to their essential decision + rationale
-  - Preserve all unique architectural decisions, constraints, and active work
-
-After compacting, show me:
-  - What was removed from each file and why
-  - Any contradictions found (do not resolve them — surface them for my decision)
-  - New line counts for each file
-
-Do not commit the changes until I confirm.
-"@ -ForegroundColor White
-    Write-Host "---" -ForegroundColor DarkGray
     Write-Host ""
 }
 
