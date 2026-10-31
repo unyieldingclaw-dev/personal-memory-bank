@@ -11,7 +11,8 @@ review:
 
 **Amended 2026-09-22** with two decisions the user took after further review rounds on the plan:
 - **The parity conflict:** option A+ (§5).
-- **The popup:** on Windows, it closes itself after 600 s (§3).
+- **The popup:** on Windows, it is set to close itself after 600 s (§3); that close has not been
+  timed.
 
 Those rounds found that the plan as written would fail CI, because
 `tests/test-mirror-parity.sh:354-421` (382-436 as of `e3c2f43`) pins the live Stop wiring to the
@@ -26,7 +27,11 @@ template's.
   checklist's items from commit 2's two reviews (§5); and "on Windows" on every 600 s claim
   (marked once, at Known Limitation 5).
 - **2026-10-26:** the `WORKFLOW.md` region pin gains Phase 7's live-only Changelog line, which
-  main added after this branch forked (§5).
+  main added after this branch forked (§5); and the changelog entry moves from `CHANGELOG.md` to
+  `changelog.d/feat-pre-approval-protocol.md` (#97).
+- **2026-10-30:** wording corrections after merge: the 600 s popup close is not timed (§3, Known
+  Limitation 5), the Testing section follows the suite where they differ, and the promotion
+  checklist's preamble no longer counts its trial-affecting items (§5).
 
 ## Problem
 
@@ -213,7 +218,7 @@ allow. On a block there is no popup.
 This changes the popup from modal to non-modal. It no longer holds the session until dismissed,
 which also removes the stall that `HOOKS-GUIDE:116` records.
 
-**On Windows, the popup closes itself after 600 s** (user decision 2026-09-22). There it is
+**On Windows, the popup is set to close itself after 600 s** (user decision 2026-09-22). There it is
 `(New-Object -ComObject WScript.Shell).Popup(<text>, 600, 'Claude Code', 64)`, not a `MessageBox`.
 
 Why it has a timeout:
@@ -223,7 +228,11 @@ Why it has a timeout:
   closed that window was never tested, so 600 s is chosen to match, not claimed as equivalent.
 
 Checked 2026-09-22 with a 3 s timeout: launched through `Start-Process` with a hidden window, the
-popup closed itself and its process exited after 4.2 s. The 600 s value itself has not been timed.
+popup closed itself and its process exited after 4.2 s. The 600 s close has not been timed, and
+popups were later seen still open 15 minutes after launch, cause unknown (plan, Task 8–9 Results),
+and the merge-time review saw a production-path popup still open at 12.7 min
+(`pmb-session-artifacts/pre-approval-review/change-review-branch.md`, O-3).
+Read "closes itself after 600 s" anywhere in this repo as "is set to", not as a measured close.
 
 **Trial measurement (review finding F5).** One line per block, and one per post-block Stop, goes
 to `.pmb-pre-approval.log` (gitignored). Each line holds a timestamp, a `session_id` prefix, the
@@ -381,9 +390,10 @@ protocol text still covers these asks. Spikes 3 and 4 are removed with it.
   `templates/`.** Commit 1's `/code-review` approved with 40 findings, none blocking. The report is
   out of repo, at `pmb-session-artifacts/pre-approval-review/review-commit1.md`. Commit 2 fixed six
   of them in code and corrected the docs for several more (plan amendment 10). The items below are
-  deferred to that decision. Most matter only if adopters get the hook, but two also affect the PMB
-  trial itself: `mb upgrade` reverting it (A-F6) and the unlogged kill switch (S4). Items that
-  commit 2 resolved, or that needed no action, are not listed:
+  deferred to that decision. Most matter only if adopters get the hook, but some also affect the PMB
+  trial itself, among them `mb upgrade` reverting it (A-F6), the unlogged kill switch (S4) and the
+  silent undercount when the hook's cwd is a subfolder (S3, Known Limitation 10). Items that
+  commit 2 resolved, or that needed no action, are left out. The rest:
   - **Wiring and paths:**
     - scripts and logs are found by relative path, so a different cwd skips the check silently
       (S3);
@@ -409,7 +419,8 @@ protocol text still covers these asks. Spikes 3 and 4 are removed with it.
     - the window's upper bound (T7).
   - **Cost:**
     - about 1.4 s per turn on the `.sh` path (P1);
-    - one popup process per unanswered turn, alive for up to 600 s on Windows (P2).
+    - one popup process per unanswered turn, set to close after 600 s on Windows but seen still
+      open past that (P2, §3).
   - **Housekeeping:**
     - removing the trial exemption touches several sites (M-6);
     - `mb upgrade` inside PMB would revert the trial silently (A-F6);
@@ -526,9 +537,11 @@ sentinel string.
 
 Every case runs against the `.sh`, and against the `.ps1` when `pwsh` is on PATH, following
 `tests/test-pre-compact-check.sh`'s parity block (`PMB_REQUIRE_PARITY=1` makes a missing `pwsh`
-fatal). The invocation is the exact `settings.json` command string. The notifier can be overridden
-via `PMB_NOTIFY_CMD`, pointing at a stub that records calls. Fixtures are synthetic payloads; no
-real conversation text is committed.
+fatal). The per-case runs call each script directly; only the chain cases below run the
+`settings.json` command string. The notifier is replaced through `PMB_NOTIFY_STUB`, pointing at a
+stub that records calls. Fixtures are synthetic payloads; no real conversation text is committed.
+The list below was the design-time plan, with later additions; where it differs from the suite,
+`tests/test-pre-approval-check.sh` is authoritative.
 
 - Not an ask: allowed, notifier called once.
 - Tier A ("Want me to …?", "Type \"approved\" to begin", "approve it or tell me …") without
@@ -543,16 +556,18 @@ real conversation text is committed.
 - `stop_hook_active: true`: allowed, notifier called, a post-block log line recording
   sections-present.
 - `PMB_PRE_APPROVAL=off`: allowed, notifier called, nothing logged.
-- Missing or empty `last_assistant_message`: allowed.
-- Malformed JSON: allowed, **notifier called**, logged once; a second run adds no line.
+- An empty `last_assistant_message`: allowed. A payload with the key missing is not tested.
+- Malformed JSON: allowed, **notifier called**, a fail-open line in the trial log; a second run adds
+  no line to the error log (the trial log records each fail-open).
 - A forced unexpected error: allowed, notifier called, and the `.ps1` exits 0.
-- **A notifier stub that sleeps 5 s does not delay the hook**: the hook returns in under 1.5 s, in
-  both shells.
+- **A slow notifier stub does not delay the hook**: with `PMB_NOTIFY_STUB_DELAY` set, the hook
+  returns within the suite's timing bound, in both shells, and the stub still runs afterwards.
 - "**My recommendation:**" (lower-case) satisfies tier B in both shells.
 - Declarative asks are tier A: "Say the word and I'll push", "I'll wait for your go-ahead", and
   "let me know if you want any changes before we move to the implementation plan".
-- The measured false-positive shape, "Let me know once it's through.", is tier A by design. The
-  test documents that its escape is `Not an approval ask:`.
+- The measured false-positive shape, "Let me know once it's through.", is tier A by design, and its
+  escape is `Not an approval ask:`. The suite has no case that sends that sentence; the escape
+  phrases have cases of their own.
 - Fallback chain: the exact `settings.json` command with both script paths replaced by nonexistent
   ones still calls the notifier stub, detached.
 - The chain is synchronous on the primary path. Run the exact command with stdout redirected to a
@@ -579,9 +594,10 @@ from plan amendment 2:
   Only the `.sh` runs `python3`, and on a machine with `pwsh` the `.sh` is the fallback link: the
   live path runs the `.ps1`.
 - A Findings heading after a preamble line counts (the multiline anchor).
-- Every allow case that is not the kill switch or a deliberate fail-open also asserts that no
-  fail-open was logged. That catches a classifier that fails open, not a missing script; the block
-  cases catch that.
+- Allow cases checked with `assert_allowed` also assert that no fail-open was logged. That catches
+  a classifier that fails open, not a missing script; the block cases catch that. Some allow cases
+  use a weaker check: a few assert on the log text only, and the timing case asserts on elapsed
+  time and the stub's call only.
 - A static check that the five rule regexes' pattern literals are identical in both twins. Their
   options are not compared.
 - In `tests/test-mirror-parity.sh`, the `WORKFLOW.md` region pin asserts the region counts on each
@@ -605,7 +621,8 @@ from plan amendment 2:
   `HOOKS-GUIDE.md:116`'s popup-stall note is updated.
 - Edit: `tests/test-mirror-parity.sh` (the dated trial exemption, §5; and, amended 2026-10-14, the
   region-based `WORKFLOW.md` pin that replaces PR #53's single-line pin, §5)
-- Edit: `CHANGELOG.md` (one `[Unreleased]` entry; amended 2026-10-14)
+- New: `changelog.d/feat-pre-approval-protocol.md` (amended 2026-10-26; until #97 this was an edit
+  adding one `[Unreleased]` entry to `CHANGELOG.md`)
 - Edit: `scripts/mb.sh` (one comment that describes the PR #53 pin; amended 2026-10-14)
 - New: `tests/test-pre-approval-check.sh`
 - Edit: `tests/run.sh` (one `run_suite` line, a known one-line overlap with a concurrent worktree
@@ -639,9 +656,10 @@ Not changed: `CLAUDE.md`, `templates/` except `HOOKS-GUIDE.md`, `.claude/command
    out-of-sample (evidence row 10). Other projects' phrasing was not measured. A miss degrades to
    today's behavior, and the trial log tracks blocks, not misses.
 4. **Fires for every session in this directory** once merged, including peers mid-task.
-5. **The popup becomes non-modal and, on Windows, closes itself after 600 s** ("on Windows"
-   amended 2026-10-16). That is a deliberate behavior change (§3). A notice ignored for longer than
-   that is lost.
+5. **The popup becomes non-modal and, on Windows, is set to close itself after 600 s** ("on Windows"
+   amended 2026-10-16; "is set to" amended 2026-10-30, since that close has not been timed). That is
+   a deliberate behavior change (§3). A notice ignored for longer than the timeout is lost if the
+   close fires.
 6. **The first-pass reminder is user-level auto-memory**, not version-controlled. Revisit at
    template rollout.
 7. **`feature-dev.md` drift** until template rollout (§5).
