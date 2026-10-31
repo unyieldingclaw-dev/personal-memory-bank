@@ -22,11 +22,11 @@ regex on the `.ps1` side. The bash test harness is `tests/helpers/assert.sh`.
 amended 2026-09-22 with the user's A+ and self-closing-popup decisions).
 Read it before starting; this plan does not re-derive its decisions.
 
-## Amendments 2026-10-14 to 2026-10-16
+## Amendments
 
 Amendments 1–7 were approved by the user before execution, on 2026-10-14. Amendments 8 and 9 were
-found by the first execution attempt that day, amendment 10 is a user decision of 2026-10-15, and
-amendments 11 and 12 are user decisions of 2026-10-16, and amendment 13 one of 2026-10-26.
+found by the first execution attempt that day. Amendment 10 is a user decision of 2026-10-15,
+amendments 11 and 12 are user decisions of 2026-10-16, and amendment 13 is one of 2026-10-26.
 
 A pre-execution drift check against `origin/main` found one blocking break and several smaller
 ones. It had two review passes: the author's own, and an Opus `opposition` pass that returned
@@ -123,8 +123,9 @@ contract on 2026-10-14. Each change is also marked where it lands.
     - **Task 10 Step 3** also stages the two scripts and `tests/test-pre-approval-check.sh`. Its
       commit message names the fixes.
     - **The code blocks in Tasks 4–10 are the text as first executed.** The shipped files supersede
-      them: Tasks 4–6 are commit-1 text, and the Task 7–10 blocks predate the fixes in amendments 10
-      and 11. Re-extracting any block would undo those fixes.
+      them, and re-extracting any block would undo later fixes. This holds for every code block and
+      every "identical to its block" statement in Tasks 4–10, whichever amendment changed the files
+      since.
 11. **Commit 2's first `/code-review`** (2026-10-16): 26 findings, none blocking, one Medium. The
     Medium: the Phase 3.5 pointer said the independent review now runs before every ask; it runs
     only on escalation-list asks. Opposition was not run. The user chose to fix the Medium and the
@@ -168,7 +169,7 @@ contract on 2026-10-14. Each change is also marked where it lands.
     `memory-bank/` after this branch forked. The user chose to fold the Low fixes into one
     follow-up commit with its own review. The report is out of repo, at
     `pmb-session-artifacts/pre-approval-review/review-commit2-round2.md`; the tags below are its
-    own.
+    own, except the round-1 items, which are marked as such.
     - **Fixed in the follow-up:**
       - the expiry-date comment and Task 11's grace arithmetic (correctness F1, testing T-1,
         maintainability F3, architecture AD-1), and the date's anchor (correctness F2);
@@ -193,7 +194,8 @@ contract on 2026-10-14. Each change is also marked where it lands.
       security F4.
     - **Declined:**
       - security F2: "on Windows" narrows the claim, and the 600 s evidence is unchanged and
-        disclosed in the Task 8–9 Results;
+        disclosed in the Task 8–9 Results (which carry a 2026-10-30 correction: the 600 s value was
+        never timed);
       - security F3: already spec §5's A-F3;
       - correctness F12: covered by the Tasks 4–10 code-block note, and commit 2's message was
         written separately and names the fixes;
@@ -285,7 +287,7 @@ contract on 2026-10-14. Each change is also marked where it lands.
 | `.claude/settings.json` | The single `Stop` entry, replacing the modal popup |
 | `.gitignore` | `.pmb-pre-approval.log` |
 | `tests/test-mirror-parity.sh` | The dated trial exemption for the PMB-only Stop line (spec §5); the region-based `WORKFLOW.md` pin (Task 8 Step 3b, amendment 2) |
-| `CHANGELOG.md` | One `[Unreleased]` entry (Task 8 Step 3c, amendment 3) |
+| `changelog.d/feat-pre-approval-protocol.md` | One changelog entry (Task 8 Step 3c, amendment 3). It was a `CHANGELOG.md` `[Unreleased]` entry until #97 moved entries into fragments (amendment 13). |
 | `scripts/mb.sh` | One comment that describes the old `WORKFLOW.md` pin (Task 8 Step 3d, amendment 3) |
 | `tests/run.sh` | Register the suite (it has a completeness check) |
 | `standards/WORKFLOW.md` | The Pre-Approval Protocol section; Phase 3.5 becomes a pointer |
@@ -1395,7 +1397,7 @@ reproduced on 2026-09-22 as 146 passed, 2 failed. Absolute counts have moved sin
 `FAIL` lines.
 
 Compute the expiry, 21 days from today (the 14-day trial from merge plus a 7-day grace).
-**Re-dated by amendment 10:** commit 2 sets it to 2026-10-15 plus 21 days, `2026-11-05`; the
+**Re-dated since:** the current value is `PA_TRIAL_EXPIRES` in `tests/test-mirror-parity.sh`; the
 `2026-11-04` in this task's Results is the commit-1 value.
 
 ```bash
@@ -1903,7 +1905,7 @@ Expected:
 
 **Results (2026-10-15, Tasks 8–9 and amendment 10):**
 - **Task 8:** Steps 1, 3, 3b and 3c were spliced from this plan's blocks by an extraction script.
-  Each was identical to its block at splice time; amendments 10 and 11 changed the files since. The
+  Each was identical to its block at splice time; later fixes changed the files since. The
   kill switch reads "takes effect on the next turn", per Task 3. Mirror test: 154 passed, 0 failed,
   the figure amendment 2 measured. `baseline-health` passed all 7 checks.
 - **Task 9:** both §2 blocks were identical to their plan blocks at splice time. Step 4: 0
@@ -1926,11 +1928,16 @@ Expected:
   and the user was not sure whether they had changed it. It was reset to default, and the user
   chose default for the commit-2 review. This is the second session where the mode changed this
   way. **Correction (2026-10-16):** the user switches to auto deliberately, to avoid approving every
-  call, and commit 2's review rounds ran in auto.
-- **Popup timeout:** WScript.Shell.Popup self-closed (return -1) on both launch paths, so the
-  "closes itself after 600 s" claim is measured, not assumed. Git Bash shows that -1 as exit 127.
-  Two new-style popups seen still open 15 minutes after launch, during that defective run, are
-  unexplained.
+  call, and commit 2's review rounds ran in auto. **Corrected again (2026-10-30):** only round 2 is
+  recorded as running in auto (`pmb-session-artifacts/pre-approval-review/review-commit2-round2.md`);
+  round 1's mode is not recorded. The acceptEdits change was most likely the user's own switch.
+- **Popup timeout:** WScript.Shell.Popup self-closed (return -1) on both launch paths. Git Bash
+  shows that -1 as exit 127. Two new-style popups seen still open 15 minutes after launch, during
+  that defective run, are unexplained. **Correction (2026-10-30):** this did not time the 600 s
+  value, so "closes itself after 600 s" is the Popup timeout the scripts set, not a measured close.
+  The merge-time review (`pmb-session-artifacts/pre-approval-review/change-review-branch.md`, O-3)
+  saw a production-path popup still open at 12.7 min and treated the claim as falsified until a
+  bounded close is timed.
 
 ---
 
