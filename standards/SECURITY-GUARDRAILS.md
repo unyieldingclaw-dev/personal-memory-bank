@@ -236,7 +236,10 @@ the config. These reach the same outcome and are deliberately not matched:
   person to rediscover. That shape holds one carriage return, so it pays one more pass, over the
   CR-deleted view (see below); without the carriage return it took about 23 seconds. Measured on
   one machine on 2026-10-30, median of three runs; figures move between days on the same machine.
-  The per-shape table is in `scripts/dangerous-commands.sh`.
+  The per-shape table is in `scripts/dangerous-commands.sh`. The sh hook is slow on different text:
+  on about 50 KB of random `git`, `push`, `rm` and flag tokens it took about 100 seconds on
+  the same machine (2 to 3 seconds without the structural rows), while 50 KB of ordinary script
+  text took about 2. Both stayed inside the 600-second hook timeout.
 
   **The `-c` and `--no-gpg-sign` patterns are deliberately NOT bounded**, and this distinction is
   load-bearing. Each nests only one gap group and is quadratic at worst (**4.3s** at 50,000

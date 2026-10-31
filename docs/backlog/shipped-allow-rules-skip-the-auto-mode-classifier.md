@@ -80,7 +80,8 @@ exhaustive. Found by the port's three review rounds. "(fixture)" means a KNOWN G
     `del`, `erase`, `rd`, `ri`, `rmdir` (the Remove-Item aliases `Get-Alias` lists on PowerShell 7.6.6,
     Windows); an en-dash parameter (fixture); a backtick escape in a PowerShell-tool payload.
 - Both: a quoted `;` `&` `|` inside the segment (fixture); flags in a variable (fixture) or
-  `GIT_CONFIG_*`; tab-separated forms when the JSON cannot be parsed and the raw text is matched.
+  `GIT_CONFIG_*`. Tab-separated forms on the raw fallback were listed here until 2026-10-30; #64's
+  decoder made them match.
 - awk: `print ... | "cmd"` (fixture), `awk -f` (fixture), gawk `@f()` (fixture) and `@load`.
 
 ## Deferred from the port's reviews

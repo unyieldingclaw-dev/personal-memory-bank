@@ -1365,8 +1365,9 @@ fi
 # alone, in BOTH shells. Ported from Side-Quest-Atlas's scripts/test-dangerous-commands.py and
 # adapted to PMB: expectations differ where PMB's de-escaped view or a porting decision changes the
 # verdict, and those rows say so. Every row is checked for its TIER only; a fixture can be answered
-# by any row. Each alternative of the merged alias+awk row has its own fixture, escaped ones
-# included, because the registry's escape check proves only the alternative its example uses.
+# by any row. Each alternative of the merged alias+awk row has its own fixture, and the alias and
+# awk system() alternatives an escaped one too, because the registry's escape check proves only the
+# alternative its example uses. The getline alternative has no escaped fixture yet.
 # KNOWN GAP and NOT PORTED rows pin a deliberate decision: closing one should be a visible change.
 _dc_F=(
     BLOCK  "rm: split flags"                          'rm -r -f somedir'

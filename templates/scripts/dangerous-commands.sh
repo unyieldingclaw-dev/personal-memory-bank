@@ -305,15 +305,19 @@ fi
 #                                                                           2026-10-14)
 #     ordinary text             0.63s [0.59-0.71]   ->  0.61s [0.56-0.65]
 # Figures move between days on the same machine (dense `git ` without the rows: 18.04s on
-# 2026-10-15, 26.82s here), so compare a row's two columns, not one date with another.
+# 2026-10-14, 26.82s here), so compare a row's two columns, not one date with another.
 # ~33s is not a hang (the ~47-minute cubic case is gone) but a PreToolUse hook blocks the tool
-# call for its whole duration, so this is the honest figure for "what does a pathological 50 KB
-# command cost". It is quadratic, not cubic: halving DC_MAX_CMD would quarter it. That trade has
-# NOT been made here -- it is recorded so the next person changing DC_MAX_CMD knows the shape.
-# The sh twin's medians were 1.4-4.1s on these shapes on Windows Git Bash, where process start-up
-# dominates. With and without the three structural rows (one grep each) they differed by 2.3s at
-# most, and the min-max ranges overlapped on 9 of the 10 shapes, so the rows' sh cost is not
-# resolved above run-to-run noise there. GNU grep is a DFA.
+# call for its whole duration, so this is the honest .ps1 figure for "what does a pathological
+# 50 KB command cost". It is quadratic, not cubic: halving DC_MAX_CMD would quarter it. That trade
+# has NOT been made here -- it is recorded so the next person changing DC_MAX_CMD knows the shape.
+# The sh twin's medians were 1.4-4.1s on the periodic shapes above (Windows Git Bash, where process
+# start-up dominates), and 1.58s to 1.92s on the first 50 KB of scripts/mb.sh. Its slow case is
+# NON-periodic text instead. On ~50 KB of random draws from a handful of tokens (`git `, `push `,
+# `stash `, `=`, `-a`, `x` and space; or `rm `, `-r`, `-`, `r`, `x` and space; or a mix of the
+# two, plus one CR), the whole sh hook took 52.99s, 27.92s and 99.90s respectively, against
+# 1.57-3.29s without these three rows (median of 3, 2026-10-31, one Windows machine). That is
+# inside the 600s hook timeout, but slower than the .ps1 figure above. On a short command the rows
+# add about 0.2s per call on the sh side (1.25s to 1.43s, median of 15).
 #
 # WHY leaving them unbounded is not laziness: in `git (<gap>)--no-gpg-sign` the gap holds the
 # COMMIT MESSAGE, not flags. Bounding it to 200 silently disabled that CONFIRM for any commit
