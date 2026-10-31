@@ -108,11 +108,11 @@ silent hole: no matcher may match against an unfolded view, and no pattern argum
 upper-case letter — checked in both `scripts/` and `templates/scripts/`, plus a byte-identity
 assertion between the two mirrors.
 
-Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). Configured in `.claude/settings.json` with two matchers — one for `Bash` (with sh fallback) and one for `PowerShell` (PS-only):
+Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). Configured in `.claude/settings.json` with two matchers, `Bash` and `PowerShell`, wired identically:
 
 ```json
-{ "matcher": "Bash",       "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
-{ "matcher": "PowerShell", "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true" }
+{ "matcher": "Bash",       "command": "[ -f scripts/dangerous-commands.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
+{ "matcher": "PowerShell", "command": "[ -f scripts/dangerous-commands.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" }
 ```
 
 **Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
@@ -121,6 +121,24 @@ out does not block the tool call: its output is discarded and the call continues
 normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
 later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
 figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default.
+
+**Why the guard and `-NoProfile`.** Claude Code's hooks docs treat stdout that does not start with
+`{` as plain text and ignore the JSON, so anything printed beside a deny silently allows the call.
+Two wiring defects did that: without `-NoProfile`, whatever a PowerShell profile prints lands on
+stdout ahead of the deny; and with `pwsh` installed but the `.ps1` missing, `pwsh` prints its usage
+text (exit 64) before `||` runs bash. `[ -f X.ps1 ]` sends a missing `.ps1` straight to bash, and
+`-NoProfile` must precede `-File` (after it, it is a script argument and the profile still loads).
+The `||` chain is kept over an `if command -v pwsh` pick because a `.ps1` that fails to parse exits
+without reading stdin, so bash still receives the full payload. Every hook in `settings.json` except
+`PreCompact` and `Stop` uses this form. The form needs a POSIX shell, which is Claude Code's default
+for hooks (Git Bash on Windows). Under a hook `"shell": "powershell"`, or on Windows without Git
+Bash, where Claude Code falls back to PowerShell, `[ -f … ]` does not parse and the hook runs nothing.
+
+**The `PowerShell` matcher's bash fallback is partial.** When it falls back (`.ps1` missing, `pwsh`
+absent, or `pwsh` failing before it reads stdin), `dangerous-commands.sh` applies only its own rows:
+the PowerShell-native BLOCK rows (`Remove-Item -Recurse`, `Format-Volume`, pipe-to-`iex`) are not
+checked, and a few bash-only rows can deny a command the `.ps1` would allow. Before the fallback
+existed, that path checked nothing.
 
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
@@ -201,12 +219,16 @@ The shared policy is implemented in `scripts/pre-compact-check.ps1` (Windows/pws
     "hooks": [
       {
         "type": "command",
-        "command": "pwsh -NonInteractive -File scripts/pre-compact-check.ps1 2>/dev/null || bash scripts/pre-compact-check.sh 2>/dev/null || true"
+        "command": "if command -v pwsh >/dev/null 2>&1; then pwsh -NonInteractive -File scripts/pre-compact-check.ps1 2>/dev/null; else bash scripts/pre-compact-check.sh 2>/dev/null; fi"
       }
     ]
   }
 ]
 ```
+
+Not an `||` chain like the other hooks: this gate blocks by exiting 2, and `|| bash … || true` would
+run the bash twin after a deliberate block and then turn the exit status into 0, so the gate would
+never block.
 
 That no-matcher note applies to this Claude Code wiring. Codex deliberately has no `PreCompact`
 handler: its documented `continue: false` behavior ends the active turn, which cannot safely enforce

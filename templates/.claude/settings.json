@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/update-reviewed.ps1 2>/dev/null || bash scripts/update-reviewed.sh 2>/dev/null || true"
+            "command": "[ -f scripts/update-reviewed.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/update-reviewed.ps1 2>/dev/null || bash scripts/update-reviewed.sh 2>/dev/null || true"
           }
         ]
       },
@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/review-reminders-post.ps1 2>/dev/null || bash scripts/review-reminders-post.sh 2>/dev/null || true"
+            "command": "[ -f scripts/review-reminders-post.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/review-reminders-post.ps1 2>/dev/null || bash scripts/review-reminders-post.sh 2>/dev/null || true"
           }
         ]
       },
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/review-reminders-post.ps1 2>/dev/null || true"
+            "command": "[ -f scripts/review-reminders-post.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/review-reminders-post.ps1 2>/dev/null || bash scripts/review-reminders-post.sh 2>/dev/null || true"
           }
         ]
       }
@@ -42,11 +42,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true"
+            "command": "[ -f scripts/dangerous-commands.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true"
           },
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/review-reminders.ps1 2>/dev/null || bash scripts/review-reminders.sh 2>/dev/null || true"
+            "command": "[ -f scripts/review-reminders.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/review-reminders.ps1 2>/dev/null || bash scripts/review-reminders.sh 2>/dev/null || true"
           }
         ]
       },
@@ -55,11 +55,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true"
+            "command": "[ -f scripts/dangerous-commands.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true"
           },
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/review-reminders.ps1 2>/dev/null || true"
+            "command": "[ -f scripts/review-reminders.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/review-reminders.ps1 2>/dev/null || bash scripts/review-reminders.sh 2>/dev/null || true"
           }
         ]
       },
@@ -68,11 +68,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/check-contract.ps1 2>/dev/null || bash scripts/check-contract.sh 2>/dev/null || true"
+            "command": "[ -f scripts/check-contract.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/check-contract.ps1 2>/dev/null || bash scripts/check-contract.sh 2>/dev/null || true"
           },
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/warn-stale-review-marker.ps1 2>/dev/null || bash scripts/warn-stale-review-marker.sh 2>/dev/null || true"
+            "command": "[ -f scripts/warn-stale-review-marker.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/warn-stale-review-marker.ps1 2>/dev/null || bash scripts/warn-stale-review-marker.sh 2>/dev/null || true"
           }
         ]
       },
@@ -81,7 +81,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NonInteractive -File scripts/delegation-depth-check.ps1 2>/dev/null || bash scripts/delegation-depth-check.sh 2>/dev/null || true"
+            "command": "[ -f scripts/delegation-depth-check.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/delegation-depth-check.ps1 2>/dev/null || bash scripts/delegation-depth-check.sh 2>/dev/null || true"
           }
         ]
       }

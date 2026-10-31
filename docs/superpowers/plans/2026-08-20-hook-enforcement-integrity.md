@@ -1,5 +1,31 @@
 # Hook Enforcement Integrity Implementation Plan
 
+> **PARTLY SUPERSEDED 2026-10-30 by the hook-wiring fix (branch `fix/hook-wiring-noprofile-v2`).**
+> Do not run Tasks 1, 2 or 3, or the "fallback chain" line of Task 6's rule:
+> - **Task 1** — `tests/test-hook-wiring.sh` now exists, committed and registered, with a different
+>   design. Its "FRAGILE" assertion (any `||` string without `command -v`) fails every current string
+>   by design.
+> - **Tasks 2 and 3** — the wiring kept the `||` chain and added a guard instead:
+>   `[ -f scripts/X.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/X.ps1 2>/dev/null || bash scripts/X.sh 2>/dev/null || true`,
+>   on all 10 PreToolUse/PostToolUse strings, PowerShell matcher included. Measured reasons:
+>   `command -v` tests that `pwsh` exists, not that the `.ps1` does (with it missing, `pwsh` exits 64
+>   and the `else` never runs); and a `.ps1` that fails to parse exits without reading stdin, so the
+>   `||` chain hands bash the full payload, a fallback an if/else pick throws away.
+> - **Not adopted from Task 2:** its `2>>.pmb-hook-errors.log` redirect. The strings still send
+>   stderr to `/dev/null`, so Task 6's "stderr goes to `.pmb-hook-errors.log`" rule is still unmet;
+>   it stays open with Tasks 4 and 6.
+> - **Task 4** still stands for the drain-then-crash case (a `.ps1` that reads stdin and then dies
+>   leaves bash an empty stdin, and the call is allowed). Its Step 1 test uses only `REPO_ROOT` and
+>   `assert_contains`, so it can be appended to the committed `tests/test-hook-wiring.sh` before
+>   `print_summary` as written; Task 1's `make_stub_pwsh`/`hook_command` helpers do not exist there.
+> - **Stale below, kept as history:** the Architecture line's `if command -v pwsh` move, the Verified
+>   baseline's "Not yet registered in `tests/run.sh`" and "Task 1 Step 3 remains outstanding", the
+>   File Structure's `stub-pwsh.sh`, Task 7's "runs BEFORE Task 2" ordering, and the BLOCKING PREREQUISITE
+>   heading, whose gate is now met (see its 2026-10-30 status line).
+> - The `PreCompact` string was deliberately left alone. Its missing-`.ps1` case fails open in its
+>   own way (`pwsh` exits 64, a non-blocking error, so compaction proceeds), and it lacks
+>   `-NoProfile`. Whether that gate stays at all is an open decision, and its wiring is left to it.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make PMB's hook enforcement layer fail *visibly* instead of silently, and put its wiring — not just its scripts — under test.
@@ -23,6 +49,9 @@ the full gate (6 domains + opposition, Approve). **Still unmerged** — that bra
 merging first, so the gate above is NOT yet satisfied and this plan remains blocked. The original
 wording of this section said `[NS-32]` was "uncommitted in the main working tree"; that was true when
 written and is no longer, but the blocking condition itself is unchanged.
+
+**Status as of 2026-10-30:** the gate is met. `[NS-32]` (`4bc107c`) reached `main` as the first commit
+squashed into PR #21 (`030662c`, 2026-08-26).
 
 ## Scope note
 
@@ -91,7 +120,7 @@ is clean — until then this suite does not run in CI or in `bash tests/run.sh`.
 
 ---
 
-### Task 1: Wiring test harness — prove the fail-open
+### Task 1: Wiring test harness — prove the fail-open — SUPERSEDED 2026-10-30 (see top)
 
 **Files:**
 - Create: `tests/helpers/stub-pwsh.sh`
@@ -213,7 +242,7 @@ Message: `test: add hook wiring tests, reproducing the stdin-drain fail-open`
 
 ---
 
-### Task 2: Replace the invocation chain
+### Task 2: Replace the invocation chain — SUPERSEDED 2026-10-30 (see top)
 
 **Files:**
 - Modify: `.claude/settings.json` (7 enforcement entries)
@@ -299,7 +328,7 @@ Message: `fix: select hook interpreter with command -v, not a stdin-losing fallb
 
 ---
 
-### Task 3: Give the PowerShell-matcher entry a fallback
+### Task 3: Give the PowerShell-matcher entry a fallback — SUPERSEDED 2026-10-30 (see top)
 
 **Files:**
 - Modify: `.claude/settings.json:49`, `templates/.claude/settings.json:49`
@@ -514,6 +543,7 @@ the script and the reason before exiting 0.
 
 - Hooks select their interpreter with `command -v`, never with a fallback chain. Such a chain hands
   the second command a stdin that the first already drained.
+  *(SUPERSEDED 2026-10-30 — see the note at the top of this plan. Do not add this line.)*
 - Hook stderr goes to `.pmb-hook-errors.log`, never to `/dev/null`.
 - A bare `catch { exit 0 }` or `[ -z "$input" ] && exit 0` with no log line is a review failure.
 

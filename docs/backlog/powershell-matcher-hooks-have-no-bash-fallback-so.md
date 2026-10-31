@@ -1,12 +1,30 @@
 ---
-status: open
+status: resolved
 created: 2026-09-27
-last-reviewed: 2026-09-29
+last-reviewed: 2026-10-30
 staleness-threshold: 90d
 related_plan: null
 ---
 
 # PowerShell-matcher hooks have no bash fallback, so a missing .ps1 goes ungated
+
+**RESOLVED 2026-10-30 on branch `fix/hook-wiring-noprofile-v2`.** The status is flipped in the same
+PR as the fix, so `main` shows it resolved only once the fix is there; if that PR is dropped, so is
+this edit. All 10
+PreToolUse/PostToolUse strings, the three `PowerShell`-matcher ones included, are now
+`[ -f scripts/X.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/X.ps1 2>/dev/null || bash scripts/X.sh 2>/dev/null || true`.
+The "Done when" is met by the committed `tests/test-hook-wiring.sh`, which runs each string verbatim
+in a scratch repo with each `.ps1` deleted in turn (and broken, and behind a printing profile):
+`dangerous-commands` and `review-reminders` deny on both matchers, and `review-reminders-post`
+reissues the marker on both (plus a pre-present/post-deleted mixed case). The 2026-08-20 plan is
+marked superseded for Tasks 1-3. The "Not established" points below were settled as follows:
+Claude Code's hooks docs say stdout that does not start with `{` is plain text and its JSON is
+ignored, so by the docs the `Bash` matcher's deny was voided too (not measured end to end) and is
+fixed the same way; `review-reminders.sh`
+handles PowerShell-tool payloads (30 forms with a valid marker, checked in the 2026-10-15 design
+review: no wrong deny), while `dangerous-commands.sh`
+lacks the five PowerShell-native BLOCK rows. That gap is pinned by a test and documented in
+`docs/HOOKS-GUIDE.md`. The text below is the 2026-09-29 state.
 
 **Measured 2026-09-27.** Line numbers are from `.claude/settings.json` and
 `templates/.claude/settings.json`, which are identical at these lines and unchanged since `739f0eb`

@@ -27,8 +27,8 @@ run_suite() {
 # contract: a by-hand harness must not be named test-*.sh (see tests/mutate-merge-gate.sh), and a
 # suite must not run this script, or it recurses (tests/test-run-sh.sh runs a temp COPY instead).
 #
-# WHY git ls-files rather than a glob: tests/ also holds untracked work-in-progress suites (e.g. a
-# withdrawn hook-wiring test), and those must not run. Tracked is what reaches CI.
+# WHY git ls-files rather than a glob: tests/ can hold untracked work-in-progress suites, and those
+# must not run. Tracked is what reaches CI.
 #
 # WHY ls-files only when the repository's toplevel IS REPO_ROOT: in a copy extracted inside some
 # other repository, ls-files would answer from that repository's index, which does not track this

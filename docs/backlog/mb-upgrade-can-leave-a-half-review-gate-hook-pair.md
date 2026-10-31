@@ -94,8 +94,10 @@ The real residual gaps:
   check passes a name if any `<name>.*` exists (`mb.sh:940`, `mb.ps1:1235`), so it prints
   `[OK] Hook scripts present` (reproduced 2026-09-26 with `mb.sh`, scratch copy, `review-reminders.ps1`
   absent) and warns (`mb.sh:951`) only when both twins are absent. A missing
-  `review-reminders.ps1` leaves the PowerShell tool ungated (`templates/.claude/settings.json:62`,
-  `… || true`). Path 1 produces exactly this one-file gap for an adopter with no earlier copy.
+  `review-reminders.ps1` left the PowerShell tool ungated (`templates/.claude/settings.json:62`,
+  `… || true`) until 2026-10-30, when that string gained a `[ -f ]` guard and the bash fallback
+  (`docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md`); a missing `.ps1` now degrades
+  to the `.sh` twin instead. Path 1 still produces this one-file gap for an adopter with no earlier copy.
   Item 1 does not detect it; items 3-4 do if the declared set includes the hook scripts and
   `settings.json`.
 
