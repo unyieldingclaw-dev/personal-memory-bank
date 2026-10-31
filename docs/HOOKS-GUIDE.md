@@ -48,9 +48,11 @@ Configured in `.claude/settings.json`:
 
 Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
 
-**BLOCK** (19 patterns — command exits non-zero, Claude stops):\
-*Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
+**BLOCK** (17 patterns — command exits non-zero, Claude stops):\
+*Shell:* `rm -rf`, and `rm` with recursive and force flags in common reordered spellings · `mkfs` · `dd if=` · `git push --force` · `git push -f`, and common spellings of a force push elsewhere in the command (`--force`, `--mirror`, `-f`, `+refspec`) · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh` · a git alias whose value starts with `!` · awk `system()` or `cmd | getline`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
+
+The reordered and abbreviated forms are matched in common spellings only, not exhaustively: a deliberately respelled command can get through. `standards/SECURITY-GUARDRAILS.md` describes what is matched, the accepted false positives and what is not covered by design.
 
 **CONFIRM** (10 patterns — surfaces confirmation dialog):
 `git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `git merge <branch>` (boundary-matched: excludes `git merge-base`) · commit-signing bypass (regex, four patterns: `commit.gpgsign` set to any falsey value — key or value quoted or bare — via `git -c`, the same via a `git config` subcommand, `--unset`/`--unset-all commit.gpgsign`, and `--no-gpg-sign`)
@@ -92,9 +94,11 @@ there is unconstrained.
 The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase` alone does not
 fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
 verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
-the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The byte locale
-counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
-row inherits its matcher's locale rule, which can change what it matches.
+the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. Under a UTF-8
+locale the caller's pass counts the signing rows' `{0,255}` gaps in characters, and the
+`LC_ALL=C` pass always counts them in bytes. What that guarantees, and when, is stated once in
+`standards/SECURITY-GUARDRAILS.md`. So a new sh regex row inherits its matcher's
+locale rule, which can change what it matches.
 
 **Platform requirement (sh hook):** stated once, with what each missing piece costs, in
 `standards/SECURITY-GUARDRAILS.md` under "Platform requirement (sh hook)". Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
@@ -124,8 +128,9 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 `timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
 out does not block the tool call: its output is discarded and the call continues through the
 normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
-later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
-figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default. Whether to set
+later). The PowerShell hook's slowest measured case, a ~50 KB command, took about 33 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default; the sh hook's, about 100 seconds
+on one non-periodic shape, is inside it too. Whether to set
 `onFailure` is an open decision in `docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md`.
 
 **Two bugs found and fixed (2026-07-02) that made this hook a near-total no-op:**
@@ -153,15 +158,17 @@ In PMB, one Stop entry, `scripts/pre-approval-check.ps1` with its `.sh` twin, do
     is a measured heuristic trigger, and adequacy stays with the Reviewer/Opponent layer. See the
     design rule above on false confidence.
 - **"Claude has paused" notification.** It is launched detached on every exit except a block, and
-  on Windows it closes itself after 600 s. The harness no longer waits on it. It used to be a
-  separate, modal Stop entry:
+  on Windows it is set to close itself after 600 s; popups have been seen still open well past
+  that, cause unknown. The harness no longer waits on it. It used to be a separate, modal Stop
+  entry:
   - `--Remote-Control` and headless sessions hung on it, with no one present to dismiss it;
   - a block would have shown "waiting for input" about an ask that was about to be replaced.
 
 The hook fails open by design: on any error it allows the turn. Blocks, post-block outcomes and the
 fail-opens the script reaches go to `.pmb-pre-approval.log` (gitignored, no message text) for the
-trial that decides template rollout. Two cases leave no line: the kill switch, and both scripts
-failing to start (for example from a subfolder; design spec, Known Limitation 10). Kill switch:
+trial that decides template rollout. Known cases that leave no line: the kill switch, a failed write
+to the log itself (both scripts discard it), and both scripts failing to start (for example from a
+subfolder; design spec, Known Limitation 10). Kill switch:
 `"PMB_PRE_APPROVAL": "off"` in the `settings.json` env block (takes effect on the next turn).
 
 **What adopters get today.** `templates/.claude/settings.json` still installs the older modal popup
@@ -289,7 +296,7 @@ The `.sh` version matches against the raw stdin payload rather than extracting t
 - **What is asked:** exactly `gh pr merge <N> -R <owner/repo> --squash --match-head-commit <40-hex SHA>` (or `--merge`), nothing before or after it, with the repo listed in `.claude/merge-gate.json`. The prompt's reason names the PR, repo, method and full SHA. `--match-head-commit` makes GitHub refuse the merge if the head moved after the prompt; `-R` stops `GH_REPO`, git remotes or `gh repo set-default` from redirecting it.
 - **What is denied:** every other spelling (`--admin`, `--auto`, `--delete-branch`, `--rebase`, a `cd` prefix, a chained command…); a subagent's merge; any mode other than default/acceptEdits/auto; `GH_HOST`/`GH_REPO`/`GH_CONFIG_DIR` in the hook's environment; an agent-written tool description other than the fixed one (the prompt shows it); and any checkout whose user, project or local settings configure a `PermissionRequest` hook or an allow rule wide enough to run a merge with no prompt, judged by its shape and by matching it as a wildcard against merge spellings (such a deny gives a generic message, so it doesn't point the agent at the silent route). A settings file that is not strict JSON denies too. A fallback verdict or a missing or crashing helper also denies. If the hook process itself fails, the wiring's `|| true` gives no decision: for the Bash matcher that takes a failure in both shells, while the PowerShell matcher runs pwsh only. The ask rules below are meant to cover that case for `gh pr merge` spellings only, in this repo only; the REST route (`gh api …/pulls/N/merge`), which the gate also treats as a merge, matches no ask rule.
 - **Measured before shipping (2026-10-20, desktop app 2.1.299, auto mode):** every forced ask waited for the user's click, a subagent's ask reached the user too, and the prompt shows the command, the hook's reason and the agent's description. Headless (`-p`) refuses an ask in every mode, including `bypassPermissions`.
-- **Belt and braces (PMB's own settings only):** `permissions.ask` rules for `gh pr merge` are meant to make a crashed hook still prompt (unmeasured: whether an ask rule prompts in auto mode is the spec's gate G1(b)), and `permissions.deny` rules block the desktop app's auto-merge tool and the GitHub plugin's merge tool, which no Bash hook sees. `mb upgrade` owns `permissions`, so adopters do not get these.
+- **Belt and braces:** `permissions.ask` rules for `gh pr merge` are meant to make a crashed hook still prompt (unmeasured: whether an ask rule prompts in auto mode is the spec's gate G1(b)), and `permissions.deny` rules block the desktop app's auto-merge tool and the GitHub plugin's merge tool, which no Bash hook sees. The two deny rules ship in the template, so adopters get them on `mb upgrade`. The ask rules are in PMB's own settings only; an adopter can add them to its `.claude/settings.json`, whose permission rules `mb upgrade` keeps.
 - **Not covered** (unchanged from before): escape spellings the classifier labels as not-a-merge (`docs/backlog/merge-gate-misses-gh-global-flags-graphql-and-powe.md`), and routes through rules that stay allowed, such as a git alias that shells out. Spec, threat model and every accepted residual: `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`. Logic: `scripts/_review-gate-merge.py` / `.ps1`. Each ask is appended to `.claude/merge-asks.log` (gitignored; a convenience record, not tamper-evident).
 
 ### 8. Review Gate Failure Recovery (`PostToolUse` — Bash tool)
@@ -317,6 +324,8 @@ PMB distributes two git hooks through the `.githooks/` directory, which is versi
 `core.hooksPath = .githooks` is a per-project git local config (stored in `.git/config`, not committed). When set, git resolves all hooks from `.githooks/` instead of `.git/hooks/`. The hook *files* are committed and versioned; the *activation* is a local git config that each `mb init`/`mb upgrade` run sets automatically.
 
 `mb upgrade` treats `.githooks/pre-push` and `.githooks/pre-commit` as `TEMPLATE_OWNED` — it overwrites them unconditionally if they differ from the template, so hook logic stays current across PMB version bumps.
+
+`.claude/settings.json` is `TEMPLATE_OWNED` for its hook wiring, `env` and `model`, but `mb upgrade` merges its `permissions` instead of overwriting them: every `allow`, `deny`, `ask` and `additionalDirectories` entry the project added is kept, as is `disableBypassPermissionsMode`. Any other key the template does not define (for example `disableAllHooks` or `apiKeyHelper`) is dropped, and named in the output. Each upgrade lists the kept rules and flags with `[!]` any rule PMB has since withdrawn from its template, any allow rule mentioning "merge", and any allow that is a bare tool name or `Tool()`, `Tool(*)` or `Tool(:*)`. If the merge cannot run (no runnable `python3`/`python` for `mb.sh`, or invalid JSON), the file is left untouched and a `[!] … not updated` line says to merge by hand. `mb upgrade --dry-run` prints the merged file's diff. The template's `deny` rules for signing bypass and `--no-verify` are a backstop for a failed hook process only: they match a command prefix, case-sensitively, so `git commit -m x --no-verify` passes them; the dangerous-commands hook is the control.
 
 ### The two hooks
 
