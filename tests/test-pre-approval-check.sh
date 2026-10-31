@@ -49,6 +49,14 @@ sys.stdout.buffer.write(json.dumps({"session_id": "testsess-0001-aaaa", "stop_ho
                   "last_assistant_message": msg}, ensure_ascii=False).encode("utf-8"))'
 }
 
+# payload_tail MESSAGE HEX -- MESSAGE followed by one code point. The code point is built with chr()
+# inside Python, so no invisible character is typed into this file and it never crosses argv.
+payload_tail() {
+    python3 -c 'import json, sys
+print(json.dumps({"session_id": "testsess-0001-aaaa", "prompt_id": "p-1", "hook_event_name": "Stop",
+                  "stop_hook_active": False, "last_assistant_message": sys.argv[1] + chr(int(sys.argv[2], 16))}))' "$1" "$2"
+}
+
 # run_case SHELL BODY [ENV=VALUE...] -- fresh state, then one hook run. Sets OUT, CODE, MS.
 run_case() {
     rm -f "$SB/.pmb-pre-approval.log" "$SB/.pmb-hook-errors.log"
@@ -129,6 +137,17 @@ check_shell() {
     run_case "$S" "$(payload '**Which should we brainstorm first?**')"
     assert_contains "$OUT" '"decision":"block"' "[$S] trailing markdown after the ? is still a question"
 
+    # WHY these code points: the .ps1's culture-aware EndsWith('?') ignored each of them (a sample of the
+    # ignorable class, not all of it), so a message ending "?" plus one was tier B there and not in the .sh.
+    # Same text as the unwrapped blocked case above ('Which should we brainstorm first?'), so the trailing
+    # character is the only difference from a known-blocking input. notified: the hook ran and did not
+    # block (every non-block exit notifies, so it cannot tell the allow path from an early return).
+    for cp in 200B 200C 200E 00AD 200D FEFF 2060; do
+        run_case "$S" "$(payload_tail 'Which should we brainstorm first?' "$cp")"
+        assert_allowed "[$S] a ? followed by U+$cp is not a tier B question (ordinal match)"
+        notified 6; assert_exit_zero "$?" "[$S] a ? followed by U+$cp still shows the paused notification"
+    done
+
     run_case "$S" "$(payload $'## Recommendation\nStart with the hook, because it unblocks the rest.\n\nWhich should we brainstorm first?')"
     assert_allowed "[$S] tier B with a Recommendation heading is allowed"
 
@@ -180,6 +199,11 @@ check_shell() {
     run_case "$S" "$(payload 'Want me to push it now?')" PMB_PRE_APPROVAL=OFF
     assert_contains "$OUT" '"decision":"block"' "[$S] the kill switch is case-sensitive: OFF does not disable it (review finding C2)"
 
+    # Octal bytes keep the value independent of the shell's escape handling. U+200B is what the .ps1's
+    # culture-aware -ceq ignored.
+    run_case "$S" "$(payload 'Want me to push it now?')" "PMB_PRE_APPROVAL=off$(printf '\342\200\213')"
+    assert_contains "$OUT" '"decision":"block"' "[$S] the kill switch is exact: off plus U+200B does not disable it"
+
     if [ "$S" = "sh" ]; then
         # A json.py in the hook's cwd must not shadow the standard library (review finding S2).
         printf 'open("shadowed", "w").write("x")\n' > "$SB/json.py"
@@ -214,6 +238,17 @@ check_shell() {
 check_shell sh
 
 if command -v pwsh >/dev/null 2>&1; then
+    # Under .NET globalization-invariant mode (no ICU) culture comparison is already ordinal, so the
+    # zero-width cases would pass on the old .ps1 too. Say so, and fail under PMB_REQUIRE_PARITY=1
+    # (same sentinel idea as tests/test-review-gate-classify-parity.sh).
+    sentinel="$(pwsh -NoProfile -NonInteractive -Command "(('off' + [char]0x200B) -ceq 'off') -and ('?' + [char]0x200B).EndsWith('?')" </dev/null 2>/dev/null | tr -d '\r')"
+    if [ "$sentinel" != "True" ]; then
+        echo "!!! WARNING: culture comparison is ordinal in this pwsh (sentinel=$sentinel); the invisible-character"
+        echo "!!! cases cannot detect a culture regression here. Set PMB_REQUIRE_PARITY=1 to make this a failure."
+        if [ "${PMB_REQUIRE_PARITY:-0}" = "1" ]; then
+            assert_equals "$sentinel" "True" "PMB_REQUIRE_PARITY=1 but pwsh compares ordinally here (no ICU?)"
+        fi
+    fi
     check_shell ps1
 else
     echo ""
