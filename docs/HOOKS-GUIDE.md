@@ -48,9 +48,11 @@ Configured in `.claude/settings.json`:
 
 Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
 
-**BLOCK** (19 patterns — command exits non-zero, Claude stops):\
-*Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
+**BLOCK** (17 patterns — command exits non-zero, Claude stops):\
+*Shell:* `rm -rf`, and `rm` with recursive and force flags in common reordered spellings · `mkfs` · `dd if=` · `git push --force` · `git push -f`, and common spellings of a force push elsewhere in the command (`--force`, `--mirror`, `-f`, `+refspec`) · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh` · a git alias whose value starts with `!` · awk `system()` or `cmd | getline`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
+
+The reordered and abbreviated forms are matched in common spellings only, not exhaustively: a deliberately respelled command can get through. `standards/SECURITY-GUARDRAILS.md` describes what is matched, the accepted false positives and what is not covered by design.
 
 **CONFIRM** (10 patterns — surfaces confirmation dialog):
 `git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `git merge <branch>` (boundary-matched: excludes `git merge-base`) · commit-signing bypass (regex, four patterns: `commit.gpgsign` set to any falsey value — key or value quoted or bare — via `git -c`, the same via a `git config` subcommand, `--unset`/`--unset-all commit.gpgsign`, and `--no-gpg-sign`)
@@ -126,8 +128,9 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 `timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
 out does not block the tool call: its output is discarded and the call continues through the
 normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
-later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
-figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default. Whether to set
+later). The PowerShell hook's slowest measured case, a ~50 KB command, took about 33 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default; the sh hook's, about 100 seconds
+on one non-periodic shape, is inside it too. Whether to set
 `onFailure` is an open decision in `docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md`.
 
 **Two bugs found and fixed (2026-07-02) that made this hook a near-total no-op:**

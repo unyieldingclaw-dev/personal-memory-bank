@@ -135,19 +135,20 @@ and the `R2/` and `R4/` IDs, none of which appears below any more: read it with 
   `standards/SECURITY-GUARDRAILS.md` ships to adopters, who never see PMB's decision and keep the
   "open" wording once it is settled. Track it in PMB's own memory bank instead.
 - **The worst-case figures disagree across shipped files** (R5/COR5-1, R5/COR5-2, R5/P5-1,
-  CHR2/M-1). For one quantity, the ps1 hook's cost on a ~50 KB command:
-  - the sh hook's WHOLE-HOOK worst-case comment still calls `17.55s` "the real number to reason
-    about" and has no CR case;
-  - the standard's "Residual cost" paragraph says about 17.5 s, then about 21 s CR-free and 29 s
-    with one CR, in the same paragraph;
-  - a comment in `tests/dangerous-commands.Tests.ps1` says ~17.5 s;
-  - `docs/HOOKS-GUIDE.md` (and its template) says "under 30 seconds".
+  CHR2/M-1). For one quantity, the ps1 hook's cost on a ~50 KB command. **Partly done
+  2026-10-30** by the SQA port re-cut, which re-measured with its structural rows: the sh hook's
+  WHOLE-HOOK table now has CR cases; the standard's "Residual cost" paragraph says about 33 s with
+  one CR and about 23 s without, and points at the table; `docs/HOOKS-GUIDE.md` (and its
+  template) says about 33 seconds and points at the standard. Still open:
+  - the `onFailure` decision above still quotes 19 to 21 s CR-free and about 29 s with one CR;
+  - the standard and the guide state the figure as well as pointing at it; keep it in one place.
 
-  Five measured runs of the gated code with one CR took 27.2, 29.0, 30.8, 30.9 and 34.3 s on one
-  machine (R4 and R5, 2026-10-15 and 2026-10-16), so "under 30" is false for three of them, and the
-  "about 29" in the standard, the CHANGELOG and the `onFailure` decision above quotes one round. One
-  CR-free run took 22.2 s, outside "19 to 21 s". Point every copy at one stated range, or at the
-  standard, and add the CR case to the sh table.
+  Before the re-cut, the sh comment called `17.55s` "the real number to reason about", the
+  standard said about 17.5 s then 21 s and 29 s in one paragraph, and the guide said "under 30
+  seconds". Five measured runs of the gated code with one CR took 27.2, 29.0, 30.8, 30.9 and
+  34.3 s on one machine (R4 and R5, 2026-10-15 and 2026-10-16), so "under 30" was false for three
+  of them, and the "about 29" in the standard, the CHANGELOG and the `onFailure` decision above
+  quoted one round. One CR-free run took 22.2 s, outside "19 to 21 s".
 - **R5/COR5-4:** the comment above the 400K timing row in `tests/test-dangerous-commands.sh` says
   that row stays green on a quadratic CR test placed after the bound because the difference is
   "under about a second". The figure is low: round-4 measurements of that expansion alone at 50K

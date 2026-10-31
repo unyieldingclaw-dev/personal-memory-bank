@@ -462,7 +462,7 @@ Describe "dangerous-commands.ps1 (round-8 regression guards)" {
     # 8000 chars = 44s on this shape, and the growth was cubic, so 50000 extrapolated to ~3 HOURS.
     # (Payload-shape caveat: dense `git config ` is the worst case for the NESTED gaps this test
     # guards. The single-gap patterns are worst on dense `git ` text and cost ~4.3s each; the
-    # whole-hook worst case at the 50000 bound is ~17.5s. See dangerous-commands.sh.) A regression at
+    # whole-hook figures at the 50000 bound are in dangerous-commands.sh's table.) A regression at
     # 50000 would present as a CI hang rather than a failing test -- and the earlier claim that this
     # assertion was "confirmed to discriminate by reverting the fix" cannot have been executed at
     # that size. At 8000 the unbounded build takes 44s against this 10s bar: same signal, bounded
@@ -727,6 +727,97 @@ Describe "dangerous-commands.ps1 ([NS-38] split pipes, [NS-40] WARN de-escaping,
             $json = @{ tool_name = "Bash"; tool_input = @{ command = $k.c } } | ConvertTo-Json -Compress
             $out = $json | & pwsh -NoLogo -NoProfile -Command "[System.Globalization.CultureInfo]::CurrentCulture = 'tr-TR'; & '$script:HookScript'" 2>&1
             ($out -join "`n") | Should -Match $k.want -Because "culture must not decide the verdict: $($k.c)"
+        }
+    }
+}
+
+Describe "dangerous-commands.ps1 (structural rm / force-push / alias+awk rows)" {
+    # WHY these alongside the sh suite's fixture table: CI's pester-tests job runs this file
+    # unconditionally, and the sh suite's ps1 half is skipped wherever pwsh is absent. Each case
+    # asserts the row's OWN reason, so a literal row answering in its place does not pass.
+    BeforeAll {
+        function Get-Verdict([string]$Command) {
+            $json = @{ tool_name = "Bash"; tool_input = @{ command = $Command } } | ConvertTo-Json -Compress
+            (Invoke-DangerousCommandsHook $json).Output
+        }
+        $script:RmReason    = 'BLOCK: irreversible recursive deletion \(rm with recursive and force flags'
+        $script:PushReason  = 'BLOCK: force push \(--force, --mirror or -f'
+        $script:ExecReason  = 'BLOCK: arbitrary command execution through a tool'
+    }
+
+    It "blocks reordered, split and abbreviated rm forms through the structural row" {
+        foreach ($c in @('rm -r -f x', 'rm x -rf', 'rm --force -r x', 'rm --rec --forc x', 'sudo rm -r x -f',
+                         'rm.exe -r -f x', 'rm -r -fo C:\x', 'rm C:\x -Recurse -Force')) {
+            Get-Verdict $c | Should -Match $script:RmReason -Because "rm with recursive and force flags: $c"
+        }
+    }
+
+    It "blocks force pushes the literal rows miss" {
+        foreach ($c in @('git push origin main --force', 'git -C . push origin main -f', 'git push origin +main',
+                         'git push --mirror origin', 'git -c alias.p=push p origin main --force',
+                         'git.exe push origin main --force', 'git push -4f origin main', 'git push --mir origin')) {
+            Get-Verdict $c | Should -Match $script:PushReason -Because "a force push in any position: $c"
+        }
+    }
+
+    It "blocks a git alias that runs a shell command, and awk system() / getline" {
+        foreach ($c in @("git -c alias.x='!id' x", 'git config alias.x !id', "awk 'BEGIN{system(`"id`")}'",
+                         "mawk 'BEGIN{system (`"id`")}'", "awk 'BEGIN{`"id`" | getline x}'",
+                         "awk 'BEGIN{`"id`" |& getline x}'")) {
+            Get-Verdict $c | Should -Match $script:ExecReason -Because "command execution through arguments: $c"
+        }
+    }
+
+    It "leaves the near-misses alone" {
+        foreach ($c in @('rm -r somedir', 'docker run --rm --read-only -it img --foo', 'git push origin main',
+                         'git push origin main --follow-tags', 'git config push.default current',
+                         'git config --get-all alias.list', "awk '{print `$1}' f | sort",
+                         "awk 'BEGIN{x=1}' f; grep -n 'os.system(' x.py", 'git stash push -m "wip +tests"',
+                         "git stash push -m 'wip -fix later'", 'rm -r somedir && tail -f log')) {
+            Get-Verdict $c | Should -Not -Match '"permissionDecision":"deny"' -Because "not a force-delete, force push or exec: $c"
+        }
+    }
+
+    # THE PERFORMANCE GUARD for these rows. Their backtracking is QUADRATIC, not cubic like the
+    # signing rows above, so an 8000-char payload cannot discriminate. Two kinds of 50000-char shape,
+    # timed in-process on each row's own regex (the whole hook on a dense `git push` shape also pays
+    # for the signing rows):
+    #   - shapes that are slow for the rows AS SHIPPED, so growth there shows;
+    #   - shapes on which an UNBOUNDED quantifier is slow, gap by gap: a shape that suits one gap can
+    #     be instant for another (`rm -r x ...` misses the gap after `-f`; `rm -f x ...` catches it),
+    #     so one shape per row is not enough.
+    # Measured figures are in dangerous-commands.sh's comments. When this guard was written, each gap
+    # unbounded on its own exceeded the 5s bar on some shape below, with one exception: the push
+    # row's `=` branch before `push` stayed under it on every shape tried. Unbounding the rm cluster
+    # alternative's two letter runs together exceeds it on `rm -rrr...`.
+    # NOT timed here: repeated short clusters (`rm -rrrrrrrr ` repeated), about 3s per view as shipped
+    # -- too close to the bar for a CI runner of unknown speed.
+    It "keeps the structural rows under 5s on a set of 50000-char shapes, as shipped and as an unbounding would expose" {
+        $opts = [System.Text.RegularExpressions.RegexOptions]'IgnoreCase, Singleline, CultureInvariant'
+        $keys = @{ rm = 'irreversible recursive deletion \(rm with'; push = 'force push \(--force, --mirror'
+                   exec = 'arbitrary command execution through' }
+        $lines = Get-Content $script:HookScript | Where-Object { $_ -match 'regex = \$true' }
+        $rows = @{}
+        foreach ($k in $keys.Keys) {
+            $hit = @($lines | Where-Object { $_ -match $keys[$k] })
+            $hit.Count | Should -Be 1 -Because "the $k row must be found exactly once, or this test proves nothing"
+            if ($hit[0] -match "pattern = '((?:[^']|'')*)'") { $rows[$k] = $Matches[1] -replace "''", "'" }
+        }
+        $n = 50000
+        $shapes = @(
+            @('rm', ('rm ' + ('-r ' * 17000))), @('rm', ('rm -r x ' * 6250)), @('rm', ('rm -r ' * 8334)),
+            @('rm', ('rm -f x ' * 6250)), @('rm', ('rm -f ' * 8334)),
+            @('rm', ('rm -' + ('r' * $n))), @('rm', ('rm -' + ('f' * $n))),
+            @('push', ('git ' + ('push ' * 10000))), @('push', ('git push x ' * 4546)), @('push', ('git push ' * 5556)),
+            @('push', ('git stash push ' * 3334)),
+            @('exec', ('awk |' * 10000)), @('exec', ('awk ' * 12500)))
+        foreach ($s in $shapes) {
+            $text = $s[1].Substring(0, $n)
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $m = [regex]::IsMatch($text, $rows[$s[0]], $opts)
+            $sw.Stop()
+            $m | Should -BeFalse -Because "the shape is built never to match, so the engine explores every start"
+            $sw.Elapsed.TotalSeconds | Should -BeLessThan 5 -Because "the $($s[0]) row on '$($text.Substring(0, 16))...' must stay bounded"
         }
     }
 }
