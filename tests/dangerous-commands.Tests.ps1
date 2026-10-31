@@ -584,7 +584,7 @@ Describe "dangerous-commands.ps1 (round-8 regression guards)" {
 Describe "dangerous-commands.ps1 ([NS-37] case-folding parity reference)" {
     # WHY these assertions live on the side that was already CORRECT: [NS-37] was a DIVERGENCE,
     # not a shared bug. Every matcher in this script uses OrdinalIgnoreCase (literals) or
-    # RegexOptions.IgnoreCase (regexes), while four of the six matchers in the sh twin used a
+    # RegexOptions.IgnoreCase (regexes), while four of the six matchers the sh twin had then used a
     # bare POSIX `case` -- which is case-sensitive -- and so returned NO VERDICT AT ALL on a
     # mixed-case payload this script denied. The sh side was folded to match THIS behaviour,
     # which makes this file the reference for it.
@@ -700,6 +700,16 @@ Describe "dangerous-commands.ps1 ([NS-38] split pipes, [NS-40] WARN de-escaping,
             $r.Output | Should -Not -Match '"permissionDecision":"deny"'
             ([regex]::Matches($r.Output, "WARNING:")).Count | Should -Be 1 -Because "one match, one notice"
         }
+    }
+
+    It "warns once, not twice, when both views name the file" {
+        # WHY a plain payload: the escaped ones above match only the de-escaped view, so they cannot
+        # see a notice printed once per view. A plain path matches both views, which is the case
+        # where the loop must stop after its first notice.
+        $json = @{ tool_name = "Bash"; tool_input = @{ command = 'cat ~/.ssh/id_rsa' } } | ConvertTo-Json -Compress
+        $r = Invoke-DangerousCommandsHook $json
+        $r.Output | Should -Match "WARNING:"
+        ([regex]::Matches($r.Output, "WARNING:")).Count | Should -Be 1 -Because "both views match, one notice"
     }
 
     It "matches case-insensitively under the tr-TR culture" {

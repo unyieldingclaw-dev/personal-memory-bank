@@ -527,21 +527,29 @@ dc_grep() {
     # WHY confirm_regex() runs the caller's locale AND C, not either one alone -- each alone
     # misses a signing bypass the other catches (all measured):
     #   - C alone: the rows bound their gaps with `.{0,255}`, and C counts that bound in BYTES
-    #     while a UTF-8 locale and the .ps1 twin count CHARACTERS. `git config --file /tmp/<120
-    #     CJK chars>/cfg` plus the key and a falsey value (408 bytes) matches under C.UTF-8 and
-    #     .NET and not under C, so the sh CONFIRM went silent while ps1 prompted.
+    #     while a UTF-8 locale counts CHARACTERS and the .ps1 twin counts UTF-16 code units.
+    #     `git config --file /tmp/<120 CJK chars>/cfg` plus the key and a falsey value (408
+    #     bytes) matches under C.UTF-8 and .NET and not under C, so the sh CONFIRM went silent
+    #     while ps1 prompted.
     #   - The caller's locale alone: under tr_TR.UTF-8, -i does not fold `I` to `i`, so an
     #     upper-case key -- `git config COMMIT.GPGSIGN false`, which git accepts -- got no
-    #     verdict; and under any UTF-8 locale `.` does not match an invalid sequence, so a lone
-    #     surrogate escape in a gap (the extraction writes it as bytes ED B3 BF) got none either
-    #     on GNU grep 3.7. Both pass under C. Both are the sh twin of defects the .ps1 closes
-    #     with CultureInvariant and .NET's `.`.
+    #     verdict; under a UTF-8 locale on a strict grep (GNU 3.7 and 3.11 measured; 3.0 is not
+    #     strict) `.` does not match an invalid sequence, so a lone surrogate escape in a gap (the
+    #     extraction writes it as bytes ED B3 BF) got none either; and under a UTF-8 locale on GNU
+    #     grep 3.0 the full row misses a gap holding an astral character such as an emoji, though
+    #     every fragment of the row matches it (3.11 does not). All pass under C. The first two
+    #     are the sh twin of defects the .ps1 closes with CultureInvariant and .NET's `.`.
     # The union can only add matches. Its cost is a second grep per row, paid only when the
     # first misses -- that is, on almost every command -- and the NUL join above pays for it.
-    # It does not close every combination: when the caller's pass misses for one of the reasons
-    # above AND the gap is longer than 255 bytes, the C pass misses too, so a
-    # Turkish locale plus an upper-case key plus a long CJK path gets no verdict here while the .ps1
-    # twin prompts. Recorded in standards/SECURITY-GUARDRAILS.md.
+    # What the union guarantees, and when, is stated once in standards/SECURITY-GUARDRAILS.md.
+    # The list above is the measured record of the caller's pass missing; it is not exhaustive.
+    #
+    # WHY the argument count is checked: with no subject, printf emits one empty record and grep
+    # answers "no match", so a caller that lost its subjects would pass every command silently.
+    if [ "$#" -lt 3 ]; then
+        deny "CONFIRM REQUIRED: internal error: dc_grep needs a pattern, a locale and at least one subject (got $# arguments), so this command cannot be checked reliably. Run manually if intentional."
+        exit 0
+    fi
     _dc_re=$1
     _dc_lc=$2
     shift 2
