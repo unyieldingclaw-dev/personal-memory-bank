@@ -9,7 +9,8 @@ related_plan: null
 # Follow-ups from PR #59 (update-reviewed.sh) and PR #71 (OPP6-1 unstaged-changes gate)
 
 Source: the "Follow-ups" / "Backlog candidates" sections of `gh pr view 59` and `gh pr view 71`.
-None is fixed. The empty-stdin-after-pwsh item is already in
+Items marked Done or Dropped below are resolved; the rest are open.
+The empty-stdin-after-pwsh item is already in
 `replace-the-gh-pr-merge-deny-with-a-forced-permiss.md` and is not repeated.
 
 ## From PR #71 (commit gate, `2c4088f`)
@@ -51,5 +52,6 @@ None is fixed. The empty-stdin-after-pwsh item is already in
   first measure whether the hook payload's `cwd` follows EnterWorktree.
 - **Done:** the six wording/test nits. The comment now says "the other stdin-reading hooks"; the
   stacked WHY comments are merged; the Cygwin rationale and its "not reproduced locally" caveat live
-  once, in the hook, and the test points there (the released `CHANGELOG.md` entry is left as
-  history); tests use `to_win_path`; a Linux/macOS-only test pins the backslash-filename trade-off.
+  once, in the hook, and the test points there (the released 1.3.0 entry in
+  `docs/archive/changelog-1.3.0.md` is left as history); tests use `to_win_path`; a
+  Linux/macOS-only test pins the backslash-filename trade-off.
