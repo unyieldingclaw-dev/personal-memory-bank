@@ -57,6 +57,72 @@ This standard defines what AI should **BLOCK**, **CONFIRM**, or **WARN** about.
 | Never execute commands that modify system files outside project | Scope violation |
 | Never run commands with `sudo` or admin privileges unless explicit | Privilege escalation |
 
+**How the hook matches rm and force push (added 2026-10-14).** `scripts/dangerous-commands.sh`/`.ps1`
+block the literals `rm -rf`, `git push --force` and `git push -f`, and also match common reordered,
+split, clustered and abbreviated spellings of both. Examples they block:
+- `rm -r -f x`, `rm x -rf`, `rm -vr x -f`, `rm --rec --forc x`, `rm.exe -r -f x`;
+- `git push origin main --force`, `git -C . push -f`, `git push origin +main`,
+  `git push --mirror origin`, `git push -4f origin main`, `git -c alias.p=push p origin main --force`.
+
+`git stash push` is deliberately not matched: it never touches a remote.
+
+**This matching is not exhaustive.** It targets the spellings people and agents commonly write. A
+command deliberately respelled — padded, abbreviated further, quoted around a separator, held in a
+variable, or set up by an earlier command — can get through. The forms tested, blocked and not, are
+the fixture table in the PMB repository's `tests/test-dangerous-commands.sh`.
+
+**PowerShell's own delete spellings are mostly not matched.** The PowerShell hook matches `rm`
+(Remove-Item's alias) and the literals `Remove-Item -Recurse -Force` and `Remove-Item -Force -Recurse`.
+Ordinary spellings with the path elsewhere, such as `Remove-Item C:\x -Recurse -Force`, and the
+aliases `ri`, `del`, `rd` and `rmdir`, are not matched.
+
+This matters beyond defense in depth. The template allowlists `Bash(git *)`, and an allow rule
+resolves *before* Claude Code's auto-mode classifier. So a force push in one of those forms used to
+be approved with no review at all.
+
+- **Not covered, by design:**
+  - **`rm -r` without `-f`.** The Bash tool's stdin is not a terminal, so rm skips its
+    write-protection prompt and `-f` adds nothing. Measured with GNU coreutils 8.32: `rm -r` deleted
+    a read-only file with no prompt. So these rows gate the *spelling*, not the harm.
+    - Recursive deletion itself is gated by Claude Code's own permission flow: a prompt in default
+      mode, and the classifier in auto mode.
+    - Under `bypassPermissions`, only critical-path targets are gated: the filesystem root, home, and
+      the working directory itself.
+  - **Anything set up before the command runs.** The hook sees one command's text, so it cannot see
+    a git alias defined earlier or in user config (`git pf`), nor push behaviour configured with
+    `remote.<name>.mirror` or a `+` refspec.
+- **Accepted false positives:** text that names the flags, for example `git log --grep 'push --force'`
+  and `git commit -m 'drop rm -r and -f'`. Quotes do not end a command for this matcher.
+
+### Command Execution via Argument-Capable Tools
+
+Added 2026-10-14. Some tools run an arbitrary command through their own arguments, so an allow rule
+for the tool approves that command too, and it then skips the auto-mode classifier.
+
+| Rule | How an allow rule reaches it | Enforcement |
+|------|------------------------------|-------------|
+| Never define a git alias whose value starts with `!` (`git -c alias.x='!cmd' x`, `git config alias.x '!cmd'`, or the same through `GIT_CONFIG_PARAMETERS`) | The template allowlists `Bash(git *)` | Blocked in common spellings |
+| Never run a command through awk's `system()`, `"cmd" \| getline` or gawk's `"cmd" \|& getline` (`awk`, `gawk`, `mawk`, `nawk`) | `/code-review`'s `allowed-tools` pre-approves `Bash(awk *)` for that turn | Blocked in common spellings. `system` straight after a `.` (`os.system(`) does not count |
+
+As above, this matching is not exhaustive; the PMB repository's fixture table holds the tested forms.
+
+- **Not ported, deliberately:**
+  - `find` with `-exec`/`-ok`: Claude Code never lets a prefix rule approve find's command-running
+    actions, so they already reach a prompt or the classifier.
+  - sed's `e` command: no shipped settings allow rule or command `allowed-tools` approves sed. The
+    shipped agent definitions list `Bash(sed *)` among their tools; whether that grants anything
+    beyond making the tool available is unresolved.
+- **Not covered, by design:**
+  - awk's `print ... | "cmd"`, which reads exactly like a shell pipe in the command text;
+  - an awk program held in a file (`awk -f`);
+  - gawk's indirect calls (`f = "system"; @f("cmd")`);
+  - other git config keys that run a command, for example `core.sshCommand`;
+  - general execution (`bash -c`, `python3 -c`), which this hook has never tried to block.
+- **Accepted false positive:** an awk command followed by another that names `system(`, such as
+  `awk '{print $2}' f; grep "system(" main.c`. The awk match has to cross `;`, because an awk
+  program separates its statements with it, and the matcher cannot tell a quoted `;` from a
+  command separator.
+
 ### AI Response to BLOCK
 
 ```
@@ -164,12 +230,16 @@ the config. These reach the same outcome and are deliberately not matched:
   new floor.
 
   **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
-  costs about **17.5 seconds** in the PowerShell hook, which blocks the tool call for that whole
-  time. It is quadratic now, so halving the 50,000-byte limit would quarter it; that trade has not
-  been made, and is recorded here rather than left for the next person to rediscover. A command
-  that also holds a carriage return pays one more pass, over the CR-deleted view (see below).
-  Measured on one machine on 2026-10-16, where the CR-free case took about 21 seconds, one CR
-  raised it to about 29.
+  costs about **33 seconds** in the PowerShell hook on the slowest shape found so far, which blocks
+  the tool call for that whole time. It is quadratic now, so halving the 50,000-byte limit would
+  quarter it; that trade has not been made, and is recorded here rather than left for the next
+  person to rediscover. That shape holds one carriage return, so it pays one more pass, over the
+  CR-deleted view (see below); without the carriage return it took about 23 seconds. Measured on
+  one machine on 2026-10-30, median of three runs; figures move between days on the same machine.
+  The per-shape table is in `scripts/dangerous-commands.sh`. The sh hook is slow on different text:
+  on about 50 KB of random `git`, `push`, `rm` and flag tokens it took about 100 seconds on
+  the same machine (2 to 3 seconds without the structural rows), while 50 KB of ordinary script
+  text took about 2. Both stayed inside the 600-second hook timeout.
 
   **The `-c` and `--no-gpg-sign` patterns are deliberately NOT bounded**, and this distinction is
   load-bearing. Each nests only one gap group and is quadratic at worst (**4.3s** at 50,000
@@ -285,6 +355,18 @@ could not span the newline, and the PowerShell `iex` literals could not either.
     verdict (measured with python3 off `PATH`).
   - **No bash either:** the shipped hook wiring (`pwsh ... || bash ... || true`) runs no guard at
     all, and every command is allowed.
+
+### Network Access
+
+There is **no rule** in this hook for `curl`, `wget`, `Invoke-WebRequest`/`iwr` or
+`Invoke-RestMethod`/`irm`. Network access goes through Claude Code's own permission flow:
+- CONFIRM in this hook is a hard deny, not a prompt, and you cannot tune a TEMPLATE_OWNED file, so a
+  text rule here would also hard-deny routine localhost and dev-server checks.
+- In auto mode the classifier already blocks sending sensitive data to external endpoints by
+  default, and a text match on `curl` is sidestepped by `python -c`.
+- A read-only review agent has no reason to fetch, and `opposition` has been observed running `curl`
+  outside its grant (`.claude/agents/opposition.md`'s SCOPE CAVEAT). A deny scoped to those agents
+  is the narrower fix, and is not in this hook yet.
 
 ### Database Operations
 
