@@ -660,6 +660,16 @@ jobs:
         shell: bash
         run: git fetch --depth=1 origin main >/dev/null || true
 
+      # WHY generate tr_TR.UTF-8: test-dangerous-commands.sh's Turkish-locale cells (an upper-case
+      # signing key, where `grep -i` does not fold `I`) need a locale that really shows that fold,
+      # and the runner image ships none, so they skipped here. `locale -a | grep` fails this step
+      # when generation did not take, so the log says which half broke.
+      - name: Generate the Turkish locale for the dangerous-commands locale cells
+        shell: bash
+        run: |
+          sudo locale-gen tr_TR.UTF-8
+          locale -a | grep -i tr_TR
+
       # WHY PMB_REQUIRE_PARITY: the sh/ps1 parity blocks in test-dangerous-commands.sh and
       # test-pre-compact-check.sh SKIP when pwsh is missing, loudly but without failing. The runner
       # ships pwsh today, so this changes nothing now; it turns a runner that stopped shipping it
@@ -669,12 +679,18 @@ jobs:
       #
       # WHY PMB_REQUIRE_SYMLINKS: the same, for test-pmb-journal.sh's symbolic-link cases -- the
       # writers' link refusals, a dangling-link start sentinel, the gate's link checks.
+      #
+      # WHY PMB_REQUIRE_LOCALE_CASES: the same, for test-dangerous-commands.sh's locale cells -- no
+      # effective Turkish locale, or no UTF-8 locale where grep is strict, fails instead of skipping.
+      # A separate flag, because GNU grep 3.0 (Git for Windows) is never strict, so a local run
+      # that sets PMB_REQUIRE_PARITY would otherwise always fail.
       - name: Run mb command tests
         shell: bash
         env:
           PMB_REQUIRE_PARITY: "1"
           PMB_REQUIRE_FIFO: "1"
           PMB_REQUIRE_SYMLINKS: "1"
+          PMB_REQUIRE_LOCALE_CASES: "1"
         run: bash tests/run.sh
 
   powershell-lint:
