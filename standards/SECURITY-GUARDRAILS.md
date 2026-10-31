@@ -198,36 +198,43 @@ the config. These reach the same outcome and are deliberately not matched:
   alternation cannot see through command substitution.
 - An **indirected key** — `K=commit.gpgsign; git config "$K" false`. Resolving it requires
   *evaluating* the shell rather than reading it.
-- **(added 2026-08-24)** More than 255 characters between `git` and `config`, or between `config`
-  and the key. Those two patterns nest two gap groups, which made matching **cubic** (~8x per
-  doubling, measured): at the 50,000-character input limit the guard could spend roughly **47
-  minutes** inside a single pattern, and a `PreToolUse` hook blocks the tool call while it runs — so
-  an oversized command hung the agent outright rather than merely running slowly. That was reachable
-  without an attacker: a large heredoc writing prose *about* `git config`, containing no `|`, `;` or
-  `&`, has exactly that shape. Those four gap groups are now bounded to `{0,255}`. The bound was
-  `{0,300}` until 2026-09-30. It was lowered because POSIX guarantees repetition bounds only up to
-  255: a grep that supports `-z` but caps bounds there would reject `{0,300}`, and under the
-  fail-closed rule the sh hook would then deny every command. No such grep has been measured
-  (macOS/BSD grep is the plausible case). BusyBox is not one: it rejects `-z` first, so the sh hook
-  denies every command there at either bound.
-  **The longest `-C` path that still matches is 250 characters**, measured in both hooks. It follows
-  from the arithmetic: the gap must also hold `-C `, the leading `/` and the space before `config`,
-  so path + 5 <= 255. At `{0,300}` the same measurement gives 295; this paragraph had said 296, and
-  earlier 490. The cost is
-  flag-and-path territory, where real gaps are short (`--global` is 9 characters), and it does not
-  lower the floor — anyone able to pad the command text already has the two unclosable cases above,
-  which are strictly easier.
+- **(added 2026-08-24)** A gap of more than 255 between `git` and `config`, or between `config` and
+  the key; the "restated 2026-10-15" paragraph below says what each hook counts. Those two patterns
+  nest two gap groups, which made matching **cubic** (~8x per doubling, measured): at the
+  50,000-character input limit the guard could spend roughly **47 minutes** inside a single pattern,
+  and a `PreToolUse` hook blocks the tool call while it runs — so an oversized command hung the
+  agent outright rather than merely running slowly. That was reachable without an attacker: a large
+  heredoc writing prose *about* `git config`, containing no `|`, `;` or `&`, has exactly that shape.
+  Those four gap groups are now bounded to `{0,255}`. The bound was `{0,300}` until 2026-10-03. It
+  was lowered because POSIX guarantees repetition bounds only up to 255: a grep that supports `-z`
+  but caps bounds there would reject `{0,300}`, and under the fail-closed rule the sh hook would
+  then deny every command. No such grep has been measured (macOS/BSD grep is the plausible case).
+  BusyBox is not one: it rejects `-z` first, so the sh hook denies every command there at either
+  bound. **The longest `-C` path that still matches is 250 ASCII characters**, measured in both
+  hooks. It follows from the arithmetic: the gap must also hold `-C `, the leading `/` and the space
+  before `config`, so path + 5 <= 255. At `{0,300}` the same measurement gives 295; this paragraph
+  had said 296, and earlier 490. The cost is flag-and-path territory, where real gaps are short
+  (`--global` is 9 characters), and it does not lower the floor — anyone able to pad the command
+  text already has the two unclosable cases above, which are strictly easier.
 
-  **(added 2026-09-30)** On the sh hook the bound can count **bytes**, not characters. GNU grep
-  counts `.{0,255}` in bytes under the byte locale (`C`), and the sh signing rows fall back to that
-  locale when a match under the caller's locale fails. So the limit is 255 bytes, about 85 CJK
-  characters, in at least these cases:
-  - the caller's locale is `C`;
-  - a Turkish locale with an upper-case key;
-  - a lone-surrogate escape in the gap, on a strict GNU grep (3.7 measured).
-
-  The PowerShell hook counts characters in all three. This is the same padding class as above, not a
-  new floor.
+  **(added 2026-09-30, restated 2026-10-15)** The sh hook matches each signing row twice: under the
+  caller's locale, where a UTF-8 locale counts the `{0,255}` bound in characters, and under
+  `LC_ALL=C`, which counts it in **bytes**. What is guaranteed: when the hook's python3 step
+  extracts the command intact and grep runs with its default options, a command of a form the
+  signing rows match, each of whose bounded gaps is at most 255 bytes as that step writes them
+  (UTF-8, with every lone surrogate and every input byte that is not valid UTF-8 written as 3
+  bytes), gets a verdict in every locale, because the `LC_ALL=C` pass runs whenever the
+  caller's-locale pass misses. Measured on GNU grep 3.0 and 3.11; other greps that support `-z` are
+  untested. GNU grep 3.0 still reads `GREP_OPTIONS`, and `GREP_OPTIONS=-m0` in the hook's
+  environment silences both passes there (3.11 ignores it; both measured). When python3 is missing
+  or that step exits non-zero, for any reason, the hook matches the whole payload instead, with
+  its JSON escapes decoded (see the Platform requirement bullet below), and none of this is
+  guaranteed. A longer gap that still fits in 255 characters gets a verdict only if
+  the caller's-locale pass matches, which fails for locale and grep-build reasons; the measured ones
+  are listed in the comment on `dc_grep` in `scripts/dangerous-commands.sh`, and that list is not
+  exhaustive. The PowerShell hook counts UTF-16 code units: one per BMP character, which covers
+  most CJK, and two per astral character, such as an emoji. This is the same padding class as
+  above, not a new floor.
 
   **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
   costs about **33 seconds** in the PowerShell hook on the slowest shape found so far, which blocks
