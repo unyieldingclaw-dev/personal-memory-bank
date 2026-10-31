@@ -48,8 +48,8 @@ Configured in `.claude/settings.json`:
 
 Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
 
-**BLOCK** (19 patterns — command exits non-zero, Claude stops):\
-*Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
+**BLOCK** (17 patterns — command exits non-zero, Claude stops):\
+*Shell:* `rm -rf`, and `rm` with recursive and force flags in any order · `mkfs` · `dd if=` · `git push --force` · `git push -f`, and a force push in any position (`--force`, `--mirror`, `-f`, `+refspec`) · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh` · a git alias whose value starts with `!` · awk `system()` or `cmd | getline`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
 
 **CONFIRM** (10 patterns — surfaces confirmation dialog):
@@ -124,7 +124,7 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 `timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
 out does not block the tool call: its output is discarded and the call continues through the
 normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
-later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
+later). The PowerShell hook's slowest measured case, a ~50 KB command, took about 33 seconds (the
 figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default. Whether to set
 `onFailure` is an open decision in `docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md`.
 

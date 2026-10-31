@@ -1206,6 +1206,9 @@ _dc_ascii() { printf '%s' "$1" | LC_ALL=C sed 's/[^ -~].*//'; }
 # its row needs ends at the final character (guard 3 enforces it). Update these beside the rows.
 declare -A _dc_ex=(
     ["sh:block_regex#1"]="curl x | $_dc_b"
+    ["sh:block_regex#2"]="rm -r -f"
+    ["sh:block_regex#3"]="git push origin main -f"
+    ["sh:block_regex#4"]="git -c alias.x=!"
     ["sh:confirm_regex#1"]="git -c commit.gpgsign=false"
     ["sh:confirm_regex#2"]="git config commit.gpgsign false"
     ["sh:confirm_regex#3"]="git config --unset commit.gpgsign"
@@ -1214,6 +1217,9 @@ declare -A _dc_ex=(
     ["ps1:BLOCK#2"]="curl x | $_dc_s"
     ["ps1:BLOCK#3"]="iwr x | Invoke-Expression"
     ["ps1:BLOCK#4"]="iwr x | iex"
+    ["ps1:BLOCK#5"]="rm -r -f"
+    ["ps1:BLOCK#6"]="git push origin main -f"
+    ["ps1:BLOCK#7"]="git -c alias.x=!"
     ["ps1:CONFIRM#1"]="git -c commit.gpgsign=false"
     ["ps1:CONFIRM#2"]="git config commit.gpgsign false"
     ["ps1:CONFIRM#3"]="git config --unset commit.gpgsign"
@@ -1353,6 +1359,145 @@ else
     fi
 fi
 
+# ── phase 1c: behavioural fixtures for the structural rm / force-push / alias+awk rows ──
+# WHY: the registry above proves each row answers its ONE example. These pin the forms each row
+# exists to catch -- reordered, split, abbreviated, escaped -- and the near-misses it must leave
+# alone, in BOTH shells. Ported from Side-Quest-Atlas's scripts/test-dangerous-commands.py and
+# adapted to PMB: expectations differ where PMB's de-escaped view or a porting decision changes the
+# verdict, and those rows say so. Every row is checked for its TIER only; a fixture can be answered
+# by any row. Each alternative of the merged alias+awk row has its own fixture, escaped ones
+# included, because the registry's escape check proves only the alternative its example uses.
+# KNOWN GAP and NOT PORTED rows pin a deliberate decision: closing one should be a visible change.
+_dc_F=(
+    BLOCK  "rm: split flags"                          'rm -r -f somedir'
+    BLOCK  "rm: reversed cluster"                     'rm -fr somedir'
+    BLOCK  "rm: long flags"                           'rm --recursive --force somedir'
+    BLOCK  "rm: mixed short and long"                 'rm -r --force somedir'
+    BLOCK  "rm: force first"                          'rm --force -r somedir'
+    BLOCK  "rm: -f -r"                                'rm -f -r somedir'
+    BLOCK  "rm: flags after the target"               'rm somedir -rf'
+    BLOCK  "rm: cluster with another flag"            'rm -vrf somedir'
+    BLOCK  "rm: getopt abbreviations"                 'rm --rec --forc x'
+    BLOCK  "rm: path to the binary"                   '/bin/rm -r -f x'
+    BLOCK  "rm: under sudo, flags split"              'sudo rm -r x -f'
+    BLOCK  "rm: .exe"                                 'rm.exe -r -f x'
+    BLOCK  "rm: backslash-newline continuation"       $'rm -r \\\n  -f somedir'
+    BLOCK  "rm: upper case"                           'RM -R -f x'
+    BLOCK  "rm: escaped"                              'r\m -r -\f x'
+    BLOCK  "rm: PowerShell alias, -fo"                'rm -r -fo C:\x'
+    BLOCK  "rm: PowerShell alias, long parameters"    'rm C:\x -Recurse -Force'
+    SILENT "rm: -r alone (KNOWN GAP: runs unprompted, no TTY)"  'rm -r somedir'
+    SILENT "rm: -f on the next command's line"        $'rm -r somedir\necho done -f'
+    SILENT "rm: docker --rm is not rm"                'docker run --rm --read-only -it img --foo'
+    SILENT "rm: quoted separator (KNOWN GAP)"         "rm -r 'a;b' -f"
+    SILENT "rm: flags in a variable (KNOWN GAP)"      'FLAGS=-rf; rm $FLAGS somedir'
+    SILENT "rm: plain file"                           'rm somefile.txt'
+    BLOCK  "rm: another flag before r, -f split off"  'rm -vr somedir -f'
+    BLOCK  "rm: -dr then --force"                     'rm -dr somedir --force'
+    BLOCK  "rm: flags named in a message (ACCEPTED FALSE POSITIVE)"  "git commit -m 'drop rm -r and -f'"
+    SILENT "rm: -f in the command after &&"           'rm -r somedir && tail -f log'
+    SILENT "rm: -f in the command after |"            'rm -rv somedir | tail -f log'
+    SILENT "rm: over 32 letters before the r (KNOWN GAP)"  'rm -vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvrf x'
+    SILENT "rm: over 32 letters between r and f (KNOWN GAP)"  'rm -rvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvf x'
+    BLOCK  "rm: 30 letters before r, 30 between (each run under 32)"  'rm -vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvrvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvf x'
+    SILENT "rm: flags padded 300 apart (KNOWN GAP)"   "$(printf 'rm -r %0300d -f' 0)"
+    SILENT "rm: Remove-Item, path first (KNOWN GAP)"  'Remove-Item C:\tmp\x -Recurse -Force'
+    SILENT "rm: Remove-Item -Path (KNOWN GAP)"        'Remove-Item -Path C:\tmp\x -Recurse -Force'
+    SILENT "rm: ri alias (KNOWN GAP)"                 'ri C:\tmp\x -Recurse -Force'
+    SILENT "rm: del alias (KNOWN GAP)"                'del C:\tmp\x -Recurse -Force'
+    SILENT "rm: rd alias (KNOWN GAP)"                 'rd C:\tmp\x -Recurse -Force'
+    SILENT "rm: rmdir alias (KNOWN GAP)"              'rmdir C:\tmp\x -Recurse -Force'
+    SILENT "rm: en-dash parameters (KNOWN GAP)"       'rm C:\tmp\x –Recurse –Force'
+    SILENT "rm: a word ending in rm"                  'farm -r -f x'
+    BLOCK  "push: --force after the branch"           'git push origin main --force'
+    BLOCK  "push: -f after the branch"                'git push origin main -f'
+    BLOCK  "push: global option first"                'git -C . push origin main --force'
+    BLOCK  "push: +refspec"                           'git push origin +main'
+    BLOCK  "push: quoted +refspec"                    "git push origin '+main'"
+    BLOCK  "push: double space"                       'git  push origin +main:main'
+    BLOCK  "push: tab before +refspec"                $'git push origin\t+main:main'
+    BLOCK  "push: +refspec after a global option"     'git -C . push origin +main'
+    BLOCK  "push: --mirror"                           'git push --mirror origin'
+    BLOCK  "push: --mirror escaped"                   'git push origin main --mirro\r'
+    BLOCK  "push: alias whose value force-pushes"     "git -c alias.p='push --force' p origin main"
+    BLOCK  "push: alias=push then --force"            'git -c alias.p=push p origin main --force'
+    BLOCK  "push: .exe"                               'git.exe push origin main --force'
+    BLOCK  "push: -f inside a flag cluster"           'git push -uf origin x'
+    BLOCK  "push: --force-with-lease"                 'git push --force-with-lease'
+    BLOCK  "push: continuation"                       $'git push \\\n  --force origin main'
+    BLOCK  "push: grep for the text (ACCEPTED FALSE POSITIVE)"  "git log --grep 'push --force'"
+    SILENT "push: plain"                              'git push origin main'
+    SILENT "push: --follow-tags"                      'git push origin main --follow-tags'
+    SILENT "push: hyphenated branch"                  'git push origin feature-fix'
+    SILENT "push: --delete"                           'git push origin --delete old'
+    SILENT "push: + only before the push"             "git commit -m 'feat: a + b' && git push"
+    SILENT "push: push.default config"                'git config push.default current'
+    SILENT "push: push.default beside a forced fetch" 'git -c push.default=current fetch -f origin main:main'
+    SILENT "push: pushDefault config"                 'git -c remote.pushDefault=origin push origin main'
+    SILENT "push: --push-option"                      'git push --push-option=ci.skip origin main'
+    BLOCK  "push: -4f (--ipv4 plus force)"            'git push -4f origin main'
+    BLOCK  "push: --mir abbreviates --mirror"         'git push --mir origin'
+    BLOCK  "push: -C path ending in stash"            'git -C /tmp/stash push --force'
+    BLOCK  "push: -C path ending in h"                'git -C /x/h push --force'
+    BLOCK  "push: -C path ending in sh"               'git -C /x/sh push --force'
+    BLOCK  "push: -C path ending in ash"              'git -C /x/ash push --force'
+    BLOCK  "push: -C path ending in tash"             'git -C /x/tash push --force'
+    SILENT "push: a word ending in git"               'digit push origin main -f'
+    SILENT "push: stash push, + in the message"       'git stash push -m "wip +tests"'
+    SILENT "push: stash push, -f in the message"      "git stash push -m 'wip -fix later'"
+    SILENT "push: stash push after a global option"   'git -C x stash push -m "+a"'
+    SILENT "push: -f in the command after &&"         'git push origin main && rm -f x.lock'
+    SILENT "push: -f on the next line"                $'git push origin main\necho -f'
+    SILENT "push: -C directory named stash (KNOWN GAP)"  'git -C stash push --force'
+    SILENT "push: alias from user config (KNOWN GAP)"    'git pf origin main'
+    SILENT "push: remote.*.mirror config (KNOWN GAP)"    'git -c remote.origin.mirror=true push origin'
+    SILENT "push: --mi abbreviates --mirror (KNOWN GAP)" 'git push --mi origin'
+    SILENT "push: --m abbreviates --mirror (KNOWN GAP)"  'git push --m origin'
+    SILENT "push: --namespace stash (KNOWN GAP)"         'git --namespace stash push --force origin main'
+    SILENT "push: -C STASH, any case (KNOWN GAP)"        'git -C STASH push -f origin main'
+    SILENT "push: first word a tail of stash (KNOWN GAP)"  'git h push --force'
+    SILENT "push: send-pack (KNOWN GAP)"                 'git send-pack --force git@example.invalid:o/r.git main'
+    SILENT "push: quoted backslash path to git (KNOWN GAP)"  '& "C:\Program Files\Git\cmd\git.exe" push origin main --force'
+    BLOCK  "alias: -c, quoted value"                  "git -c alias.probe='!echo X' probe"
+    BLOCK  "alias: git config --global"               "git config --global alias.lg '!git log --oneline'"
+    BLOCK  "alias: whole argument quoted"             'git -c "alias.x=!echo PWNED" x'
+    BLOCK  "alias: unquoted, space-separated"         'git config alias.x !id'
+    BLOCK  "alias: escaped !"                         'git -c alias.x=\!id x'
+    BLOCK  "alias: through GIT_CONFIG_PARAMETERS"     "GIT_CONFIG_PARAMETERS=\"'alias.x=!id'\" git x"
+    BLOCK  "awk: system()"                            "awk 'BEGIN{system(\"id\")}'"
+    BLOCK  "awk: gawk"                                "gawk 'BEGIN{system(\"id\")}'"
+    BLOCK  "awk: mawk, space before the paren"        "mawk 'BEGIN{system (\"id\")}'"
+    BLOCK  "awk: system( on the next line"            $'awk \'BEGIN{\nsystem("id")}\''
+    BLOCK  "awk: cmd | getline"                       "awk 'BEGIN{\"id\" | getline x}'"
+    BLOCK  "awk: escaped"                             "a\\wk 'BEGIN{system(1)}'"
+    BLOCK  "awk: print to sh (pipe row via the de-escaped view)"  "awk '{print \"X\" | \"sh\"}'"
+    SILENT "alias: find ! -name alias.txt"            'find . ! -name "alias.txt"'
+    SILENT "alias: commit message with alias.py!"     "git commit -m 'rewrite alias.py logic!'"
+    SILENT "alias: listing aliases"                   'git config --get-all alias.list'
+    SILENT "awk: field print piped to sort"           "awk '{print \$1}' f | sort | uniq -c"
+    SILENT "awk: os.system( in a later grep"          "awk 'BEGIN{x=1}' f; grep -n 'os.system(' *.py"
+    SILENT "awk: getline from a file"                 "awk '{getline line < \"f\"}' g"
+    SILENT "awk: python os.system"                    "python3 -c 'import os; os.system(1)'"
+    SILENT "awk: the word awkward"                    'echo awkward; os.system(1)'
+    SILENT "awk: program in a file (KNOWN GAP)"       'awk -f prog.awk data'
+    SILENT "awk: print to a command (KNOWN GAP)"      "awk '{print \"id\" | \"cat\"}'"
+    BLOCK  "awk: gawk coprocess |& getline"           "awk 'BEGIN{\"id\" |& getline x}'"
+    BLOCK  "awk: system( after a ; in the program"    "awk '{a=1; system(\"id\")}'"
+    BLOCK  "awk: system( in a later grep (ACCEPTED FALSE POSITIVE)"  "awk -F, '{print \$2}' d.csv; grep -n \"system(\" main.c"
+    SILENT "awk: gawk indirect call (KNOWN GAP)"      "gawk 'BEGIN{f=\"system\"; @f(\"id\")}'"
+    SILENT "awk: a word ending in awk"                "hawk '{system(1)}'"
+    SILENT "find -exec (NOT PORTED: Claude Code gates find actions)"  'find . -name x -exec echo {} \;'
+    SILENT "sed 1e (NOT PORTED: no settings or command grant approves sed)"  "sed '1e id' f"
+    SILENT "sed s///e (NOT PORTED)"                                   "sed 's/a/b/e' f"
+    SILENT "git -c core.sshCommand (KNOWN GAP, backlog)"              "git -c core.sshCommand='echo X' fetch"
+)
+for (( _dc_i = 0; _dc_i < ${#_dc_F[@]}; _dc_i += 3 )); do
+    _dc_add_row fsh "${_dc_F[_dc_i]}" "${_dc_F[_dc_i+2]}" "" "${_dc_F[_dc_i+1]}"
+    if [ "$_dc_have_ps1" = "1" ]; then
+        _dc_add_row fps1 "${_dc_F[_dc_i]}" "${_dc_F[_dc_i+2]}" "" "${_dc_F[_dc_i+1]}"
+    fi
+done
+
 # ── phase 2: every hook invocation the rows imply, once each, eight at a time ──
 # WHY batched and parallel: each invocation is a fresh process (~1s for sh, ~0.7s for pwsh on
 # Windows), and run one after another this block alone took several minutes. The JSON for every
@@ -1368,6 +1513,7 @@ _dc_want_job() {
 for _dc_i in "${!_dc_R_kind[@]}"; do
     case "${_dc_R_kind[$_dc_i]}" in
         x) _dc_want_job ps1 "${_dc_R_payload[$_dc_i]}" ;;
+        f*) _dc_want_job "${_dc_R_kind[$_dc_i]#f}" "${_dc_R_payload[$_dc_i]}" ;;
         *) _dc_want_job "${_dc_R_kind[$_dc_i]}" "${_dc_R_payload[$_dc_i]}"
            _dc_want_job "${_dc_R_kind[$_dc_i]}" "$(_dc_escape "${_dc_R_payload[$_dc_i]}")" ;;
     esac
@@ -1407,6 +1553,11 @@ for _dc_i in "${!_dc_R_kind[@]}"; do
             "sh/ps1 parity: [$_dc_p] gets the same tier from both shells"
         continue
     fi
+    case "$_dc_kd" in
+        f*) assert_equals "$(_dc_tier "${_dc_V[${_dc_kd#f}|$_dc_p]}")" "${_dc_R_want[$_dc_i]}" \
+                "${_dc_kd#f} fixture: ${_dc_R_label[$_dc_i]}"
+            continue ;;
+    esac
     _dc_plain=${_dc_V[$_dc_kd|$_dc_p]}
     assert_equals "$(_dc_tier "$_dc_plain")" "${_dc_R_want[$_dc_i]}" "$_dc_kd: [$_dc_p] reaches its row's tier (${_dc_R_label[$_dc_i]})"
     assert_contains "$_dc_plain" "$(_dc_ascii "${_dc_R_reason[$_dc_i]}")" "$_dc_kd: [$_dc_p] is answered by its own row"
