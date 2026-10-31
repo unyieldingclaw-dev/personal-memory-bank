@@ -363,5 +363,5 @@ auto-mode observation, the adopter reach, and the branch-protection settings. Th
 a one-line summary of which forms escape, so that its own argument can be read without this file
 open — if the table changes, that summary is the one place to check. Also [NS-25], [NS-26], [NS-43].
 
-`docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md` owns the `PowerShell` matcher's
-missing bash fallback, which the Fix outline above mentions in passing.
+`docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md` owned the `PowerShell` matcher's
+missing bash fallback, which the Fix outline above mentions in passing (resolved 2026-10-30).

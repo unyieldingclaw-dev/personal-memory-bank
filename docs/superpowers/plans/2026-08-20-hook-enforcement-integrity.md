@@ -2,8 +2,8 @@
 
 > **PARTLY SUPERSEDED 2026-10-30 by the hook-wiring fix (branch `fix/hook-wiring-noprofile-v2`).**
 > Do not run Tasks 1, 2 or 3, or the "fallback chain" line of Task 6's rule:
-> - **Task 1** — `tests/test-hook-wiring.sh` now exists, committed and registered, with a different
->   design. Its "FRAGILE" assertion (any `||` string without `command -v`) fails every current string
+> - **Task 1** — `tests/test-hook-wiring.sh` now exists, committed (`tests/run.sh` runs every tracked
+>   `tests/test-*.sh` since PR #106, so there is no registration step), with a different design. Its "FRAGILE" assertion (any `||` string without `command -v`) fails every current string
 >   by design.
 > - **Tasks 2 and 3** — the wiring kept the `||` chain and added a guard instead:
 >   `[ -f scripts/X.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/X.ps1 2>/dev/null || bash scripts/X.sh 2>/dev/null || true`,
@@ -20,8 +20,9 @@
 >   `print_summary` as written; Task 1's `make_stub_pwsh`/`hook_command` helpers do not exist there.
 > - **Stale below, kept as history:** the Architecture line's `if command -v pwsh` move, the Verified
 >   baseline's "Not yet registered in `tests/run.sh`" and "Task 1 Step 3 remains outstanding", the
->   File Structure's `stub-pwsh.sh`, Task 7's "runs BEFORE Task 2" ordering, and the BLOCKING PREREQUISITE
->   heading, whose gate is now met (see its 2026-10-30 status line).
+>   File Structure's `stub-pwsh.sh` and its "register the new suite" step, Task 7's "runs BEFORE
+>   Task 2" ordering, and the BLOCKING PREREQUISITE heading, whose gate is now met (see its
+>   2026-10-30 status line).
 > - The `PreCompact` string was deliberately left alone. Its missing-`.ps1` case fails open in its
 >   own way (`pwsh` exits 64, a non-blocking error, so compaction proceeds), and it lacks
 >   `-NoProfile`. Whether that gate stays at all is an open decision, and its wiring is left to it.

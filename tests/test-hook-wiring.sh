@@ -19,9 +19,8 @@
 #                if/else runtime pick (docs/superpowers/plans/2026-08-20-hook-enforcement-integrity.md).
 #   shim      -- a `pwsh` first on PATH that prints noise unless -NoProfile precedes -File
 #   profile   -- Linux/macOS only: real pwsh with HOME pointed at a temp dir holding a printing profile
-# The shim, deleted, broken and profile modes each have a positive control, so none of them can pass
-# by silently not happening. The reissue block's mixed case has none; its oracles fail if it doesn't
-# happen.
+# Every mode, the reissue block's mixed case included, has a positive control, so none of them can
+# pass by silently not happening.
 #
 # OUT OF SCOPE, deliberately: the PreCompact string. Whether that gate stays at all is an open
 # decision (it can deadlock a session that can no longer take a turn), and that work would edit this
@@ -126,6 +125,7 @@ while IFS=$'\x1f' read -r ev matcher cmd; do
     SEEN="$SEEN$kind "
     # Store each string under its kind; printf -v keeps it out of eval.
     printf -v "CMD_$kind" '%s' "$cmd"
+    printf -v "SCRIPT_$kind" '%s' "$script"
 done <<EOF
 $ROWS_LIVE
 EOF
@@ -147,6 +147,21 @@ for k in $ALL_KINDS; do
     # as a grep option.
     case "$pre" in *-NoProfile*) r=0 ;; *) r=1 ;; esac
     assert_exit_zero "$r" "$k: -NoProfile precedes -File"
+done
+
+# ── static: every in-scope string is exactly the canonical form for its own script ─────────────
+# WHY: the behavioural oracles cannot see a dropped or misnamed bash link on hooks whose twins print
+# nothing in the fixture (check-contract, update-reviewed), and a wrong twin on a row whose payload
+# another hook also denies. Mutation-tested in review: both survived 104/0 before this check.
+echo ""
+echo "--- static: each string's guard, -File and bash link name the same script, and both twins exist ---"
+for k in $ALL_KINDS; do
+    case "$k" in exempt*) continue ;; esac
+    v="CMD_$k"; c="${!v:-}"; v="SCRIPT_$k"; s="${!v:-}"
+    canon="[ -f scripts/$s.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/$s.ps1 2>/dev/null || bash scripts/$s.sh 2>/dev/null || true"
+    assert_equals "$c" "$canon" "$k: canonical guarded form for scripts/$s"
+    [ -f "$REPO_ROOT/scripts/$s.ps1" ] && [ -f "$REPO_ROOT/scripts/$s.sh" ]
+    assert_exit_zero "$?" "$k: both scripts/$s.ps1 and scripts/$s.sh exist"
 done
 
 # ── fixture ─────────────────────────────────────────────────────────────────────────────────
@@ -279,10 +294,16 @@ for mode in $MODES; do
 
     # Deny cases: EMPTY must never pass these.
     set_mode "$mode" dangerous-commands
+    # WHY the reason too: the force-push payload is also denied by the review gate's push check, so a
+    # deny alone cannot tell dangerous-commands' fallback from a wrong twin.
     run "${CMD_dc_bash:-}" p_dc_bash
-    assert_equals "$(verdict)" "OBJ deny" "$mode: Bash dangerous-commands, recursive delete -> exactly one deny object"
+    s=$(shape)
+    assert_equals "$(printf '%s\n' "$s" | head -1)" "OBJ deny" "$mode: Bash dangerous-commands, recursive delete -> exactly one deny object"
+    assert_contains "$s" "BLOCK:" "$mode: Bash dangerous-commands deny comes from dangerous-commands (BLOCK:)"
     run "${CMD_dc_ps:-}" p_dc_ps
-    assert_equals "$(verdict)" "OBJ deny" "$mode: PowerShell dangerous-commands, force push -> exactly one deny object"
+    s=$(shape)
+    assert_equals "$(printf '%s\n' "$s" | head -1)" "OBJ deny" "$mode: PowerShell dangerous-commands, force push -> exactly one deny object"
+    assert_contains "$s" "BLOCK:" "$mode: PowerShell dangerous-commands deny comes from dangerous-commands (BLOCK:)"
     # KNOWN GAP, pinned: the .sh twin has none of the five PowerShell-native BLOCK rows (Remove-Item,
     # Format-Volume, pipe-to-iex), so when the PowerShell matcher falls back to bash they are not
     # blocked. "No deny" rather than "EMPTY" so the assertion describes the gap, not the bytes. Porting
@@ -341,7 +362,11 @@ REISSUE_MODES="$MODES"
 for mode in $REISSUE_MODES; do
     case "$mode" in
         shim|profile) continue ;;   # covered by the stdout oracles above; this block checks state
-        mixed)        set_mode present; rm -f "$FX/scripts/review-reminders-post.ps1" ;;
+        mixed)        set_mode present; rm -f "$FX/scripts/review-reminders-post.ps1"
+                      [ -f "$FX/scripts/review-reminders-post.ps1" ]
+                      assert_exit_nonzero "$?" "control: mixed mode really removes review-reminders-post.ps1"
+                      [ -f "$FX/scripts/review-reminders.ps1" ]
+                      assert_exit_zero "$?" "control: mixed mode keeps review-reminders.ps1" ;;
         *)            set_mode "$mode" review-reminders review-reminders-post ;;
     esac
     for side in bash ps; do

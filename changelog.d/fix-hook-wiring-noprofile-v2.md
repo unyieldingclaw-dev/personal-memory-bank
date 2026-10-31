@@ -1,5 +1,5 @@
 ### Fixed
-- **A hook's deny could be voided by text printed beside it.** Claude Code's hooks docs treat
+- **Text printed beside a hook's JSON could void its deny (per Claude Code's docs).** The hooks docs treat
   stdout that does not start with `{` as plain text and ignore the JSON, and two wiring defects in
   `.claude/settings.json` put text there. No `-NoProfile`: anything a PowerShell profile printed
   came first (measured on Linux pwsh 2026-10-16: a `$HOME/.config/powershell` profile prints under
@@ -23,6 +23,6 @@
     already passes `-NoProfile`, but a missing `.ps1` still puts `pwsh`'s usage text before its JSON.
 
   New `tests/test-hook-wiring.sh` runs the exact strings, with each `.ps1` present, deleted, broken,
-  and behind a printing profile; the shim, deleted, broken and profile modes each have a positive
-  control. `docs/HOOKS-GUIDE.md` (both copies) explains the form, and its `PreCompact` snippet, a
+  and behind a printing profile, each mode with a positive control, and checks statically that every
+  string is the exact guarded form for its own script. `docs/HOOKS-GUIDE.md` (both copies) explains the form, and its `PreCompact` snippet, a
   `|| … || true` chain that would never block, now shows the real wiring.

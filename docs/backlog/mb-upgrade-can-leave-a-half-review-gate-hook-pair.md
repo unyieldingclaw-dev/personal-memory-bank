@@ -182,5 +182,5 @@ a full `/code-review` and `/change-review`.
 the classifier when it *is* installed; this item is about the classifier being absent. `[NS-19]`
 (template drift) is a different failure — the adopter's report conflated the two. `[NS-50]`(a) is the
 precedent for per-file ownership classes. `docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md`
-owns the hook wiring that leaves a missing `.ps1` ungated; this item owns detecting and preventing
-the missing file.
+owned the hook wiring that left a missing `.ps1` ungated (resolved 2026-10-30: it now degrades to the
+`.sh` twin); this item owns detecting and preventing the missing file.
