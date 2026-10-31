@@ -89,10 +89,11 @@ there is unconstrained.
 The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase` alone does not
 fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
 verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
-the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The signing rows'
-`{0,255}` gaps count bytes on the sh hook; what that guarantees, and when, is stated once in
-`standards/SECURITY-GUARDRAILS.md`. So a new sh regex row inherits its matcher's locale rule, which
-can change what it matches.
+the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. Under a UTF-8
+locale the caller's pass counts the signing rows' `{0,255}` gaps in characters, and the
+`LC_ALL=C` pass always counts them in bytes. What that guarantees, and when, is stated once in
+`standards/SECURITY-GUARDRAILS.md`. So a new sh regex row inherits its matcher's
+locale rule, which can change what it matches.
 
 **Platform requirement (sh hook):** stated once, with what each missing piece costs, in
 `standards/SECURITY-GUARDRAILS.md` under "Platform requirement (sh hook)". Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so

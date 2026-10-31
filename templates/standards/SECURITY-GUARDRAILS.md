@@ -151,18 +151,24 @@ the config. These reach the same outcome and are deliberately not matched:
   (`--global` is 9 characters), and it does not lower the floor — anyone able to pad the command
   text already has the two unclosable cases above, which are strictly easier.
 
-  **(restated 2026-10-15)** On the sh hook the `{0,255}` bound counts **bytes**. What is
-  guaranteed: when the hook's python3 step extracts the command intact, a command of a form the
+  **(added 2026-09-30, restated 2026-10-15)** The sh hook matches each signing row twice: under the
+  caller's locale, where a UTF-8 locale counts the `{0,255}` bound in characters, and under
+  `LC_ALL=C`, which counts it in **bytes**. What is guaranteed: when the hook's python3 step
+  extracts the command intact and grep runs with its default options, a command of a form the
   signing rows match, each of whose bounded gaps is at most 255 bytes as that step writes them
-  (UTF-8, with every lone surrogate and every byte of non-UTF-8 input written as 3 bytes), gets a
-  verdict in every locale, because the `LC_ALL=C` pass runs whenever the caller's-locale pass
-  misses. Measured on GNU grep 3.0 and 3.11; other greps that support `-z` are untested. Whenever
-  the python3 step exits non-zero, for any reason, the hook matches the raw JSON payload instead and
-  none of this is guaranteed. A longer gap that still fits in 255 characters gets a verdict only if
+  (UTF-8, with every lone surrogate and every input byte that is not valid UTF-8 written as 3
+  bytes), gets a verdict in every locale, because the `LC_ALL=C` pass runs whenever the
+  caller's-locale pass misses. Measured on GNU grep 3.0 and 3.11; other greps that support `-z` are
+  untested. GNU grep 3.0 still reads `GREP_OPTIONS`, and `GREP_OPTIONS=-m0` in the hook's
+  environment silences both passes there (3.11 ignores it; both measured). When python3 is missing
+  or that step exits non-zero, for any reason, the hook matches the whole payload instead, with
+  its JSON escapes decoded (see the Platform requirement bullet below), and none of this is
+  guaranteed. A longer gap that still fits in 255 characters gets a verdict only if
   the caller's-locale pass matches, which fails for locale and grep-build reasons; the measured ones
-  are recorded in `tests/test-dangerous-commands.sh`, and that record is not exhaustive. The
-  PowerShell hook counts UTF-16 code units: one per CJK character, two per emoji. This is the same
-  padding class as above, not a new floor.
+  are listed in the comment on `dc_grep` in `scripts/dangerous-commands.sh`, and that list is not
+  exhaustive. The PowerShell hook counts UTF-16 code units: one per BMP character, which covers
+  most CJK, and two per astral character, such as an emoji. This is the same padding class as
+  above, not a new floor.
 
   **Residual cost, stated plainly:** with the cubic case gone, a pathological 50 KB command still
   costs about **17.5 seconds** in the PowerShell hook, which blocks the tool call for that whole
