@@ -16,7 +16,7 @@ model's discretion, subject to platform enablement and trust settings.
 |------|--------------|-------------|
 | `PreToolUse` | Before Claude runs a tool | Block dangerous operations, validate inputs |
 | `PostToolUse` | After Claude runs a tool | Auto-format, run lint, log actions |
-| `Stop` | When Claude pauses for input | Desktop notification |
+| `Stop` | When Claude pauses for input | Desktop notification; Pre-Approval Protocol check (PMB-only) |
 | `PreCompact` | Before context compaction | Save state summary |
 
 ## Enforcement Layer Architecture
@@ -32,6 +32,8 @@ Hooks are one layer in a four-layer enforcement stack. Understanding which layer
 
 **Design rule:** Don't duplicate concerns across layers. If a check belongs in CI, adding it to hooks creates two places to update when patterns change. If a check is semantic, adding it to hooks creates false confidence (simple pattern matching misses context). Each layer does its job; the stack as a whole provides defense in depth.
 
+**One deliberate exception, on trial in PMB only:** the `pre-approval-check` Stop hook (§2) runs once per turn, not per tool call. It pattern-matches the assistant's prose, which is a semantic signal. It is held to the design rule by checking only that the protocol's sections *exist*. Whether the checks behind them were adequate stays with the Reviewer / Opponent layer. The model can also answer a false positive with an escape phrase. So the hook adds friction, not the "cannot be talked around" guarantee the deny-tier `PreToolUse` hooks give. The trial decides whether it stays (design spec §5).
+
 **Worked example — why "was this authorized?" stays advisory:** A session merged a feature branch into a shared branch after the user replied "what do you suggest" to a structured choice — a request for a recommendation, not a directive, but the agent treated it as one. A `PreToolUse` hook can't fix this: it sees only the `git merge` command about to run, never the chat turn that did or didn't authorize it. The tempting fix — a marker file the agent writes after concluding "the user approved this" — is exactly as fakeable as a self-written code-review marker, which is why `/code-review` and `/change-review` bind their markers to a SHA-256 of the actual reviewed diff instead of an unverifiable claim (see the `review-reminders.sh`/`.ps1` header comments). There's no equivalent artifact to hash for "the user meant this right now," so this stays a `standards/SECURITY-GUARDRAILS.md` rule (see "What Counts as Approval") — caught by drift-resistant discipline, not a gate that always fires.
 
 **Worked example — why "the user ran it themselves" can't be hook-enforced either:** A session made several commits by asking the user to run `git commit` directly whenever the review-gate marker-write was blocked — a workaround this repo had normalized across many prior sessions, since the `PreToolUse` hook only sees Bash calls the agent itself makes, never a command typed into the user's own terminal. The user caught this live and named it directly: the user must never be used to bypass a control the agent couldn't satisfy. This is distinct from `dangerous-commands.sh`'s BLOCK/CONFIRM tiers — force-push is refused outright (BLOCK), while `filter-branch`/`--no-verify`/`chmod -R 777` prompt "run manually if intentional" (CONFIRM) — those blocks exist specifically so only a human's hands ever pull that trigger, and the user running them directly genuinely resolves the concern. The review-gate marker's purpose is different: verifying review already happened, which the user running the command themselves does nothing to make true. No hook fix exists for this either — asking the user to run something isn't a tool call, so there's nothing for `PreToolUse` to see or deny. It stays a `standards/SECURITY-GUARDRAILS.md` rule (see "The User Is Never the Compliance Bypass") for the same reason "What Counts as Approval" does: some things can only be caught by discipline, not by a gate. The actual hard backstop for this specific case is designed, not yet built — see `docs/superpowers/specs/2026-08-12-review-gate-layered-enforcement-design.md`'s Layer 3 CI check, which would catch an unreviewed commit regardless of how it landed.
@@ -46,9 +48,11 @@ Configured in `.claude/settings.json`:
 
 Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
 
-**BLOCK** (19 patterns — command exits non-zero, Claude stops):\
-*Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
+**BLOCK** (17 patterns — command exits non-zero, Claude stops):\
+*Shell:* `rm -rf`, and `rm` with recursive and force flags in common reordered spellings · `mkfs` · `dd if=` · `git push --force` · `git push -f`, and common spellings of a force push elsewhere in the command (`--force`, `--mirror`, `-f`, `+refspec`) · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh` · a git alias whose value starts with `!` · awk `system()` or `cmd | getline`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
+
+The reordered and abbreviated forms are matched in common spellings only, not exhaustively: a deliberately respelled command can get through. `standards/SECURITY-GUARDRAILS.md` describes what is matched, the accepted false positives and what is not covered by design.
 
 **CONFIRM** (10 patterns — surfaces confirmation dialog):
 `git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `git merge <branch>` (boundary-matched: excludes `git merge-base`) · commit-signing bypass (regex, four patterns: `commit.gpgsign` set to any falsey value — key or value quoted or bare — via `git -c`, the same via a `git config` subcommand, `--unset`/`--unset-all commit.gpgsign`, and `--no-gpg-sign`)
@@ -90,9 +94,11 @@ there is unconstrained.
 The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase` alone does not
 fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
 verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
-the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The byte locale
-counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
-row inherits its matcher's locale rule, which can change what it matches.
+the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. Under a UTF-8
+locale the caller's pass counts the signing rows' `{0,255}` gaps in characters, and the
+`LC_ALL=C` pass always counts them in bytes. What that guarantees, and when, is stated once in
+`standards/SECURITY-GUARDRAILS.md`. So a new sh regex row inherits its matcher's
+locale rule, which can change what it matches.
 
 **Platform requirement (sh hook):** stated once, with what each missing piece costs, in
 `standards/SECURITY-GUARDRAILS.md` under "Platform requirement (sh hook)". Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
@@ -122,8 +128,9 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 `timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
 out does not block the tool call: its output is discarded and the call continues through the
 normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
-later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
-figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default. Whether to set
+later). The PowerShell hook's slowest measured case, a ~50 KB command, took about 33 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default; the sh hook's, about 100 seconds
+on one non-periodic shape, is inside it too. Whether to set
 `onFailure` is an open decision in `docs/backlog/dangerous-commands-follow-ups-after-ns38-ns40.md`.
 
 **Two bugs found and fixed (2026-07-02) that made this hook a near-total no-op:**
@@ -135,9 +142,39 @@ Both bugs were latent since the hook was written; neither is specific to this re
 
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
-### 2. Stop Notification (`Stop`) — excluded from install template
+### 2. Stop Notification and Pre-Approval Check (`Stop`)
 
-The Stop hook is excluded from `templates/.claude/settings.json` because it causes indefinite hangs in `--Remote-Control` mode (Claude in Chrome). In that mode Claude runs headless; the hook fires but no user is present to dismiss the Windows MessageBox, stalling the session permanently. PMB's own `.claude/settings.json` keeps this hook as a deliberate choice for interactive Windows sessions; it is excluded from the install template to prevent those hangs in remote/headless environments. If you need a Stop notification in an interactive-only project, add it to that project's local `.claude/settings.json` manually.
+In PMB, one Stop entry, `scripts/pre-approval-check.ps1` with its `.sh` twin, does two jobs:
+
+- **Pre-Approval Protocol check.**
+  - It reads the payload's `last_assistant_message`.
+  - It blocks when the turn ends in an approve-or-choose ask without a `Findings` heading and a
+    Recommendation, or in any other question without a Recommendation. It returns
+    `{"decision":"block","reason":…}`, and the model continues once, either to add the sections or
+    to reply `Not an approval ask:` / `No recommendation applies:`.
+  - `stop_hook_active` guards against loops.
+  - See `standards/WORKFLOW.md`, Pre-Approval Protocol.
+  - **A pass means the sections exist, not that the checks behind them were good.** Ask detection
+    is a measured heuristic trigger, and adequacy stays with the Reviewer/Opponent layer. See the
+    design rule above on false confidence.
+- **"Claude has paused" notification.** It is launched detached on every exit except a block, and
+  on Windows it is set to close itself after 600 s; popups have been seen still open well past
+  that, cause unknown. The harness no longer waits on it. It used to be a separate, modal Stop
+  entry:
+  - `--Remote-Control` and headless sessions hung on it, with no one present to dismiss it;
+  - a block would have shown "waiting for input" about an ask that was about to be replaced.
+
+The hook fails open by design: on any error it allows the turn. Blocks, post-block outcomes and the
+fail-opens the script reaches go to `.pmb-pre-approval.log` (gitignored, no message text) for the
+trial that decides template rollout. Known cases that leave no line: the kill switch, a failed write
+to the log itself (both scripts discard it), and both scripts failing to start (for example from a
+subfolder; design spec, Known Limitation 10). Kill switch:
+`"PMB_PRE_APPROVAL": "off"` in the `settings.json` env block (takes effect on the next turn).
+
+**What adopters get today.** `templates/.claude/settings.json` still installs the older modal popup
+as its Stop entry. During the trial, PMB's live entry differs from it under a dated exemption in
+`tests/test-mirror-parity.sh`. Whether adopters should get a Stop notification at all is an open
+decision; see the design spec, §5.
 
 ### 3. Contract Scope Check (`PreToolUse` — Write + Edit tools)
 

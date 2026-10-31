@@ -16,7 +16,7 @@ model's discretion, subject to platform enablement and trust settings.
 |------|--------------|-------------|
 | `PreToolUse` | Before Claude runs a tool | Block dangerous operations, validate inputs |
 | `PostToolUse` | After Claude runs a tool | Auto-format, run lint, log actions |
-| `Stop` | When Claude pauses for input | Desktop notification |
+| `Stop` | When Claude pauses for input | Desktop notification; Pre-Approval Protocol check (PMB-only) |
 | `PreCompact` | Before context compaction | Save state summary |
 
 ## Enforcement Layer Architecture
@@ -46,9 +46,11 @@ Configured in `.claude/settings.json`:
 
 Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
 
-**BLOCK** (19 patterns — command exits non-zero, Claude stops):\
-*Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
+**BLOCK** (17 patterns — command exits non-zero, Claude stops):\
+*Shell:* `rm -rf`, and `rm` with recursive and force flags in common reordered spellings · `mkfs` · `dd if=` · `git push --force` · `git push -f`, and common spellings of a force push elsewhere in the command (`--force`, `--mirror`, `-f`, `+refspec`) · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh` · a git alias whose value starts with `!` · awk `system()` or `cmd | getline`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
+
+The reordered and abbreviated forms are matched in common spellings only, not exhaustively: a deliberately respelled command can get through. `standards/SECURITY-GUARDRAILS.md` describes what is matched, the accepted false positives and what is not covered by design.
 
 **CONFIRM** (10 patterns — surfaces confirmation dialog):
 `git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `git merge <branch>` (boundary-matched: excludes `git merge-base`) · commit-signing bypass (regex, four patterns: `commit.gpgsign` set to any falsey value — key or value quoted or bare — via `git -c`, the same via a `git config` subcommand, `--unset`/`--unset-all commit.gpgsign`, and `--no-gpg-sign`)
@@ -89,9 +91,11 @@ there is unconstrained.
 The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase` alone does not
 fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
 verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
-the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The byte locale
-counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
-row inherits its matcher's locale rule, which can change what it matches.
+the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. Under a UTF-8
+locale the caller's pass counts the signing rows' `{0,255}` gaps in characters, and the
+`LC_ALL=C` pass always counts them in bytes. What that guarantees, and when, is stated once in
+`standards/SECURITY-GUARDRAILS.md`. So a new sh regex row inherits its matcher's
+locale rule, which can change what it matches.
 
 **Platform requirement (sh hook):** stated once, with what each missing piece costs, in
 `standards/SECURITY-GUARDRAILS.md` under "Platform requirement (sh hook)". Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
@@ -119,14 +123,27 @@ Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dang
 `timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
 out does not block the tool call: its output is discarded and the call continues through the
 normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
-later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
-figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default.
+later). The PowerShell hook's slowest measured case, a ~50 KB command, took about 33 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default; the sh hook's, about 100 seconds
+on one non-periodic shape, is inside it too.
 
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
-### 2. Stop Notification (`Stop`) — excluded from install template
+### 2. Stop Notification and Pre-Approval Check (`Stop`)
 
-The Stop hook is excluded from `templates/.claude/settings.json` because it causes indefinite hangs in headless/remote sessions (no user present to dismiss the notification, stalling the session permanently). If you need a Stop notification in an interactive-only project, add it to that project's local `.claude/settings.json` manually.
+PMB's own `.claude/settings.json` runs a single Stop hook, `scripts/pre-approval-check.ps1`, with
+two jobs:
+- it enforces PMB's Pre-Approval Protocol: a turn ending in an approve-or-choose ask must carry a
+  Findings section and a Recommendation, and a turn ending in any other question a Recommendation;
+- it shows a detached "Claude has paused" notification that, on Windows, is set to close itself
+  after 600 s; popups have been seen still open well past that, cause unknown.
+
+**A pass means the sections exist, not that the checks behind them were good.** Ask detection is a
+heuristic trigger, and adequacy stays with the Reviewer/Opponent layer.
+
+The pre-approval check is not installed by `mb init`; it is on trial in PMB only. What `mb init`
+does install as the Stop entry is the older modal "Claude has paused" popup, which can hang headless
+or remote sessions with no one to dismiss it. Whether adopters keep it is an open decision.
 
 ### 3. Contract Scope Check (`PreToolUse` — Write + Edit tools)
 

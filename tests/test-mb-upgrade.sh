@@ -356,7 +356,23 @@ for cmd in upgrade update; do
     output=$(cd "$TMPDIR_DRYLATE" && MB_HOME="$REPO_ROOT" bash "$MB" "$cmd" x --dry-run 2>&1 </dev/null)
     assert_contains "$output" "dry run" "mb $cmd x --dry-run is a dry run"
     assert_equals "$(ls -A "$TMPDIR_DRYLATE")" "memory-bank" "mb $cmd x --dry-run wrote nothing"
+    # WHY a positive control: "wrote nothing" would also pass if the flag were always on.
+    output=$(cd "$TMPDIR_DRYLATE" && MB_HOME="$REPO_ROOT" bash "$MB" "$cmd" x 2>&1 </dev/null)
+    assert_file_exists "$TMPDIR_DRYLATE/.pmb-version" "mb $cmd x without --dry-run still upgrades for real"
     rm -rf "$TMPDIR_DRYLATE"
 done
+
+echo ""
+echo "--- no shipped doc teaches mb update as an AI chat shortcut ---"
+# WHY: `mb update` is a CLI command (a live upgrade alias in mb.sh), and these files once also
+# taught it as a chat shortcut for "update the memory bank", so a reader could run a real upgrade
+# meaning to ask the AI. The shortcut is "update memory bank"; this keeps the old one from returning.
+SHORTCUT_DOCS="standards/MEMORY-BANK.md templates/standards/MEMORY-BANK.md .cursor/rules/memory-bank.mdc templates/cursor/rules/memory-bank.mdc templates/memory-bank/README.md docs/QUICK-REFERENCE.md docs/SETUP-GUIDE.md scripts/init-memory-bank.sh scripts/init-memory-bank.ps1"
+stale_shortcut=""
+for f in $SHORTCUT_DOCS; do
+    assert_file_exists "$REPO_ROOT/$f" "$f exists (keeps this check non-vacuous)"
+    grep -q "mb update" "$REPO_ROOT/$f" && stale_shortcut="$stale_shortcut $f"
+done
+assert_equals "$stale_shortcut" "" "no chat-shortcut doc mentions mb update"
 
 print_summary
