@@ -672,9 +672,11 @@ are not the F-numbers used earlier in this spec.
     21:10:57Z) is a web-editor resolution. `git merge-tree` on its parents conflicts in
     `tests/run.sh`. So a re-cut limits the scope but does not prevent a new conflict.
 - **F3 (Medium). Which syncs paid.** Per the opposition, 9185ea7 and c873d0c were the app's
-  host-side sync, outside every hook (git shows only a local committer). Per the notes, the syncs
-  that cost a review were dc8dcb6 and a76f0d9, both S2 conflicts in the CHANGELOG during the 1.3.0
-  restructure. Their resolution diffs are 67,235 B of 189,957 B and 68,322 B of 137,130 B.
+  host-side sync, outside every hook (git shows only a local committer). All four S2 syncs
+  cost a review: 4e62cff and f1cbabd per §1, and, per the notes, dc8dcb6 and a76f0d9 (S2
+  conflicts in the CHANGELOG during the 1.3.0 restructure). Which gate (commit or push) paid for
+  each is not measured. The resolution diffs of dc8dcb6 and a76f0d9 are 67,235 B of 189,957 B and
+  68,322 B of 137,130 B.
 - **F4 (Medium). The "resolution diff is 35-50% of the full diff" argument is withdrawn as a stable
   figure.** The ratio is 2.2% for 4e62cff (1,736 of 77,334 B), 2.2% for f1cbabd (6,426 of 289,068
   B), 35% for dc8dcb6, 50% for a76f0d9 and 8% for 14e4ce4 (76,076 of 919,380 B). It is dispersed, not
@@ -687,7 +689,10 @@ are not the F-numbers used earlier in this spec.
   both 335974e and c9bfba1 against origin/main, and 6ecda5a (the #78 squash, 2026-10-27) is a
   child of a384084. So "P2 is an ancestor of base" fails a PR that was reviewed and correct. The
   backstop needs the F1 reconcile case specified before it can be built.
-- **The push-gate S0 pass would have saved no reviews in this window.** Of the 6 local syncs, 4 were
+- **The push-gate S0 pass would have saved no reviews in this sample.** (Outside it, d78c5fd, a
+  local S0 sync on #58 at 2026-10-20T14:05:56Z with an empty overlap, drew a review at 14:12:48Z.
+  Whether a push gate forced that review is unknown, so the claim is about the sample only.) Of the
+  6 local syncs, 4 were
   conflicted (S2) and 9185ea7 overlapped `CHANGELOG.md` and `tests/run.sh` (not S0). The one clean,
   non-overlapping local merge, c873d0c, reached the remote only inside the c9bfba1 push, which is
   class N and does not qualify for the pass. The 15 GitHub merges are made on the remote and
