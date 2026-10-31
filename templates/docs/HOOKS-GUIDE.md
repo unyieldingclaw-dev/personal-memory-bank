@@ -16,7 +16,7 @@ model's discretion, subject to platform enablement and trust settings.
 |------|--------------|-------------|
 | `PreToolUse` | Before Claude runs a tool | Block dangerous operations, validate inputs |
 | `PostToolUse` | After Claude runs a tool | Auto-format, run lint, log actions |
-| `Stop` | When Claude pauses for input | Desktop notification |
+| `Stop` | When Claude pauses for input | Desktop notification; Pre-Approval Protocol check (PMB-only) |
 | `PreCompact` | Before context compaction | Save state summary |
 
 ## Enforcement Layer Architecture
@@ -124,9 +124,20 @@ figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default.
 
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
-### 2. Stop Notification (`Stop`) — excluded from install template
+### 2. Stop Notification and Pre-Approval Check (`Stop`)
 
-The Stop hook is excluded from `templates/.claude/settings.json` because it causes indefinite hangs in headless/remote sessions (no user present to dismiss the notification, stalling the session permanently). If you need a Stop notification in an interactive-only project, add it to that project's local `.claude/settings.json` manually.
+PMB's own `.claude/settings.json` runs a single Stop hook, `scripts/pre-approval-check.ps1`, with
+two jobs:
+- it enforces PMB's Pre-Approval Protocol: a turn ending in an approve-or-choose ask must carry a
+  Findings section and a Recommendation, and a turn ending in any other question a Recommendation;
+- it shows a detached "Claude has paused" notification that, on Windows, closes itself after 600 s.
+
+**A pass means the sections exist, not that the checks behind them were good.** Ask detection is a
+heuristic trigger, and adequacy stays with the Reviewer/Opponent layer.
+
+The pre-approval check is not installed by `mb init`; it is on trial in PMB only. What `mb init`
+does install as the Stop entry is the older modal "Claude has paused" popup, which can hang headless
+or remote sessions with no one to dismiss it. Whether adopters keep it is an open decision.
 
 ### 3. Contract Scope Check (`PreToolUse` — Write + Edit tools)
 

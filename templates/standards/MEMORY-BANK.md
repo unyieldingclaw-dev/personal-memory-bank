@@ -485,10 +485,9 @@ Teach AI to recognize these shortcuts:
 
 | Command | Action |
 |---------|--------|
-| `mb update` | Update all relevant Memory Bank files |
+| `update memory bank` | Update all relevant Memory Bank files |
 | `mb status` | Show file sizes, timestamps, health check |
-| `mb clean` | Move old history to `docs/archive/` |
-| `mb clean` | Trim activeContext.md to essentials |
+| `mb clean` | Trim activeContext.md to essentials and move old history to `docs/archive/` |
 | `mb commit` | Stage and commit Memory Bank changes |
 
 ## Auto-Update Behavior

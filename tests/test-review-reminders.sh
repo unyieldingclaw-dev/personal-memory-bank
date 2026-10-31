@@ -69,6 +69,13 @@ win_path_for_json() {
   printf '%s' "${win_path//\\/\\\\}"
 }
 
+ps1_takes_test_paths() {
+  # True where win_path_for_json() yields a path review-reminders.ps1 can resolve: Windows with
+  # cygpath, or any other OS, where pwsh reads the POSIX path from mktemp as-is.
+  command -v cygpath >/dev/null 2>&1 && return 0
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 1 ;; esac
+}
+
 invoke_hook_from() {
   # invoke_hook_from <script> <spawn-dir> <command-text> — like invoke_hook, but spawns the
   # hook process from <spawn-dir> instead of $TMPDIR_RR, so <command-text> can carry its own
@@ -303,6 +310,9 @@ if command -v python3 >/dev/null 2>&1; then
   git -C "$TMPDIR_DECOY_A" commit -q -m "initial"
   mkdir -p "$TMPDIR_DECOY_A/.claude"
   echo "decoy two" >> "$TMPDIR_DECOY_A/file.txt"
+  # Staged: an unstaged change is refused before any marker check (OPP6-1), so a hook that
+  # wrongly resolved to decoy A would deny anyway and leave its marker, and this test would pass.
+  git -C "$TMPDIR_DECOY_A" add file.txt
   # Decoy A gets its own genuinely-valid marker for ITS OWN diff -- proving this isn't just an
   # absent/stale marker being rejected, but a real, currently-valid marker that must NOT be
   # usable to authorize a commit actually happening in a different repo (RR).
@@ -339,11 +349,12 @@ fi
 # comment for why a plain POSIX or unescaped-Windows path breaks this specific hook.
 echo ""
 echo "--- cross-shell parity: review-reminders.ps1 also resolves root to the LAST cd ---"
-# WHY also require cygpath, not just pwsh (found by code review): win_path_for_json()'s
-# fallback to the raw POSIX path when cygpath is missing would silently produce a path
+# WHY ps1_takes_test_paths, not just pwsh (found by code review): on Windows without cygpath,
+# win_path_for_json()'s fallback to the raw POSIX path would silently produce a path
 # Resolve-CdRoot can't parse, turning an environment gap into a spurious test FAIL instead of
 # a clean SKIPPED line -- matching this file's existing skip-not-fail convention elsewhere.
-if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+# Linux and macOS need no cygpath: requiring it there skipped this block on Linux CI.
+if command -v pwsh >/dev/null 2>&1 && ps1_takes_test_paths; then
   TMPDIR_DECOY_A_PS1="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-decoy-ps1)"
   git -C "$TMPDIR_DECOY_A_PS1" init -q -b main
   git -C "$TMPDIR_DECOY_A_PS1" config user.email "test@example.com"
@@ -353,6 +364,7 @@ if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
   git -C "$TMPDIR_DECOY_A_PS1" commit -q -m "initial"
   mkdir -p "$TMPDIR_DECOY_A_PS1/.claude"
   echo "decoy two" >> "$TMPDIR_DECOY_A_PS1/file.txt"
+  git -C "$TMPDIR_DECOY_A_PS1" add file.txt
   tmp=$(mktemp)
   git -C "$TMPDIR_DECOY_A_PS1" diff HEAD > "$tmp" 2>/dev/null
   sha256sum "$tmp" | cut -d' ' -f1 > "$TMPDIR_DECOY_A_PS1/.claude/.code-review-ok"
@@ -405,8 +417,8 @@ fi
 # win_path_for_json() -- see its own comment above for why.
 echo ""
 echo "--- cross-shell parity: review-reminders.ps1 accepts a cd prefix with no space before && ---"
-# WHY also require cygpath: see the identical guard on the chained-cd parity test above.
-if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+# WHY ps1_takes_test_paths: see the identical guard on the chained-cd parity test above.
+if command -v pwsh >/dev/null 2>&1 && ps1_takes_test_paths; then
   TMPDIR_WRONG_WS_PS1="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-wrongws-ps1)"
   git init -q -b main "$TMPDIR_WRONG_WS_PS1"
 
@@ -895,22 +907,34 @@ fi
 
 # WHY spawn outside any repository: in every case above the hook's working directory IS the root,
 # so a hint naming the working directory instead of the resolved root would pass them all.
+# The cd into a subdirectory means a hint that printed the raw cd argument, not the resolved
+# toplevel, fails too.
+TMPDIR_OUTSIDE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-outside)"
+ceiling="$(dirname "$TMPDIR_OUTSIDE")"
+mkdir -p "$TMPDIR_EMPTY/sub"
 # python3 because the bash twin resolves a cd only through _review-gate-classify.py.
 if command -v python3 >/dev/null 2>&1; then
-  TMPDIR_OUTSIDE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-rr-outside)"
-  ceiling="$(dirname "$TMPDIR_OUTSIDE")"
   resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_from "review-reminders.sh" "$TMPDIR_OUTSIDE" "git commit -m empty")
   assert_contains "$resp" "repository root could not be resolved" "review-reminders.sh resolves no root from the outside spawn directory (fixture check)"
   resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_from "review-reminders.sh" "$TMPDIR_OUTSIDE" "cd \\\"$root_empty\\\" && git commit -m empty")
   assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.sh's empty-diff denial names the quoted cd's repository, not the hook's working directory"
-  if command -v pwsh >/dev/null 2>&1; then
-    resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_ps1_from "$TMPDIR_OUTSIDE" "cd \\\"$root_empty\\\" && git commit -m empty")
-    assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.ps1's empty-diff denial names the quoted cd's repository, not the hook's working directory"
-  fi
-  rm -rf "$TMPDIR_OUTSIDE"
+  resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_from "review-reminders.sh" "$TMPDIR_OUTSIDE" "cd \\\"$root_empty/sub\\\" && git commit -m empty")
+  assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.sh's empty-diff denial names the toplevel when the quoted cd is a subdirectory, not the cd argument"
 else
-  echo "  SKIP: python3 is not installed; the bash twin cannot resolve a cd, so the outside-spawn case is not run"
+  echo "  SKIP: python3 is not installed; the bash twin cannot resolve a cd, so its outside-spawn case is not run"
 fi
+# Its own guard: the ps1 twin parses the command with ConvertFrom-Json and never needs python3.
+if command -v pwsh >/dev/null 2>&1; then
+  resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_ps1_from "$TMPDIR_OUTSIDE" "git commit -m empty")
+  assert_contains "$resp" "repository root could not be resolved" "review-reminders.ps1 resolves no root from the outside spawn directory (fixture check)"
+  resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_ps1_from "$TMPDIR_OUTSIDE" "cd \\\"$root_empty\\\" && git commit -m empty")
+  assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.ps1's empty-diff denial names the quoted cd's repository, not the hook's working directory"
+  resp=$(GIT_CEILING_DIRECTORIES="$ceiling" invoke_hook_ps1_from "$TMPDIR_OUTSIDE" "cd \\\"$root_empty/sub\\\" && git commit -m empty")
+  assert_contains "$resp" "The gate checked $root_empty:" "review-reminders.ps1's empty-diff denial names the toplevel when the quoted cd is a subdirectory, not the cd argument"
+else
+  echo "  SKIP: pwsh is not installed; the ps1 twin's outside-spawn case is not run"
+fi
+rm -rf "$TMPDIR_OUTSIDE"
 
 # ── deny output stays valid JSON when the reason carries quotes or backslashes ────────────
 # WHY: review-reminders.sh printed the reason into a JSON string unescaped, so the unresolved-root
@@ -946,7 +970,7 @@ if [ -n "$PY" ]; then
     assert_not_contains "$reason" 'work-tree' "review-reminders.ps1's empty-diff denial does not offer --work-tree as a root source"
   fi
   case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Windows forbids quotes in file names; the quoted-root JSON case runs on Linux and macOS only" ;;
+    MINGW*|MSYS*|CYGWIN*) echo "  SKIP: Windows forbids quotes and control characters in file names; the quoted-root and control-character JSON cases run on Linux and macOS only" ;;
     *)
       QROOT="$TMPDIR_EMPTY/q\"b\\s"
       git init -q -b main "$QROOT"
@@ -984,8 +1008,22 @@ if [ -n "$PY" ]; then
         echo "clean" > "$QROOT_PS1/file.txt"
         git -C "$QROOT_PS1" add file.txt
         git -C "$QROOT_PS1" commit -q -m "initial"
+        qroot_ps1_top=$(git -C "$QROOT_PS1" rev-parse --show-toplevel)
         resp=$(invoke_hook_ps1_from "$QROOT_PS1" "git commit -m empty")
-        assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $(git -C "$QROOT_PS1" rev-parse --show-toplevel):")" "1" "review-reminders.ps1's denial naming a root with a quote is valid JSON and keeps the path intact"
+        assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $qroot_ps1_top:")" "1" "review-reminders.ps1's denial naming a root with a quote is valid JSON and keeps the path intact"
+        # ps1's ConvertTo-Json escapes control characters rather than dropping them. WHY a tab
+        # and no newline: pwsh splits git's output at the newline, so the root becomes two
+        # strings and the hook denies it as not enterable instead (measured 2026-10-23; it fails closed).
+        CROOT_PS1="$TMPDIR_EMPTY/c$(printf '\t')ps1"
+        git init -q -b main "$CROOT_PS1"
+        git -C "$CROOT_PS1" config user.email "test@example.com"
+        git -C "$CROOT_PS1" config user.name "Test"
+        echo "clean" > "$CROOT_PS1/file.txt"
+        git -C "$CROOT_PS1" add file.txt
+        git -C "$CROOT_PS1" commit -q -m "initial"
+        croot_ps1_top=$(git -C "$CROOT_PS1" rev-parse --show-toplevel)
+        resp=$(invoke_hook_ps1_from "$CROOT_PS1" "git commit -m empty")
+        assert_equals "$(printf '%s' "$resp" | json_reason | grep -cF "The gate checked $croot_ps1_top:")" "1" "review-reminders.ps1's denial naming a root with a tab is valid JSON and keeps the tab"
       fi
       ;;
   esac
