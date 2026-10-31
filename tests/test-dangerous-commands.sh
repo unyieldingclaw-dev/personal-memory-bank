@@ -1117,7 +1117,8 @@ done
 # 2. The C pass, Turkish case: under tr_TR.UTF-8, `grep -i` does not fold `I` to `i`, so an
 # upper-case config key -- which git accepts -- got no verdict on sh while ps1 prompted (measured,
 # on origin/main as well). A locale is used only if grep really shows that fold, and the case is
-# skipped loudly where none does (the Ubuntu CI runner ships no Turkish locale).
+# skipped loudly where none does. CI generates tr_TR.UTF-8 and sets PMB_REQUIRE_LOCALE_CASES=1,
+# so there a missing locale fails instead.
 echo ""
 echo "--- the signing rows catch an upper-case key under a Turkish locale ---"
 _dc_tr_ok() { [ "$(printf 'I' | LC_ALL="$1" grep -ci 'i' 2>/dev/null)" = "0" ]; }
@@ -1130,7 +1131,14 @@ for _loc in tr_TR.UTF-8 tr_TR.utf8; do
     assert_contains "$output" "CONFIRM REQUIRED:" "an upper-case signing key still prompts under LC_ALL=$_loc"
     break
 done
-[ "$_dc_tr_ran" = "1" ] || echo "  SKIPPED: no locale on this machine shows the Turkish I fold"
+if [ "$_dc_tr_ran" != "1" ]; then
+    echo "  SKIPPED: no locale on this machine shows the Turkish I fold"
+    # WHY one failure here covers the later Turkish cells too: they use the same probe, so the same
+    # locale is missing for all of them.
+    if [ "${PMB_REQUIRE_LOCALE_CASES:-0}" = "1" ]; then
+        assert_contains "tr-missing" "tr-present" "PMB_REQUIRE_LOCALE_CASES=1 but no locale shows the Turkish I fold -- the Turkish cells could not run"
+    fi
+fi
 
 # 3. The C pass, invalid-sequence case: under a UTF-8 locale `.` does not match an invalid UTF-8
 # sequence, and the extraction writes a JSON lone-surrogate escape as bytes ED B3 BF. So a
@@ -1240,7 +1248,12 @@ done
 echo ""
 echo "--- the guarantee holds in every locale at 255 bytes ---"
 [ -n "$_dc_tr_loc" ] || echo "  NOTE: no effective Turkish locale; the upper-case cells cannot kill a mutant that drops the C pass here"
-[ -n "$_dc_strict" ] || echo "  NOTE: no strict-grep UTF-8 locale; the lone-surrogate cells cannot kill a mutant that drops the C pass here"
+if [ -z "$_dc_strict" ]; then
+    echo "  NOTE: no strict-grep UTF-8 locale; the lone-surrogate cells cannot kill a mutant that drops the C pass here"
+    if [ "${PMB_REQUIRE_LOCALE_CASES:-0}" = "1" ]; then
+        assert_contains "strict-missing" "strict-present" "PMB_REQUIRE_LOCALE_CASES=1 but no UTF-8 locale here has a strict grep -- the lone-surrogate cells cannot discriminate"
+    fi
+fi
 for _loc in C $_dc_utf8_locales $_dc_tr_loc; do
     # Kills dropping the C pass, under the Turkish locale (the caller's pass cannot fold `I`).
     output=$(_dc_run_sh "$_loc" "$(_dc_gap 2 2 a 255 "$_dc_KEY" git)")

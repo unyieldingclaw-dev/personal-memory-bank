@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-10-05
-last-reviewed: 2026-10-19
+last-reviewed: 2026-10-31
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -204,6 +204,10 @@ and the `R2/` and `R4/` IDs, none of which appears below any more: read it with 
     (ADVISORY_CREATE); when the file exists and differs, it prints a diff and asks for a manual
     review. So an adopter with an older standard gets the new deny message pointing at a label
     their copy lacks. `scripts/mb.ps1` overwrites both, so the gap is on the sh upgrade path.
+    `fix/ns38-signing-gap-bound` adds a second case: the `dc_grep` comment no longer states the
+    signing-row guarantee and points at the standard's paragraph instead. An adopter on 1.3.0
+    whose standard is not updated follows it to the older text, which lists cases and says the
+    PowerShell hook "counts characters in all three".
   - CHR2/M-1: `docs/HOOKS-GUIDE.md` says "folding the two subjects once" costs two subshells,
     "three when the command holds a carriage return"; with the CR-deleted view there are three
     subjects.
@@ -227,14 +231,28 @@ and the `R2/` and `R4/` IDs, none of which appears below any more: read it with 
 - **The bound guard misses `{,n}`.** `tests/test-dangerous-commands.sh:757-766` extracts
   `\{[0-9]+(,[0-9]*)?\}`, so `{,300}` passes the guard, yet GNU `grep -E` treats `{,300}` as a
   bound. Widen the pattern to `\{[0-9]*(,[0-9]*)?\}`.
-- **CI guards the confirm_regex C pass with one test that depends on the grep version.** The only
-  test that killed the mutant that removes the C pass is the tr_TR one. It skips wherever no
-  Turkish locale exists, and the Ubuntu CI runner has none. Run `locale-gen tr_TR.UTF-8` in the
-  `mb-command-tests` job of `.github/workflows/pmb-health.yml`, or make that skip fatal under a
-  flag, as `PMB_REQUIRE_PARITY` does for pwsh.
-- **The 250-character `-C` figure is not pinned.** Assert in both suites
-  (`tests/test-dangerous-commands.sh`, `tests/dangerous-commands.Tests.ps1`) that a 250-character
-  path prompts and a 251-character path does not.
+- **RESOLVED on `fix/ns38-signing-gap-bound` (commit 3): CI guards the confirm_regex C pass with one
+  test that depends on the grep version.** The `mb-command-tests` job now runs
+  `locale-gen tr_TR.UTF-8` and sets `PMB_REQUIRE_LOCALE_CASES=1`, which fails the run when no
+  Turkish locale, or no strict-grep UTF-8 locale, is effective. The premise was also wrong: the
+  tr_TR test was not the only killer. On GNU grep 3.11 the lone-surrogate cells kill the mutant
+  that removes the C pass too (measured in Docker in that branch's round-3 review, 2026-10-31).
+- **RESOLVED on `fix/ns38-signing-gap-bound` (commit 1): the 250-character `-C` figure is not
+  pinned.** `tests/test-dangerous-commands.sh` now pins every bounded gap group, in both hooks: a
+  255-byte gap prompts and a 256-byte gap does not. For group 1, 255 bytes is the 250-character
+  `-C` path.
+- **The dc_grep no-subject test pins "does not return", not "exits 0".** Found in round 3 of the
+  `fix/ns38-signing-gap-bound` review. A copy of the hook whose guard ends in `exit 1` or `exit 2`
+  passes all five assertions (measured, GNU grep 3.0). Every other deny site exits 0, and Claude
+  Code reads the deny JSON only on exit 0, so such a guard would likely fail open (inferred; no
+  call site reaches the guard today). Assert the stubbed subshell's exit status is 0.
+- **The 256-byte KNOWN LIMIT edge cells can pass on an empty payload.** The "payload was generated"
+  check covers Limits 1 and 2 only. With `_dc_gap` broken on purpose, the 8 edge-256 cells stay
+  green (measured). The 255-byte cells fail in the same run, so the suite is not blind; add the
+  check to the edge loop anyway, or make a `_dc_gap` failure abort.
+- **The locale cells add about 17 s to the sh suite** on a loaded Windows machine (10 hook runs and
+  10 python3 payload generations). The payloads do not depend on the locale, so generating them
+  once outside the loop would save most of the python3 cost.
 - **Only the opening words of the deny message are asserted.** Its remedy text, in
   `scripts/dangerous-commands.sh`, is not (read).
 
@@ -258,11 +276,26 @@ and the `R2/` and `R4/` IDs, none of which appears below any more: read it with 
 - **The "Not covered" list in `standards/SECURITY-GUARDRAILS.md` reads as exhaustive.** It omits
   subshell, brace, `"$SHELL"`, `$'bash'` and `${X:-bash}` forms. These get no verdict on `main`
   either.
-- **`standards/SECURITY-GUARDRAILS.md:160` says "counts characters in all three".** .NET counts
-  UTF-16 code units, so an astral character counts as 2 (read).
-- **`standards/SECURITY-GUARDRAILS.md:139` misdates the bound change.** It says the bound was
-  `{0,300}` "until 2026-09-30", but b76d08e, which lowered it, is dated 2026-10-03. The
-  "(added 2026-09-30)" at `:152` is correct: it dates the bytes paragraph, which b5cfe33 added.
+- **RESOLVED on `fix/ns38-signing-gap-bound` (commit 1): `standards/SECURITY-GUARDRAILS.md:160`
+  says "counts characters in all three".** The standard now says the PowerShell hook counts UTF-16
+  code units: one per BMP character, two per astral character.
+- **RESOLVED on `fix/ns38-signing-gap-bound` (commit 1): `standards/SECURITY-GUARDRAILS.md:139`
+  misdates the bound change.** It now says `{0,300}` "until 2026-10-03". The "(added 2026-09-30)"
+  label stays; it is correct.
+- **Wording left stale by `fix/ns38-signing-gap-bound`**, found in its round-3 review (2026-10-31):
+  - `scripts/dangerous-commands.sh`, in `confirm_regex`: "see dc_grep for the three bypasses that
+    need both passes". The `dc_grep` list now has four, and calls itself not exhaustive, so drop
+    the count.
+  - `tests/test-dangerous-commands.sh`: "four of the five matcher functions there were then". At
+    030662c there were six (block, block_boundary, confirm, confirm_regex, confirm_boundary, warn),
+    and the retrofit missed two, as the file says elsewhere. The "one matcher of five" qualifier
+    has the same problem.
+  - `tests/test-dangerous-commands.sh`, the guarantee header: it restates the guarantee without
+    the standard's "grep runs with its default options" condition. Make it a pointer.
+  - `tests/dangerous-commands.Tests.ps1`, the "warns once" test: its comment says the loop "must
+    stop after its first notice". The ps1 has one `if` joining the views with `-or`; nothing stops.
+  - `standards/SECURITY-GUARDRAILS.md`, the guarantee paragraph: "matches each signing row twice"
+    should be "up to twice"; the C pass runs only when the first misses.
 - **`CHANGELOG.md` still gives 295 for the `{0,300}` bound.** The entry that says "`{0,300}` bound
   admits is **295** characters" does not note that the final bound is 255,
   which allows a 250-character path.
@@ -278,3 +311,28 @@ recurred twice on this branch on 2026-10-05:
 
 Both times, the approving Opposition agent had to verify that nothing had changed and then rewrite
 its own marker. The fix is for the gate to consume a marker only once the command has actually run.
+
+## 5. The sh hook's environment can silence it — recorded 2026-10-31, open
+
+Both need control of the hook's environment or of the project directory. Each is its own
+behaviour change, so neither was fixed on `fix/ns38-signing-gap-bound`.
+
+- **`GREP_OPTIONS` silences every `dc_grep` row on GNU grep 3.0.** With `GREP_OPTIONS=-m0` in the
+  hook's environment, every grep reports no match, so no regex row gives a verdict: the
+  commit-signing rows, the BLOCK row for a pipe into a shell (newline-split forms included), and
+  the CR-deleted view. Measured on GNU grep 3.0 (Git for Windows) on both the parsed and the
+  no-python3 path. GNU grep 3.7 and 3.11 ignore the variable (measured). A reviewer cited GNU
+  grep's release notes for 3.6 as dropping it, which would leave 3.1 to 3.5 affected too; neither
+  is checked here. `standards/SECURITY-GUARDRAILS.md` discloses this only in the
+  signing-row paragraph. Candidate fix: `unset GREP_OPTIONS` near the top of the hook, plus a test
+  that sets it.
+- **A `json.py` in the hook's working directory replaces Python's `json` in the extraction step.**
+  `python3 -c` puts the current directory first on `sys.path`. With a `json.py` whose `loads()`
+  returns a harmless command, a payload holding a pipe into a shell got no verdict, while the same
+  payload from a clean directory was BLOCKed (measured 2026-10-31, GNU grep 3.0). The hook runs in
+  the session's working directory, normally the project root, so a cloned repository can carry
+  such a file. Candidate fix: `python3 -I`,
+  which leaves the current directory and the user's site-packages off `sys.path`.
+- **Unmeasured, same class:** an exported bash function named `grep` (`BASH_FUNC_grep%%`) in the
+  hook's environment would replace the matcher too. The standard's "grep runs with its default
+  options" condition arguably covers it.
