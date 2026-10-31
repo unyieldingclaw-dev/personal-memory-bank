@@ -125,8 +125,9 @@ visible by its Task 4 logging.
 
 ## Done when
 
-- A committed wiring test (tracked, so `tests/run.sh` fails until it is registered), run in a
-  scratch copy of the tree and never the real `scripts/`, deletes each `.ps1` in turn and runs each
+- A committed wiring test (tracked and named `tests/test-*.sh`, so `tests/run.sh` runs it with no
+  registration step since PR #106), run in a scratch copy of the tree and never the real
+  `scripts/`, deletes each `.ps1` in turn and runs each
   settings command string verbatim with the scratch root as the working directory:
   - `:58` and `:62`, and their `Bash` twins `:45` and `:49`, each deny a guarded command (for
     example a `git commit` without a review marker). "Deny" means stdout is only the deny JSON
