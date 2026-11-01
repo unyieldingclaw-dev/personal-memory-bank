@@ -66,7 +66,8 @@ function Invoke-PausedNotification {
             $cmd = "Start-Sleep -Seconds $delay; Add-Content -LiteralPath '$stub' -Value notify"
         } else {
             $exe = 'powershell.exe'
-            # WScript.Shell.Popup times out after 600 s; nothing else would close a detached popup.
+            # WScript.Shell.Popup is set to close after 600 s (not timed, spec section 3); nothing else
+            # would close a detached popup.
             $cmd = "(New-Object -ComObject WScript.Shell).Popup('Claude has paused and is waiting for input.', 600, 'Claude Code', 64) | Out-Null"
         }
         Start-Process -FilePath $exe -ArgumentList "-NoProfile -NonInteractive -Command `"$cmd`"" -WindowStyle Hidden
@@ -78,9 +79,10 @@ function Invoke-PausedNotification {
 }
 
 try {
-    # WHY -ceq: -eq ignores case, so "OFF" disabled this twin but not the .sh, whose test is
-    # case-sensitive (review finding C2). Both twins now accept only the exact value 'off'.
-    if ($env:PMB_PRE_APPROVAL -ceq 'off') { return }
+    # WHY case-sensitive AND ordinal: -eq ignores case, so "OFF" disabled this twin but not the .sh,
+    # whose test is exact (review finding C2); -ceq fixes that but is still culture-aware, so 'off'
+    # plus a zero-width character (measured with U+200B) compared equal here and not in the .sh.
+    if ([string]::Equals($env:PMB_PRE_APPROVAL, 'off', [StringComparison]::Ordinal)) { return }
     # WHY a UTF-8 StreamReader, not [Console]::In: on Windows the latter decodes with the OEM code
     # page (ibm437), splitting each non-ASCII character into several (review finding F5). Same fix as
     # dangerous-commands.ps1.
@@ -125,7 +127,9 @@ try {
         $lines = @([regex]::Split($end, '\r\n|\n|\r') | Where-Object { $_.Trim() })
         if ($lines.Count -gt 0) {
             $last = $lines[-1].TrimEnd().TrimEnd([char[]]@('*', '_', '`', "'", '"', ')')).TrimEnd()
-            $tierB = $last.EndsWith('?')
+            # WHY ordinal: the default EndsWith is culture-aware and ignores zero-width, soft-hyphen and
+            # some control characters, so "?" plus U+200B was a question here but not in the .sh.
+            $tierB = $last.EndsWith('?', [StringComparison]::Ordinal)
         }
     }
 
