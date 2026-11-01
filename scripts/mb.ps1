@@ -2261,6 +2261,140 @@ function Show-Query {
     Write-Host ""
 }
 
+# WHY settings.json is merged, not overwritten: its permission lists are project policy, and the
+# wholesale copy this replaces silently deleted an adopter's deny rules. Same rules as mb.sh's
+# _upgrade_settings (see its comment, which also lists the known divergences on unusual input); the
+# two must produce byte-identical files and identical report lines for every shape the parity tests
+# in tests/mb-setup.Tests.ps1 pin.
+# Returns @{ Code = 0 (Out written) | 10 (already merged) | 2 (Error); Count; Lines }.
+function Merge-UpgradeSettingsFile {
+    param([string]$Src, [string]$Target, [string]$Out, [string]$MbHome)
+    $lists = @('allow', 'deny', 'ask', 'additionalDirectories')
+    $keep = 'disableBypassPermissionsMode'
+    # WHY -ccontains on property names: PSObject property lookup is case-insensitive, JSON keys are not.
+    function Test-Key($obj, [string]$key) { return ($obj.PSObject.Properties.Name -ccontains $key) }
+    function ConvertTo-Dump($obj) { return ((ConvertTo-Json -InputObject $obj -Depth 100) -replace "`r`n", "`n") + "`n" }
+    function Read-SettingsFile([string]$path, [string]$what) {
+        $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8
+        if ([string]::IsNullOrWhiteSpace($raw)) { return "$what is not valid JSON (empty)" }
+        try {
+            # WHY -NoEnumerate: the pipeline would unroll a one-element top-level array into its element.
+            $obj = ConvertFrom-Json -InputObject $raw -NoEnumerate -ErrorAction Stop
+        } catch {
+            return "$what is not valid JSON ($($_.Exception.GetType().Name))"
+        }
+        # WHY the full type name: the [pscustomobject] accelerator is PSObject, which every value
+        # matches -- a file holding 42 or true would pass and be overwritten with the template.
+        if ($obj -isnot [System.Management.Automation.PSCustomObject]) { return "$what is not a JSON object" }
+        if (Test-Key $obj 'permissions') {
+            $perms = $obj.permissions
+            if ($perms -isnot [pscustomobject]) { return "${what}: permissions is not an object" }
+            foreach ($k in $lists) {
+                if (-not (Test-Key $perms $k)) { continue }
+                $v = $perms.$k
+                if ($v -isnot [array] -or @($v | Where-Object { $_ -isnot [string] }).Count -gt 0) {
+                    return "${what}: permissions.$k is not a list of strings"
+                }
+            }
+        }
+        return $obj
+    }
+    $T = Read-SettingsFile $Src 'template'
+    if ($T -is [string]) { return @{ Code = 2; Error = $T } }
+    $P = Read-SettingsFile $Target 'project file'
+    if ($P -is [string]) { return @{ Code = 2; Error = $P } }
+
+    $M = Get-Content -LiteralPath $Src -Raw -Encoding utf8 | ConvertFrom-Json
+    if (-not (Test-Key $M 'permissions')) { $M | Add-Member -NotePropertyName permissions -NotePropertyValue ([pscustomobject]@{}) }
+    $MP = $M.permissions
+    $kept = [System.Collections.Generic.List[object]]::new()
+    $flags = [System.Collections.Generic.List[string]]::new()
+    $notes = [System.Collections.Generic.List[string]]::new()
+    if (Test-Key $P 'permissions') {
+        foreach ($prop in $P.permissions.PSObject.Properties) {
+            $k = $prop.Name; $v = $prop.Value
+            if ($lists -ccontains $k) {
+                $have = [System.Collections.Generic.List[object]]::new()
+                if (Test-Key $MP $k) { foreach ($e in $MP.$k) { $have.Add($e) } }
+                foreach ($e in $v) {
+                    if (-not $have.Contains($e)) { $have.Add($e); $kept.Add(@($k, $e)) }
+                }
+                # WHY assign when present: Add-Member -Force re-adds the property at the end, which
+                # reorders permissions and breaks byte parity with the Python merge.
+                if (Test-Key $MP $k) { $MP.$k = [object[]]$have.ToArray() }
+                else { $MP | Add-Member -NotePropertyName $k -NotePropertyValue ([object[]]$have.ToArray()) }
+            } elseif ($k -ceq $keep -and -not (Test-Key $MP $k)) {
+                $MP | Add-Member -NotePropertyName $k -NotePropertyValue $v
+                $kept.Add(@('permissions', $k))
+            } elseif (-not (Test-Key $MP $k)) {
+                $notes.Add("dropped permissions.$k (only the permission lists and $keep are kept)")
+            } elseif ((ConvertTo-Dump $v) -cne (ConvertTo-Dump $MP.$k)) {
+                $notes.Add("replaced permissions.$k with the template's")
+            }
+        }
+    }
+    foreach ($prop in $P.PSObject.Properties) {
+        $k = $prop.Name; $v = $prop.Value
+        if ($k -ceq 'permissions') { continue }
+        if (-not (Test-Key $T $k)) {
+            $notes.Add("dropped top-level key $k (not in the template)")
+            continue
+        }
+        if ($v -is [pscustomobject] -and $T.$k -is [pscustomobject]) {
+            foreach ($sk in $v.PSObject.Properties.Name) {
+                if (-not (Test-Key $T.$k $sk)) { $notes.Add("dropped $k.$sk (not in the template)") }
+            }
+        }
+        if ((ConvertTo-Dump $v) -cne (ConvertTo-Dump $T.$k)) { $notes.Add("replaced $k with the template's") }
+    }
+    if ($kept.Count -gt 0) {
+        $tmpl = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        if (Test-Key $T 'permissions') {
+            foreach ($k in $lists) { if (Test-Key $T.permissions $k) { foreach ($e in $T.permissions.$k) { [void]$tmpl.Add($e) } } }
+        }
+        $retired = $null
+        $shallow = git -C $MbHome rev-parse --is-shallow-repository 2>$null
+        $shallowOk = ($LASTEXITCODE -eq 0)
+        $log = git -C $MbHome log -p --format= -- templates/.claude/settings.json 2>$null
+        if ($shallowOk -and $LASTEXITCODE -eq 0 -and "$shallow".Trim() -eq 'false') {
+            $retired = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($line in @($log)) {
+                if ($line -cmatch '\A-\s*("(?:[^"\\]|\\.)*")\s*,?\s*\z') { [void]$retired.Add(($Matches[1] | ConvertFrom-Json)) }
+            }
+        }
+        if ($null -eq $retired) { $notes.Add("retired-rule check unavailable: no full PMB git history at $MbHome") }
+        foreach ($pair in $kept) {
+            $k = $pair[0]; $e = $pair[1]
+            if ($retired -and $retired.Contains($e) -and -not $tmpl.Contains($e)) {
+                $flags.Add("[!] PMB no longer ships this rule; kept -- remove it if unneeded: $k $e")
+            }
+            if ($k -ceq 'allow' -and $e -match 'merge') {
+                $flags.Add("[!] kept allow rule mentions merge -- check it is not a merge route the merge gate cannot see: $e")
+            }
+            if ($k -ceq 'allow' -and (($e -cmatch '\A[A-Za-z]\w*\z' -and -not $e.StartsWith('mcp__')) -or $e -cmatch '\A\w+\((:?\*)?\)\z')) {
+                $flags.Add("[!] kept allow rule is broad: $e")
+            }
+        }
+    }
+    $lines = @($kept | ForEach-Object { "kept $($_[0]): $($_[1])" }) + @($flags) + @($notes)
+    $result = @{ Code = 0; Count = $kept.Count; Lines = $lines }
+    $dumpM = ConvertTo-Dump $M
+    if ($dumpM -ceq (ConvertTo-Dump $P)) { $result.Code = 10; return $result }
+    if ($dumpM -ceq (ConvertTo-Dump $T)) {
+        Copy-Item -LiteralPath $Src -Destination $Out -Force
+    } else {
+        # WHY the provider resolver: .NET resolves relative paths against the process directory, not $PWD.
+        $outPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out)
+        [System.IO.File]::WriteAllText($outPath, $dumpM, [System.Text.UTF8Encoding]::new($false))
+    }
+    $back = Read-SettingsFile $Out 'merged file'
+    if ($back -is [string] -or (ConvertTo-Dump $back) -cne $dumpM) {
+        Remove-Item -LiteralPath $Out -Force -ErrorAction SilentlyContinue
+        return @{ Code = 2; Error = 'merged file did not read back identically' }
+    }
+    return $result
+}
+
 function Invoke-Upgrade {
     param([string]$ProjectPath = "")
     # WHY both: under `pwsh -File` (mb.bat) --dry-run binds to the script-level $DryRun switch;
@@ -2319,7 +2453,8 @@ function Invoke-Upgrade {
         ".cursor/rules/security.mdc"
         ".cursor/rules/code-review.mdc"
         ".cursor/rules/rules-file-integrity.mdc"
-        # Claude Code settings — hook wiring, not project-specific
+        # Claude Code settings — hook wiring is template-owned, but the permission lists are
+        # project policy: merged by Merge-UpgradeSettingsFile, never overwritten
         ".claude/settings.json"
         # Codex hook wiring — deterministic lifecycle configuration, trusted explicitly in /hooks
         ".codex/hooks.json"
@@ -2449,7 +2584,42 @@ function Invoke-Upgrade {
         }
     }
 
-    # Process TEMPLATE_OWNED — overwrite unconditionally if stale
+    # WHY a line count on dry run: see _upgrade_numstat in mb.sh -- same git command, same numbers.
+    function Get-UpgradeNumstat {
+        param([string]$Old, [string]$New)
+        $ns = @(git diff --no-index --numstat -- $Old $New 2>$null)
+        if ($ns.Count -eq 0) { return "" }
+        $parts = "$($ns[0])" -split "`t"
+        if ($parts[0] -eq '-') { return ", binary" }
+        if ($parts.Count -ge 2) { return ", +$($parts[0])/-$($parts[1]) lines" }
+        return ""
+    }
+
+    function Invoke-SettingsFileUpgrade {
+        param([string]$Src, [string]$Target)
+        $tmp = Join-Path (Split-Path -Parent $Target) ".settings.json.mb-upgrade.$PID"
+        $r = Merge-UpgradeSettingsFile -Src $Src -Target $Target -Out $tmp -MbHome $RepoRoot
+        if ($r.Code -eq 2) {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            Write-Host "[!] $Target not updated: $($r.Error) -- merge $Src by hand" -ForegroundColor Red
+            return
+        }
+        if ($r.Code -eq 10) {
+            Write-Host "[=] $Target (unchanged; keeps $($r.Count) project permission rules)" -ForegroundColor DarkGray
+        } elseif ($dryRun) {
+            Write-Host "[~?] $Target (would update$(Get-UpgradeNumstat -Old $Target -New $tmp); keeps $($r.Count) project permission rules)" -ForegroundColor Yellow
+        } else {
+            Move-Item -LiteralPath $tmp -Destination $Target -Force
+            Write-Host "[~] $Target (updated; kept $($r.Count) project permission rules)" -ForegroundColor Yellow
+        }
+        foreach ($line in $r.Lines) { Write-Host "      $line" }
+        if ($r.Code -eq 0 -and $dryRun) {
+            git diff --no-index -- $Target $tmp 2>$null | ForEach-Object { Write-Host "      $_" }
+        }
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+
+    # Process TEMPLATE_OWNED — overwrite unconditionally if stale (settings.json: merged instead)
     foreach ($target in $templateOwned) {
         $src = Get-TemplateSrc -Target $target
         if (-not (Test-Path $src)) {
@@ -2467,9 +2637,11 @@ function Invoke-Upgrade {
             }
         } elseif ((Get-FileHash $src).Hash -eq (Get-FileHash $target).Hash) {
             Write-Host "[=] $target (unchanged)" -ForegroundColor DarkGray
+        } elseif ($target -eq ".claude/settings.json") {
+            Invoke-SettingsFileUpgrade -Src $src -Target $target
         } else {
             if ($dryRun) {
-                Write-Host "[~?] $target (would update)" -ForegroundColor Yellow
+                Write-Host "[~?] $target (would update$(Get-UpgradeNumstat -Old $target -New $src))" -ForegroundColor Yellow
             } else {
                 Copy-Item -Path $src -Destination $target -Force
                 Write-Host "[~] $target (updated)" -ForegroundColor Yellow
