@@ -21,7 +21,8 @@ echo "=== review-gate classifier twin parity ==="
 
 require_or_skip() {
     echo "--- SKIPPED: $1 ---"
-    echo "!!! WARNING: classifier parity did NOT run. Set PMB_REQUIRE_PARITY=1 to make this a failure."
+    echo "!!! WARNING: classifier parity did NOT run."
+    [ "${PMB_REQUIRE_PARITY:-0}" = "1" ] || echo "!!! Set PMB_REQUIRE_PARITY=1 to make this a failure."
     if [ "${PMB_REQUIRE_PARITY:-0}" = "1" ]; then
         assert_contains "missing" "present" "PMB_REQUIRE_PARITY=1 but $1"
     fi
@@ -39,6 +40,12 @@ command -v pwsh >/dev/null 2>&1 || require_or_skip "pwsh is not on PATH"
 command -v python3 >/dev/null 2>&1 || require_or_skip "python3 is not on PATH"
 
 T="$(mktemp -d 2>/dev/null || mktemp -d -t pmb-cls-parity)"
+# An empty T would put every file below at / (and a git repo at /repo in a root container).
+if [ -z "$T" ] || [ ! -d "$T" ]; then
+    assert_equals "${T:-<empty>}" "a directory" "mktemp -d made a scratch directory"
+    print_summary
+    exit 1
+fi
 trap 'rm -rf "$T"' EXIT
 # pnat PATH -- PATH as a native pwsh reads it (Git Bash converts nothing inside -Command strings).
 pnat() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
@@ -50,7 +57,8 @@ pnat() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else print
 sentinel="$(pwsh -NoProfile -NonInteractive -Command "@('-I') -ccontains ('-I' + [char]0xAD)" </dev/null 2>/dev/null | tr -d '\r')"
 if [ "$sentinel" != "True" ]; then
     echo "!!! WARNING: culture comparison is ordinal in this pwsh (sentinel=$sentinel); the parity rows cannot"
-    echo "!!! detect a culture regression here. Set PMB_REQUIRE_PARITY=1 to make this a failure."
+    echo "!!! detect a culture regression here."
+    [ "${PMB_REQUIRE_PARITY:-0}" = "1" ] || echo "!!! Set PMB_REQUIRE_PARITY=1 to make this a failure."
     if [ "${PMB_REQUIRE_PARITY:-0}" = "1" ]; then
         assert_equals "$sentinel" "True" "PMB_REQUIRE_PARITY=1 but pwsh compares ordinally here (no ICU?)"
     fi
@@ -86,9 +94,14 @@ ROWS=(
     "COMMIT|git -c a.b=c${SSEMI}x $C"
     "COMMIT|git -c a.b=c${SAMP}${SAMP}x $C"
     "COMMIT|git -${ACUTE}x $C"
+    # Over-triggers before the fix: culture-equal names and options the programs themselves reject.
+    # These two kept the verdict and differed in git context only: ps1 read them as --git-dir (git
+    # rejects both, rc=129).
     "COMMIT|git --git-dir${SHY}=x $C"
     "COMMIT|git --GIT-DIR=x $C"
-    # Over-triggers before the fix: culture-equal names and options the programs themselves reject.
+    # A culture -C or global-flag match would consume or skip the next token (git rejects both).
+    "NONE|git ${SHY}--no-pager $C"
+    "COMMIT|git -C${SHY} $C"
     "NONE|git -C${SHY} sub $C"
     "NONE|git -c${SHY} a=b $C"
     "NONE|git${SHY} $C"
@@ -120,6 +133,9 @@ ROWS=(
     "COMMIT|git -c a.b=c $C"
     "COMMIT|echo x | xargs -I{} git $C"
     "COMMIT|echo x | xargs -- git $C"
+    # GNU -i/-e take only an attached argument, so a case-insensitive match on -I/-E would eat git.
+    "COMMIT|echo x | xargs -i git $C"
+    "COMMIT|echo x | xargs -e git $C"
     "COMMIT|ssh -p 22 host git $C"
     "COMMIT|bash -c \"git $C\""
     "COMMIT|PWSH -Command \"git $C\""
@@ -230,22 +246,34 @@ for tool in Bash PowerShell; do
 done
 
 # ---- AST guard --------------------------------------------------------------------------------
-# Parses the classifier and lists every comparison that could be culture-aware:
+# Parses the classifier and reports these comparison forms, all of which can be culture-aware:
 #  - -eq/-ne/-lt/-le/-gt/-ge (any case prefix) unless the LEFT operand is provably not a string: a
-#    number, $null, an [int] cast, .Count/.Length, arithmetic, or one of the int-only scanner variables.
-#    The left operand decides the comparison type in PowerShell, so a number on the right proves nothing.
+#    number, $null, an [int] cast, .Count/.Length, + - * / with both operands safe, or one of the
+#    $intVars names. The left operand decides the comparison type in PowerShell, so a number on the
+#    right proves nothing.
 #  - every -contains/-notcontains/-in/-notin/-like/-notlike, and every switch statement;
-#  - StartsWith/EndsWith/IndexOf/LastIndexOf/CompareTo/Compare/Equals calls without an Ordinal argument,
-#    and ToLower()/ToUpper() (culture casing);
-#  - Sort-Object, Compare-Object, Group-Object, Where-Object, Select-String.
+#  - StartsWith/EndsWith/IndexOf/LastIndexOf/CompareTo/Compare/Equals calls with no argument that is
+#    exactly [System.StringComparison]::Ordinal (OrdinalIgnoreCase folds case, and -i is not -I);
+#    ToLower()/ToUpper() (culture casing); any CompareInfo, IsPrefix or IsSuffix member;
+#  - Sort-Object, Compare-Object, Group-Object, Where-Object, Select-String, Get-Unique (by alias or
+#    module-qualified too), and Select-Object -Unique.
 # -match/-replace/-split are regex operators, not collation, and are allowed.
+# Known limits: the $intVars names are trusted as ints by NAME; nothing checks what they hold, so a
+# string assigned to one of them makes `$c -eq 'x'` culture-aware and still passes. The lists are
+# forms, not a proof: a comparer handed to a .NET API (e.g. [Linq.Enumerable]::Contains with
+# CurrentCultureIgnoreCase), a member called by a computed name, or Invoke-Expression gets past it.
 cat > "$T/guard.ps1" <<'EOF'
 param([string[]]$Paths)
+# Trusted by NAME as the classifier's int-only scanner variables (char codes, quote, depth, index);
+# not checked. Keep them int-only, or the guard misses comparisons on them.
 $intVars = @('c', 'quote', 'depth', 'Depth', 'i')
 $eqOps = @('Ieq','Ine','Ceq','Cne','Ilt','Ile','Igt','Ige','Clt','Cle','Cgt','Cge')
 $banOps = @('Icontains','Inotcontains','Ccontains','Cnotcontains','Iin','Inotin','Cin','Cnotin','Ilike','Inotlike','Clike','Cnotlike')
 $ordMethods = @('startswith','endswith','indexof','lastindexof','compareto','compare','equals')
-$banCmds = @('sort-object','compare-object','group-object','where-object','select-string','sort','group','where','?')
+$casingMethods = @('tolower','toupper')
+$banMembers = @('compareinfo','isprefix','issuffix')
+$banCmds = @('sort-object','compare-object','group-object','where-object','select-string','get-unique','sort','group','where','?','gu')
+$ordinalArg = '^\[(System\.)?String(Comparison|Comparer)\]::Ordinal$'
 function Test-SafeLeft($a) {
     if ($a -is [System.Management.Automation.Language.ConstantExpressionAst] -and $a.Value -is [ValueType]) { return $true }
     if ($a -is [System.Management.Automation.Language.VariableExpressionAst]) {
@@ -262,7 +290,9 @@ function Test-SafeLeft($a) {
         return @('Count', 'Length') -ccontains $a.Member.Value
     }
     if ($a -is [System.Management.Automation.Language.BinaryExpressionAst]) {
-        return @('Plus', 'Minus', 'Multiply', 'Divide') -ccontains [string]$a.Operator
+        # 'a' + $y and 'a' * 2 are strings: arithmetic is safe only when both operands are.
+        return (@('Plus', 'Minus', 'Multiply', 'Divide') -ccontains [string]$a.Operator) -and
+            (Test-SafeLeft $a.Left) -and (Test-SafeLeft $a.Right)
     }
     return $false
 }
@@ -278,39 +308,96 @@ foreach ($p in $Paths) {
             elseif ($eqOps -ccontains $op -and -not (Test-SafeLeft $n.Left)) { $why = "operator -$op on a possibly-string left operand" }
         } elseif ($n -is [System.Management.Automation.Language.SwitchStatementAst]) {
             $why = 'switch statement'
-        } elseif ($n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+        } elseif ($n -is [System.Management.Automation.Language.MemberExpressionAst] -and
                   $n.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
             $m = $n.Member.Value.ToLowerInvariant()
-            if ($m -ceq 'tolower' -or $m -ceq 'toupper') { $why = "$m() (culture casing)" }
-            elseif ($ordMethods -ccontains $m) {
-                $hasOrdinal = $false
-                foreach ($arg in @($n.Arguments)) { if ($arg.Extent.Text -cmatch 'StringComparison\]::Ordinal|StringComparer\]::Ordinal') { $hasOrdinal = $true } }
-                if (-not $hasOrdinal) { $why = "$m() without Ordinal" }
+            if ($banMembers -ccontains $m) { $why = "member $m (CompareInfo collates by culture)" }
+            elseif ($n -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) {
+                if ($casingMethods -ccontains $m) { $why = "$m() (culture casing)" }
+                elseif ($ordMethods -ccontains $m) {
+                    $hasOrdinal = $false
+                    foreach ($arg in @($n.Arguments)) { if ($arg.Extent.Text -cmatch $ordinalArg) { $hasOrdinal = $true } }
+                    if (-not $hasOrdinal) { $why = "$m() without [StringComparison]::Ordinal" }
+                }
             }
         } elseif ($n -is [System.Management.Automation.Language.CommandAst]) {
             $name = $n.GetCommandName()
-            if ($name -and ($banCmds -ccontains $name.ToLowerInvariant())) { $why = "command $name" }
+            if ($name) {
+                $short = ($name -split '\\')[-1].ToLowerInvariant()
+                if ($banCmds -ccontains $short) { $why = "command $name" }
+                elseif (@('select-object', 'select') -ccontains $short) {
+                    foreach ($e in $n.CommandElements) {
+                        if ($e -is [System.Management.Automation.Language.CommandParameterAst] -and $e.ParameterName -and
+                            'unique'.StartsWith($e.ParameterName.ToLowerInvariant(), [System.StringComparison]::Ordinal)) {
+                            $why = "command $name -$($e.ParameterName)"
+                        }
+                    }
+                }
+            }
         }
         if ($why) { "{0}:{1}`t{2}`t{3}" -f [System.IO.Path]::GetFileName($p), $line, $why, ($n.Extent.Text -split "`n")[0] }
     }
 }
 EOF
-# Self-test: one banned form per line (counted), then safe forms that must not be reported.
+# Self-test: banned forms, one per line and at least one per entry of every guard list (so deleting
+# an entry turns this red), then a marker line, then safe forms that must not be reported. The guard
+# must report each line above the marker exactly once and nothing below it.
 cat > "$T/selftest.ps1" <<'EOF'
 $a -EQ 'x'
+$s -ne 34
+$a -ceq $b
+$a -cne $b
+$a -lt $b
+$a -le $b
+$a -gt $b
+$a -ge $b
+$a -clt $b
+$a -cle $b
+$a -cgt $b
+$a -cge $b
+'-I' + $y -eq $z
+$x + 1 -lt $n
+[char]$a -eq [char]$b
+$a -contains $b
+$a -notcontains $b
 $a -ccontains $b
+$a -cnotcontains $b
 $a -in @('x')
 $a -notin @('x')
+$a -cin @('x')
+$a -cnotin @('x')
 $a -like 'x*'
+$a -notlike 'x*'
+$a -clike 'x*'
+$a -cnotlike 'x*'
 switch ($a) { 'x' { 1 } }
 $a.startswith('-')
 $a.EndsWith('x', 'Ordinal')
+$a.IndexOf('[System.StringComparison]::Ordinal')
+$a.LastIndexOf('x')
+$a.CompareTo($b)
 [string]::Compare($a, $b)
+$a.Equals($b)
+$a.StartsWith('-', [System.StringComparison]::OrdinalIgnoreCase)
 $a.ToLower()
-$a -eq $b
-$s -eq 34
+$a.ToUpper()
+$ci = [cultureinfo]::CurrentCulture.CompareInfo
+$ci.IsPrefix($a, '-')
+$ci.IsSuffix($a, '-')
 $a | Sort-Object
-[char]$a -eq [char]$b
+$a | Compare-Object $b
+$a | Group-Object
+$a | Where-Object Name
+$a | Select-String x
+$a | Get-Unique
+$a | sort
+$a | group
+$a | where Name
+$a | ? Name
+$a | gu
+$a | Microsoft.PowerShell.Utility\Sort-Object
+$a | Select-Object -Unique
+# ---- safe forms below: the guard must report none of them ----
 $c -eq 92
 [int]$x -eq [int]$y
 $null -eq $x
@@ -319,13 +406,16 @@ $i + 1 -lt $n.Length
 $a.StartsWith('-', [System.StringComparison]::Ordinal)
 [string]::Equals($a, $b, [System.StringComparison]::Ordinal)
 $a -match '^x'
+$a | Select-Object -First 1
 EOF
+marker="$(grep -n '^# ---- safe forms below' "$T/selftest.ps1" | cut -d: -f1)"
+want_lines="$(seq 1 $((${marker:-0} - 1)) | tr '\n' ' ')"
+[ -n "$want_lines" ] || want_lines="(no marker line, or nothing above it)"
 self="$(pwsh -NoProfile -NonInteractive -File "$(pnat "$T/guard.ps1")" "$(pnat "$T/selftest.ps1")" </dev/null 2>&1 | tr -d '\r')"
-assert_equals "$(printf '%s\n' "$self" | grep -c . )" "14" "AST guard self-test reports exactly the 14 banned forms"
-assert_equals "$(printf '%s\n' "$self" | cut -f1 | sed 's/.*://' | sort -n | tr '\n' ' ')" "1 2 3 4 5 6 7 8 9 10 11 12 13 14 " "AST guard self-test reports lines 1-14 and none of the safe forms"
+assert_equals "$(printf '%s\n' "$self" | cut -f1 | sed 's/.*://' | sort -n | tr '\n' ' ')" "$want_lines" "AST guard self-test reports each of lines 1-$((marker - 1)) once and none of the safe forms"
 for f in "$S/_review-gate-classify.ps1" "$REPO_ROOT/templates/scripts/_review-gate-classify.ps1"; do
     hits="$(pwsh -NoProfile -NonInteractive -File "$(pnat "$T/guard.ps1")" "$(pnat "$f")" </dev/null 2>&1 | tr -d '\r')"
-    assert_equals "$hits" "" "no culture-aware comparison in ${f#"$REPO_ROOT"/}"
+    assert_equals "$hits" "" "no culture-aware comparison in ${f#"$REPO_ROOT"/} (the guard trusts \$c \$quote \$depth \$Depth \$i as ints by name: keep them int-only)"
 done
 
 print_summary

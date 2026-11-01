@@ -117,6 +117,22 @@
       "Bash(python -m pytest *)",
       "Bash(python -m mypy *)",
       "Bash(python -m ruff *)"
+    ],
+    "deny": [
+      "Bash(git -c commit.gpgsign=false *)",
+      "Bash(git -c commit.gpgsign=0 *)",
+      "Bash(git -c commit.gpgSign=false *)",
+      "Bash(git commit --no-gpg-sign *)",
+      "Bash(git commit --no-verify *)",
+      "Bash(git push --no-verify *)",
+      "PowerShell(git -c commit.gpgsign=false *)",
+      "PowerShell(git -c commit.gpgsign=0 *)",
+      "PowerShell(git -c commit.gpgSign=false *)",
+      "PowerShell(git commit --no-gpg-sign *)",
+      "PowerShell(git commit --no-verify *)",
+      "PowerShell(git push --no-verify *)",
+      "mcp__ccd_pr__set_auto_merge",
+      "mcp__plugin_engineering_github__merge_pull_request"
     ]
   }
 }
