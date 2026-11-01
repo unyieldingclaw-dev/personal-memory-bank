@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-10-30
+last-reviewed: 2026-10-31
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -12,6 +12,10 @@ lineage: []
 ---
 
 # Progress
+
+## 2026-10-31 — PR #111 (`2e1bd4e`): `mb upgrade` merges `settings.json` permissions
+
+Closes `[NS-50]`(a), unblocks ACR (`[NS-14]`). Follow-ups: its PR body.
 
 ## 2026-10-30 — PRs #99–#103 (`mb --dry-run`/`mb update`) and #67 (`[NS-59]`) merged
 
