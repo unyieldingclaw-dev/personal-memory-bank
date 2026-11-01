@@ -319,12 +319,13 @@ contract, and a full `/code-review` and `/change-review`.
      suite `tests/test-review-reminders.sh`, which exercises both twins.
    - **What the wrapper forms need is production fidelity, not a single suite.** Both classifiers
      are reachable by command text alone, so both need unit cases. What differs is faithfulness:
-     in production a wrapper arriving as a `PowerShell` tool call never reaches the `.sh` twin
-     (`.claude/settings.json`'s `PowerShell` matcher has no bash fallback), so only the `.ps1` path
-     is end-to-end-faithful for it — `review-gate-classifier.Tests.ps1` at the classifier level and
+     in production a wrapper arriving as a `PowerShell` tool call normally reaches only the `.ps1`
+     twin (since 2026-10-30 the `PowerShell` matcher falls back to the `.sh` twin, but only when the
+     `.ps1` is missing, `pwsh` is absent, or `pwsh` fails before reading stdin), so the `.ps1` path
+     is the end-to-end-faithful one for it — `review-gate-classifier.Tests.ps1` at the classifier level and
      `tests/test-review-reminders.sh`'s `invoke_hook_ps1` (`:37-41`, already used against the merge
      gate at `:200-213`) at the hook level. A Python-side wrapper case tests a path production
-     never takes; it is defence in depth, not the assertion that matters.
+     takes only on that degraded fallback; it is defence in depth, not the assertion that matters.
    - **`tool_name` is not the mechanism.** It is read by neither classifier and neither hook
      (`grep -n "tool_name"` across all four returns nothing, and both probes return identical
      verdicts under either value), and `tests/test-review-reminders.sh` omits the field entirely.
@@ -363,5 +364,5 @@ auto-mode observation, the adopter reach, and the branch-protection settings. Th
 a one-line summary of which forms escape, so that its own argument can be read without this file
 open — if the table changes, that summary is the one place to check. Also [NS-25], [NS-26], [NS-43].
 
-`docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md` owns the `PowerShell` matcher's
-missing bash fallback, which the Fix outline above mentions in passing.
+`docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md` owned the `PowerShell` matcher's
+missing bash fallback, which the Fix outline above mentions in passing (resolved 2026-10-30).
