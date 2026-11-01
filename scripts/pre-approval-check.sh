@@ -32,8 +32,9 @@ notify() {
             sleep "${PMB_NOTIFY_STUB_DELAY:-0}"
             echo notify >> "$PMB_NOTIFY_STUB"
         else
-            # WHY WScript.Shell.Popup with a 600 s timeout, not a MessageBox: nothing else closes a
-            # detached popup, so ignored ones would pile up (user decision 2026-09-22, spec section 3).
+            # WHY WScript.Shell.Popup with a 600 s timeout, not a MessageBox: nothing else is set to close
+            # a detached popup (user decision 2026-09-22). The 600 s close itself has not been timed
+            # (spec section 3), so ignored popups may still pile up.
             powershell.exe -NoProfile -Command "(New-Object -ComObject WScript.Shell).Popup('Claude has paused and is waiting for input.', 600, 'Claude Code', 64) | Out-Null"
             osascript -e 'display notification "Claude has paused and is waiting for input." with title "Claude Code"'
             notify-send 'Claude Code' 'Claude has paused and is waiting for input.'
