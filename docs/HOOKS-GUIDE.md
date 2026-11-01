@@ -296,7 +296,7 @@ Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and em
 
 ### 7. Review Gate (`PreToolUse` — Bash tool)
 
-Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is put to the user as a permission prompt in one exact form and denied in every other — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
+Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/` (a tag-only push of an already-merged commit is checked by where its tags point instead; see below), mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is put to the user as a permission prompt in one exact form and denied in every other — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
 
 **Marker files (single-use per diff, gitignored):**
 
@@ -308,6 +308,33 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 **A commit must be fully staged (added 2026-10-19):** the hash covers `git diff HEAD`, which is the working tree, but a commit records the index, so a commit holding only part of the reviewed change would still match. The commit gate therefore also refuses, before claiming the marker, while any tracked change is unstaged (`git diff --quiet --no-ext-diff --no-textconv` fails; the two flags stop a textconv filter or an exit-code-trusted external diff driver from hiding a difference). Stage in a command of its own before committing: the hook runs before a chained `git add X && git commit` stages anything, and before `git commit -a` does, so both are refused whenever tracked changes are unstaged. The check holds at hook time only. Not covered yet: commits that name paths (`git commit <path>`, `--only`), `--amend`, `--patch`, a chained command that edits or stages files before its `git commit`, `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` set in the command's environment, and content a textconv filter or external diff driver hides from the reviewed diff itself (the marker still hashes plain `git diff HEAD`, so the two flags guard only the staging check).
 
 **Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps — if the source doesn't exist, the rename simply fails, collapsing "does it exist" and "claim it" into one filesystem operation. Only the path that allows the command consumes the marker: on a hash mismatch it is renamed back unconsumed, so a denial by this gate never burns an earned review (a later hook or a declined permission prompt can still burn it, because the allowing path has already consumed the marker; see the claim-then-restore comment in `review-reminders.sh`).
+
+**A tag-only push of a merged commit needs no marker (added 2026-10-30):** the push marker binds `git diff origin/main...HEAD`, which says nothing about what a tag push publishes. Before this change, pushing a release tag needed a fresh `/change-review` of whatever branch happened to be checked out, and from a checkout of main it could not pass at all, because that diff is empty. The gate now lets a push through with no marker, and without touching any marker, when all of these hold:
+
+- **The whole command is `cd "<absolute path>" && git push <remote>` followed only by `refs/tags/<tag>` or `tag <tag>` words.**
+  - It takes exactly one quoted cd, to an absolute path: `C:/…`, or `/…` on Linux and macOS. On Windows the PowerShell twin also refuses `/…`, because pwsh and Git Bash resolve it to different trees.
+  - The cd is meant to tie the repository the gate checks to the one the shell pushes from. These are the ways found so far for the two to part, each closed and tested:
+    - Without a cd, the gate would check its own working directory, which can be another repository.
+    - A relative path, a second cd, or a leading `-`, `+` or `~` is read differently by the shell, which goes to the previous directory, location history or HOME.
+    - The PowerShell twin enters the resolved root literally, because a wildcard such as `[ab]` in it, reached through a junction or symlink, would land in another directory.
+    - Off Windows, the sh twin refuses `C:/…`, which is a relative path there.
+  - The path must be printable ASCII without its own quote, `$`, a backtick, `\`, `[`, `]`, `*` or `?`. Each of those makes the shell's `cd` disagree with the gate's literal reading of the path. Inside double quotes the shell expands `$` and backticks, and `\` escapes a quote. pwsh's `cd` expands wildcards. pwsh also ends a string at typographic quotes such as ’ and ”, which is why non-ASCII characters are excluded too. Use `C:/…` paths. Words are separated by spaces or tabs only. A remote is letters, digits, `.`, `_` and `-`. A tag name is the same set plus `/`. Both start with a letter, digit or `_`, so an option such as `-f` is never taken for the remote.
+- **Every named tag exists as `refs/tags/<tag>` and resolves to a commit that is an ancestor of `refs/remotes/origin/main`.** That covers lightweight tags, annotated tags, and tags of tags. The existence check is `show-ref --verify`, so a branch named `refs/tags/<tag>` doesn't count. A symbolic ref under `refs/tags/` is refused too, because git pushes it as the branch it points to. `refs/remotes/origin/main` is spelled out, so a local branch named `origin/main` doesn't count either. The ancestry check runs with `--no-replace-objects`, so a `git replace` graft can't make an unreviewed commit look merged.
+- **No `remote.<name>.push` is configured.** git maps a `refs/tags/<tag>` given without `:<dst>` onto such a refspec's destination, which can be a branch, with its force flag.
+
+A command in that shape whose tag fails the check is denied with a reason that names the tag. Run `git fetch origin` first if the merge is recent. Anything outside the shape still needs the marker, exactly as before:
+
+- a bare name (`git push origin v1.3.0`; the denial names the accepted spelling)
+- `--tags`, `--follow-tags`, `--mirror`, `--all`
+- any force: `-f`, `--force`, a `+` refspec
+- any delete: `--delete`, `-d`, `:refs/tags/<tag>`
+- `src:dst` and wildcard refspecs
+- a tag mixed with a branch
+- `git -c`/`git -C`, an environment assignment, or a quoted remote or tag word
+- no cd, a relative cd or a second cd, and anything else chained before or after it, which closes the `git tag -f <tag> <unreviewed> && git push …` route
+- a fallback verdict (classifier unavailable)
+
+The shape is `TAG_PUSH` in `scripts/_review-gate-classify.py` (`--tag-push`), with the same pattern text in `Get-ReviewGateTagPushName` in `_review-gate-classify.ps1`. Tests: `tests/test-review-gate-tag-push.sh`, both twins. Not covered: the check trusts the local `refs/remotes/origin/main`. Anything that moves it lets a tag on any commit through with no marker; examples are a `git fetch` into that ref and `git update-ref`. The branch route, by contrast, would still demand a review of some diff. And a tag pushed this way is only as approved as your go-ahead in chat: this check is about review, not about authorizing the publish.
 
 **Two significant fixes (2026-07-02), found via a real, unauthorized commit going through untouched:**
 
