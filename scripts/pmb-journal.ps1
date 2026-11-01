@@ -711,18 +711,17 @@ function ConvertTo-PmbSafeText([string]$Raw) {
     return $Raw
 }
 
-# pmb_gate_block SID KIND DETAIL FROM -- block a MANUAL compaction: the reason as a one-line JSON
+# pmb_gate_block SID KIND DETAIL -- block a MANUAL compaction: the reason as a one-line JSON
 # decision on stdout and as text on stderr; returns 2. The suggested command stays bash syntax, the
-# same command the sh twin suggests, with the path single-quoted and --session when the id came from
-# the payload.
-function Write-PmbGateBlock([string]$Sid, [string]$Kind, [string]$Detail, [string]$From) {
+# same command the sh twin suggests, with the path single-quoted and always --session (pmb_gate_block
+# says why).
+function Write-PmbGateBlock([string]$Sid, [string]$Kind, [string]$Detail) {
     $detailSafe = ConvertTo-PmbSafeText (ConvertTo-PmbRaw $Detail)
     $top = Get-PmbToplevel
     if (-not $top) { $top = '<worktree>' }
     $top = (ConvertTo-PmbSafeText (ConvertTo-PmbRaw $top)).Replace("'", "'\''")
     $cmd = "bash '$top/scripts/pmb-journal.sh' note"
-    $sess = ''
-    if (Test-PmbSame $From 'payload') { $sess = " --session $Sid" }
+    $sess = " --session $Sid"
     if (Test-PmbSame $Kind 'env') {
         $msg = @(
             "Compaction paused: this session's journal cannot be written."
@@ -761,7 +760,7 @@ function Add-PmbGateMarker([string]$Sdir, [string]$Body) {
     } catch { Write-Verbose 'gate-blocked not removed' }
 }
 
-# pmb_gate_identify: the session to check, where its id came from, and the trigger -- or $null,
+# pmb_gate_identify: the session to check and the trigger -- or $null,
 # after a fail-open warning, when there is no valid id. Like the sh twin, it takes the FIRST
 # "session_id" and "trigger" anywhere in the payload, nested or not (pinned by a test in each twin).
 function Get-PmbGateIdentity([string]$Payload) {
@@ -771,7 +770,6 @@ function Get-PmbGateIdentity([string]$Payload) {
     if ($m.Success) { $psid = $m.Groups[1].Value }
     $m = [regex]::Match($flat, '"trigger"[ \t\v\f]*:[ \t\v\f]*"([a-z]*)"')
     if ($m.Success) { $trigger = $m.Groups[1].Value }
-    $from = 'env'
     $sid = "$env:CLAUDE_CODE_SESSION_ID"
     if ($sid -and -not (Test-PmbSid $sid)) {
         Write-PmbErr 'pmb-journal gate: warning: CLAUDE_CODE_SESSION_ID is invalid; using the payload session_id'
@@ -780,12 +778,12 @@ function Get-PmbGateIdentity([string]$Payload) {
     if ($sid -and $psid -and -not (Test-PmbSame $psid $sid)) {
         Write-PmbErr ('pmb-journal gate: warning: payload session_id {0} differs from CLAUDE_CODE_SESSION_ID; checking {1}' -f $psid, $sid)
     }
-    if (-not $sid) { $sid = $psid; $from = 'payload' }
+    if (-not $sid) { $sid = $psid }
     if (-not (Test-PmbSid $sid)) {
         Write-PmbErr 'pmb-journal gate: cannot identify this session; allowing compaction (fail-open)'
         return $null
     }
-    return [pscustomobject]@{ Sid = $sid; From = $from; Trigger = $trigger }
+    return [pscustomobject]@{ Sid = $sid; Trigger = $trigger }
 }
 
 # One probe write into DIR/tmp: $null when it worked, else the OS error. WHY a random name and
@@ -801,13 +799,13 @@ function Get-PmbProbeError([string]$Dir) {
 
 # pmb_gate_env: the two environment conditions that block a manual /compact (spec 4.3). Returns the
 # block's status (2) on either, else 0. Each block reports the path and the OS error.
-function Invoke-PmbGateEnv([string]$Dir, [string]$Sid, [string]$From) {
+function Invoke-PmbGateEnv([string]$Dir, [string]$Sid) {
     if ((Test-PmbPath $Dir) -and -not (Test-PmbDirectory $Dir)) {
         # The write the journal needs, made to fail: its message is the OS error.
         $err = ''
         try { [void][System.IO.Directory]::CreateDirectory("$Dir/tmp") } catch { $err = Get-PmbErrorText $_ }
         if (-not $err) { $err = 'unknown error' }
-        return (Write-PmbGateBlock $Sid 'env' "$Dir exists but is not a directory ($err). Fix: move that file aside so $Dir can be a directory." $From)
+        return (Write-PmbGateBlock $Sid 'env' "$Dir exists but is not a directory ($err). Fix: move that file aside so $Dir can be a directory.")
     }
     try { [void][System.IO.Directory]::CreateDirectory("$Dir/tmp") } catch { Write-Verbose 'tmp not created' }
     $err = ''
@@ -817,7 +815,7 @@ function Invoke-PmbGateEnv([string]$Dir, [string]$Sid, [string]$From) {
         if ($i -lt $script:PmbGateProbes) { Start-Sleep -Seconds ([double]$script:PmbGateProbeDelay) }
     }
     if (-not $err) { $err = 'unknown error' }
-    return (Write-PmbGateBlock $Sid 'env' "cannot write to $Dir/tmp (tried $script:PmbGateProbes times: $err). Fix: restore write access to $Dir/tmp." $From)
+    return (Write-PmbGateBlock $Sid 'env' "cannot write to $Dir/tmp (tried $script:PmbGateProbes times: $err). Fix: restore write access to $Dir/tmp.")
 }
 
 # pmb_gate_rec: the gate's test of one entry of r/ -- its seq and kind when the name passes the
@@ -857,7 +855,7 @@ function Get-PmbGateNewest([string]$Sdir) {
 # pmb_gate_once: no qualifying record since MARKER -- block ONCE. The block records MARKER in
 # gate-blocked, written with an LF line end only (C6.8: the sh twin reads it with `read`, which
 # keeps a CR); a repeated manual /compact with that marker still the latest passes, with a warning.
-function Invoke-PmbGateOnce([string]$Sdir, [string]$Sid, [int]$Marker, [string]$From) {
+function Invoke-PmbGateOnce([string]$Sdir, [string]$Sid, [int]$Marker) {
     $gb = "$Sdir/gate-blocked"
     $last = ''
     if (Test-PmbRegularFile $gb) {
@@ -890,7 +888,7 @@ function Invoke-PmbGateOnce([string]$Sdir, [string]$Sid, [int]$Marker, [string]$
         Write-PmbErr ('pmb-journal gate: cannot record the block in {0}/gate-blocked; allowing (fail-open)' -f $Sdir)
         return 0
     }
-    return (Write-PmbGateBlock $Sid 'record' "this session has no journal record (done/learned/decision/blocked/note/handoff, at least $script:PmbMinGateBody bytes) since its last start or compaction." $From)
+    return (Write-PmbGateBlock $Sid 'record' "this session has no journal record (done/learned/decision/blocked/note/handoff, at least $script:PmbMinGateBody bytes) since its last start or compaction.")
 }
 
 # pmb_gate: the PreCompact gate in journal mode (spec 4.3). Returns 0 (allow) or 2 (block). A short
@@ -913,7 +911,7 @@ function Invoke-PmbGate([string]$Payload) {
         Add-PmbGateMarker $sdir "compaction checkpoint (trigger=$label; allowed without a check)"
         return 0
     }
-    $rc = Invoke-PmbGateEnv $dir $sid $id.From
+    $rc = Invoke-PmbGateEnv $dir $sid
     if ($rc -ne 0) { return $rc }
     if ((Test-PmbPath $sdir) -and (-not (Test-PmbDirectory $sdir) -or ((Test-PmbPath "$sdir/r") -and -not (Test-PmbDirectory "$sdir/r")))) {
         Write-PmbErr ('pmb-journal gate: {0} is not a usable session directory; allowing (fail-open)' -f $sdir)
@@ -924,7 +922,7 @@ function Invoke-PmbGate([string]$Payload) {
         Add-PmbGateMarker $sdir 'compaction checkpoint'
         return 0
     }
-    return (Invoke-PmbGateOnce $sdir $sid $newest.Marker $id.From)
+    return (Invoke-PmbGateOnce $sdir $sid $newest.Marker)
 }
 
 # ---- CLI ---------------------------------------------------------------------------------------
