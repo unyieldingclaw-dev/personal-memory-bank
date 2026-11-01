@@ -1,4 +1,5 @@
-# PreToolUse hook -- blocks git commit/push until the matching review slash command has run.
+# PreToolUse hook -- blocks git commit/push until the matching review slash command has run,
+# except a tag-only push of an already-merged commit (see the PUSH case; full WHY in the .sh twin).
 # /code-review writes .claude/.code-review-ok on an Approve verdict; /change-review writes
 # .claude/.change-review-ok when no finding is Blocking. Each marker authorizes exactly one
 # commit or push attempt for a SPECIFIC diff -- see below.
@@ -185,7 +186,10 @@ if (-not $root) {
 # assumption just fixed above, at different call sites. Anchoring the rest of this script to
 # $root once, here, means every git call downstream is correct by construction instead of
 # needing -C $root at each individual site.
-try { Set-Location $root } catch {
+# -LiteralPath: plain Set-Location expands wildcards, so a root such as C:\x\[ab]\repo (reached
+# through a junction) landed in C:\x\a\repo, and the tag route checked that repository's tags
+# instead of the one the shell pushes from (measured 2026-10-30, pwsh 7).
+try { Set-Location -LiteralPath $root } catch {
     Deny "Review gate cannot run: the resolved repository root '$root' is not enterable."
     exit 0
 }
@@ -263,15 +267,50 @@ switch ($verdict) {
         break
     }
     'PUSH' {
+        # A tag-only push is checked by where its tags point, not by a marker. See the .sh twin
+        # for the WHY of each check. A fallback verdict never takes this route: either the
+        # classifier, which defines Get-ReviewGateTagPushName, did not load, or $cmd is unset.
+        $tagNames = @(Get-ReviewGateTagPushName $cmd)
+        # The shape guarantees one absolute cd path, but on Windows a /... path is rooted and not
+        # fully qualified. pwsh resolves it on the current drive (/tmp is C:\tmp), while Git Bash
+        # resolves its own mount (/tmp is %TEMP%), so the two could check and push different trees.
+        foreach ($contextPath in @($commandContext.Paths)) {
+            if (-not [System.IO.Path]::IsPathFullyQualified($contextPath)) { $tagNames = @() }
+        }
+        # A remote.<name>.push refspec makes git map a refs/tags/<t> with no :<dst> onto that
+        # refspec's destination, which can be a branch, with its force flag. See the .sh twin.
+        $null = git config --get-regexp '^remote\..*\.push$' 2>$null
+        if ($LASTEXITCODE -eq 0) { $tagNames = @() }
+        if ($tagNames.Count -gt 0) {
+            foreach ($tag in $tagNames) {
+                $tagOk = $false
+                git show-ref --verify --quiet "refs/tags/$tag" 2>$null
+                $tagExists = $LASTEXITCODE -eq 0
+                $null = git symbolic-ref -q "refs/tags/$tag" 2>$null
+                if ($tagExists -and $LASTEXITCODE -ne 0) {
+                    $tagTarget = git rev-parse --verify --quiet "refs/tags/$tag" 2>$null
+                    if ($LASTEXITCODE -eq 0 -and $tagTarget) {
+                        git --no-replace-objects merge-base --is-ancestor $tagTarget refs/remotes/origin/main 2>$null
+                        $tagOk = $LASTEXITCODE -eq 0
+                    }
+                }
+                if (-not $tagOk) {
+                    Deny "Review gate: refs/tags/$tag does not exist, is a symbolic ref, does not point at a commit, or points at a commit that is not in refs/remotes/origin/main, so pushing it could publish unreviewed history. A tag push needs no review marker only when every tag it names is on a commit already merged to main; if the merge is recent, run git fetch origin first. $rootHint"
+                    exit 0
+                }
+            }
+            exit 0
+        }
+        $tagHint = 'To push a tag of a commit already on origin/main, make the whole command cd "<absolute repo path>" && git push <remote> refs/tags/<tag> (or tag <tag>), with nothing else chained.'
         $expected = Get-PushDiffHash
         $marker = Join-Path $root '.claude/.change-review-ok'
         if (-not $expected -or $expected -eq $emptyDiffSha) {
-            Deny "Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review. $rootHint"
+            Deny "Review gate: there is no diff to review, so an empty-diff hash cannot serve as proof of review. $tagHint $rootHint"
             break
         }
         $claim = Move-ReviewGateMarkerToClaim $marker
         if ($null -eq $claim) {
-            Deny 'Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks.'
+            Deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. $tagHint"
         } elseif ($claim.Content -eq $expected) {
             Complete-ReviewGateMarkerClaim $claim
             # A push can target any remote/ref, so @{u} cannot prove whether it succeeded.
@@ -279,7 +318,7 @@ switch ($verdict) {
             Remove-Item (Join-Path $root '.claude/.pending-push-presha') -Force -ErrorAction SilentlyContinue
         } else {
             Restore-ReviewGateMarkerFromClaim $claim
-            Deny 'Run /change-review before pushing -- the branch no longer matches the reviewed diff.'
+            Deny "Run /change-review before pushing -- the branch no longer matches the reviewed diff. $tagHint"
         }
         break
     }
