@@ -12,6 +12,7 @@ but are worth keeping for reference.
 | Slim outputs | `slim-YYYY-MM-DD.md` | `slim-2026-05-29.md` |
 | Context evictions | `context-YYYY-MM-topic.md` | `context-2026-05-auth-refactor.md` |
 | Progress evictions | `progress-YYYY-MM-topic.md` | `progress-2026-05-v1-release.md` |
+| Released changelog sections | `changelog-<version>.md`, or `changelog-<first>-to-<last>.md` for a range | `changelog-1.3.0.md` |
 
 ## Rules
 - One topic or time period per file — never append to an existing archive file
