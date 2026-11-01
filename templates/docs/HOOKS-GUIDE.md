@@ -112,11 +112,11 @@ silent hole: no matcher may match against an unfolded view, and no pattern argum
 upper-case letter — checked in both `scripts/` and `templates/scripts/`, plus a byte-identity
 assertion between the two mirrors.
 
-Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). Configured in `.claude/settings.json` with two matchers — one for `Bash` (with sh fallback) and one for `PowerShell` (PS-only):
+Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). Configured in `.claude/settings.json` with two matchers, `Bash` and `PowerShell`, wired identically:
 
 ```json
-{ "matcher": "Bash",       "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
-{ "matcher": "PowerShell", "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true" }
+{ "matcher": "Bash",       "command": "[ -f scripts/dangerous-commands.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
+{ "matcher": "PowerShell", "command": "[ -f scripts/dangerous-commands.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" }
 ```
 
 **Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
@@ -126,6 +126,25 @@ normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Cod
 later). The PowerShell hook's slowest measured case, a ~50 KB command, took about 33 seconds (the
 figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default; the sh hook's, about 100 seconds
 on one non-periodic shape, is inside it too.
+
+**Why the guard and `-NoProfile`.** Claude Code's hooks docs treat stdout that does not start with
+`{` as plain text and ignore the JSON, so anything printed beside a deny silently allows the call.
+Two wiring defects did that: without `-NoProfile`, whatever a PowerShell profile prints lands on
+stdout ahead of the deny; and with `pwsh` installed but the `.ps1` missing, `pwsh` prints its usage
+text (exit 64) before `||` runs bash. `[ -f X.ps1 ]` sends a missing `.ps1` straight to bash, and
+`-NoProfile` must precede `-File` (after it, it is a script argument and the profile still loads).
+The `||` chain is kept over an `if command -v pwsh` pick because a `.ps1` that fails to parse exits
+without reading stdin, so bash still receives the full payload. Every hook in `settings.json` except
+`PreCompact` and `Stop` uses this form. The form needs a POSIX shell, which is Claude Code's default
+for hooks (Git Bash on Windows; per the hooks reference, checked 2026-10-15). Under a hook `"shell": "powershell"`, or on Windows without Git
+Bash, where Claude Code falls back to PowerShell, `[ -f … ]` does not parse and the hook runs nothing.
+
+**The `PowerShell` matcher's bash fallback is partial.** When it falls back (`.ps1` missing, `pwsh`
+absent, or `pwsh` failing before it reads stdin), `dangerous-commands.sh` applies only its own rows:
+the PowerShell-native BLOCK rows (`Remove-Item -Recurse`, `Format-Volume`, pipe-to-`iex`) are not
+checked, and a few `.sh` patterns match more broadly (e.g. `| sh2`), so they can deny a command
+the `.ps1` would allow. Before the fallback
+existed, that path checked nothing.
 
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
@@ -207,12 +226,16 @@ The shared policy is implemented in `scripts/pre-compact-check.ps1` (Windows/pws
     "hooks": [
       {
         "type": "command",
-        "command": "pwsh -NonInteractive -File scripts/pre-compact-check.ps1 2>/dev/null || bash scripts/pre-compact-check.sh 2>/dev/null || true"
+        "command": "if command -v pwsh >/dev/null 2>&1; then pwsh -NonInteractive -File scripts/pre-compact-check.ps1 2>/dev/null; else bash scripts/pre-compact-check.sh 2>/dev/null; fi"
       }
     ]
   }
 ]
 ```
+
+Not an `||` chain like the other hooks: this gate blocks by exiting 2, and `|| bash … || true` would
+run the bash twin after a deliberate block and then turn the exit status into 0, so the gate would
+never block.
 
 That no-matcher note applies to this Claude Code wiring. Codex deliberately has no `PreCompact`
 handler: its documented `continue: false` behavior ends the active turn, which cannot safely enforce
@@ -245,7 +268,7 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 
 **Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps. Only the path that allows the command consumes the marker: on a hash mismatch it is renamed back unconsumed, so a denial by this gate never burns an earned review (a later hook or a declined permission prompt can still burn it, because the allowing path has already consumed the marker; see the claim-then-restore comment in `review-reminders.sh`).
 
-**`gh pr merge` — a permission prompt for one exact form, deny for everything else:** unlike commit/push, this isn't a hash check. By merge time the diff already passed the commit gate, push gate, and CI; the remaining gap is authorization — the user deciding, now, to merge this PR — which no agent-written marker can encode, but Claude Code's own Allow/Deny prompt can. The hook returns `"ask"` only for exactly `gh pr merge <N> -R <owner/repo> --squash --match-head-commit <40-hex SHA>` (or `--merge`), with the repo listed in `.claude/merge-gate.json`, from the main agent, in default/acceptEdits/auto mode, when no settings file configures a `PermissionRequest` hook or an allow rule wide enough to run a merge silently. Everything else — other flags, chained commands, subagents, other modes, a missing or crashing helper — is denied. **One gap:** if the hook process itself fails (in both shells for the Bash matcher; the PowerShell matcher runs pwsh only), the wiring's `|| true` gives no decision, and the call goes to Claude Code's normal permission flow. `permissions.ask` rules for `Bash(gh pr merge:*)` and `PowerShell(gh pr merge:*)` are meant to make that case prompt too, for those spellings only (the REST route `gh api …/pulls/N/merge` matches neither); whether they prompt in auto mode is not yet measured. Put them in `.claude/settings.json` (`mb upgrade` keeps a project's permission rules; see below), `.claude/settings.local.json`, or your user settings. **Create `.claude/merge-gate.json` (`{"repos": ["owner/repo"]}`) to enable it; without it every merge is denied, as before.** Logic: `scripts/_review-gate-merge.py` / `.ps1`.
+**`gh pr merge` — a permission prompt for one exact form, deny for everything else:** unlike commit/push, this isn't a hash check. By merge time the diff already passed the commit gate, push gate, and CI; the remaining gap is authorization — the user deciding, now, to merge this PR — which no agent-written marker can encode, but Claude Code's own Allow/Deny prompt can. The hook returns `"ask"` only for exactly `gh pr merge <N> -R <owner/repo> --squash --match-head-commit <40-hex SHA>` (or `--merge`), with the repo listed in `.claude/merge-gate.json`, from the main agent, in default/acceptEdits/auto mode, when no settings file configures a `PermissionRequest` hook or an allow rule wide enough to run a merge silently. Everything else — other flags, chained commands, subagents, other modes, a missing or crashing helper — is denied. **One gap:** if the hook process itself fails (in both shells, for either matcher: the PowerShell matcher falls back to bash too), the wiring's `|| true` gives no decision, and the call goes to Claude Code's normal permission flow. `permissions.ask` rules for `Bash(gh pr merge:*)` and `PowerShell(gh pr merge:*)` are meant to make that case prompt too, for those spellings only (the REST route `gh api …/pulls/N/merge` matches neither); whether they prompt in auto mode is not yet measured. Put them in `.claude/settings.json` (`mb upgrade` keeps a project's permission rules; see below), `.claude/settings.local.json`, or your user settings. **Create `.claude/merge-gate.json` (`{"repos": ["owner/repo"]}`) to enable it; without it every merge is denied, as before.** Logic: `scripts/_review-gate-merge.py` / `.ps1`.
 
 ### 8. Review Gate Failure Recovery (`PostToolUse` — Bash tool)
 

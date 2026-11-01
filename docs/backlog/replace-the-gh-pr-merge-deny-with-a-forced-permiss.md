@@ -62,8 +62,10 @@ below is the original proposal, kept as history.
   subcommand is a bash-only classifier-parity case: gh rejects it as an unknown command, so it is
   not an executable merge route.
 - **Both entry points are wired.** In `.claude/settings.json`, `PreToolUse` runs `review-reminders`
-  for the `Bash` matcher and for the `PowerShell` matcher. The `PowerShell` matcher has no bash
-  fallback.
+  for the `Bash` matcher and for the `PowerShell` matcher. Since 2026-10-30 both fall back to the
+  `.sh` twin when the `.ps1` is missing, `pwsh` is absent, or `pwsh` fails before reading stdin; on
+  that path a PowerShell-tool merge is classified by the bash side, which misses the path/`.exe`
+  wrapper forms that `.ps1` denies.
 - **The auto-mode classifier's observed behaviour** is recorded in the blocking item, under "What
   actually stands in the way today". It is not restated here: it is a single-day observation that
   will be re-measured, and it should change in one place.
@@ -168,7 +170,8 @@ Reading the docs does not count. Each item has a pass condition.
    "no decision" hands the call to the permission flow.
    - Today, if the pwsh hook drains stdin and then crashes, the bash fallback reads an empty stream
      and exits 0 (2026-09-11 whole-repo review, `memory-bank/progress.md`).
-   - The `PowerShell` matcher has no bash fallback.
+   - The `PowerShell` matcher's bash fallback (added 2026-10-30) has the same drained-stdin
+     weakness, and the bash classifier misses the path/`.exe` merge wrappers.
 7. **Parsing, in both classifiers and both raw-text fallbacks.**
    - Find the gh subcommand after skipping any flag-shaped token before it, and match it
      case-insensitively for classifier parity; gh rejects mixed-case subcommands, so this is
