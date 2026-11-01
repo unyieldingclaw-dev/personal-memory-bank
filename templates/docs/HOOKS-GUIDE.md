@@ -255,7 +255,7 @@ Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and em
 
 ### 7. Review Gate (`PreToolUse` — Bash tool)
 
-Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is put to the user as a permission prompt in one exact form and denied in every other — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
+Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/` (a tag-only push of an already-merged commit is checked by where its tags point instead; see below), mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is put to the user as a permission prompt in one exact form and denied in every other — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
 
 **Marker files (single-use per diff, gitignored):**
 
@@ -267,6 +267,28 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 **A commit must be fully staged (added 2026-10-19):** the hash covers `git diff HEAD`, which is the working tree, but a commit records the index, so a commit holding only part of the reviewed change would still match. The commit gate therefore also refuses, before claiming the marker, while any tracked change is unstaged (`git diff --quiet --no-ext-diff --no-textconv` fails; the two flags stop a textconv filter or an exit-code-trusted external diff driver from hiding a difference). Stage in a command of its own before committing: the hook runs before a chained `git add X && git commit` stages anything, and before `git commit -a` does, so both are refused whenever tracked changes are unstaged. The check holds at hook time only. Not covered yet: commits that name paths (`git commit <path>`, `--only`), `--amend`, `--patch`, a chained command that edits or stages files before its `git commit`, `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE` set in the command's environment, and content a textconv filter or external diff driver hides from the reviewed diff itself (the marker still hashes plain `git diff HEAD`, so the two flags guard only the staging check).
 
 **Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps. Only the path that allows the command consumes the marker: on a hash mismatch it is renamed back unconsumed, so a denial by this gate never burns an earned review (a later hook or a declined permission prompt can still burn it, because the allowing path has already consumed the marker; see the claim-then-restore comment in `review-reminders.sh`).
+
+**A tag-only push of a merged commit needs no marker:** the push marker binds `git diff origin/main...HEAD`, which says nothing about what a tag push publishes. Before this, pushing a release tag needed a fresh `/change-review` of whatever branch was checked out, and from main it could not pass at all (that diff is empty). The gate now lets a push through with no marker, and without touching one, when all of these hold:
+
+- **The whole command is `cd "<absolute path>" && git push <remote>` followed only by `refs/tags/<tag>` or `tag <tag>` words.** Words are separated by spaces or tabs.
+  - It takes exactly one quoted cd, to an absolute path: `C:/…`, or `/…` outside Windows.
+  - The cd is meant to tie the repository the gate checks to the one the shell pushes from. A relative path, a second cd, or a leading `-`, `+` or `~` would be read differently by the shell. On Windows the PowerShell twin also refuses `/…`.
+  - The path must be printable ASCII without its own quote, `$`, a backtick, `\`, `[`, `]`, `*` or `?`. Use `C:/…` paths. Otherwise the shell's `cd` (expansion, escapes, pwsh wildcards, or pwsh's typographic quotes such as ’) could disagree with the gate's literal reading of the path.
+  - Remote and tag names are letters, digits, `.`, `_` and `-` (tags also `/`), starting with a letter, digit or `_`.
+- **Every tag exists as `refs/tags/<tag>`, is not a symbolic ref, and is on a commit in `refs/remotes/origin/main`.** Replace grafts are ignored. Run `git fetch origin` first if the merge is recent.
+- **No `remote.<name>.push` is configured.** Through one, git can map a tag refspec onto a branch.
+
+A tag-shaped push that fails the check is denied with a reason naming the tag. Everything else still needs the marker:
+
+- a bare name such as `git push origin v1.3.0` (the denial names the accepted spelling)
+- `--tags`, `--follow-tags`, `--mirror`, `--all`
+- force or delete forms
+- `src:dst` or wildcard refspecs
+- mixed tag and branch refspecs
+- `git -c`/`-C` or an environment assignment
+- no cd, a relative cd or a second cd, and anything else chained
+
+The check trusts the local `refs/remotes/origin/main`: anything that moves that ref lets a tag on any commit through with no marker. It is about review, not about authorizing the publish. Logic: `TAG_PUSH` in `scripts/_review-gate-classify.py` (`--tag-push`), with the same pattern in `_review-gate-classify.ps1`.
 
 **`gh pr merge` — a permission prompt for one exact form, deny for everything else:** unlike commit/push, this isn't a hash check. By merge time the diff already passed the commit gate, push gate, and CI; the remaining gap is authorization — the user deciding, now, to merge this PR — which no agent-written marker can encode, but Claude Code's own Allow/Deny prompt can. The hook returns `"ask"` only for exactly `gh pr merge <N> -R <owner/repo> --squash --match-head-commit <40-hex SHA>` (or `--merge`), with the repo listed in `.claude/merge-gate.json`, from the main agent, in default/acceptEdits/auto mode, when no settings file configures a `PermissionRequest` hook or an allow rule wide enough to run a merge silently. Everything else — other flags, chained commands, subagents, other modes, a missing or crashing helper — is denied. **One gap:** if the hook process itself fails (in both shells, for either matcher: the PowerShell matcher falls back to bash too), the wiring's `|| true` gives no decision, and the call goes to Claude Code's normal permission flow. `permissions.ask` rules for `Bash(gh pr merge:*)` and `PowerShell(gh pr merge:*)` are meant to make that case prompt too, for those spellings only (the REST route `gh api …/pulls/N/merge` matches neither); whether they prompt in auto mode is not yet measured. Put them in `.claude/settings.json` (`mb upgrade` keeps a project's permission rules; see below), `.claude/settings.local.json`, or your user settings. **Create `.claude/merge-gate.json` (`{"repos": ["owner/repo"]}`) to enable it; without it every merge is denied, as before.** Logic: `scripts/_review-gate-merge.py` / `.ps1`.
 

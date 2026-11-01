@@ -101,6 +101,23 @@ function Get-ReviewGateLeadingCdPath {
     return @($paths)
 }
 
+# Tag names if $Command is exactly the tag-only push shape, else nothing. The pattern text is
+# _review-gate-classify.py's TAG_PUSH, whose comment has the WHY. \A and \z because .NET's $
+# also matches before a final newline; [regex] rather than -match, which ignores case.
+function Get-ReviewGateTagPushName {
+    param([string]$Command)
+    $shapeText = @'
+cd[ \t]+(?:"(?:[A-Za-z]:)?/[\x20\x21\x23\x25-\x29\x2B-\x3E\x40-\x5A\x5E\x5F\x61-\x7E]*"|'(?:[A-Za-z]:)?/[\x20-\x23\x25\x26\x28\x29\x2B-\x3E\x40-\x5A\x5E\x5F\x61-\x7E]*')[ \t]*&&[ \t]*git[ \t]+push[ \t]+[A-Za-z0-9_][A-Za-z0-9._-]*((?:[ \t]+(?:refs/tags/|tag[ \t]+)[A-Za-z0-9_][A-Za-z0-9._/-]*)+)
+'@
+    $nameText = @'
+(?:refs/tags/|tag[ \t]+)([A-Za-z0-9_][A-Za-z0-9._/-]*)
+'@
+    if ([string]::IsNullOrEmpty($Command)) { return @() }
+    $shape = ([regex]"\A(?:$shapeText)\z").Match($Command)
+    if (-not $shape.Success) { return @() }
+    return @(([regex]$nameText).Matches($shape.Groups[1].Value) | ForEach-Object { $_.Groups[1].Value })
+}
+
 function Get-ReviewGateGitContextPath {
     param([string[]]$Tokens)
     $paths = @()
