@@ -125,6 +125,14 @@ to_win_path() {
     fi
 }
 
+ps1_takes_test_paths() {
+    # True where to_win_path() yields a path pwsh can open: Windows with cygpath, or any other
+    # OS, where pwsh reads the POSIX path from mktemp as-is. Same guard as test-review-reminders.sh's;
+    # requiring cygpath everywhere skipped the update-reviewed.ps1 cases on Linux CI.
+    command -v cygpath >/dev/null 2>&1 && return 0
+    case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 1 ;; esac
+}
+
 # ── backslash (cygpath -w) path reaches perl as a forward-slash path ────────────────────────
 # WHY a perl shim rather than checking the file: the hook's comment above FILE_PATH="$NORMALIZED"
 # explains how a backslash path loses the file when the cwd is on another drive. On a
@@ -310,7 +318,7 @@ else
   echo "--- literal-backslash filename test: SKIPPED (Windows cannot create such a filename) ---"
 fi
 
-if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+if command -v pwsh >/dev/null 2>&1 && ps1_takes_test_paths; then
   echo ""
   echo "--- cross-shell parity: update-reviewed.ps1 nested payload updates last-reviewed ---"
   TMPDIR_PS1="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-ps1)"
@@ -356,7 +364,7 @@ if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
   fi
 else
   echo ""
-  echo "--- update-reviewed.ps1 tests: SKIPPED (pwsh and/or cygpath not installed on this machine) ---"
+  echo "--- update-reviewed.ps1 tests: SKIPPED (pwsh not installed, or Windows without cygpath) ---"
 fi
 
 # WHY here, outside the cygpath-gated cases: the Windows workflow runs this file against

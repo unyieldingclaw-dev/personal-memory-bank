@@ -51,11 +51,12 @@ win_path_for_json() {
   # into a JSON-string-safe native Windows path, for embedding inside a command string sent
   # to review-reminders.ps1. Two steps, both required:
   #   1. cygpath -w: review-reminders.ps1 is a native Windows process with no MSYS
-  #      path-translation layer -- Resolve-CdRoot's [System.IO.Path] calls cannot resolve a
-  #      POSIX-style "/tmp/tmp.XXXX" path (it silently treats a leading "/" as rooted at the
-  #      current drive, producing a nonexistent path). Confirmed directly: an isolated
-  #      Resolve-CdRoot call resolves correctly given a real Windows path, and returns empty
-  #      given the POSIX form of the identical directory.
+  #      path-translation layer. A leading cd reaches the root through the classifier's
+  #      context paths (Get-ReviewGateCommandContext), each one passed to Resolve-Path, which
+  #      treats a leading "/" as rooted at the current drive -- so a POSIX-style
+  #      "/tmp/tmp.XXXX" or "/c/..." path names a nonexistent directory and the hook denies
+  #      "cannot resolve the command's explicit repository path". Resolve-CdRoot, which has
+  #      the same blind spot, is only the fallback when there are no context paths.
   #   2. backslash-doubling: a Windows path's literal backslashes are not valid unescaped
   #      characters inside a JSON string -- e.g. the "\t" in "...\Temp\tmp.XXXX" is a valid
   #      JSON escape sequence (tab) that silently corrupts the path if left unescaped, which
@@ -89,9 +90,9 @@ invoke_hook_ps1_from() {
   # invoke_hook_ps1_from <spawn-dir> <command-text> — PowerShell equivalent of
   # invoke_hook_from, for review-reminders.ps1 specifically. WHY this exists: prior to it,
   # only review-reminders.sh's resolve_cd_root() had spawn-dir-independent coverage for the
-  # chained-cd and whitespace-variant fixes -- review-reminders.ps1's own Resolve-CdRoot
-  # implements the identical logic but had no test proving it, a real cross-platform coverage
-  # gap for a security-relevant root-resolution function (found by code review).
+  # chained-cd and whitespace-variant fixes -- review-reminders.ps1 applies the identical
+  # logic but had no test proving it, a real cross-platform coverage gap for security-relevant
+  # root resolution (found by code review).
   local spawn_dir="$1" command="$2"
   printf '{"tool_input":{"command":"%s"}}' "$command" \
     | (cd "$spawn_dir" && pwsh -NonInteractive -File "$REPO_ROOT/scripts/review-reminders.ps1" 2>/dev/null)
@@ -230,6 +231,9 @@ echo "--- compound guarded actions are denied before any marker is consumed ---"
 write_marker_bash_recipe ".code-review-ok"
 resp=$(invoke_hook "review-reminders.sh" "git commit -m x && gh pr merge 25")
 assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.sh denies commit-then-merge as a compound guarded command"
+# A hook that skipped the compound refusal still denies here (MULTI falls through to the
+# unrecognised-verdict arm) and keeps the marker. Only the reason tells them apart.
+assert_contains "$resp" 'compound commands containing multiple guarded actions' "review-reminders.sh's commit-then-merge denial is the compound-command refusal"
 assert_file_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders.sh does not consume a commit marker for a denied compound command"
 rm -f "$TMPDIR_RR/.claude/.code-review-ok"
 
@@ -237,6 +241,7 @@ if command -v pwsh >/dev/null 2>&1; then
   write_marker_bash_recipe ".code-review-ok"
   resp=$(invoke_hook_ps1 "git commit -m x && gh pr merge 25")
   assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 denies commit-then-merge as a compound guarded command"
+  assert_contains "$resp" 'compound commands containing multiple guarded actions' "review-reminders.ps1's commit-then-merge denial is the compound-command refusal"
   assert_file_exists "$TMPDIR_RR/.claude/.code-review-ok" "review-reminders.ps1 does not consume a commit marker for a denied compound command"
   rm -f "$TMPDIR_RR/.claude/.code-review-ok"
 fi
@@ -331,6 +336,10 @@ if command -v python3 >/dev/null 2>&1; then
   # been consumed and the commit allowed. Confirming it's still present proves root correctly
   # resolved to RR, not A.
   assert_file_exists "$TMPDIR_DECOY_A/.claude/.code-review-ok" "review-reminders.sh did not touch decoy A's marker — confirming root resolved to RR (the last cd), not A (the first)"
+  # Deny plus an untouched decoy marker also holds for a hook that fails closed on the chain
+  # (no root, or an unresolvable context path). Only RR's own missing-marker refusal proves the
+  # gate reached RR's marker check.
+  assert_contains "$resp" 'Run /code-review before committing' "review-reminders.sh's chained-cd denial is RR's missing-marker refusal, not a fail-closed root-resolution error"
 
   rm -rf "$TMPDIR_DECOY_A"
 else
@@ -339,9 +348,10 @@ fi
 
 # ── cross-shell parity: chained-cd fix also holds for review-reminders.ps1 ─────────────────
 # WHY this test exists (found by code review): the chained-cd fix and its regression test
-# above only ever exercised review-reminders.sh's resolve_cd_root(). review-reminders.ps1's
-# Resolve-CdRoot implements the identical last-cd-wins logic but had zero test coverage of
-# its own for this security-relevant behavior — a real PowerShell-side parity gap for the
+# above only ever exercised review-reminders.sh. review-reminders.ps1 applies the same
+# last-cd-wins chain (through Get-ReviewGateCommandContext's context paths; Resolve-CdRoot is
+# only the fallback when there are none) but had zero test coverage of its own for this
+# security-relevant behavior — a real PowerShell-side parity gap for the
 # exact scenario (a decoy repo's valid-but-unrelated marker authorizing a commit in a
 # different repo) the bash fix above was written to close. Independent of python3 -- ps1
 # parses JSON via ConvertFrom-Json, not the python3 helper the bash hook uses. Paths embedded
@@ -350,8 +360,8 @@ fi
 echo ""
 echo "--- cross-shell parity: review-reminders.ps1 also resolves root to the LAST cd ---"
 # WHY ps1_takes_test_paths, not just pwsh (found by code review): on Windows without cygpath,
-# win_path_for_json()'s fallback to the raw POSIX path would silently produce a path
-# Resolve-CdRoot can't parse, turning an environment gap into a spurious test FAIL instead of
+# win_path_for_json()'s fallback to the raw POSIX path would produce a path the hook's
+# Resolve-Path can't open, turning an environment gap into a spurious test FAIL instead of
 # a clean SKIPPED line -- matching this file's existing skip-not-fail convention elsewhere.
 # Linux and macOS need no cygpath: requiring it there skipped this block on Linux CI.
 if command -v pwsh >/dev/null 2>&1 && ps1_takes_test_paths; then
@@ -378,10 +388,12 @@ if command -v pwsh >/dev/null 2>&1 && ps1_takes_test_paths; then
   resp=$(invoke_hook_ps1_from "$TMPDIR_DECOY_A_PS1" "cd \\\"$DECOY_A_PS1_WIN\\\" && cd \\\"$TMPDIR_RR_WIN\\\" && git commit -m test8ps1")
   assert_contains "$resp" '"permissionDecision":"deny"' "review-reminders.ps1 resolves root to the LAST cd (RR) in a chained command, not the first (decoy A) — denies because RR has no valid marker of its own"
   assert_file_exists "$TMPDIR_DECOY_A_PS1/.claude/.code-review-ok" "review-reminders.ps1 did not touch decoy A's marker — confirming root resolved to RR (the last cd), not A (the first)"
+  # WHY: see the identical assertion on the bash chained-cd test above.
+  assert_contains "$resp" 'Run /code-review before committing' "review-reminders.ps1's chained-cd denial is RR's missing-marker refusal, not a fail-closed root-resolution error"
 
   rm -rf "$TMPDIR_DECOY_A_PS1"
 else
-  echo "SKIPPED (pwsh and/or cygpath not installed on this machine)"
+  echo "SKIPPED (pwsh not installed, or Windows without cygpath)"
 fi
 
 # ── whitespace-variant fix: bash and PowerShell now accept the same cd-prefix shapes ────────
@@ -431,7 +443,7 @@ if command -v pwsh >/dev/null 2>&1 && ps1_takes_test_paths; then
 
   rm -rf "$TMPDIR_WRONG_WS_PS1"
 else
-  echo "SKIPPED (pwsh and/or cygpath not installed on this machine)"
+  echo "SKIPPED (pwsh not installed, or Windows without cygpath)"
 fi
 
 # ── fail-open: missing _review-gate-lib.sh/.ps1 causes the hook to exit 0, not crash/deny ──
