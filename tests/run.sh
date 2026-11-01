@@ -28,8 +28,8 @@ run_suite() {
 # named test-*.sh (see tests/mutate-merge-gate.sh), and a suite must not run this script, or it
 # recurses (tests/test-run-sh.sh runs a temp COPY instead).
 #
-# WHY git ls-files rather than a glob: tests/ also holds untracked work-in-progress suites (e.g. a
-# withdrawn hook-wiring test), and those must not run. Tracked is what reaches CI. A NOTE names
+# WHY git ls-files rather than a glob: tests/ can hold untracked work-in-progress suites, and those
+# must not run. Tracked is what reaches CI. A NOTE names
 # them, because before enumeration a hand-added run_suite line ran a new suite before `git add`.
 # ':(glob)' because a plain pathspec's * also matches /, so tests/test-x/y.sh would be listed; -z
 # and a read loop keep a name with a space or a non-ASCII byte whole. No sort on this side: ls-files
