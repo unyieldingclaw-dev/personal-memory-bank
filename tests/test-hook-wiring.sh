@@ -22,9 +22,9 @@
 # Every mode, the reissue block's mixed case included, has a positive control, so none of them can
 # pass by silently not happening.
 #
-# OUT OF SCOPE, deliberately: the PreCompact string. Whether that gate stays at all is an open
-# decision (it can deadlock a session that can no longer take a turn), and that work would edit this
-# exact string. Also out of scope: the live file's Stop entry, pre-approval-check (PMB-only, so the
+# OUT OF SCOPE, deliberately: the PreCompact string. Its legacy path cannot block any more (spec
+# docs/superpowers/specs/2026-11-01-derived-work-rules-and-compaction-recovery-design.md, D1'), so
+# the wiring defects this suite guards against cannot void a deny there outside journal mode. Also out of scope: the live file's Stop entry, pre-approval-check (PMB-only, so the
 # template has no copy, and on trial under its own design). It already has -NoProfile but no
 # [ -f ] guard. Both are exempt from every check here by name, never executed (the Stop entry's last
 # link opens a real desktop notification), and counted so the exemptions cannot widen silently.
@@ -89,7 +89,7 @@ echo "--- extraction: counted, two-way mapped, template identical ---"
 # template's extraction is non-empty, which that suite does not need. The live file's PMB-only Stop
 # entry has no template copy, so it is left out of that comparison.
 n_live=$(printf '%s\n' "$ROWS_LIVE" | grep -c .)
-assert_equals "$n_live" "12" "live settings.json: exactly 12 pwsh-invoking hook strings (10 in scope + PreCompact + PMB-only Stop)"
+assert_equals "$n_live" "13" "live settings.json: exactly 13 pwsh-invoking hook strings (11 in scope + PreCompact + PMB-only Stop)"
 ROWS_LIVE_SHARED="$(printf '%s\n' "$ROWS_LIVE" | grep -v '^Stop'$'\x1f')"
 assert_equals "$ROWS_TMPL" "$ROWS_LIVE_SHARED" "template settings.json: the same pwsh hook strings as live (minus its PMB-only Stop entry), in the same order"
 
@@ -108,12 +108,13 @@ kind_of() {
         "PostToolUse :: Write|Edit :: update-reviewed")          echo reviewed ;;
         "PostToolUse :: Bash :: review-reminders-post")          echo post_bash ;;
         "PostToolUse :: PowerShell :: review-reminders-post")    echo post_ps ;;
+        "SessionStart :: compact :: codex-compaction-hook")      echo recover ;;
         "PreCompact ::  :: pre-compact-check")                   echo exempt ;;
         "Stop ::  :: pre-approval-check")                        echo exempt_stop ;;
         *)                                                       echo UNMAPPED ;;
     esac
 }
-ALL_KINDS="dc_bash dc_ps rr_bash rr_ps contract stale depth reviewed post_bash post_ps exempt exempt_stop"
+ALL_KINDS="dc_bash dc_ps rr_bash rr_ps contract stale depth reviewed post_bash post_ps recover exempt exempt_stop"
 
 SEEN=" "
 while IFS=$'\x1f' read -r ev matcher cmd; do
@@ -159,6 +160,8 @@ for k in $ALL_KINDS; do
     case "$k" in exempt*) continue ;; esac
     v="CMD_$k"; c="${!v:-}"; v="SCRIPT_$k"; s="${!v:-}"
     canon="[ -f scripts/$s.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/$s.ps1 2>/dev/null || bash scripts/$s.sh 2>/dev/null || true"
+    # WHY its own form: the recovery hook is the one string that passes an argument to each twin.
+    [ "$k" = recover ] && canon="[ -f scripts/$s.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/$s.ps1 -Mode recover 2>/dev/null || bash scripts/$s.sh recover 2>/dev/null || true"
     assert_equals "$c" "$canon" "$k: canonical guarded form for scripts/$s"
     [ -f "$REPO_ROOT/scripts/$s.ps1" ] && [ -f "$REPO_ROOT/scripts/$s.sh" ]
     assert_exit_zero "$?" "$k: both scripts/$s.ps1 and scripts/$s.sh exist"
@@ -345,6 +348,14 @@ for mode in $MODES; do
     set_mode "$mode" update-reviewed
     run "${CMD_reviewed:-}" p_write
     assert_equals "$(verdict)" "EMPTY" "$mode: update-reviewed -> no output"
+
+    # Recovery text, not JSON: it is SessionStart context. WHY first line and exact count: profile
+    # noise would be prepended, and both twins printing would mean the bash link ran after a .ps1
+    # that had already succeeded.
+    set_mode "$mode" codex-compaction-hook
+    run "${CMD_recover:-}" p_write
+    assert_equals "$(head -1 "$TMP_HW/out" | cut -c1-17)" "After compaction," "$mode: SessionStart(compact) prints the recovery text first"
+    assert_equals "$(grep -c 'After compaction' "$TMP_HW/out")" "1" "$mode: SessionStart(compact) prints the recovery text exactly once"
 done
 
 # ── marker reissue: a commit that consumed a valid marker and then failed gets it back ─────

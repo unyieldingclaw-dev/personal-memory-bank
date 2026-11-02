@@ -86,6 +86,17 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f scripts/codex-compaction-hook.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/codex-compaction-hook.ps1 -Mode recover 2>/dev/null || bash scripts/codex-compaction-hook.sh recover 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [

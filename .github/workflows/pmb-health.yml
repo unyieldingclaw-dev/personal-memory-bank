@@ -177,8 +177,9 @@ jobs:
           # block hardcoded STARTUP_BASELINE=108973, and review killed it on two counts, both right.
           # (1) It was a TRIPWIRE, the exact thing the comment fifty lines above defines and refuses
           # to set: 1,024 bytes of slack against six files, when the median recent progress.md entry
-          # is ~2,700 bytes and scripts/pre-compact-check.sh REQUIRES an entry dated today before it
-          # will allow a compaction. Growth is not optional here, so a sub-1% allowance would have
+          # is ~2,700 bytes and scripts/pre-compact-check.sh then REQUIRED an entry dated today before
+          # it would allow a compaction (no longer, since the 2026-11-01 derived-work spec). Growth
+          # was not optional then, so a sub-1% allowance would have
           # red-lined a required, enforce_admins check on the next ordinary PR. (2) "Only ever
           # decrease" was asserted in a comment and enforced by nothing -- the constant lived in a
           # file any PR could edit, so the monotonicity being sold was unenforceable by construction,
