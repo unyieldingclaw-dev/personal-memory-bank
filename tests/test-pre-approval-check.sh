@@ -312,6 +312,20 @@ rm -f "$SB/chain.out"
 ( cd "$SB" && payload 'Want me to push it now?' | PMB_NOTIFY_STUB="$STUB" bash -c "$CHAIN" > "$SB/chain.out" 2>/dev/null )
 assert_contains "$(cat "$SB/chain.out")" '"decision":"block"' "the block JSON is already written when the chain returns (primary path is synchronous)"
 
+# WHY: with pwsh installed and the .ps1 missing, an unguarded chain printed pwsh's usage text ahead
+# of the .sh's block JSON, and the harness ignores JSON when stdout does not start with `{`.
+if command -v pwsh >/dev/null 2>&1; then
+    mv "$SB/scripts/pre-approval-check.ps1" "$SB/scripts/pre-approval-check.ps1.off"
+    new_stub
+    rm -f "$SB/chain.out"
+    ( cd "$SB" && payload 'Want me to push it now?' | PMB_NOTIFY_STUB="$STUB" bash -c "$CHAIN" > "$SB/chain.out" 2>/dev/null )
+    assert_equals "$(head -c 1 "$SB/chain.out")" "{" "with the .ps1 missing, the chain's stdout starts with the .sh's JSON (no pwsh usage text)"
+    assert_contains "$(cat "$SB/chain.out")" '"decision":"block"' "with the .ps1 missing, the .sh still blocks"
+    mv "$SB/scripts/pre-approval-check.ps1.off" "$SB/scripts/pre-approval-check.ps1"
+else
+    echo "  SKIP: pwsh not installed -- the missing-.ps1 usage-text case needs it"
+fi
+
 BROKEN="${CHAIN//pre-approval-check/no-such-hook}"
 new_stub
 ( cd "$SB" && payload 'Done.' | PMB_NOTIFY_STUB="$STUB" bash -c "$BROKEN" >/dev/null 2>&1 )

@@ -24,10 +24,13 @@
 #
 # OUT OF SCOPE, deliberately: the PreCompact string. Its legacy path cannot block any more (spec
 # docs/superpowers/specs/2026-11-01-derived-work-rules-and-compaction-recovery-design.md, D1'), so
-# the wiring defects this suite guards against cannot void a deny there outside journal mode. Also out of scope: the live file's Stop entry, pre-approval-check (PMB-only, so the
-# template has no copy, and on trial under its own design). It already has -NoProfile but no
-# [ -f ] guard. Both are exempt from every check here by name, never executed (the Stop entry's last
-# link opens a real desktop notification), and counted so the exemptions cannot widen silently.
+# the wiring defects this suite guards against cannot void a deny there outside journal mode.
+# Also out of scope: the live file's Stop entry, pre-approval-check (PMB-only, so the template has
+# no copy, and on trial under its own design). It has -NoProfile and the [ -f ] guard, but its last
+# link is a notifier, not `|| true`, so it is not the canonical form; its chain runs in
+# tests/test-pre-approval-check.sh with the notifier stubbed. Both are exempt from every check here by
+# name, never executed here (the Stop entry's last link opens a real desktop notification), and
+# counted so the exemptions cannot widen silently.
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -302,11 +305,13 @@ for mode in $MODES; do
     run "${CMD_dc_bash:-}" p_dc_bash
     s=$(shape)
     assert_equals "$(printf '%s\n' "$s" | head -1)" "OBJ deny" "$mode: Bash dangerous-commands, recursive delete -> exactly one deny object"
-    assert_contains "$s" "BLOCK:" "$mode: Bash dangerous-commands deny comes from dangerous-commands (BLOCK:)"
+    printf '%s\n' "$s" | grep -qF "BLOCK: "
+    assert_exit_zero "$?" "$mode: Bash dangerous-commands deny comes from dangerous-commands (BLOCK:, case-sensitive)"
     run "${CMD_dc_ps:-}" p_dc_ps
     s=$(shape)
     assert_equals "$(printf '%s\n' "$s" | head -1)" "OBJ deny" "$mode: PowerShell dangerous-commands, force push -> exactly one deny object"
-    assert_contains "$s" "BLOCK:" "$mode: PowerShell dangerous-commands deny comes from dangerous-commands (BLOCK:)"
+    printf '%s\n' "$s" | grep -qF "BLOCK: "
+    assert_exit_zero "$?" "$mode: PowerShell dangerous-commands deny comes from dangerous-commands (BLOCK:, case-sensitive)"
     # KNOWN GAP, pinned: the .sh twin has none of the five PowerShell-native BLOCK rows (Remove-Item,
     # Format-Volume, pipe-to-iex), so when the PowerShell matcher falls back to bash they are not
     # blocked. "No deny" rather than "EMPTY" so the assertion describes the gap, not the bytes. Porting
@@ -336,7 +341,10 @@ for mode in $MODES; do
     rm -f "$FX/.claude/.code-review-ok"
 
     set_mode "$mode" delegation-depth-check
-    printf 'depth=6\ntimestamp=%s' "$(date '+%Y-%m-%d %H:%M')" > "$FX/.pmb-delegation-depth"
+    # WHY a far-future timestamp, not `date`: Git Bash's date follows TZ while the .ps1 reads
+    # [datetime]::Now, so a "now" seeded here can look hours old to it. Both twins count a future
+    # timestamp as fresh (negative age), whatever the zone.
+    printf 'depth=6\ntimestamp=2099-12-31 23:59' > "$FX/.pmb-delegation-depth"
     run "${CMD_depth:-}" p_agent
     assert_equals "$(verdict)" "OBJ -" "$mode: delegation-depth-check over budget -> exactly one object"
     rm -f "$FX/.pmb-delegation-depth"

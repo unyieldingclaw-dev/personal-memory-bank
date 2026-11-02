@@ -24,11 +24,9 @@ not deferred.
 - #116: "PR C" — the commit-gate root after EnterWorktree; measure the payload's `cwd` first.
 - #118: hook paths are cwd-relative (a design question, pre-existing).
 - #118: docs still say `mb upgrade` overwrites settings.json, false since #111: `docs/COMMANDS-REFERENCE.md:19`, `docs/backlog/replace-the-gh-pr-merge-deny-with-a-forced-permiss.md:196`, `docs/backlog/shipped-allow-rules-skip-the-auto-mode-classifier.md:110`, `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md:484,499`.
-- #118 follow-ups (local c8204c7, unshipped unless the user approves close-out Task 1b): the items below.
+- #118 follow-ups (c8204c7, shipped by branch `fix/stop-hook-wiring-guard`); still open:
   - **(b)** `tests/test-hook-warn-output.sh:222` uses the TZ-skewed depth seed (4 failures under TZ=UTC+12).
-  - **(c)** c8204c7 edits #118's changelog fragment instead of adding its own.
-  - **(d)** c8204c7's backlog dates use UTC.
-  - **(e)** a typo in the Stop guard's filename passes every test.
+  - **(e)** a typo in the Stop string's `-File` path passes every suite: the output still holds the block JSON but starts with pwsh's usage text, so the block is ignored. The guard opened this gap: `tests/test-hook-wiring.sh` takes the script name from the first `scripts/*.ps1` in the string, which was the `-File` path and is now the guard's. (A typo in the guard's filename is caught there.) Fix: have `tests/test-pre-approval-check.sh` assert that the guard and `-File` paths match.
   - **(f)** the drain-then-crash limit is stated only for the merge gate.
   - **(g)** `docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md:294` quotes the Stop string without the guard.
   - **(h)** **[floor?]** a depth file stamped in the future never ages out (`delegation-depth-check.sh:20-24`, `.ps1:27`).
@@ -76,7 +74,7 @@ not deferred.
 - close-out: the `memory-bank-freshness-hook` worktree (no session) vanished on 2026-11-01 with 1 modified file and its branch. The cause is unknown, and the file is unrecoverable.
 - close-out: audit the 56 open `[NS]` items for any whose work has merged. The 2026-11-01 reconciliation changed only those whose state that session established.
 - derived-work-rules (`docs/derived-work-rules`), S1 residual: journal-mode detection cannot tell an error from "not opted in" (`scripts/pmb-journal.sh:81` `pmb_flag_on`, `scripts/pmb-journal.ps1:218` `Test-PmbFlagOn`), so in an opted-in repo a detection error now allows compaction where the old legacy gate ran. That is what the journal spec's section 4.1 requires (the flag is off, no output into context), but its "`mb doctor` reports it" is not implemented: no doctor check reads `.pmb-features`.
-- derived-work-rules, S4: the `PreCompact` command in `.claude/settings.json` still lacks `-NoProfile`; moot until journal mode is on.
+- derived-work-rules, S4: the `PreCompact` command in `.claude/settings.json` fails open in journal mode: a missing `.ps1` exits 64 and the `.sh` twin never runs, a `.ps1` that fails to parse exits 1, and it lacks `-NoProfile`. Unreachable while no repo opts in; fix it in or before the journal-flag PR (`[NS-68]`), since it becomes a floor High then.
 - derived-work-rules, A5: this file is one container inside a one-item-per-file backlog, so `mb backlog promote` would promote the whole list, and its lines carry no dates for a drain rule.
 - derived-work-rules, A6: the CLAUDE.md line saying the app's follow-up instructions "do not apply in this repo" is an unenforced precedence rule; tie it to `[NS-46]`.
 - derived-work-rules, A7: Claude Code now runs `scripts/codex-compaction-hook.*`; the name says Codex.

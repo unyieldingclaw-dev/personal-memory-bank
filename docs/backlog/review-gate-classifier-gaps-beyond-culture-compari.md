@@ -24,7 +24,7 @@ check planned in NS-26 Bundle A sees every one of these commits however it was s
   PowerShell statements. Fail-closed option: classify with CR as a separator and with CR deleted, and
   take the union. Pinned as a known difference in `tests/test-review-gate-classify-parity.sh`.
 
-## PowerShell tool (its matcher has no sh fallback; see powershell-matcher-hooks-have-no-bash-fallback-so.md)
+## PowerShell tool (both twins: its matcher has had an sh fallback since PR #118, and the sh classifier applies bash rules too)
 
 Both classifiers apply bash quoting rules, and PowerShell's rules differ:
 - `echo <U+201C>abc" ; git commit -m x ; echo <U+201C>def"`: PowerShell treats U+201C as a double quote
