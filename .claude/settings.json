@@ -112,7 +112,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pwsh -NoProfile -NonInteractive -File scripts/pre-approval-check.ps1 2>/dev/null || bash scripts/pre-approval-check.sh 2>/dev/null || { (if [ -n \"${PMB_NOTIFY_STUB:-}\" ]; then echo notify >> \"$PMB_NOTIFY_STUB\"; else powershell.exe -Command \"(New-Object -ComObject WScript.Shell).Popup('Claude has paused and is waiting for input.', 600, 'Claude Code', 64)\"; osascript -e 'display notification \"Claude has paused and is waiting for input.\" with title \"Claude Code\"'; notify-send 'Claude Code' 'Claude has paused and is waiting for input.'; fi) >/dev/null 2>&1 </dev/null & } || true"
+            "command": "[ -f scripts/pre-approval-check.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/pre-approval-check.ps1 2>/dev/null || bash scripts/pre-approval-check.sh 2>/dev/null || { (if [ -n \"${PMB_NOTIFY_STUB:-}\" ]; then echo notify >> \"$PMB_NOTIFY_STUB\"; else powershell.exe -Command \"(New-Object -ComObject WScript.Shell).Popup('Claude has paused and is waiting for input.', 600, 'Claude Code', 64)\"; osascript -e 'display notification \"Claude has paused and is waiting for input.\" with title \"Claude Code\"'; notify-send 'Claude Code' 'Claude has paused and is waiting for input.'; fi) >/dev/null 2>&1 </dev/null & } || true"
           }
         ]
       }

@@ -19,8 +19,8 @@
   - The `PreCompact` string is unchanged. It has its own missing-`.ps1` fail-open (exit 64 is a
     non-blocking error, so compaction proceeds) and no `-NoProfile`; whether that gate stays at all
     is an open decision, and its wiring is left to it.
-  - PMB's own Stop entry (`pre-approval-check`, on trial, not in the template) is unchanged: it
-    already passes `-NoProfile`, but a missing `.ps1` still puts `pwsh`'s usage text before its JSON.
+  - PMB's own Stop entry (`pre-approval-check`, on trial, not in the template) is unchanged here: it
+    already passes `-NoProfile`. The follow-up `fix-stop-hook-wiring-guard` adds its `[ -f ]` guard.
 
   New `tests/test-hook-wiring.sh` runs the exact strings, with each `.ps1` present, deleted, broken,
   and behind a printing profile, each mode with a positive control, and checks statically that every
