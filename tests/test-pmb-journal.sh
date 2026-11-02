@@ -1230,9 +1230,19 @@ cmdline="$(printf '%s\n' "$err" | grep -F 'note "<text>"' | sed 's/^ *//; s/<tex
 ( cd "$T/gate" && export CLAUDE_CODE_SESSION_ID=sessGATE_06 && eval "$cmdline" ) >/dev/null 2>&1
 unblock "$T/gate" sessGATE_06
 assert_equals "$(gcode "$T/gate" sessGATE_06)" "0" "the block message's own command, run verbatim, satisfies the gate"
-assert_equals "$(printf '%s\n' "$err" | grep -c -- '--session')" "0" "with CLAUDE_CODE_SESSION_ID set, the suggested commands carry no --session"
-# A client without CLAUDE_CODE_SESSION_ID: the id comes from the payload, so the suggested commands
-# carry --session <id> (the writer cannot find the session otherwise), and run verbatim they pass.
+assert_contains "$err" 'note "<text>" --session sessGATE_06$' "with CLAUDE_CODE_SESSION_ID set, the note command still carries --session <id>"
+assert_contains "$err" 'note --file <path-to-note> --session sessGATE_06$' "with CLAUDE_CODE_SESSION_ID set, the --file command still carries --session <id>"
+# The user's own terminal: the block came from a session with CLAUDE_CODE_SESSION_ID set, and the user
+# pastes its command where that variable is not. WHY a case of its own: the run above keeps the env id,
+# so it passes whether or not the command names the session.
+err="$(cd "$T/gate" && payload sessPASTE_01 | CLAUDE_CODE_SESSION_ID=sessPASTE_01 bash "$J" gate 2>&1 >/dev/null)"
+assert_contains "$err" 'note "<text>" --session sessPASTE_01$' "a block from a session with CLAUDE_CODE_SESSION_ID: the manual /compact blocks and suggests the note command with --session <id>"
+cmdline="$(printf '%s\n' "$err" | grep -F 'note "<text>"' | sed 's/^ *//; s/<text>/what I did and what is next, pasted into a terminal without the env id/')"
+( cd "$T/gate" && unset CLAUDE_CODE_SESSION_ID && eval "$cmdline" ) >/dev/null 2>&1
+unblock "$T/gate" sessPASTE_01
+assert_equals "$(gcode "$T/gate" sessPASTE_01)" "0" "a block from a session with CLAUDE_CODE_SESSION_ID: its command, pasted into a terminal without that variable, satisfies the gate"
+# A client without CLAUDE_CODE_SESSION_ID: the id comes from the payload, the suggested commands
+# carry it as --session <id>, and run verbatim without the variable they pass.
 err="$(cd "$T/gate" && payload sessPAYID_01 | env -u CLAUDE_CODE_SESSION_ID bash "$J" gate 2>&1 >/dev/null)"
 assert_contains "$err" 'note "<text>" --session sessPAYID_01$' "an id from the payload: the note command carries --session <id>"
 assert_contains "$err" 'note --file <path-to-note> --session sessPAYID_01$' "an id from the payload: the --file command carries --session <id>"
@@ -1245,8 +1255,7 @@ assert_equals "$(cd "$T/gate" && payload sessPAYID_01 | env -u CLAUDE_CODE_SESSI
 err="$(cd "$T/gatefile" && payload sessENVPAY_01 | env -u CLAUDE_CODE_SESSION_ID bash "$J" gate 2>&1 >/dev/null)"
 assert_contains "$err" 'note "<text>" --session sessENVPAY_01$' "an environment block with an id from the payload: the note command carries --session <id>"
 err="$(cd "$T/gatefile" && payload sessENVPAY_01 | CLAUDE_CODE_SESSION_ID=sessENVPAY_01 bash "$J" gate 2>&1 >/dev/null)"
-assert_contains "$err" 'note "<text>"$' "an environment block with the env id: the note command is there"
-assert_equals "$(printf '%s\n' "$err" | grep -c -- '--session')" "0" "an environment block with CLAUDE_CODE_SESSION_ID set: the suggested command carries no --session"
+assert_contains "$err" 'note "<text>" --session sessENVPAY_01$' "an environment block with CLAUDE_CODE_SESSION_ID set: the note command still carries --session <id>"
 # The worktree path is pasted into a shell, so it is single-quoted: a `$(...)` in it never runs, and
 # a ' in it is written '\''. WHY run the command: only a shell shows that the quoting holds -- the
 # old double quotes ran the substitution and left the command pointing at a path that does not exist.
@@ -1257,7 +1266,7 @@ QD="$T/gq"'$(touch PWNED)'"'q"
 if mkdir "$QD" 2>/dev/null && ( cd "$QD" && git init -q . ) 2>/dev/null; then
     make_repo "$QD" on 2>/dev/null
     err="$(cd "$QD" && payload sessQUOTE_01 | CLAUDE_CODE_SESSION_ID=sessQUOTE_01 bash "$J" gate 2>&1 >/dev/null)"
-    assert_contains "$err" 'note "<text>"$' "a worktree path with \$(...) and ': the manual /compact blocks and suggests the note command"
+    assert_contains "$err" 'note "<text>" --session sessQUOTE_01$' "a worktree path with \$(...) and ': the manual /compact blocks and suggests the note command"
     cmdline="$(printf '%s\n' "$err" | grep -F 'note "<text>"' | sed 's/^ *//; s/<text>/a note written by the command from a quoted worktree path/')"
     ( cd "$QD" && export CLAUDE_CODE_SESSION_ID=sessQUOTE_01 && eval "$cmdline" ) >/dev/null 2>&1
     assert_equals "$([ -e "$QD/PWNED" ] && echo ran || echo quoted)" "quoted" "a \$(...) in the worktree path is not run by the suggested command"
@@ -1837,6 +1846,10 @@ if command -v pwsh >/dev/null 2>&1; then
         echo "mismatch-warns=$(yn 'differs from CLAUDE_CODE_SESSION_ID; checking sessGM_17' "$T/gm.err")"
         echo "mismatch-marker=$(markers "$D" sessGM_17)"
         echo "mismatch-payload-untouched=$([ -e "$G2/sessions/sessGM_99" ] && echo touched || echo untouched)"
+        # A mismatch that blocks: the command must name the env id, the session the gate checked.
+        echo "mismatch-block=$(gm_gate "$D" "$(payload sessGM_98)" sessGM_35)"
+        echo "mismatch-block-names-env=$(yn 'Checked session: sessGM_35' "$T/gm.out")"
+        echo "mismatch-block-session-flag=$(yn 'note "<text>" --session sessGM_35$' "$T/gm.err")"
         echo "invalid-env=$(gm_gate "$D" "$(payload sessGM_18)" 'bad id!')"
         echo "invalid-env-names-payload=$(yn 'Checked session: sessGM_18' "$T/gm.out")"
         gmw sessGM_17 note 'a fresh note, so the nested session would pass if it were read' >/dev/null
@@ -1884,6 +1897,13 @@ if command -v pwsh >/dev/null 2>&1; then
         ( cd "$D" && unset CLAUDE_CODE_SESSION_ID && eval "$(grep -F 'note "<text>"' "$T/gm.err" | sed 's/^ *//; s/<text>/what I did and what is next, from a client without the env id/')" ) >/dev/null 2>&1
         unblock "$D" sessGM_29
         echo "verbatim-payload=$(gm_gate "$D" "$(payload sessGM_29)" -)"
+        # A block made with the env id, pasted into the user's own terminal, which lacks that variable.
+        gmc sessGM_34 >/dev/null
+        echo "env-id-session-flag=$(yn 'note "<text>" --session sessGM_34$' "$T/gm.err")"
+        echo "env-id-file-session-flag=$(yn 'note --file <path-to-note> --session sessGM_34$' "$T/gm.err")"
+        ( cd "$D" && unset CLAUDE_CODE_SESSION_ID && eval "$(grep -F 'note "<text>"' "$T/gm.err" | sed 's/^ *//; s/<text>/what I did and what is next, pasted into a terminal without the env id/')" ) >/dev/null 2>&1
+        unblock "$D" sessGM_34
+        echo "verbatim-env-pasted=$(gmc sessGM_34)"
         # The two environment blocks, each in a fixture of its own.
         make_repo "$D-file" on; printf 'not a dir\n' > "$(pmbdir "$D-file")"
         echo "pmb-file=$(gm_gate "$D-file" "$(payload sessGM_30)" sessGM_30)"
@@ -1894,6 +1914,7 @@ if command -v pwsh >/dev/null 2>&1; then
         echo "pmb-file-unknown=$(yn 'unknown error' "$T/gm.out")"
         echo "pmb-file-fix=$(yn 'Fix: ' "$T/gm.out")"
         echo "pmb-file-no-hatch=$(yn 'run /compact again' "$T/gm.out")"
+        echo "pmb-file-env-session-flag=$(yn 'note "<text>" --session sessGM_30$' "$T/gm.err")"
         echo "pmb-file-repeat=$(gm_gate "$D-file" "$(payload sessGM_30)" sessGM_30)"
         echo "pmb-file-auto=$(gm_gate "$D-file" "$(payload sessGM_30 auto)" sessGM_30)"
         gm_gate "$D-file" "$(payload sessGM_31)" - >/dev/null
@@ -1956,6 +1977,9 @@ mismatch=0
 mismatch-warns=yes
 mismatch-marker=1
 mismatch-payload-untouched=untouched
+mismatch-block=2
+mismatch-block-names-env=yes
+mismatch-block-session-flag=yes
 invalid-env=2
 invalid-env-names-payload=yes
 first-session-id=2
@@ -1980,12 +2004,16 @@ seq-empty=0
 readme-and-grammar=0
 verbatim-env=0
 verbatim-payload=0
+env-id-session-flag=yes
+env-id-file-session-flag=yes
+verbatim-env-pasted=0
 pmb-file=2
 pmb-file-named=yes
 pmb-file-os-error=yes
 pmb-file-unknown=no
 pmb-file-fix=yes
 pmb-file-no-hatch=no
+pmb-file-env-session-flag=yes
 pmb-file-repeat=2
 pmb-file-auto=0
 pmb-file-payload-session-flag=yes

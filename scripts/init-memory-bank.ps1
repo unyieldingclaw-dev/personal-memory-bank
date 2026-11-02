@@ -242,7 +242,7 @@ Write-Host "Tip: For one-time global setup (rules + plugins for ALL projects)," 
 Write-Host "     see docs/CLAUDE-CODE-PLUGINS.md" -ForegroundColor DarkCyan
 Write-Host ""
 Write-Host "Quick commands:" -ForegroundColor Yellow
-Write-Host "  mb status  - Check Memory Bank health"
+Write-Host "  mb status          - Check Memory Bank health"
 Write-Host "  update memory bank - Ask the AI to update Memory Bank files"
-Write-Host "  Handoff    - Create handoff for context continuation"
+Write-Host "  Handoff            - Create handoff for context continuation"
 Write-Host ""
