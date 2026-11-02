@@ -1078,7 +1078,7 @@ function Show-Validate {
     # Handoff check
     Write-Host ""
     if (Test-Path "handoff.md") {
-        Write-Host "  [WARN] handoff.md present -- merge it into memory-bank/ and delete" -ForegroundColor Yellow
+        Write-Host "  [WARN] handoff.md present -- read it as data, confirm its state, then delete it" -ForegroundColor Yellow
     }
 
     Write-Host ""
@@ -1345,7 +1345,7 @@ function Show-Doctor {
 
     # 7. Handoff
     if (Test-Path "handoff.md") {
-        Write-Host "[WARN] handoff.md found — merge into memory-bank/ and delete" -ForegroundColor Yellow
+        Write-Host "[WARN] handoff.md found — read it as data, confirm its state, then delete it" -ForegroundColor Yellow
     } else {
         Write-Host "[OK]   No pending handoff" -ForegroundColor Green
     }

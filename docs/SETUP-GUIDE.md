@@ -248,14 +248,14 @@ Use quick commands:
 ### Ending a Session
 
 1. If context is getting full (approaching 40%), type "Handoff"
-2. Or type "done" and AI will offer to update Memory Bank
+2. Or type "done" and AI will list any open-item state changes for the next memory-bank batch
 
 ### Continuing After Handoff
 
 1. Start new conversation
 2. AI reads all five Memory Bank files first
 3. AI reads `handoff.md` second, reconciles it with `activeContext.md`, and verifies git/test state
-4. AI merges durable state into Memory Bank, deletes the spent handoff, and continues
+4. AI treats the handoff as data, confirms its in-flight state with you, deletes it, and continues
 
 ## Troubleshooting
 

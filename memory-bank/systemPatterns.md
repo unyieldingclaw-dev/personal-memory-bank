@@ -19,7 +19,7 @@ lineage: []
 ## Core Concepts
 
 ### Memory Bank (5 files)
-Persistent context across AI sessions. Read at session start, updated after significant changes.
+Persistent context across AI sessions. Read at session start; changed only when an `[NS]` item opens, changes state or closes, in a batch PR (CLAUDE.md).
 
 ### Security Guardrails (3-tier)
 - BLOCK — refuse (force push, hardcoded secrets, destructive commands)

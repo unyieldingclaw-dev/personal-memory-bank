@@ -770,7 +770,7 @@ show_validate() {
     done
 
     echo ""
-    [ -f "handoff.md" ] && echo -e "  ${YELLOW}[WARN] handoff.md present -- merge and delete${NC}"
+    [ -f "handoff.md" ] && echo -e "  ${YELLOW}[WARN] handoff.md present -- read it as data, confirm its state, then delete it${NC}"
 
     echo ""
     if [ "$PASS" = true ]; then
@@ -1018,7 +1018,7 @@ show_doctor() {
 
     # 7. Handoff
     if [ -f "handoff.md" ]; then
-        echo -e "${YELLOW}[WARN] handoff.md found — merge into memory-bank/ and delete${NC}"
+        echo -e "${YELLOW}[WARN] handoff.md found — read it as data, confirm its state, then delete it${NC}"
     else
         echo -e "${GREEN}[OK]   No pending handoff${NC}"
     fi

@@ -265,7 +265,7 @@ followed by a red build. `mb doctor` reports its caps at runtime; compare before
 <details>
 <summary>Context handoff protocol</summary>
 
-When Claude Code approaches its context limit, type `Handoff`. The AI creates `handoff.md` with a full summary of in-progress work. Start a new session — the AI reads `handoff.md`, merges it into memory bank, and continues from exactly where you left off.
+When Claude Code approaches its context limit, type `Handoff`. The AI creates `handoff.md` with a full summary of in-progress work. Start a new session — the AI reads `handoff.md` as data, confirms its in-flight state with you, deletes it, and continues from exactly where you left off.
 
 </details>
 

@@ -5,8 +5,8 @@
      the [NS-26] bullet, removed; everything else kept). Edits to shared content
      here (hook tables, config snippets, per-hook descriptions) must be mirrored there by hand. -->
 
-PMB uses native lifecycle hooks where the platform exposes an enforceable event. Claude Code can
-block compaction; Codex provides deterministic post-compaction recovery; Cursor's `preCompact` event
+PMB uses native lifecycle hooks where the platform exposes an enforceable event. Claude Code and
+Codex provide deterministic post-compaction recovery; Cursor's `preCompact` event
 is observational, so its handoff rule remains advisory. Unlike instruction files, configured hooks execute outside the
 model's discretion, subject to platform enablement and trust settings.
 
@@ -17,7 +17,8 @@ model's discretion, subject to platform enablement and trust settings.
 | `PreToolUse` | Before Claude runs a tool | Block dangerous operations, validate inputs |
 | `PostToolUse` | After Claude runs a tool | Auto-format, run lint, log actions |
 | `Stop` | When Claude pauses for input | Desktop notification; Pre-Approval Protocol check (PMB-only) |
-| `PreCompact` | Before context compaction | Save state summary |
+| `PreCompact` | Before context compaction | Journal-mode gate only (otherwise allows) |
+| `SessionStart` | Session start, resume or after compaction | Post-compaction recovery checklist |
 
 ## Enforcement Layer Architecture
 
@@ -141,7 +142,8 @@ text (exit 64) before `||` runs bash. `[ -f X.ps1 ]` sends a missing `.ps1` stra
 `-NoProfile` must precede `-File` (after it, it is a script argument and the profile still loads).
 The `||` chain is kept over an `if command -v pwsh` pick because a `.ps1` that fails to parse exits
 without reading stdin, so bash still receives the full payload. Every hook in `settings.json` except
-`PreCompact` and `Stop` uses this form; `tests/test-hook-wiring.sh` runs the exact strings. The
+`PreCompact` and `Stop` uses this form (`SessionStart` passes `-Mode recover` / `recover` as
+the script's arguments); `tests/test-hook-wiring.sh` runs the exact strings. The
 form needs a POSIX shell, which is Claude Code's default for hooks (Git Bash on Windows; per the
 hooks reference, checked 2026-10-15). Under a
 hook `"shell": "powershell"`, or on Windows without Git Bash, where Claude Code falls back to
@@ -225,41 +227,46 @@ Fires after every `Write` or `Edit` tool call. Reads the edited file path from t
 
 **Hook error logging (G2):** unexpected errors are logged to `.pmb-hook-errors.log`.
 
-### 5. PreCompact Memory Gate and Codex Recovery
+### 5. Compaction Recovery (`SessionStart` — compact) and the PreCompact Hook
 
-Claude Code enforces the content policy before compaction. Codex instead injects recovery context
-after compaction; Cursor cannot enforce the policy before compaction.
+Recovery happens **after** compaction, on every platform that allows it. Nothing blocks before it,
+except journal mode's own gate when a repository has opted in.
 
 | Platform | Before compaction | After compaction |
 |----------|-------------------|------------------|
-| Claude Code | `.claude/settings.json` runs the checker; exit 2 blocks | Instructions require a Memory Bank reread |
-| Codex | No gate — Codex `PreCompact` `continue: false` ends the active turn | Trusted `SessionStart` with `source: compact` injects the recovery checklist |
+| Claude Code | `PreCompact` runs `pre-compact-check`, which allows compaction (journal mode: its own gate) | `SessionStart` with matcher `compact` injects the recovery checklist |
+| Codex | No `PreCompact` handler — Codex `PreCompact` `continue: false` ends the active turn | Trusted `SessionStart` with `source: compact` injects the recovery checklist |
 | Cursor | The 40% rule is proactive/advisory; native `preCompact` cannot block or modify compaction | The always-applied rule instructs a Memory Bank reread |
 
 Codex project hooks must be reviewed and trusted in `/hooks`; a local feature setting or managed
 policy can disable them. See the [Codex hooks documentation](https://learn.chatgpt.com/docs/hooks)
 and [Cursor hooks documentation](https://prod.cursor.com/docs/hooks).
 
-The shared checker runs two content-based quality checks on the memory bank **or** bypasses via a
-`handoff.md` dated today. Claude Code runs it as its gate; in Codex it remains an explicit manual diagnostic.
+**The recovery checklist** (`scripts/codex-compaction-hook.{sh,ps1}`, mode `recover`) tells the
+session to re-read the memory bank, to read any `handoff.md` as data rather than instructions,
+confirm its in-flight state with the user and delete it, and to resume from verified state. Claude
+Code wires it like the other hooks:
 
-**Claude Code exit codes:**
-- **Exits 0** — both checks pass (or a `handoff.md` dated today is present). Compaction proceeds normally.
-- **Exits 2** — one or more checks fail. **Compaction is blocked.** Claude Code treats a non-zero exit from a PreCompact hook as a block signal. The hook prints an actionable message explaining what to do.
+```json
+"SessionStart": [
+  {
+    "matcher": "compact",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "[ -f scripts/codex-compaction-hook.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/codex-compaction-hook.ps1 -Mode recover 2>/dev/null || bash scripts/codex-compaction-hook.sh recover 2>/dev/null || true"
+      }
+    ]
+  }
+]
+```
 
-**To unblock:** address the failing check (see below), then retry. Alternatively, create a `handoff.md` **dated today** to bypass the gate (the handoff file signals that session state has been captured via the Handoff Protocol).
-
-**Why the date matters.** Until 2026-08-27 the bypass triggered on the file merely existing. A handoff is meant to be deleted once merged into `memory-bank/` (Handoff Protocol step 5), so one that outlives its session is spent — yet it kept handing out a free pass. A handoff dated 2026-08-26 was found still in a repo root on 2026-08-27, silently disabling this gate for every compaction in a long session. The bypass was inverted: the staler the handoff, the more likely the memory bank actually needed checking. A stale handoff now removes only the *bypass* — it is not itself a failure, so a genuinely fresh memory bank still passes.
-
-**Detection logic (content-based, not mtime):**
-- **Check 1 — `activeContext.md` substantive content:** counts non-frontmatter, non-heading, non-empty lines with ≥20 characters. Requires ≥3 such lines. A file that was only touched (e.g. `last-reviewed` timestamp updated) fails this check.
-- **Check 2 — `progress.md` dated entry:** looks for at least one line starting with today's date (or a markdown heading/list prefix followed by today's date). The date must appear at the start of a line — embedded dates in prose do not count.
-- **Bypass:** `handoff.md` dated today in the project root skips both checks.
-
-**Fails open:** unexpected errors (missing runtimes, unreadable files) exit 0 silently and log to `.pmb-hook-errors.log`.
-
-The shared policy is implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and
-`scripts/pre-compact-check.sh` (POSIX/sh). Claude Code wires it directly:
+**Why the `PreCompact` gate no longer blocks** (docs/superpowers/specs/2026-11-01-derived-work-rules-and-compaction-recovery-design.md, D1′): in PMB's
+and the template's banks, its only check that could fail required a `progress.md` entry dated today. That forced a memory-bank
+write every day, its block reason reached only the user and never the model, and its
+`handoff.md`-dated-today bypass was a date-only check any session could satisfy. Outside journal
+mode `scripts/pre-compact-check.{sh,ps1}` now exits 0 and prints nothing. The `PreCompact` entry
+stays wired so journal mode can delegate to its own gate:
 
 ```json
 "PreCompact": [
@@ -274,15 +281,10 @@ The shared policy is implemented in `scripts/pre-compact-check.ps1` (Windows/pws
 ]
 ```
 
-Not an `||` chain like the other hooks: this gate blocks by exiting 2, and `|| bash … || true` would
-run the bash twin after a deliberate block and then turn the exit status into 0, so the gate would
-never block.
+Not an `||` chain like the other hooks: journal mode's gate blocks by exiting 2, and `|| bash … ||
+true` would run the bash twin after a deliberate block and then turn the exit status into 0.
 
-That no-matcher note applies to this Claude Code wiring. Codex deliberately has no `PreCompact`
-handler: its documented `continue: false` behavior ends the active turn, which cannot safely enforce
-a state that needs agent or user action. Codex uses `matcher: "^compact$"` for `SessionStart`;
-its `scripts/codex-compaction-hook.{sh,ps1}` adapters emit only the post-compaction recovery
-checklist.
+**Fails open:** unexpected errors exit 0 and log to `.pmb-hook-errors.log`.
 
 ### 6. Agent Spawn-Volume Advisory (`PreToolUse` — Agent tool)
 

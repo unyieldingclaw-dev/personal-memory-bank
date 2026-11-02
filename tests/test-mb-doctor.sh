@@ -334,6 +334,7 @@ echo "--- check 7: handoff.md found ---"
 echo "# Handoff" > "$TMPDIR_DOC/handoff.md"
 output=$(cd "$TMPDIR_DOC" && MB_HOME="$REPO_ROOT" bash "$MB" doctor 2>&1)
 assert_contains "$output" "handoff.md found" "check 7: handoff.md present → [WARN]"
+assert_not_contains "$output" "merge into memory-bank" "check 7: the WARN no longer says to merge the handoff into memory-bank/"
 
 rm -f "$TMPDIR_DOC/handoff.md"
 
