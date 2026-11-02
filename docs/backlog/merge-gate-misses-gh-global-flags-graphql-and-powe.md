@@ -266,27 +266,27 @@ contract, and a full `/code-review` and `/change-review`.
    them destructively (see the note at the end of this step). What follows is measured state, which
    the spec needs as input; the mechanism is the spec's to choose.
    - **Measured: the Python classifier has no CI-enforced unit coverage; the PowerShell one does.**
-     `tests/run.sh` registers suites as 26 hand-maintained `run_suite` lines (`:20-45`, and `:48`
-     says so), each invoking `bash "$script"` (`:15`). A separate completeness check (`:66-83`)
-     fails the run when a tracked `tests/test-*.sh` is not registered — it globs that pattern only
-     (`:68`). CI's Pester job runs `Invoke-Pester -Path "tests/"`, which picks up
-     `tests/review-gate-classifier.Tests.ps1`. Nothing in CI or `tests/run.sh` reaches
-     `tests/test_classify.py`, `tests/test_classifier_coverage.py` or `tests/gate_matrix.py`:
-     searching `.github/`, `scripts/`, `.claude/` and `tests/` for those three names finds only
+     `tests/run.sh` runs every tracked `tests/test-*.sh`, each with `bash "$script"`. Since PR #106
+     it enumerates them with `git ls-files` and there is no registration step; that PR retired the
+     hand-kept `run_suite` list and the completeness check this step once cited. CI's Pester job
+     runs `Invoke-Pester -Path "tests/"`, which picks up `tests/review-gate-classifier.Tests.ps1`.
+     Nothing in CI or `tests/run.sh` reaches `tests/test_classify.py`,
+     `tests/test_classifier_coverage.py` or `tests/gate_matrix.py`: searching `.github/`, `scripts/`, `.claude/` and `tests/` for those three names finds only
      their own lines plus `tests/mutate.py:130,133`, and `grep -rniE "pytest|python" .github/`
      returns nothing. `gate_matrix.py` does have one caller, `tests/mutate.py:133`, but
      `grep -rn "mutate\.py"` over the repo returns only this backlog file — so that caller is
      itself invoked by nothing and the chain dead-ends.
      The Python classifier does have end-to-end coverage via `tests/test-review-reminders.sh`
-     (registered at `run.sh:33`); what it lacks is unit-level coverage — and it is exactly where
+     (run by `tests/run.sh`); what it lacks is unit-level coverage — and it is exactly where
      the letter-case classifier split lives.
    - **Neither obvious wiring route works as-is**, which is why this is the spec's problem:
      `run_suite` runs `bash`, so a `.py` suite fails immediately; `test_classifier_coverage.py:13`
      takes the classifier path as `sys.argv[1]`, which `run_suite` cannot supply; and neither
      Python file defines a `test_` function, so pytest collects nothing from either. Whatever route
-     is chosen, note that the `:68` completeness check can never match an underscore-named `.py`
-     file, so new Python coverage sits outside the one guard this repo built against a suite that
-     is never invoked — the failure mode `run.sh:48-53` records being bitten by three times.
+     is chosen, note that `tests/run.sh`'s `tests/test-*.sh` enumeration can never match an
+     underscore-named `.py` file, so new Python coverage sits outside the one mechanism this repo
+     built against a suite that is never invoked — the failure mode its enumeration comment records
+     being bitten by three times.
    - **`tests/gate_matrix.py` must not simply be "wired in".** It refuses to run without
      `--yes-rewrite-history-in-this-throwaway-clone` (`:55-67`) because it rewrites history in
      whatever tree it is given: it commits the working tree under a fabricated author, moves the
@@ -297,10 +297,11 @@ contract, and a full `/code-review` and `/change-review`.
    - **Three acceptance criteria that hold whichever topology the spec picks.** Deferring the
      decision is not the same as deferring the success criterion, and each of these closes a
      green-by-absence mode that survives any choice of mechanism:
-     - Adding a tracked suite of the chosen type and *not* registering it must make `tests/run.sh`
-       fail. Today the completeness check (`:66-83`) globs `tests/test-*.sh` only, so it cannot
-       reach an underscore-named `.py`; on the PowerShell side there is no completeness check at
-       all, and `Invoke-Pester` discovers `*.Tests.ps1` by naming convention.
+     - A tracked suite of the chosen type must run with no registration step, or a missing
+       registration must make `tests/run.sh` fail. A tracked `tests/test-*.sh` already runs that
+       way (PR #106), but the enumeration cannot reach an underscore-named `.py`; on the
+       PowerShell side there is no completeness check at all, and `Invoke-Pester` discovers
+       `*.Tests.ps1` by naming convention.
      - A `templates/` twin that drifts from its `scripts/` original must make the suite fail. See
        step 8 — this is currently an instruction with no test behind it.
      - An end-to-end merge-form case must pin **which** verdict path produced its result. Measured:
@@ -318,12 +319,13 @@ contract, and a full `/code-review` and `/change-review`.
      suite `tests/test-review-reminders.sh`, which exercises both twins.
    - **What the wrapper forms need is production fidelity, not a single suite.** Both classifiers
      are reachable by command text alone, so both need unit cases. What differs is faithfulness:
-     in production a wrapper arriving as a `PowerShell` tool call never reaches the `.sh` twin
-     (`.claude/settings.json`'s `PowerShell` matcher has no bash fallback), so only the `.ps1` path
-     is end-to-end-faithful for it — `review-gate-classifier.Tests.ps1` at the classifier level and
+     in production a wrapper arriving as a `PowerShell` tool call normally reaches only the `.ps1`
+     twin (since 2026-10-30 the `PowerShell` matcher falls back to the `.sh` twin, but only when the
+     `.ps1` is missing, `pwsh` is absent, or `pwsh` fails before reading stdin), so the `.ps1` path
+     is the end-to-end-faithful one for it — `review-gate-classifier.Tests.ps1` at the classifier level and
      `tests/test-review-reminders.sh`'s `invoke_hook_ps1` (`:37-41`, already used against the merge
      gate at `:200-213`) at the hook level. A Python-side wrapper case tests a path production
-     never takes; it is defence in depth, not the assertion that matters.
+     takes only on that degraded fallback; it is defence in depth, not the assertion that matters.
    - **`tool_name` is not the mechanism.** It is read by neither classifier and neither hook
      (`grep -n "tool_name"` across all four returns nothing, and both probes return identical
      verdicts under either value), and `tests/test-review-reminders.sh` omits the field entirely.
@@ -362,5 +364,5 @@ auto-mode observation, the adopter reach, and the branch-protection settings. Th
 a one-line summary of which forms escape, so that its own argument can be read without this file
 open — if the table changes, that summary is the one place to check. Also [NS-25], [NS-26], [NS-43].
 
-`docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md` owns the `PowerShell` matcher's
-missing bash fallback, which the Fix outline above mentions in passing.
+`docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md` owned the `PowerShell` matcher's
+missing bash fallback, which the Fix outline above mentions in passing (resolved 2026-10-30).

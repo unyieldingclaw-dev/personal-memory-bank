@@ -96,6 +96,71 @@ Describe '_review-gate-merge.ps1' {
         (Get-ReviewGateMergeDecision -Raw (New-MergePayload) -ProjectDir $script:Proj).Decision | Should -BeExactly 'ASK'
     }
 
+    It 'matches allow rule <Rule> against the asked command, not only the probes: <Expected>' -ForEach @(
+        # The probes use PR 1 and a zero SHA; the asked command is #12 at a SHA ending in 7.
+        @{ Rule = 'Bash(gh pr m* 12*)'; Expected = 'DENY' }
+        @{ Rule = 'Bash(*pr merge 12*)'; Expected = 'DENY' }
+        @{ Rule = 'Bash(*--match-head-commit 0123*)'; Expected = 'DENY' }
+        @{ Rule = 'PowerShell(gh p*7)'; Expected = 'DENY' }
+        @{ Rule = 'Bash(gh pr m* 77*)'; Expected = 'ASK' }
+        @{ Rule = 'Bash(gh p*8)'; Expected = 'ASK' }
+        @{ Rule = 'PowerShell(GH PR M* 12*)'; Expected = 'DENY' }
+        @{ Rule = 'PowerShell(GH PR M* 12 -R ACME/WEB.APP *)'; Expected = 'DENY' }
+        @{ Rule = 'PowerShell(GH PR M* 77*)'; Expected = 'ASK' }
+        @{ Rule = 'Bash(GH PR M* 12*)'; Expected = 'ASK' }
+    ) {
+        Test-MergeGateCapableRule $Rule (Get-MergeGateProbeCommand @('acme/web.app')) | Should -Be $false
+        ('{"permissions":{"allow":["' + $Rule + '"]}}') | Set-Content (Join-Path $script:Proj '.claude/settings.local.json')
+        $d = Get-ReviewGateMergeDecision -Raw (New-MergePayload) -ProjectDir $script:Proj
+        $d.Decision | Should -BeExactly $Expected
+        if ($Expected -ceq 'DENY') {
+            $d.Reason | Should -Not -Match 'settings\.local'
+            $d.Cause | Should -BeLike 'allow rule matches this merge command in: *settings.local.json'
+        }
+    }
+
+    It 'matches every rule of every file against the asked command: second of three in <Name>' -ForEach @(
+        @{ Target = 0; Name = 'the user file' }, @{ Target = 1; Name = 'the project file' }, @{ Target = 2; Name = 'the local file' }
+    ) {
+        # Get-MergeGateSettingsFile lists user, project, local; the user one is under CLAUDE_CONFIG_DIR.
+        $files = @(Get-MergeGateSettingsFile $script:Proj)
+        New-Item -ItemType Directory -Force -Path (Split-Path $files[0]) | Out-Null
+        foreach ($f in $files) { '{"permissions":{"allow":["Bash(npm run *)"]}}' | Set-Content $f }
+        '{"permissions":{"allow":["Bash(git status)","Bash(gh pr m* 12*)","Bash(npm run *)"]}}' | Set-Content $files[$Target]
+        try {
+            $d = Get-ReviewGateMergeDecision -Raw (New-MergePayload) -ProjectDir $script:Proj
+            $d.Decision | Should -BeExactly 'DENY'
+            $d.Cause | Should -BeExactly ('allow rule matches this merge command in: ' + $files[$Target])
+        } finally {
+            Remove-Item $files[0] -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'spends one step budget on the probes and the asked command together' {
+        # 460 rules fit the budget for the probes alone (177,560 steps), not with the command (225,400).
+        $rules = @('Bash(*' + ('0' * 39) + 'x)') * 460
+        @{ permissions = @{ allow = $rules } } | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $script:Proj '.claude/settings.local.json')
+        $d = Get-ReviewGateMergeDecision -Raw (New-MergePayload) -ProjectDir $script:Proj
+        $d.Decision | Should -BeExactly 'DENY'
+        $d.Cause | Should -BeLike 'allow rule matches this merge command in: *'
+    }
+
+    It 'denies a payload that is a one-element array' {
+        (Get-ReviewGateMergeDecision -Raw ('[' + (New-MergePayload) + ']') -ProjectDir $script:Proj).Decision | Should -BeExactly 'DENY'
+    }
+
+    It 'runs on a host where -ceq is culture-aware (canary for the ordinal tests)' {
+        # Under .NET invariant globalization -ceq is ordinal, so the U+200B tests in this file and
+        # the ordinal mutations in tests/mutate-merge-gate.sh pass whether or not the helper
+        # compares ordinally. Skipped loudly there, rather than passing for the wrong reason.
+        if (-not (('a' + [char]0x200b) -ceq 'a')) {
+            Write-Warning 'merge-gate canary: -ceq is ordinal on this host, so the ordinal-comparison tests prove nothing here'
+            Set-ItResult -Skipped -Because '-ceq is ordinal on this host (.NET invariant globalization?); the U+200B ordinal tests cannot fail here'
+            return
+        }
+        ('a' + [char]0x200b) -ceq 'a' | Should -BeTrue
+    }
+
     It 'classifies allow rule <Rule> as merge-capable = <Expected>' -ForEach @(
         @{ Rule = 'Bash'; Expected = $true }
         @{ Rule = 'Bash(*)'; Expected = $true }
@@ -130,6 +195,15 @@ Describe '_review-gate-merge.ps1' {
         @{ Rule = 'Bash(g*:*)'; Expected = $true }
         @{ Rule = 'Bash(gh pr m*e 1 --squash*)'; Expected = $true }
         @{ Rule = 'Bash(* --merge --match-head-commit*)'; Expected = $true }
+        @{ Rule = 'Bash(gh pr m* 1 -R acme/web.app --squash*)'; Expected = $true }
+        # PowerShell rules match case-insensitively in Claude Code, so both sides fold; Bash stays exact.
+        @{ Rule = 'PowerShell(GH *)'; Expected = $true }
+        @{ Rule = 'PowerShell(Gh pr merge *)'; Expected = $true }
+        @{ Rule = 'PowerShell(G*)'; Expected = $true }
+        @{ Rule = 'PowerShell(*SQUASH*)'; Expected = $true }
+        @{ Rule = 'PowerShell(GH PR * -R ACME/WEB.APP *)'; Expected = $true }
+        @{ Rule = 'Bash(GH *)'; Expected = $false }
+        @{ Rule = 'Bash(G*)'; Expected = $false }
     ) {
         Test-MergeGateCapableRule $Rule (Get-MergeGateProbeCommand @('acme/web.app')) | Should -Be $Expected
     }

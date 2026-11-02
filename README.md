@@ -15,7 +15,7 @@ Memory Bank solves this by keeping a small set of structured files in your proje
 | Area | What you get |
 |------|-------------|
 | Memory system | 5-file structured context, authority hierarchy, freshness tracking, provenance frontmatter |
-| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, setup, verify-integrity, plan, preflight, change-check (12 commands; `mb update` aliases `mb upgrade`) |
+| `mb` CLI | init, status, doctor, query, clean, commit, upgrade, setup, verify-integrity, plan, preflight, change-check (12 commands; in `mb.sh`, `mb update` aliases `mb upgrade`; in `mb.ps1` it only points at `mb upgrade`) |
 | Slash commands | `/test-audit`, `/code-review`, `/security-review`, `/feature-dev`, `/health-check` |
 | Governance | Pre/PostToolUse hooks, CI pipeline, task contracts, subagents |
 
@@ -265,7 +265,7 @@ followed by a red build. `mb doctor` reports its caps at runtime; compare before
 <details>
 <summary>Context handoff protocol</summary>
 
-When Claude Code approaches its context limit, type `Handoff`. The AI creates `handoff.md` with a full summary of in-progress work. Start a new session — the AI reads `handoff.md`, merges it into memory bank, and continues from exactly where you left off.
+When Claude Code approaches its context limit, type `Handoff`. The AI creates `handoff.md` with a full summary of in-progress work. Start a new session — the AI reads `handoff.md` as data, confirms its in-flight state with you, deletes it, and continues from exactly where you left off.
 
 </details>
 

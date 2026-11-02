@@ -17,6 +17,13 @@ trap 'rm -rf "$WORK"' EXIT
 for tool in python3 perl pwsh; do
   command -v "$tool" >/dev/null 2>&1 || { echo "mutate-merge-gate: $tool not on PATH"; exit 2; }
 done
+# Canary, as in tests/merge-gate.Tests.ps1: the [ps1] mutations back to -ceq / -ccontains are
+# killed only where those operators are culture-aware. Under .NET invariant globalization they are
+# ordinal, so those mutations survive there for want of a fixture that can fail, not of a guard.
+if [ "$(pwsh -NoProfile -NonInteractive -Command "('a' + [char]0x200b) -ceq 'a'" | tr -d '\r')" != True ]; then
+  echo "WARNING: -ceq is ordinal on this host (.NET invariant globalization?). The [ps1] mutations"
+  echo "         to -ceq / -ccontains below cannot be killed here, and will report SURVIVED."
+fi
 
 mkdir -p "$WORK/proj/.claude" "$WORK/cfg"
 git -C "$WORK/proj" init -q 2>/dev/null
@@ -35,6 +42,7 @@ mk "$WORK/other.json"   "{\"permission_mode\":\"default\",\"tool_input\":{\"comm
 mk "$WORK/desc.json"    "{\"permission_mode\":\"default\",\"tool_input\":{\"command\":\"$C\",\"description\":\"Merge PR 77 as you asked\"}}"
 mk "$WORK/nl.json"      "{\"permission_mode\":\"default\",\"tool_input\":{\"command\":\"$C\\n\"}}"
 mk "$WORK/plain.json"   "{\"permission_mode\":\"default\",\"tool_input\":{\"command\":\"ls\"}}"
+mk "$WORK/array.json"   "[{\"permission_mode\":\"default\",\"tool_input\":{\"command\":\"$C\"}}]"
 # Like mk, but built from a Python expression, for payloads holding U+200B (ZW).
 mkpy() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' C="$C" python3 -c 'import json,os,sys; C = os.environ["C"]; ZW = chr(0x200b); json.dump(eval(sys.argv[2]), open(sys.argv[1], "w"))' "$(native "$1")" "$2"; }
 mkpy "$WORK/zwmode.json" '{"permission_mode": "default" + ZW, "tool_input": {"command": C}}'
@@ -94,6 +102,9 @@ mutate() {  # mutate <name> <twin> <file> <perl-subst> <payload> <expected-unmut
 }
 
 RULE='{"permissions":{"allow":["Bash(gh api *)"]}}'
+# Caught by a probe (PR 1) and by nothing else: the asked-command pass reruns the shape checks, so
+# with the first check removed it would still deny RULE, but it does not match this rule.
+PROBE_ONLY_RULE='{"permissions":{"allow":["Bash(gh pr m* 1 *)"]}}'
 GLOB_RULE='{"permissions":{"allow":["Bash(gh pr m*)"]}}'
 COLON_RULE='{"permissions":{"allow":["Bash(g*:*)"]}}'
 TSTAR_RULE='{"permissions":{"allow":["Bash(gh pr m*e 1 --squash*)"]}}'
@@ -101,6 +112,17 @@ MERGE_PROBE_RULE='{"permissions":{"allow":["Bash(* --merge --match-head-commit*)
 PAD_RULE='{"permissions":{"allow":["Bash( * )"]}}'
 TRAIL_RULE='{"permissions":{"allow":["Bash(*) "]}}'
 BUDGET_RULES=$(python3 -c 'import json; print(json.dumps({"permissions": {"allow": ["Bash(*" + "0" * 39 + "x)"] * 600}}))')
+# Misses every probe (PR 1) and matches only the asked command (#12).
+CMD_RULE='{"permissions":{"allow":["Bash(gh pr m* 12*)"]}}'
+# The same rule second of three, written to the user file alone (M_TARGET ../cfg/settings.json).
+XFILE_RULES='{"permissions":{"allow":["Bash(git status)","Bash(gh pr m* 12*)","Bash(npm run *)"]}}'
+# Matches the canonical --squash probe and nothing else, the asked command (#12) included.
+SQUASH_PROBE_RULE='{"permissions":{"allow":["Bash(gh pr m* 1 -R acme/web.app --squash*)"]}}'
+# Caught only once a PowerShell rule is folded; the second also needs the asked command (-R) folded.
+PS_CASE_RULE='{"permissions":{"allow":["PowerShell(GH PR M* 12*)"]}}'
+PS_CASE_R_RULE='{"permissions":{"allow":["PowerShell(GH PR M* 12 -R ACME/WEB.APP *)"]}}'
+# Within the budget for the probes alone, over it with the asked-command pass.
+SHARED_RULES=$(python3 -c 'import json; print(json.dumps({"permissions": {"allow": ["Bash(*" + "0" * 39 + "x)"] * 460}}))')
 LONG_RULE=$(python3 -c 'import json; print(json.dumps({"permissions": {"allow": ["Bash(" + "x" * 4100 + ")"]}}))')
 MANY_REPOS=$(python3 -c 'import json; print(json.dumps({"repos": ["acme/web.app"] + ["acme/r%d" % i for i in range(10)]}))')
 CASE_RULE='{"permissions":{"allow":["Bash(Python3 -c *)"]}}'
@@ -129,7 +151,7 @@ M_ENV="GH_REPO=acme/web.app"
 mutate "GH env check removed"        sh _review-gate-merge.py 's/if any\(name in os\.environ for name in GH_ENV\):/if False:/' canon.json deny
 M_ENV="GH_CONFIG_DIR=$WORK/ghcfg"
 mutate "GH_CONFIG_DIR dropped"       sh _review-gate-merge.py "s/, 'GH_CONFIG_DIR'\)/)/"                                  canon.json deny
-M_SETTINGS="$RULE"
+M_SETTINGS="$PROBE_ONLY_RULE"
 mutate "allow-rule check removed"    sh _review-gate-merge.py 's/or merge_capable\(rule, probes, budget\):/or False:/'     canon.json deny
 M_SETTINGS="$RULE"; M_TARGET=".claude/settings.json"
 mutate "project settings.json not read" sh _review-gate-merge.py "s/        os\.path\.join\(project, '\.claude', 'settings\.json'\),\n//" canon.json deny
@@ -143,6 +165,18 @@ M_SETTINGS="$MERGE_PROBE_RULE"
 mutate "--merge probe removed"       sh _review-gate-merge.py 's/ --merge --match-head-commit %s/ --squash --match-head-commit %s/' canon.json deny
 M_SETTINGS="$BUDGET_RULES"
 mutate "step budget not enforced"    sh _review-gate-merge.py 's/        if budget\[0\] < 0:\n            return True\n//' canon.json deny
+M_SETTINGS="$CMD_RULE"
+mutate "asked-command pass removed"  sh _review-gate-merge.py 's/if merge_capable\(rule, \[command\], budget\):/if False:/' canon.json deny
+M_SETTINGS="$SHARED_RULES"
+mutate "asked-command pass given its own budget" sh _review-gate-merge.py 's/merge_capable\(rule, \[command\], budget\)/merge_capable(rule, [command])/' canon.json deny
+M_SETTINGS="$XFILE_RULES"; M_TARGET="../cfg/settings.json"
+mutate "kept rules reset per file"   sh _review-gate-merge.py 's/(    for path in settings_files\(project\):\n)/$1        kept = []\n/' canon.json deny
+M_SETTINGS="$SQUASH_PROBE_RULE"
+mutate "canonical --squash probe removed" sh _review-gate-merge.py "s/'gh pr merge 1 -R %s --squash --match-head-commit %s' % \(r, zero\),\n\s+//" canon.json deny
+M_SETTINGS="$PS_CASE_RULE"
+mutate "PowerShell case fold removed" sh _review-gate-merge.py "s/    if m\.group\(1\) == 'PowerShell':/    if False:/" canon.json deny
+M_SETTINGS="$PS_CASE_R_RULE"
+mutate "PowerShell fold of the probes removed" sh _review-gate-merge.py 's/        probes = \[p\.translate\(ASCII_LOWER\) for p in probes\]\n//' canon.json deny
 M_SETTINGS="$LONG_RULE"
 mutate "rule length cap removed"     sh _review-gate-merge.py 's/    if len\(rule\) > MAX_RULE_LENGTH:\n        return True\n//' canon.json deny
 M_GATE="$MANY_REPOS"
@@ -185,7 +219,7 @@ M_ENV="GH_REPO=acme/web.app"
 mutate "GH env check removed"        ps1 _review-gate-merge.ps1 's/if \(Test-Path "Env:\$name"\)/if (\$false)/'               canon.json deny
 M_ENV="GH_CONFIG_DIR=$WORK/ghcfg"
 mutate "GH_CONFIG_DIR dropped"       ps1 _review-gate-merge.ps1 "s/, 'GH_CONFIG_DIR'\)/)/"                                  canon.json deny
-M_SETTINGS="$RULE"
+M_SETTINGS="$PROBE_ONLY_RULE"
 mutate "allow-rule check removed"    ps1 _review-gate-merge.ps1 's/-or \(Test-MergeGateCapableRule \$rule \$probes \$budget\)/-or \$false/' canon.json deny
 M_SETTINGS="$RULE"; M_TARGET=".claude/settings.json"
 mutate "project settings.json not read" ps1 _review-gate-merge.ps1 "s/        \(Join-Path \(Join-Path \\\$ProjectDir '\.claude'\) 'settings\.json'\),\n//" canon.json deny
@@ -199,12 +233,24 @@ M_SETTINGS="$MERGE_PROBE_RULE"
 mutate "--merge probe removed"       ps1 _review-gate-merge.ps1 's/-R \$r --merge --match/-R \$r --squash --match/'          canon.json deny
 M_SETTINGS="$BUDGET_RULES"
 mutate "step budget not enforced"    ps1 _review-gate-merge.ps1 's/        if \(\$Budget\.Steps -lt 0\) \{ return \$true \}\n//' canon.json deny
+M_SETTINGS="$CMD_RULE"
+mutate "asked-command pass removed"  ps1 _review-gate-merge.ps1 's/if \(Test-MergeGateCapableRule \$k\.Rule @\(\$command\) \$budget\)/if (\$false)/' canon.json deny
+M_SETTINGS="$SHARED_RULES"
+mutate "asked-command pass given its own budget" ps1 _review-gate-merge.ps1 's/Test-MergeGateCapableRule \$k\.Rule @\(\$command\) \$budget/Test-MergeGateCapableRule \$k.Rule @(\$command)/' canon.json deny
+M_SETTINGS="$XFILE_RULES"; M_TARGET="../cfg/settings.json"
+mutate "kept rules reset per file"   ps1 _review-gate-merge.ps1 's/(    foreach \(\$path in \(Get-MergeGateSettingsFile \$ProjectDir\)\) \{\n)/$1        \$kept = [System.Collections.Generic.List[object]]::new()\n/' canon.json deny
+M_SETTINGS="$SQUASH_PROBE_RULE"
+mutate "canonical --squash probe removed" ps1 _review-gate-merge.ps1 's/        \$probes \+= "gh pr merge 1 -R \$r --squash --match-head-commit \$zero"\n//' canon.json deny
+M_SETTINGS="$PS_CASE_RULE"
+mutate "PowerShell case fold removed" ps1 _review-gate-merge.ps1 "s/if \(\[string\]::Equals\(\\\$tool, 'PowerShell', \[System\.StringComparison\]::Ordinal\)\)/if (\\\$false)/" canon.json deny
+M_SETTINGS="$PS_CASE_R_RULE"
+mutate "PowerShell fold of the probes removed" ps1 _review-gate-merge.ps1 's/        \$Probes = @\(foreach \(\$p in \$Probes\) \{ ConvertTo-MergeGateAsciiLower \$p \}\)\n//' canon.json deny
 M_SETTINGS="$LONG_RULE"
 mutate "rule length cap removed"     ps1 _review-gate-merge.ps1 's/    if \(\$Rule\.Length -gt \$script:MergeGateMaxRuleLength\) \{ return \$true \}\n//' canon.json deny
 M_GATE="$MANY_REPOS"
 mutate "repo count cap removed"      ps1 _review-gate-merge.ps1 's/ -or \$repos\.Count -gt \$script:MergeGateMaxRepos//' canon.json deny
 M_SETTINGS="$CASE_RULE"
-mutate "ASCII lowercasing removed"   ps1 _review-gate-merge.ps1 's/\$lower -cmatch \$interp/\$body -cmatch \$interp/'        canon.json deny
+mutate "ASCII lowercasing removed"   ps1 _review-gate-merge.ps1 's/\(ConvertTo-MergeGateAsciiLower \$body\) -cmatch \$interp/\$body -cmatch \$interp/' canon.json deny
 M_SETTINGS="$SPACE_RULE"
 mutate "edge whitespace not stripped" ps1 _review-gate-merge.ps1 's/\$r = Get-MergeGateTrimmedText \$Rule/\$r = \$Rule/'   canon.json deny
 M_SETTINGS="$PAD_RULE"
@@ -216,7 +262,8 @@ mutate "PermissionRequest check removed" ps1 _review-gate-merge.ps1 's/if \(\$nu
 M_SETTINGS="$COMMENT"
 mutate "strict JSON validation removed" ps1 _review-gate-merge.ps1 's/\[System\.Text\.Json\.JsonDocument\]::Parse\(\$Text, \$options\)\.Dispose\(\)//' canon.json deny
 M_SETTINGS="$ARRAY"
-mutate "-NoEnumerate removed"        ps1 _review-gate-merge.ps1 's/ConvertFrom-Json -NoEnumerate -ErrorAction Stop/ConvertFrom-Json -ErrorAction Stop/' canon.json deny
+mutate "-NoEnumerate removed"        ps1 _review-gate-merge.ps1 's/\$parsed = \$Text \| ConvertFrom-Json -NoEnumerate -ErrorAction Stop/\$parsed = \$Text | ConvertFrom-Json -ErrorAction Stop/' canon.json deny
+mutate "payload -NoEnumerate removed" ps1 _review-gate-merge.ps1 's/\$Raw \| ConvertFrom-Json -NoEnumerate -ErrorAction Stop/\$Raw | ConvertFrom-Json -ErrorAction Stop/' array.json deny
 
 echo "=== default-deny for unknown verdicts (both hooks) ==="
 stub_verdict() { printf '%s\n' 'import sys; sys.stdout.write("" if "--git-context" in sys.argv else "BOGUS")' > "$1/_review-gate-classify.py"; printf '\n%s\n' 'function Get-ReviewGateVerdictFromPayload { "BOGUS" }' >> "$1/_review-gate-classify.ps1"; }

@@ -580,19 +580,20 @@ pmb_strip_unsafe() {
 # reason is printed to the user's terminal, where pmb_json_str's escaping covers only bytes below 0x20.
 # WHY the path is single-quoted in the suggested command: the user pastes that command into a shell,
 # and inside double quotes a path holding `$(...)`, a backquote or `"` would run code or break the
-# command; a ' in the path is written '\''. WHY --session when the id came from the payload
-# (PMB_G_FROM, set by pmb_gate_identify): the writer finds the session through
-# CLAUDE_CODE_SESSION_ID, which that client does not set, so without it the command writes nowhere.
+# command; a ' in the path is written '\''. WHY --session always: the writer finds the session only
+# through CLAUDE_CODE_SESSION_ID or --session, and the user's own terminal does not set the variable,
+# so without --session the command fails there. Where the variable is set, the writer requires the
+# two to match, so the command cannot write into another session.
 # WHY the `return 2` is here and nowhere else in the gate: every block goes through this function, and
 # its callers pass its status on with an explicit `return $?`, so a block can never be turned into a
 # pass by a line added after the call.
 pmb_gate_block() {
-    local sid="$1" kind="$2" detail top cmd sq="'\\''" sess="" msg
+    local sid="$1" kind="$2" detail top cmd sq="'\\''" sess msg
     pmb_strip_unsafe "$3"; detail="$PMB_SAFE"
     top=$(pmb_toplevel); [ -n "$top" ] || top="<worktree>"
     pmb_strip_unsafe "$top"; top=${PMB_SAFE//\'/$sq}
     cmd="bash '$top/scripts/pmb-journal.sh' note"
-    [ "${PMB_G_FROM:-}" = payload ] && sess=" --session $sid"
+    sess=" --session $sid"
     if [ "$kind" = env ]; then
         msg="Compaction paused: this session's journal cannot be written.
 - $detail
@@ -622,21 +623,19 @@ pmb_gate_marker() {
 }
 
 # The gate's shared state. Bash plumbing only -- a twin passes these however it likes (objects, a
-# result record): PMB_G_SID, PMB_G_FROM, PMB_G_TRIGGER (pmb_gate_identify), PMB_G_MARKER, PMB_G_HIT
+# result record): PMB_G_SID, PMB_G_TRIGGER (pmb_gate_identify), PMB_G_MARKER, PMB_G_HIT
 # (pmb_gate_newest), PMB_ALLOC (pmb_alloc_max), PMB_N_SEQ and PMB_N_KIND (pmb_name_parse, also left
 # set by a pmb_gate_rec that returns 1), PMB_LINK (pmb_first_link), PMB_SAFE (pmb_strip_unsafe) and
 # PMB_REC (pmb_read_record). pmb_gate_rec needs PMB_ALLOC set first; pmb_max_seq overwrites it. The
 # cross-twin contract is only what a caller can observe: the exit code (2 = block, 0 = allow), the
 # text on stderr, the one-line JSON decision on stdout, and the gate-blocked file.
 
-# pmb_gate_identify — reads the hook payload on stdin; sets PMB_G_SID (the session to check),
-# PMB_G_FROM (`env` or `payload`: where that id came from) and PMB_G_TRIGGER. CLAUDE_CODE_SESSION_ID
-# wins over the payload's first session_id, with a warning when the two differ; an invalid
-# CLAUDE_CODE_SESSION_ID falls back to the payload's. Returns 1, after a fail-open warning, when
-# neither gives a valid session id.
+# pmb_gate_identify — reads the hook payload on stdin; sets PMB_G_SID (the session to check) and
+# PMB_G_TRIGGER. CLAUDE_CODE_SESSION_ID wins over the payload's first session_id, with a warning when
+# the two differ; an invalid CLAUDE_CODE_SESSION_ID falls back to the payload's. Returns 1, after a
+# fail-open warning, when neither gives a valid session id.
 pmb_gate_identify() {
     local payload flat psid sid
-    PMB_G_FROM=env
     payload=$(cat 2>/dev/null || true)
     flat=$(printf '%s' "$payload" | tr -d '\r\n')
     psid=$(printf '%s' "$flat" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]*"' | head -1 | sed 's/.*"\([A-Za-z0-9_-]*\)"$/\1/')
@@ -649,7 +648,7 @@ pmb_gate_identify() {
     if [ -n "$sid" ] && [ -n "$psid" ] && [ "$psid" != "$sid" ]; then
         printf 'pmb-journal gate: warning: payload session_id %s differs from CLAUDE_CODE_SESSION_ID; checking %s\n' "$psid" "$sid" >&2
     fi
-    [ -n "$sid" ] || { sid="$psid"; PMB_G_FROM=payload; }
+    [ -n "$sid" ] || sid="$psid"
     if ! pmb_valid_sid "$sid"; then
         printf 'pmb-journal gate: cannot identify this session; allowing compaction (fail-open)\n' >&2
         return 1
