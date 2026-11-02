@@ -6,10 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# WHY every job sets timeout-minutes: GitHub's default is 6 hours, and a FIFO opened by mistake
+# hangs a job until then. MB Command Tests ran 10m03s on 4738ad5 (run 38890930402), which carries
+# the journal suite, so it gets 30; every other job ran under 2 minutes there and gets 10.
 jobs:
   file-size:
     name: File Size
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -173,8 +177,9 @@ jobs:
           # block hardcoded STARTUP_BASELINE=108973, and review killed it on two counts, both right.
           # (1) It was a TRIPWIRE, the exact thing the comment fifty lines above defines and refuses
           # to set: 1,024 bytes of slack against six files, when the median recent progress.md entry
-          # is ~2,700 bytes and scripts/pre-compact-check.sh REQUIRES an entry dated today before it
-          # will allow a compaction. Growth is not optional here, so a sub-1% allowance would have
+          # is ~2,700 bytes and scripts/pre-compact-check.sh then REQUIRED an entry dated today before
+          # it would allow a compaction (no longer, since the 2026-11-01 derived-work spec). Growth
+          # was not optional then, so a sub-1% allowance would have
           # red-lined a required, enforce_admins check on the next ordinary PR. (2) "Only ever
           # decrease" was asserted in a comment and enforced by nothing -- the constant lived in a
           # file any PR could edit, so the monotonicity being sold was unenforceable by construction,
@@ -271,6 +276,7 @@ jobs:
   forbidden-patterns:
     name: Forbidden Patterns
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -388,6 +394,7 @@ jobs:
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
         with:
@@ -403,6 +410,7 @@ jobs:
   sast:
     name: SAST (Semgrep)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -430,6 +438,7 @@ jobs:
   rules-file-integrity:
     name: Rules-File Integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -603,6 +612,7 @@ jobs:
   template-integrity:
     name: Template Integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -632,6 +642,7 @@ jobs:
   mb-command-tests:
     name: MB Command Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -650,13 +661,43 @@ jobs:
         shell: bash
         run: git fetch --depth=1 origin main >/dev/null || true
 
+      # WHY generate tr_TR.UTF-8: test-dangerous-commands.sh's Turkish-locale cells (an upper-case
+      # signing key, where `grep -i` does not fold `I`) need a locale that really shows that fold,
+      # and the runner image ships none, so they skipped here. `locale -a | grep` fails this step
+      # when generation did not take, so the log says which half broke.
+      - name: Generate the Turkish locale for the dangerous-commands locale cells
+        shell: bash
+        run: |
+          sudo locale-gen tr_TR.UTF-8
+          locale -a | grep -i tr_TR
+
+      # WHY PMB_REQUIRE_PARITY: the sh/ps1 parity blocks in test-dangerous-commands.sh and
+      # test-pre-compact-check.sh SKIP when pwsh is missing, loudly but without failing. The runner
+      # ships pwsh today, so this changes nothing now; it turns a runner that stopped shipping it
+      # into a red build instead of a green one that no longer checks the shell Windows runs first.
+      #
+      # WHY PMB_REQUIRE_FIFO: the same, for test-pmb-journal.sh's FIFO cases (mkfifo and timeout).
+      #
+      # WHY PMB_REQUIRE_SYMLINKS: the same, for test-pmb-journal.sh's symbolic-link cases -- the
+      # writers' link refusals, a dangling-link start sentinel, the gate's link checks.
+      #
+      # WHY PMB_REQUIRE_LOCALE_CASES: the same, for test-dangerous-commands.sh's locale cells -- no
+      # effective Turkish locale, or no UTF-8 locale where grep is strict, fails instead of skipping.
+      # A separate flag, because GNU grep 3.0 (Git for Windows) is never strict, so a local run
+      # that sets PMB_REQUIRE_PARITY would otherwise always fail.
       - name: Run mb command tests
         shell: bash
+        env:
+          PMB_REQUIRE_PARITY: "1"
+          PMB_REQUIRE_FIFO: "1"
+          PMB_REQUIRE_SYMLINKS: "1"
+          PMB_REQUIRE_LOCALE_CASES: "1"
         run: bash tests/run.sh
 
   powershell-lint:
     name: PowerShell Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -681,6 +722,7 @@ jobs:
   mb-doctor-self-check:
     name: MB Doctor Self-Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -711,6 +753,7 @@ jobs:
   pester-tests:
     name: Pester Tests (mb.ps1)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6.0.2
 

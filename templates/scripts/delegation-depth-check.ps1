@@ -29,9 +29,13 @@ try {
         }
     }
 
+    # WHY systemMessage-only JSON and the "in this checkout" wording: see the sh twin.
+    # EscapeNonAscii writes the "≤" as \u2264, so the JSON is pure ASCII and survives pwsh's
+    # non-UTF-8 stdout encoding on Windows (which turns it into "?" otherwise).
     if ($depth -ge $budgetLimit) {
-        Write-Host "[WARN] Agent spawn count: $($depth + 1) this session (budget: ≤$budgetLimit per standards/PERFORMANCE-BUDGET.md)"
-        Write-Host "       High agent volume increases prompt-injection surface. Consider consolidating tasks."
+        [ordered]@{
+            systemMessage = "[WARN] Agent spawn count: $($depth + 1) in this checkout since the last 2-hour break (budget: ≤$budgetLimit per standards/PERFORMANCE-BUDGET.md). High agent volume increases prompt-injection surface. Consider consolidating tasks."
+        } | ConvertTo-Json -Compress -EscapeHandling EscapeNonAscii | Write-Output
     }
 
     $ts = Get-Date -Format 'yyyy-MM-dd HH:mm'

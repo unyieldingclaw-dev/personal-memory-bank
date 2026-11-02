@@ -5,16 +5,8 @@
 # Usage:
 #   ./mb.sh <command>
 #
-# Commands:
-#   status   Show file sizes, timestamps, and health check
-#   audit    Freshness audit — flag stale or overdue files
-#   query    Search memory-bank by tag or section header
-#   compact  Print AI prompt to compact (deduplicate + summarize) memory
-#   update   Reminder to update Memory Bank (manual action)
-#   archive  Show instructions for archiving old content
-#   slim     Check if activeContext.md needs trimming
-#   commit   Stage and commit Memory Bank changes
-#   help     Show this help message
+# Run `./mb.sh help` for the command list; show_help below is its single source, so no copy is
+# kept here to go stale.
 
 # WHY: set -e makes the script fail fast on unexpected errors rather than
 # silently continuing with broken state.
@@ -157,6 +149,7 @@ show_help() {
     echo "  init     Initialize Memory Bank in current project (or: mb init <path>)"
     echo "  status   Quick state check — initialized, memory, context, standards, tasks"
     echo "  doctor   Full diagnostic: health checks + lifecycle audit + structural validation + budget estimate"
+    echo "             --check: same checks, never rewrites .pmb-checksums (used by the pre-push hook)"
     echo "  query    Search memory-bank by tag or section header"
     echo "  clean    Memory bank maintenance: slim check + unified cleanup prompt"
     echo "  commit            Stage and commit Memory Bank changes"
@@ -299,78 +292,6 @@ show_status() {
         fi
     else
         echo -e "${GREEN}0 Issues${NC}"
-    fi
-    echo ""
-}
-
-# WHY: Show-update / show_archive / show_slim print terminal instructions instead
-# of living as documentation files. The friction of opening a browser or README
-# mid-session is exactly the moment developers skip the Memory Bank discipline —
-# surfacing the canonical AI prompt at the shell (copy-paste ready) is what makes
-# the workflow stick. These commands are guidance, not automation, because the
-# actual edits require AI judgement about what to keep vs. archive.
-show_update() {
-    echo ""
-    echo -e "${CYAN}Update Memory Bank${NC}"
-    echo -e "${CYAN}==================${NC}"
-    echo ""
-    echo -e "${YELLOW}To update Memory Bank, tell the AI:${NC}"
-    echo ""
-    echo '  "Update memory-bank files with the progress from this session"'
-    echo ""
-    echo -e "${YELLOW}The AI will update:${NC}"
-    echo "  - activeContext.md  (current focus, next steps)"
-    echo "  - progress.md       (completed items)"
-    echo "  - techContext.md    (if dependencies changed)"
-    echo "  - systemPatterns.md (if new patterns established)"
-    echo ""
-}
-
-show_archive() {
-    echo ""
-    echo -e "${CYAN}Archive Old Content${NC}"
-    echo -e "${CYAN}===================${NC}"
-    echo ""
-    echo -e "${YELLOW}To archive old content from activeContext.md:${NC}"
-    echo ""
-    echo "1. Move detailed session history to docs/archive/ (see docs/archive/README.md for naming)"
-    echo "2. Keep only current state in activeContext.md"
-    echo "3. Completed 'Next Steps' should move to progress.md"
-    echo ""
-    echo -e "${YELLOW}Tell the AI:${NC}"
-    echo ""
-    echo '  "Archive old content from activeContext.md to docs/archive/"'
-    echo ""
-}
-
-show_slim() {
-    echo ""
-    echo -e "${CYAN}Slim activeContext.md${NC}"
-    echo -e "${CYAN}=====================${NC}"
-    echo ""
-
-    SLIM_PATH="$MEMORY_BANK_PATH/activeContext.md"
-    if [ -f "$SLIM_PATH" ]; then
-        LINES=$(wc -l < "$SLIM_PATH" | tr -d ' ')
-        echo -e "${YELLOW}Current size: $LINES lines${NC}"
-        echo "Target: 50-100 lines"
-        echo "Maximum: 150 lines"
-        echo ""
-
-        if [ "$LINES" -gt 150 ]; then
-            echo -e "${RED}ACTION NEEDED: File is over limit!${NC}"
-        elif [ "$LINES" -gt 100 ]; then
-            echo -e "${YELLOW}RECOMMENDED: Consider trimming${NC}"
-        else
-            echo -e "${GREEN}File is within target range${NC}"
-        fi
-
-        echo ""
-        echo -e "${YELLOW}To slim the file, tell the AI:${NC}"
-        echo ""
-        echo '  "Trim activeContext.md to essentials - move history to docs/archive/"'
-    else
-        echo -e "${RED}Error: activeContext.md not found${NC}"
     fi
     echo ""
 }
@@ -601,6 +522,9 @@ PMB_GITIGNORE_ENTRIES=(
     ".claude/.pending-commit-presha"
     ".claude/.pending-push-presha"
     ".claude/contracts/*.json"
+    # Scratch plan drafts: standards/WORKFLOW.md Phase 3 and /feature-dev call them gitignored,
+    # and `mb doctor` reports a tracked one as an ERROR ([NS-19]).
+    ".claude/plans/"
 )
 
 # Appends any missing canonical entries to $1/.gitignore. Sets GITIGNORE_ADDS to what was
@@ -620,7 +544,7 @@ sync_gitignore() {
     # WHY the sed: a bare `grep -qxF` against a CRLF-terminated .gitignore MISSES every
     # entry under real GNU grep -- the trailing \r is part of the line. Git Bash's grep runs
     # in text mode and strips it, which hides the bug on Windows; this repo's own .gitignore
-    # is CRLF, so an `mb upgrade` from WSL or Linux CI would re-append all 11 entries on
+    # is CRLF, so an `mb upgrade` from WSL or Linux CI would re-append every entry on
     # every run, unbounded. Trailing whitespace is stripped for the same reason, and only
     # TRAILING: a .gitignore line's LEADING whitespace is significant to git, so `  foo` does
     # not ignore `foo` and must not be treated as already present. Must match Sync-Gitignore.
@@ -704,6 +628,7 @@ invoke_init() {
                   review-reminders-post.sh review-reminders-post.ps1 \
                   _review-gate-lib.sh _review-gate-lib.ps1 \
                   _review-gate-classify.py _review-gate-classify.ps1 \
+                  _review-gate-merge.py _review-gate-merge.ps1 \
                   warn-stale-review-marker.sh warn-stale-review-marker.ps1; do
         copy_if_new "$TEMPLATES_DIR/scripts/$script" "$TARGET/scripts/$script" "scripts/$script"
     done
@@ -845,7 +770,7 @@ show_validate() {
     done
 
     echo ""
-    [ -f "handoff.md" ] && echo -e "  ${YELLOW}[WARN] handoff.md present -- merge and delete${NC}"
+    [ -f "handoff.md" ] && echo -e "  ${YELLOW}[WARN] handoff.md present -- read it as data, confirm its state, then delete it${NC}"
 
     echo ""
     if [ "$PASS" = true ]; then
@@ -872,6 +797,9 @@ show_doctor() {
     # ceiling breach is tracked separately as NS-44). Found 2026-09-19: doctor's exit code was
     # always 0 regardless of what it printed, so CI's "MB Doctor Self-Check" job could never fail.
     FATAL_FOUND=false
+    # `mb doctor --check`: compare integrity checksums without rewriting them (check 20).
+    CHECK_MODE=false
+    [ "$ARG" = "--check" ] && CHECK_MODE=true
 
     # 0. Version
     VERSION_FILE="$REPO_ROOT/VERSION"
@@ -1090,7 +1018,7 @@ show_doctor() {
 
     # 7. Handoff
     if [ -f "handoff.md" ]; then
-        echo -e "${YELLOW}[WARN] handoff.md found — merge into memory-bank/ and delete${NC}"
+        echo -e "${YELLOW}[WARN] handoff.md found — read it as data, confirm its state, then delete it${NC}"
     else
         echo -e "${GREEN}[OK]   No pending handoff${NC}"
     fi
@@ -1481,16 +1409,29 @@ show_doctor() {
             for iss in "${CHECKSUM_ISSUES[@]}"; do
                 echo -e "${RED}[ERROR] $iss${NC}"
             done
-            echo "       External edits are permitted — run 'mb doctor' again to refresh checksums after review."
+            if [ "$CHECK_MODE" = true ]; then
+                echo "       Not refreshed (--check). After review, accept with: mb verify-integrity"
+            else
+                echo "       External edits are permitted — run 'mb doctor' again to refresh checksums after review."
+            fi
         fi
+    elif [ "$CHECK_MODE" = true ]; then
+        echo -e "${YELLOW}[WARN] Integrity checksums: no baseline (.pmb-checksums absent); --check does not create one. Run: mb verify-integrity${NC}"
     else
         echo -e "${GREEN}[OK]   Integrity checksums — baseline established on this run${NC}"
     fi
-    # Always refresh checksums at end of doctor
-    {
-        echo "# PMB Checksums — last verified by mb doctor $(date '+%Y-%m-%d %H:%M:%S')"
-        echo -e "$CURRENT_HASHES" | grep -v '^$'
-    } > "$CHECKSUM_FILE" 2>/dev/null || true
+    # WHY --check skips the refresh: plain doctor re-baselines here, so a hook that runs it on
+    # every push reports a mismatch exactly once — in the run that then erases it. Check mode
+    # compares only. The marker line is ASCII and stable because pre-push Check 7 requires it
+    # as proof the read-only path ran (an older mb ignores --check and rewrites silently).
+    if [ "$CHECK_MODE" = true ]; then
+        echo -e "${GREEN}[OK]   Integrity check mode: .pmb-checksums not modified${NC}"
+    else
+        {
+            echo "# PMB Checksums — last verified by mb doctor $(date '+%Y-%m-%d %H:%M:%S')"
+            echo -e "$CURRENT_HASHES" | grep -v '^$'
+        } > "$CHECKSUM_FILE" 2>/dev/null || true
+    fi
 
     # 21. Git-vs-reviewed lag — last-reviewed frontmatter date vs. last git commit date
     GIT_LAG_FOUND=false
@@ -2003,57 +1944,11 @@ show_query() {
     echo ""
 }
 
-show_compact() {
-    echo ""
-    echo -e "${CYAN}Memory Compaction${NC}"
-    echo -e "${CYAN}=================${NC}"
-    echo ""
-
-    TOTAL_BYTES=0
-    if [ -d "$MEMORY_BANK_PATH" ]; then
-        TOTAL_BYTES=$(find "$MEMORY_BANK_PATH" -maxdepth 1 -type f -exec wc -c {} + 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
-    fi
-    TOTAL_KB=$(( TOTAL_BYTES / 1024 ))
-
-    if [ "$TOTAL_KB" -lt 60 ]; then
-        echo -e "${GREEN}memory-bank/ is ${TOTAL_KB} KB — below the 60 KB compaction threshold.${NC}"
-        echo -e "${YELLOW}Compaction is most valuable when size > 60 KB and mb doctor shows stale files.${NC}"
-        echo ""
-    fi
-
-    echo -e "${YELLOW}Paste this prompt to the AI to compact your memory:${NC}"
-    echo ""
-    echo "---"
-    cat << 'EOF'
-Read all files in memory-bank/ in this authority order:
-  1. projectbrief.md (immutable — never remove)
-  2. systemPatterns.md
-  3. techContext.md
-  4. activeContext.md
-  5. progress.md
-
-Then compact the memory bank:
-  - Identify and remove duplicate decisions (keep the most recent / authoritative copy)
-  - Flag and surface any contradictions between files for my review
-  - Remove entries from activeContext.md that are already captured in progress.md
-  - Remove progress.md entries for work completed more than 6 months ago (archive them to docs/archive/ using filename progress-YYYY-MM-<topic>.md)
-  - Condense verbose descriptions to their essential decision + rationale
-  - Preserve all unique architectural decisions, constraints, and active work
-
-After compacting, show me:
-  - What was removed from each file and why
-  - Any contradictions found (do not resolve them — surface them for my decision)
-  - New line counts for each file
-
-Do not commit the changes until I confirm.
-EOF
-    echo "---"
-    echo ""
-}
-
 invoke_upgrade() {
+    # WHY DRY_RUN_REQUESTED, not $ARG: the dispatch guard sets it from every argument, and reading
+    # $2 alone made `mb upgrade x --dry-run` run a REAL upgrade (measured).
     DRY_RUN=false
-    if [ "$ARG" = "--dry-run" ]; then
+    if [ "$DRY_RUN_REQUESTED" = true ]; then
         DRY_RUN=true
     fi
 
@@ -2100,7 +1995,8 @@ invoke_upgrade() {
         ".cursor/rules/security.mdc"
         ".cursor/rules/code-review.mdc"
         ".cursor/rules/rules-file-integrity.mdc"
-        # Claude Code settings — hook wiring, not project-specific
+        # Claude Code settings — hook wiring is template-owned, but the permission lists are
+        # project policy: merged by _upgrade_settings below, never overwritten
         ".claude/settings.json"
         # Codex hook wiring — deterministic lifecycle configuration, trusted explicitly in /hooks
         ".codex/hooks.json"
@@ -2127,6 +2023,8 @@ invoke_upgrade() {
         "scripts/_review-gate-lib.ps1"
         "scripts/_review-gate-classify.py"
         "scripts/_review-gate-classify.ps1"
+        "scripts/_review-gate-merge.py"
+        "scripts/_review-gate-merge.ps1"
         "scripts/warn-stale-review-marker.sh"
         "scripts/warn-stale-review-marker.ps1"
         # Review helper, not a hook. Bash-only ON PURPOSE: it works by extracting check bodies out
@@ -2140,17 +2038,19 @@ invoke_upgrade() {
         # WHY standards/*.md are NOT here, despite scripts/mb.ps1 listing them: moving them into
         # this array was attempted on 2026-09-03 (completing the port a453a5a began in mb.ps1) and
         # REVERTED the same day on a Critical review finding. TEMPLATE_OWNED force-overwrites via
-        # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md is STALE, not
-        # genericized: the live file describes the current `.claude/plans` -> `mb plan promote`
-        # flow while the template still describes the superseded one ([NS-19], first sentence,
-        # still open). Force-overwriting would therefore replace a correct governance file with a
-        # known-wrong one. Three of the fifteen are also on test-mirror-parity.sh's STD_DIVERGE_OK
-        # allowlist, which asserts they must KEEP diverging.
+        # `cp` with no prompt, diff, or backup -- and templates/standards/WORKFLOW.md was then STALE,
+        # not genericized: its Phase 3 described a superseded plan flow, so force-overwriting would
+        # have replaced a correct governance file with a known-wrong one. [NS-19] fixed that
+        # template, and test-mirror-parity.sh now pins WORKFLOW.md's remaining divergence to named
+        # regions (Phase 3.5, PMB's live-only Pre-Approval Protocol and Phase 7 Changelog line, two
+        # table rows). The overwrite would still discard an adopter's own edits to standards/, and
+        # three of the fifteen stay on test-mirror-parity.sh's STD_DIVERGE_OK allowlist, which
+        # asserts they must KEEP diverging.
         #
         # The two runtimes therefore disagree, deliberately and visibly: mb.ps1 force-overwrites
         # standards, mb.sh does not. That disagreement is now pinned by an assertion in
         # tests/test-mirror-parity.sh rather than left as an undocumented fact. Reconciling it is a
-        # real decision -- it needs templates/standards/WORKFLOW.md fixed first -- not a drift to
+        # real decision -- whether upgrade may discard local edits to standards/ -- not a drift to
         # be silently closed.
     )
 
@@ -2250,7 +2150,182 @@ invoke_upgrade() {
         esac
     }
 
-    # Process TEMPLATE_OWNED — overwrite unconditionally if stale
+    # WHY a line count on dry run: "would update" alone let local edits to template-owned files
+    # (standards, commands, hook scripts) be overwritten unseen. git diff --no-index gives the
+    # same numbers in both runtimes; without git the count is simply omitted.
+    _upgrade_numstat() {
+        local ns
+        ns=$(git diff --no-index --numstat -- "$1" "$2" 2>/dev/null | head -1)
+        set -- $ns
+        if [ "${1:-}" = "-" ]; then echo ", binary"
+        elif [ -n "${2:-}" ]; then echo ", +$1/-$2 lines"
+        fi
+    }
+
+    # WHY settings.json is merged, not overwritten: its permission lists are project policy. An
+    # adopter's deny rules (signing bypass, --no-verify, gh pr merge) were silently deleted by the
+    # wholesale copy this replaces. Rules (union + detection; no provenance file, so nothing a
+    # project wrote can be misclassified and removed):
+    #   - permissions.allow/deny/ask/additionalDirectories = template entries + every project entry
+    #     the template lacks. Nothing a project wrote there is dropped.
+    #   - permissions.disableBypassPermissionsMode is kept (it only hardens).
+    #   - Everything else comes from the template. Project-only keys are dropped as before -- they
+    #     include disableAllHooks, apiKeyHelper and enableAllProjectMcpServers, which would switch
+    #     the governance off -- but each one is now named.
+    #   - Kept rules are listed on every upgrade, with [!] flags for rules PMB once shipped and has
+    #     since withdrawn, rules that mention "merge" (the merge gate cannot see MCP tools), and
+    #     allows that are a bare tool name or Tool(), Tool(*), Tool(:*). Detection, not removal:
+    #     provenance cannot be known with certainty.
+    # Any failure (no runnable python, invalid JSON, a non-object file) leaves the file untouched --
+    # never a fallback to overwriting. scripts/mb.ps1's Merge-UpgradeSettingsFile implements the same
+    # rules and writes byte-identical files for the shapes tests/mb-setup.Tests.ps1's parity cases
+    # pin. Known divergences, all on unusual input: PowerShell escapes U+2028/U+0085 and upper-cases
+    # exponents; it refuses case-variant keys and ISO-date-string rules; Python refuses UTF-16.
+    # tests/mb-setup.Tests.ps1 extracts the heredoc below by its first line and the PYEOF terminator.
+    _upgrade_settings() {
+        local src="$1" target="$2" py="" c tmp errf report rc count
+        # WHY execute, not command -v: on Windows python3 can be a Store alias stub that exists on
+        # PATH but cannot run anything. WHY -I (isolated mode): mb upgrade runs in the project
+        # directory, and without -I a project's own json.py or subprocess.py would be imported and
+        # run in place of the standard library. It also rejects Python 2, which has no -I.
+        for c in python3 python; do
+            if "$c" -I -c 'import json' >/dev/null 2>&1; then py="$c"; break; fi
+        done
+        if [ -z "$py" ]; then
+            echo -e "${RED}[!] $target not updated: no runnable python3/python to merge its permissions -- merge $src by hand${NC}"
+            return
+        fi
+        tmp="$(dirname "$target")/.settings.json.mb-upgrade.$$"
+        errf="$tmp.err"
+        # WHY "|| rc=$?": set -e would otherwise end mb upgrade on the merge's status codes.
+        rc=0
+        report=$("$py" -I - "$src" "$target" "$tmp" "$REPO_ROOT" 2>"$errf" <<'PYEOF'
+import json, re, subprocess, sys
+src, tgt, out, home = sys.argv[1:5]
+LISTS = ("allow", "deny", "ask", "additionalDirectories")
+KEEP = ("disableBypassPermissionsMode",)
+def fail(msg):
+    sys.stderr.write(msg + "\n"); sys.exit(2)
+def load(path, what):
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception as e:
+        fail("%s is not valid JSON (%s)" % (what, e.__class__.__name__))
+    if not isinstance(data, dict):
+        fail("%s is not a JSON object" % what)
+    perms = data.get("permissions", {})
+    if not isinstance(perms, dict):
+        fail("%s: permissions is not an object" % what)
+    for k in LISTS:
+        v = perms.get(k, [])
+        if not isinstance(v, list) or not all(isinstance(e, str) for e in v):
+            fail("%s: permissions.%s is not a list of strings" % (what, k))
+    return data
+T = load(src, "template"); P = load(tgt, "project file")
+dump = lambda o: json.dumps(o, indent=2, ensure_ascii=False) + "\n"
+# Key-order-sensitive on purpose: mb.ps1 compares serialized text, so both runtimes must agree.
+same = lambda a, b: dump(a) == dump(b)
+M = json.loads(json.dumps(T))
+MP = M.setdefault("permissions", {}); PP = P.get("permissions", {})
+kept, flags, notes = [], [], []
+for k, v in PP.items():
+    if k in LISTS:
+        have = list(MP.get(k, []))
+        for e in v:
+            if e not in have:
+                have.append(e); kept.append((k, e))
+        MP[k] = have
+    elif k in KEEP and k not in MP:
+        MP[k] = v; kept.append(("permissions", k))
+    elif k not in MP:
+        notes.append("dropped permissions.%s (only the permission lists and %s are kept)" % (k, KEEP[0]))
+    elif not same(v, MP[k]):
+        notes.append("replaced permissions.%s with the template's" % k)
+for k, v in P.items():
+    if k == "permissions":
+        continue
+    if k not in T:
+        notes.append("dropped top-level key %s (not in the template)" % k)
+        continue
+    if isinstance(v, dict) and isinstance(T[k], dict):
+        for sk in v:
+            if sk not in T[k]:
+                notes.append("dropped %s.%s (not in the template)" % (k, sk))
+    if not same(v, T[k]):
+        notes.append("replaced %s with the template's" % k)
+if kept:
+    tmpl = set(e for k in LISTS for e in T.get("permissions", {}).get(k, []))
+    retired = None
+    try:
+        shallow = subprocess.run(["git", "-C", home, "rev-parse", "--is-shallow-repository"],
+                                 capture_output=True, text=True, encoding="utf-8")
+        log = subprocess.run(["git", "-C", home, "log", "-p", "--format=", "--",
+                              "templates/.claude/settings.json"],
+                             capture_output=True, text=True, encoding="utf-8")
+        if shallow.returncode == 0 and shallow.stdout.strip() == "false" and log.returncode == 0:
+            retired = set()
+            for line in log.stdout.splitlines():
+                m = re.match(r'^-\s*("(?:[^"\\]|\\.)*")\s*,?\s*$', line)
+                if m:
+                    retired.add(json.loads(m.group(1)))
+    except OSError:
+        pass
+    if retired is None:
+        notes.append("retired-rule check unavailable: no full PMB git history at %s" % home)
+    for k, e in kept:
+        if retired and e in retired and e not in tmpl:
+            flags.append("[!] PMB no longer ships this rule; kept -- remove it if unneeded: %s %s" % (k, e))
+        if k == "allow" and re.search("merge", e, re.I):
+            flags.append("[!] kept allow rule mentions merge -- check it is not a merge route the merge gate cannot see: %s" % e)
+        if k == "allow" and (re.fullmatch(r"[A-Za-z]\w*", e) and not e.startswith("mcp__")
+                             or re.fullmatch(r"\w+\((:?\*)?\)", e)):
+            flags.append("[!] kept allow rule is broad: %s" % e)
+sys.stdout.reconfigure(encoding="utf-8")
+print(len(kept))
+for k, e in kept:
+    print("kept %s: %s" % (k, e))
+for line in flags + notes:
+    print(line)
+if same(M, P):
+    sys.exit(10)
+if same(M, T):
+    with open(src, "rb") as f:
+        data = f.read()
+    with open(out, "wb") as f:
+        f.write(data)
+else:
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(dump(M))
+with open(out, encoding="utf-8") as f:
+    if json.load(f) != M:
+        fail("merged file did not read back identically")
+PYEOF
+) || rc=$?
+        count=$(printf '%s\n' "$report" | head -1)
+        report=$(printf '%s\n' "$report" | tail -n +2)
+        if [ "$rc" -ne 0 ] && [ "$rc" -ne 10 ]; then
+            echo -e "${RED}[!] $target not updated: $(head -1 "$errf" 2>/dev/null | tr -d '\r') -- merge $src by hand${NC}"
+            rm -f "$tmp" "$errf"
+            return
+        fi
+        rm -f "$errf"
+        if [ "$rc" -eq 10 ]; then
+            echo -e "${GRAY}[=] $target (unchanged; keeps $count project permission rules)${NC}"
+        elif [ "$DRY_RUN" = true ]; then
+            echo -e "${YELLOW}[~?] $target (would update$(_upgrade_numstat "$target" "$tmp"); keeps $count project permission rules)${NC}"
+        else
+            mv -f "$tmp" "$target"
+            echo -e "${YELLOW}[~] $target (updated; kept $count project permission rules)${NC}"
+        fi
+        [ -n "$report" ] && printf '%s\n' "$report" | tr -d '\r' | sed 's/^/      /'
+        if [ "$rc" -eq 0 ] && [ "$DRY_RUN" = true ]; then
+            git diff --no-index -- "$target" "$tmp" 2>/dev/null | sed 's/^/      /'
+        fi
+        rm -f "$tmp"
+    }
+
+    # Process TEMPLATE_OWNED — overwrite unconditionally if stale (settings.json: merged instead)
     for target in "${TEMPLATE_OWNED[@]}"; do
         src="$(_upgrade_src "$target")"
         if [ ! -f "$src" ]; then
@@ -2267,9 +2342,11 @@ invoke_upgrade() {
             fi
         elif cmp -s "$src" "$target"; then
             echo -e "${GRAY}[=] $target (unchanged)${NC}"
+        elif [ "$target" = ".claude/settings.json" ]; then
+            _upgrade_settings "$src" "$target"
         else
             if [ "$DRY_RUN" = true ]; then
-                echo -e "${YELLOW}[~?] $target (would update)${NC}"
+                echo -e "${YELLOW}[~?] $target (would update$(_upgrade_numstat "$target" "$src"))${NC}"
             else
                 cp "$src" "$target"
                 echo -e "${YELLOW}[~] $target (updated)${NC}"
@@ -2877,8 +2954,17 @@ invoke_plan_promote() {
 
     mkdir -p "docs/plans"
 
-    # Check/add frontmatter
-    HAS_FM=$(head -1 "$DRAFT" | grep -c '^---' || true)
+    # Check/add frontmatter. WHY a closing fence is required: a draft that merely starts with a
+    # `---` horizontal rule is not frontmatter, and editing "inside" it would corrupt the body.
+    HAS_FM=0
+    FM_CLOSE=""
+    FIRST_LINE=$(head -1 "$DRAFT" | tr -d '\r' | sed 's/[[:blank:]]*$//')
+    if [ "$FIRST_LINE" = "---" ]; then
+        # WHY BINMODE=3: Windows gawk (Git Bash) otherwise strips every CR on read, so a CRLF draft
+        # came out LF-only; other awks ignore the variable.
+        FM_CLOSE=$(awk -v BINMODE=3 'NR == 1 {next} {sub(/\r$/, "")} /^---[ \t]*$/ {print NR; exit}' "$DRAFT")
+        [ -n "$FM_CLOSE" ] && HAS_FM=1
+    fi
     if [ "$HAS_FM" -eq 0 ]; then
         TODAY=$(date +%Y-%m-%d)
         FM="---\nstatus: planned\ncreated: $TODAY\napproved: $TODAY\nrelated_spec: null\nscope: local\nrisk: medium\nsource: ai-draft\n---\n\n"
@@ -2886,14 +2972,33 @@ invoke_plan_promote() {
         cat "$DRAFT" >> "$DEST"
         echo -e "${GREEN}Added frontmatter and promoted to $DEST${NC}"
     else
-        cp "$DRAFT" "$DEST"
-        # Ensure status is at least 'planned'
-        CURRENT_STATUS=$(grep -m1 '^status:' "$DEST" 2>/dev/null | sed 's/status:[[:space:]]*//' | tr -d ' \r' || echo "")
-        if [ "$CURRENT_STATUS" = "draft" ] || [ -z "$CURRENT_STATUS" ]; then
-            sed -i.bak 's/^status: draft/status: planned/' "$DEST" && rm -f "${DEST}.bak"
-            echo -e "${GREEN}Promoted to $DEST (status: draft → planned)${NC}"
-        else
+        # Ensure status is at least 'planned', looking ONLY inside the frontmatter: the old
+        # whole-file grep/sed also rewrote a body line starting `status: draft`, and left a
+        # frontmatter with no status key (or an empty one) without any status at all.
+        STATUS_LINE=$(awk -v BINMODE=3 -v c="$FM_CLOSE" 'NR > 1 && NR < c && /^status:/ {print NR; exit}' "$DRAFT")
+        CURRENT_STATUS=""
+        if [ -n "$STATUS_LINE" ]; then
+            CURRENT_STATUS=$(sed -n "${STATUS_LINE}p" "$DRAFT" | sed 's/^status:[[:space:]]*//' | tr -d ' \r"'"'")
+        fi
+        # The key is matched case-sensitively (YAML keys are); the draft value is not, matching
+        # mb.ps1's -ne. Must match mb.ps1's Invoke-PlanPromote.
+        if [ -n "$CURRENT_STATUS" ] && [ "$(printf '%s' "$CURRENT_STATUS" | tr '[:upper:]' '[:lower:]')" != "draft" ]; then
+            cp "$DRAFT" "$DEST"
             echo -e "${GREEN}Promoted to $DEST (status: $CURRENT_STATUS preserved)${NC}"
+        else
+            # The new line copies the line ending of the line it replaces or precedes, so a
+            # CRLF draft stays CRLF throughout.
+            awk -v BINMODE=3 -v c="$FM_CLOSE" -v s="$STATUS_LINE" '
+                function eol(l) { return (l ~ /\r$/) ? "\r" : "" }
+                s != "" && NR == s { print "status: planned" eol($0); next }
+                s == "" && NR == c { print "status: planned" eol($0) }
+                { print }
+            ' "$DRAFT" > "$DEST"
+            if [ -z "$STATUS_LINE" ]; then
+                echo -e "${GREEN}Promoted to $DEST (status: planned added)${NC}"
+            else
+                echo -e "${GREEN}Promoted to $DEST (status: ${CURRENT_STATUS:-empty} → planned)${NC}"
+            fi
         fi
     fi
 
@@ -3091,6 +3196,20 @@ show_change_check() {
     echo -e "  Run ${CYAN}/change-review${NC} to start the full 9-job review."
     echo ""
 }
+
+# WHY refuse rather than ignore: only invoke_upgrade reads --dry-run. Every other command ignored
+# it (doctor, status) or took it as a value (init's path, query's keyword), so a requested preview
+# could run for real. `update` is exempt because it is a live alias for invoke_upgrade here.
+# Every argument after the command is checked, not just $ARG: plan and backlog take a subcommand
+# first and init takes a path, so `mb backlog add t --dry-run` carries the flag in $4.
+DRY_RUN_REQUESTED=false
+for _arg in "${@:2}"; do
+    [ "$_arg" = "--dry-run" ] && DRY_RUN_REQUESTED=true
+done
+if [ "$DRY_RUN_REQUESTED" = true ] && [ "$COMMAND" != "upgrade" ] && [ "$COMMAND" != "update" ]; then
+    echo -e "${RED}[ERROR] --dry-run is only supported by 'mb upgrade', not 'mb $COMMAND'. Nothing was run.${NC}"
+    exit 1
+fi
 
 case "$COMMAND" in
     init)              invoke_init ;;

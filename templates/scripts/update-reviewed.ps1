@@ -77,7 +77,9 @@ try {
     # WHY: Only update if the frontmatter block exists and contains last-reviewed.
     # Don't add frontmatter to files that don't have it — that's a human decision.
     if ($content -match 'last-reviewed:') {
-        $updated = $content -replace '(?m)^last-reviewed:.*$', "last-reviewed: $today"
+        # WHY [^\r\n]* and no trailing $: in .NET `.` matches \r and (?m)$ matches only before
+        # \n, so `.*$` also replaced the \r of a CRLF line. Same fix as update-reviewed.sh.
+        $updated = $content -replace '(?m)^last-reviewed:[^\r\n]*', "last-reviewed: $today"
         if ($updated -ne $content) {
             Set-Content $file_path $updated -NoNewline
         }

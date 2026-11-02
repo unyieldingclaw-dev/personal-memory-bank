@@ -19,6 +19,7 @@ echo "--- clean: hooks and libs both present → PASS, no output ---"
 touch "$TMPDIR_CHK/review-reminders.sh" "$TMPDIR_CHK/review-reminders.ps1"
 touch "$TMPDIR_CHK/_review-gate-lib.sh" "$TMPDIR_CHK/_review-gate-lib.ps1"
 touch "$TMPDIR_CHK/_review-gate-classify.py" "$TMPDIR_CHK/_review-gate-classify.ps1"
+touch "$TMPDIR_CHK/_review-gate-merge.py" "$TMPDIR_CHK/_review-gate-merge.ps1"
 out=$(bash "$CHECKER" "$TMPDIR_CHK"); rc=$?
 assert_exit_zero $rc "clean dir: checker exits 0"
 if [ -z "$out" ]; then
@@ -61,6 +62,21 @@ out=$(bash "$CHECKER" "$TMPDIR_CHK"); rc=$?
 assert_exit_nonzero $rc "missing PowerShell classifier: checker exits non-zero"
 assert_contains "$out" "_review-gate-classify.ps1 missing" "missing PowerShell classifier: error names the file"
 touch "$TMPDIR_CHK/_review-gate-classify.ps1"
+
+# ── Missing merge helpers: every merge would be denied instead of put to the user ─────
+echo ""
+echo "--- review-reminders hooks require their merge-gate helpers ---"
+rm -f "$TMPDIR_CHK/_review-gate-merge.py"
+out=$(bash "$CHECKER" "$TMPDIR_CHK"); rc=$?
+assert_exit_nonzero $rc "missing Python merge helper: checker exits non-zero"
+assert_contains "$out" "_review-gate-merge.py missing" "missing Python merge helper: error names the file"
+touch "$TMPDIR_CHK/_review-gate-merge.py"
+
+rm -f "$TMPDIR_CHK/_review-gate-merge.ps1"
+out=$(bash "$CHECKER" "$TMPDIR_CHK"); rc=$?
+assert_exit_nonzero $rc "missing PowerShell merge helper: checker exits non-zero"
+assert_contains "$out" "_review-gate-merge.ps1 missing" "missing PowerShell merge helper: error names the file"
+touch "$TMPDIR_CHK/_review-gate-merge.ps1"
 
 # ── -post variant alone also triggers the check (not just the non-post name) ─
 echo ""

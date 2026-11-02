@@ -50,6 +50,14 @@ Plugins are configured in `~/.claude/settings.json` under `enabledPlugins`.
 
 **Rule of thumb:** 3 plugins max. More plugins = more context loaded per session = slower, more expensive.
 
+### External skill-library guidance for PMB
+
+An external skill catalog (including Anthropic's Small Business library) is **not** a recommended PMB dependency merely because its skill architecture is interesting. PMB's plugin recommendations should remain focused on actual project-memory and review needs.
+
+Before recommending another skill to a PMB user, verify that it solves a concrete PMB task, that its description does not collide with existing PMB commands or installed skills, and that the client's actual routing works on both intended and neighboring requests. Treat new skills as optional until demonstrated; do not copy an entire external catalog or repeat shared security policy inside every skill.
+
+General skill-architecture research belongs in [Harness Engineering](https://github.com/unyieldingclaw-dev/harness-engineering) rather than PMB's permanent `memory-bank/systemPatterns.md`.
+
 ### Installing Plugins
 
 Claude Code downloads plugins automatically when listed in `enabledPlugins`. Just add the entry and restart.

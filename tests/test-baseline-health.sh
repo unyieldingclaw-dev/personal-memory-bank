@@ -45,24 +45,37 @@ trap cleanup EXIT
 # WHY the caller registers the sandbox rather than this function: every call site invokes this as
 # `X=$(new_sandbox)`, and command substitution runs the function in a SUBSHELL. An array append
 # performed in here is discarded when that subshell exits, so the parent's SANDBOXES stayed empty
-# and the cleanup trap iterated nothing — measured, five full repo clones (~80 MB) leaked per run.
+# and the cleanup trap iterated nothing — measured: every call site's full repo clone (~80 MB each)
+# leaked per run, not a fixed count worth restating here since it only grows as mutations are added.
 # The path is returned instead, and each call site appends it in the parent shell.
 new_sandbox() {
     local d main_oid
     d=$(mktemp -d) || return 1
-    git -C "$REPO_ROOT" clone -q "$REPO_ROOT" "$d/repo" 2>/dev/null || return 1
+    # WHY every failure below cleans up "$d" itself, rather than leaving that to the
+    # caller: $d already exists once mktemp succeeds, and every operation after it —
+    # clone, fetch, cat-file, update-ref, the ref-verify check, and both cp calls — can
+    # fail. The caller only learns $d's path on a SUCCESSFUL return (see the SUBSHELL
+    # note below), so a failure here has no path to hand off for cleanup; the leak has
+    # to be closed at the point of failure, not deferred to code that never runs.
+    git -C "$REPO_ROOT" clone -q "$REPO_ROOT" "$d/repo" 2>/dev/null || { rm -rf "$d"; return 1; }
     # Remote-tracking refs are not advertised by a clone source. In CI the checkout is detached,
     # so origin/main exists only as refs/remotes/origin/main and a nested clone silently loses it.
     # Fetch its object, then set and verify the ref separately: a direct refspec transfer from a
     # shallow source can reject the ref update while still returning success. This is local setup,
     # not a network fetch by baseline-health.sh, and keeps the --no-fetch ratchet meaningful.
     if main_oid=$(git -C "$REPO_ROOT" rev-parse --verify refs/remotes/origin/main 2>/dev/null); then
-        git -C "$d/repo" fetch -q --no-tags "$REPO_ROOT" "$main_oid" 2>/dev/null || return 1
-        git -C "$d/repo" cat-file -e "$main_oid^{commit}" 2>/dev/null || return 1
-        git -C "$d/repo" update-ref refs/remotes/origin/main "$main_oid" || return 1
-        [ "$(git -C "$d/repo" rev-parse --verify refs/remotes/origin/main 2>/dev/null)" = "$main_oid" ] || return 1
+        git -C "$d/repo" fetch -q --no-tags "$REPO_ROOT" "$main_oid" 2>/dev/null || { rm -rf "$d"; return 1; }
+        git -C "$d/repo" cat-file -e "$main_oid^{commit}" 2>/dev/null || { rm -rf "$d"; return 1; }
+        git -C "$d/repo" update-ref refs/remotes/origin/main "$main_oid" || { rm -rf "$d"; return 1; }
+        [ "$(git -C "$d/repo" rev-parse --verify refs/remotes/origin/main 2>/dev/null)" = "$main_oid" ] || { rm -rf "$d"; return 1; }
+        # The nested clone's origin initially points to REPO_ROOT, where the local main branch
+        # may lag behind origin/main. The script's normal `git fetch origin main` would then
+        # replace this correct baseline with that stale local main. Keep the fetch local and
+        # deterministic by making this sandbox advertise the captured origin/main as main.
+        git -C "$d/repo" update-ref refs/heads/main "$main_oid" || { rm -rf "$d"; return 1; }
+        git -C "$d/repo" remote set-url origin "$d/repo" || { rm -rf "$d"; return 1; }
     fi
-    cp "$SCRIPT" "$d/repo/scripts/baseline-health.sh" || return 1
+    cp "$SCRIPT" "$d/repo/scripts/baseline-health.sh" || { rm -rf "$d"; return 1; }
     # The clone carries COMMITTED state. The script is copied in above precisely
     # because of that — and the workflow it extracts from needs identical
     # treatment, which it was not getting. MEASURED 2026-09-08: mutation 8 failed
@@ -71,7 +84,7 @@ new_sandbox() {
     # no workflow change can be tested until after it is committed, which inverts
     # the point of a mutation suite: the one edit you most want to prove is the
     # one edit the harness cannot see.
-    cp "$REPO_ROOT/.github/workflows/pmb-health.yml" "$d/repo/.github/workflows/pmb-health.yml" || return 1
+    cp "$REPO_ROOT/.github/workflows/pmb-health.yml" "$d/repo/.github/workflows/pmb-health.yml" || { rm -rf "$d"; return 1; }
     printf '%s' "$d"
 }
 
@@ -144,17 +157,6 @@ assert_contains "$out" "Nothing was verified" "workflow absent: says plainly tha
 assert_not_contains "$out" "baseline-health: PASS" "workflow absent: never reports a pass"
 
 # ---------------------------------------------------------------------------
-# 7. The step list must stay in sync with the workflow. This is what catches a
-#    rename in the REAL repo before it reaches a review — mutation 3 proves the
-#    script reacts, this proves the current pairing is actually correct.
-# ---------------------------------------------------------------------------
-# ANTI-VACUITY FLOOR, and it is the point of this block rather than a nicety. The enumeration
-# anchors on the literal `STEPS=(`. Rename the array and the sed matches nothing, the loop never
-# runs, `missing` keeps its initial 0, and the block reports success having checked zero entries —
-# measured, not theorised. Pinning the count to a literal makes that failure loud. It also means
-# adding an entry to STEPS deliberately fails this test until the number here is updated: the count
-# IS the assertion.
-# ---------------------------------------------------------------------------
 # 6. MUTATION — a DUPLICATE step name. This is the one that mattered: step names
 #    are not required to be unique by YAML, so a second step with a tracked name
 #    is legal in a workflow GitHub accepts. The extractor matches by name and
@@ -181,6 +183,66 @@ assert_contains "$out" "AMBIGUOUS STEP NAME" "duplicate step name: says the name
 assert_contains "$out" "Credential grep" "duplicate step name: names the ambiguous step"
 assert_not_contains "$out" "INJECTED_BODY_EXECUTED" "duplicate step name: the smuggled body never runs"
 assert_not_contains "$out" "baseline-health: PASS" "duplicate step name: never reports an overall pass"
+
+# ---------------------------------------------------------------------------
+# 6b. MUTATION — the same duplicate-name guard, but the decoy is written in YAML
+#     flow-mapping style rather than block style. A plain exact-line grep for
+#     "      - name: <step>" only ever matches block style, so a flow-style decoy
+#     was invisible to the old guard: count stayed 1, AMBIGUOUS STEP NAME never
+#     fired. The raw extractor cannot interpret this step, so refuse the workflow.
+#     It must fail closed even when Python/PyYAML are unavailable.
+# ---------------------------------------------------------------------------
+SBX_D=$(new_sandbox) || { echo "  FAIL: could not create sandbox"; print_summary; exit 1; }
+SANDBOXES+=("$SBX_D"); SBX="$SBX_D/repo"
+cat >> "$SBX/.github/workflows/pmb-health.yml" <<'YAML'
+
+  decoy-job:
+    name: Decoy
+    runs-on: ubuntu-latest
+    steps:
+      - { name: "Check file sizes", run: "echo INJECTED_BODY_EXECUTED" }
+YAML
+out=$(run_in "$SBX"); rc=$?
+assert_equals "$rc" "3" "flow-style duplicate: exits 3 rather than reporting a clean tree"
+assert_contains "$out" "UNSUPPORTED FLOW-STYLE STEP" "flow-style duplicate: explains why extraction stopped"
+assert_not_contains "$out" "INJECTED_BODY_EXECUTED" "flow-style duplicate: the smuggled body never runs"
+assert_not_contains "$out" "baseline-health: PASS" "flow-style duplicate: never reports an overall pass"
+
+# 6c. An anchor before the flow mapping is valid YAML and must not evade the guard.
+SBX_D=$(new_sandbox) || { echo "  FAIL: could not create sandbox"; print_summary; exit 1; }
+SANDBOXES+=("$SBX_D"); SBX="$SBX_D/repo"
+cat >> "$SBX/.github/workflows/pmb-health.yml" <<'YAML'
+
+  decoy-job:
+    name: Decoy
+    runs-on: ubuntu-latest
+    steps:
+      - &decoy { name: "Check file sizes", run: "echo INJECTED_BODY_EXECUTED" }
+YAML
+out=$(run_in "$SBX"); rc=$?
+assert_equals "$rc" "3" "anchored flow-style duplicate: exits 3"
+assert_contains "$out" "UNSUPPORTED FLOW-STYLE STEP" "anchored flow-style duplicate: reports the unsafe format"
+assert_not_contains "$out" "baseline-health: PASS" "anchored flow-style duplicate: never reports a pass"
+
+# 6d. Flow-like text inside a run block is scalar data, not a step entry.
+SBX_D=$(new_sandbox) || { echo "  FAIL: could not create sandbox"; print_summary; exit 1; }
+SANDBOXES+=("$SBX_D"); SBX="$SBX_D/repo"
+cat >> "$SBX/.github/workflows/pmb-health.yml" <<'YAML'
+
+  decoy-job:
+    name: Decoy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Data, not a tracked check
+        run: |
+          cat <<'TXT'
+          - { name: "Check file sizes", run: "echo INJECTED_BODY_EXECUTED" }
+          steps: [ data ]
+          TXT
+YAML
+out=$(run_in "$SBX"); rc=$?
+assert_equals "$rc" "0" "flow-like run data: exits 0"
+assert_contains "$out" "baseline-health: PASS" "flow-like run data: tracked checks still run"
 
 # ---------------------------------------------------------------------------
 # 8. MUTATION - DETECTION EFFICACY, a different question from every mutation
@@ -398,12 +460,15 @@ assert_not_contains "$out" "SKIP:  origin/main baseline unavailable" "--no-fetch
 
 WF="$REPO_ROOT/.github/workflows/pmb-health.yml"
 
-# ANTI-VACUITY FLOOR, and it is the whole point of this block rather than a nicety. The enumeration
-# anchors on the literal STEPS=( . Rename that array and the extraction matches nothing, the loop
-# below never executes, missing keeps its initial 0, and the block reports success having checked
-# zero entries — measured, not theorised. Pinning the count to a literal makes that failure loud.
-# It also means deliberately adding an entry to STEPS fails this test until the number here is
-# updated: the count IS the assertion, not bookkeeping around it.
+# ---------------------------------------------------------------------------
+# 7. The step list must stay in sync with the workflow. This is what catches a
+#    rename in the REAL repo before it reaches a review — mutation 3 proves the
+#    script reacts, this proves the current pairing is actually correct.
+# ---------------------------------------------------------------------------
+# ANTI-VACUITY FLOOR, and it is the whole point of this block rather than a nicety. Without one,
+# renaming the literal STEPS=( anchor makes the extraction match nothing, the loop below never
+# executes, missing keeps its initial 0, and the block reports success having checked zero
+# entries — measured, not theorised.
 #
 # grep -oE + tr rather than a sed backreference: the backreference was silently lost in transit
 # once already while editing this file, leaving an empty replacement that made the enumeration
@@ -413,8 +478,38 @@ steps_of() {
     sed -n '/^STEPS=(/,/^)/p' "$1" | grep -oE '"[^"]+"' | tr -d '"'
 }
 
+# native_steps_count — an independent count of the SAME STEPS array, derived by letting bash
+# itself parse the extracted array literal rather than re-running steps_of()'s own sed/grep/tr
+# pipeline. Comparing the two below is what proves steps_of() isn't silently vacuous, without
+# pinning the expected count to a hand-typed literal that goes stale every time an entry is
+# added to or removed from STEPS — the previous version of this floor compared $enumerated
+# against a bare "7", which this replaces.
+#
+# WHY `local STEPS=()` before the eval, not left implicit: both functions share the same
+# `sed -n '/^STEPS=(/,/^)/p'` boundary, so this only proves the TWO PARSERS agree, not that
+# either is reading the right span — an anchor rename makes both extractions empty, and without
+# an explicit local declaration here, `${#STEPS[@]}` on a never-declared array throws under this
+# file's `set -u` instead of reading 0, so the two sides happened to disagree (0 vs error) by
+# accident rather than by design. Declaring `local STEPS=()` first removes that accident — the
+# eval of an empty extraction now leaves a genuine empty array, so both sides read a real 0 and
+# agree — which is exactly why the explicit `-gt 0` floor below is required together with it, not
+# instead of it: agreement alone no longer catches the anchor-rename case once the accidental
+# protection is gone.
+native_steps_count() {
+    local -a STEPS=()
+    local steps_text
+    steps_text=$(sed -n '/^STEPS=(/,/^)/p' "$1")
+    eval "$steps_text"
+    echo "${#STEPS[@]}"
+}
+
 enumerated=$(steps_of "$SCRIPT" | grep -c .)
-assert_equals "$enumerated" "7" "test 6 enumerated all 7 STEPS entries (0 here would mean this test checked nothing)"
+native_count=$(native_steps_count "$SCRIPT")
+assert_equals "$enumerated" "$native_count" "test 7: steps_of()'s count agrees with bash's own array-length parse of the same STEPS literal"
+# Separate from the agreement check above on purpose: two parsers sharing the same STEPS=(
+# boundary would agree at 0 just as readily as at 7 if that boundary broke, so agreement alone
+# is not the anti-vacuity floor — this is.
+assert_equals "1" "$([ "$enumerated" -gt 0 ] && echo 1 || echo 0)" "test 7: the agreed count is non-zero (0 here would mean this test checked nothing)"
 
 missing=0
 while IFS= read -r step; do

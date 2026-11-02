@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Example .githooks/format-check for a Node repo that formats with prettier. Copy this file AND
+# format-check.mjs into your repo's .githooks/ to opt in; see PMB's docs/HOOKS-GUIDE.md.
+#
+# .githooks/pre-commit runs this with bash, from the top of the working tree, with the staged
+# regular files on stdin, NUL-terminated. Exit 0 lets the commit through; anything else refuses it.
+
+if ! command -v node > /dev/null 2>&1; then
+  echo "WARNING: node is not on PATH -- skipping the local format check. CI's format check still runs."
+  exit 0
+fi
+# node, not npx: npx can fall back to a global prettier of another version, and its Windows shims
+# mangle file names (npx.ps1 drops them, npx.cmd splits them at "&").
+exec node .githooks/format-check.mjs

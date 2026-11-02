@@ -1,7 +1,7 @@
 ---
 status: open
 created: 2026-09-22
-last-reviewed: 2026-09-22
+last-reviewed: 2026-09-29
 staleness-threshold: 90d
 related_plan: null
 ---
@@ -12,9 +12,13 @@ related_plan: null
 not fixed. The rule "this agent never merges pull requests" is enforced only for commands that the
 review-gate classifier labels MERGE, and several ways of asking `gh` to merge are not labelled that
 way. (The file name keeps the slug it was created with, which named only part of the class.)
+Two more families were measured on 2026-09-25 at `739f0eb`, after a peer session in an adopter
+repository reported them; they are the last two table rows and are marked with that date.
 
 **What decays here, and what to re-verify before relying on it:**
-- **Line numbers** were checked at `ac63ccb` and drift with any edit.
+- **Line numbers** were checked at `ac63ccb` and drift with any edit. The ones added 2026-09-25
+  (`.py:39/54/229`, `.ps1:20/34/35`) were checked at `739f0eb`; `git diff ac63ccb 739f0eb` over both
+  classifiers is empty, so all cites agree at either commit.
 - **Machine-local, untracked configuration**, which has no history to diff against.
 - **Version-gated tool behaviour**: measurements were taken with the `gh` and Claude Code versions
   installed on one machine on 2026-09-22.
@@ -52,6 +56,8 @@ no merge was attempted.
 | A PowerShell string-evaluation wrapper around a `gh pr merge` | no decision, both twins | no decision |
 | The same, via the short alias | no decision, both twins | no decision |
 | A process-launcher call with the merge in its argument list | no decision, both twins | no decision |
+| A leading wrapper spelled with a path or `.exe` (`/usr/bin/env gh pr merge …`, `env.exe …`), 2026-09-25 | **`.sh` no decision; `.ps1` denies** | no decision |
+| A **quoted** environment assignment before `gh` (`"FOO=bar" gh pr merge …`), 2026-09-25 | no decision, both twins | no decision |
 
 - **"No decision"** means empty stdout with exit 0. The call then goes on to the normal permission
   flow, which is not the same as being allowed (see below).
@@ -60,6 +66,16 @@ no merge was attempted.
   makes no decision. On gh 2.92.0, `gh PR list`, `gh Pr list` and `gh pr LIST` all exit with
   `unknown command`. This is a parity and test-topology gap in synthetic hook input, not evidence
   that an adopter without pwsh can merge using a mixed-case subcommand.
+- **The 2026-09-25 rows** come from `hook-probe-wrappers.py` and `.out` in the artifacts directory,
+  same four hooks, both tool names, identical verdicts under each. Unlike the case variant, the
+  path-qualified wrapper is an ordinary, working spelling, so it is a real `.sh`-side escape and
+  not only a parity gap. Two controls in the same run were denied by both twins: the bare `env`
+  wrapper, and `gh "pr" "merge" 45` with the subcommand tokens quoted.
+- **Quoting a global option is not a new escape, but it constrains the fix.** `gh "-R" "o/r" pr
+  merge 45` gets no decision from either twin — but so does the unquoted form, which is already
+  row 3. Measured against the Python classifier directly: `FOO=bar gh pr merge 45` is MERGE and
+  `"FOO=bar" gh pr merge 45` is NONE, while `-R` gives NONE quoted or not. So the quoted assignment
+  is new; the quoted option only means fix step 1 must strip quotes before it tests a token's shape.
 - **The classifier's match breaks for *any* flag-shaped token before the subcommand.** That is the
   part that matters here, it is what the table records, and it has reproduced in every probe run.
   Whether gh would then *run* the command is a separate question, and a treacherous one — see
@@ -112,6 +128,14 @@ no merge was attempted.
     pwsh path (`review-reminders.ps1:68` dot-sources it).
 - **Only the REST merge path is matched** (`.py:305`, `.ps1:139`). The GraphQL route is not.
 - **Neither classifier unwraps PowerShell string-evaluation or process-launch wrappers.**
+- **Only `.ps1` normalizes a leading wrapper's spelling.** Both files have a basename helper that
+  strips quotes, a path and `.exe` and folds case (`.py:54` `basename()`, `.ps1:20`
+  `Get-ReviewGateBaseName`). `.ps1:35` applies it when skipping wrappers; `.py:229`
+  (`leading_executable`) only strips quotes and tests membership in `WRAPPERS` (`.py:39`), so
+  `/usr/bin/env` is taken as the executable and the merge behind it is never examined.
+- **Both twins test an assignment on the raw, still-quoted token** (`ASSIGNMENT.match(t)` at
+  `.py:229`; the `-match` at `.ps1:34`), so a quoted `NAME=value` is not skipped and becomes the
+  executable.
 - **The raw-text fallbacks** (`review-reminders.sh:154`, `.ps1:81`) run when the classifier does not
   return a verdict at all — `python3` missing, the classifier file missing, or malformed JSON
   (`review-reminders.sh:126-127`, `.ps1:74-85`). A confident but wrong NONE never reaches them.
@@ -132,7 +156,9 @@ no merge was attempted.
   canonical, REST and MULTI cases. `templates/` has no test tree at all (`find templates -iname
   "*test*"` returns one unrelated command doc). The wrapper forms are uncovered too:
   `grep -rn "Invoke-Expression" tests/`, `grep -rnw "iex" tests/` and `grep -rn "Start-Process"
-  tests/` each returned nothing.
+  tests/` each returned nothing. So are the 2026-09-25 families: searching `tests/` for a
+  path-qualified `env`/`sudo`, `env.exe`, or a quoted `NAME=value` token found only shebang lines
+  and unrelated shell assignments.
 - **A note on searching for the wrapper names.** `dangerous-commands.ps1:253-256` denies a command
   whose text contains a pipe-adjacent spelling of the two PowerShell eval names — those four
   patterns cover `Invoke-Expression` and `iex` only, not `Start-Process`, which appears in no block
@@ -208,7 +234,13 @@ contract, and a full `/code-review` and `/change-review`.
    carry one inline after `=`** — otherwise `gh --squash=true pr merge 45` loses `pr` to the skip
    and the merge is missed again (measured above). A separate value token cannot be distinguished
    from a subcommand by shape alone, which is the strongest argument for the alternative: treat a
-   `gh` invocation carrying pre-subcommand flags as unanalyzable and deny it.
+   `gh` invocation carrying pre-subcommand flags as unanalyzable and deny it. Either way, **strip
+   quotes before testing a token's shape**, or `"-R"` passes as a subcommand-shaped word.
+   - In `leading_executable`, compare `basename(t)` against `WRAPPERS`, as `.ps1` already does, and
+     test an assignment on the quote-stripped token in **both** twins. Both are real, but neither
+     closes a larger escape both twins share: a wrapper's own options (for example `nice -n 5` or
+     `env -i` ahead of the guarded command) make both classifiers return NONE for a commit, a push
+     or a merge.
 2. Match the subcommand case-insensitively on the Python side for classifier parity. The measured
    gh CLI rejects mixed-case subcommands, so this is hardening, not an executable merge bypass.
 3. Classify a `gh api graphql` call carrying a merge mutation as MERGE.
@@ -234,27 +266,27 @@ contract, and a full `/code-review` and `/change-review`.
    them destructively (see the note at the end of this step). What follows is measured state, which
    the spec needs as input; the mechanism is the spec's to choose.
    - **Measured: the Python classifier has no CI-enforced unit coverage; the PowerShell one does.**
-     `tests/run.sh` registers suites as 26 hand-maintained `run_suite` lines (`:20-45`, and `:48`
-     says so), each invoking `bash "$script"` (`:15`). A separate completeness check (`:66-83`)
-     fails the run when a tracked `tests/test-*.sh` is not registered — it globs that pattern only
-     (`:68`). CI's Pester job runs `Invoke-Pester -Path "tests/"`, which picks up
-     `tests/review-gate-classifier.Tests.ps1`. Nothing in CI or `tests/run.sh` reaches
-     `tests/test_classify.py`, `tests/test_classifier_coverage.py` or `tests/gate_matrix.py`:
-     searching `.github/`, `scripts/`, `.claude/` and `tests/` for those three names finds only
+     `tests/run.sh` runs every tracked `tests/test-*.sh`, each with `bash "$script"`. Since PR #106
+     it enumerates them with `git ls-files` and there is no registration step; that PR retired the
+     hand-kept `run_suite` list and the completeness check this step once cited. CI's Pester job
+     runs `Invoke-Pester -Path "tests/"`, which picks up `tests/review-gate-classifier.Tests.ps1`.
+     Nothing in CI or `tests/run.sh` reaches `tests/test_classify.py`,
+     `tests/test_classifier_coverage.py` or `tests/gate_matrix.py`: searching `.github/`, `scripts/`, `.claude/` and `tests/` for those three names finds only
      their own lines plus `tests/mutate.py:130,133`, and `grep -rniE "pytest|python" .github/`
      returns nothing. `gate_matrix.py` does have one caller, `tests/mutate.py:133`, but
      `grep -rn "mutate\.py"` over the repo returns only this backlog file — so that caller is
      itself invoked by nothing and the chain dead-ends.
      The Python classifier does have end-to-end coverage via `tests/test-review-reminders.sh`
-     (registered at `run.sh:33`); what it lacks is unit-level coverage — and it is exactly where
+     (run by `tests/run.sh`); what it lacks is unit-level coverage — and it is exactly where
      the letter-case classifier split lives.
    - **Neither obvious wiring route works as-is**, which is why this is the spec's problem:
      `run_suite` runs `bash`, so a `.py` suite fails immediately; `test_classifier_coverage.py:13`
      takes the classifier path as `sys.argv[1]`, which `run_suite` cannot supply; and neither
      Python file defines a `test_` function, so pytest collects nothing from either. Whatever route
-     is chosen, note that the `:68` completeness check can never match an underscore-named `.py`
-     file, so new Python coverage sits outside the one guard this repo built against a suite that
-     is never invoked — the failure mode `run.sh:48-53` records being bitten by three times.
+     is chosen, note that `tests/run.sh`'s `tests/test-*.sh` enumeration can never match an
+     underscore-named `.py` file, so new Python coverage sits outside the one mechanism this repo
+     built against a suite that is never invoked — the failure mode its enumeration comment records
+     being bitten by three times.
    - **`tests/gate_matrix.py` must not simply be "wired in".** It refuses to run without
      `--yes-rewrite-history-in-this-throwaway-clone` (`:55-67`) because it rewrites history in
      whatever tree it is given: it commits the working tree under a fabricated author, moves the
@@ -265,10 +297,11 @@ contract, and a full `/code-review` and `/change-review`.
    - **Three acceptance criteria that hold whichever topology the spec picks.** Deferring the
      decision is not the same as deferring the success criterion, and each of these closes a
      green-by-absence mode that survives any choice of mechanism:
-     - Adding a tracked suite of the chosen type and *not* registering it must make `tests/run.sh`
-       fail. Today the completeness check (`:66-83`) globs `tests/test-*.sh` only, so it cannot
-       reach an underscore-named `.py`; on the PowerShell side there is no completeness check at
-       all, and `Invoke-Pester` discovers `*.Tests.ps1` by naming convention.
+     - A tracked suite of the chosen type must run with no registration step, or a missing
+       registration must make `tests/run.sh` fail. A tracked `tests/test-*.sh` already runs that
+       way (PR #106), but the enumeration cannot reach an underscore-named `.py`; on the
+       PowerShell side there is no completeness check at all, and `Invoke-Pester` discovers
+       `*.Tests.ps1` by naming convention.
      - A `templates/` twin that drifts from its `scripts/` original must make the suite fail. See
        step 8 — this is currently an instruction with no test behind it.
      - An end-to-end merge-form case must pin **which** verdict path produced its result. Measured:
@@ -286,12 +319,13 @@ contract, and a full `/code-review` and `/change-review`.
      suite `tests/test-review-reminders.sh`, which exercises both twins.
    - **What the wrapper forms need is production fidelity, not a single suite.** Both classifiers
      are reachable by command text alone, so both need unit cases. What differs is faithfulness:
-     in production a wrapper arriving as a `PowerShell` tool call never reaches the `.sh` twin
-     (`.claude/settings.json`'s `PowerShell` matcher has no bash fallback), so only the `.ps1` path
-     is end-to-end-faithful for it — `review-gate-classifier.Tests.ps1` at the classifier level and
+     in production a wrapper arriving as a `PowerShell` tool call normally reaches only the `.ps1`
+     twin (since 2026-10-30 the `PowerShell` matcher falls back to the `.sh` twin, but only when the
+     `.ps1` is missing, `pwsh` is absent, or `pwsh` fails before reading stdin), so the `.ps1` path
+     is the end-to-end-faithful one for it — `review-gate-classifier.Tests.ps1` at the classifier level and
      `tests/test-review-reminders.sh`'s `invoke_hook_ps1` (`:37-41`, already used against the merge
      gate at `:200-213`) at the hook level. A Python-side wrapper case tests a path production
-     never takes; it is defence in depth, not the assertion that matters.
+     takes only on that degraded fallback; it is defence in depth, not the assertion that matters.
    - **`tool_name` is not the mechanism.** It is read by neither classifier and neither hook
      (`grep -n "tool_name"` across all four returns nothing, and both probes return identical
      verdicts under either value), and `tests/test-review-reminders.sh` omits the field entirely.
@@ -311,10 +345,24 @@ contract, and a full `/code-review` and `/change-review`.
 
 ## Related
 
-`docs/backlog/replace-the-gh-pr-merge-deny-with-a-forced-permiss.md` proposes loosening this same
-gate and must not proceed before this fix.
+`docs/backlog/replace-the-gh-pr-merge-deny-with-a-forced-permiss.md` proposed loosening this same
+gate, and said it must not proceed before this fix.
+- **That ordering was overridden on 2026-10-20, with the user's approval.** The canonical form now
+  gets a permission prompt (`docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`).
+  That change widens none of the escapes in this item, because they are classified as not-a-merge
+  either way.
+- **This item stays open.** Two more routes were found while designing that change:
+  - **The desktop app's auto-merge tool**, `mcp__ccd_pr__set_auto_merge`. It is not a Bash call,
+    so no review-gate hook sees it. PMB's settings now deny it.
+  - **A git alias that shells out**, `git -c alias.x='!gh pr merge …' x`. It classifies as
+    `NONE` (measured 2026-10-20), and it may match `Bash(git *)`.
+- **Correction to "Which checkout matters" above.** Linked worktrees **do** carry their own
+  `settings.local.json`: 29 of 38 on this machine on 2026-10-20.
 
 This file owns, and that one does not restate: how the classifiers match, the measured table, the
 auto-mode observation, the adopter reach, and the branch-protection settings. That item does carry
 a one-line summary of which forms escape, so that its own argument can be read without this file
 open — if the table changes, that summary is the one place to check. Also [NS-25], [NS-26], [NS-43].
+
+`docs/backlog/powershell-matcher-hooks-have-no-bash-fallback-so.md` owned the `PowerShell` matcher's
+missing bash fallback, which the Fix outline above mentions in passing (resolved 2026-10-30).

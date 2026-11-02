@@ -182,6 +182,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# extract_step only understands block-style steps. Refuse flow-style entries, including ones
+# prefixed by an anchor, tag, or alias, before the exact-line duplicate check below.
+# Match step indentation: a run: | body may legitimately contain the same text as shell data.
+if grep -Eq '^      -[[:space:]]*[{&*!]|^    steps:[[:space:]]*\[' "$WORKFLOW"; then
+    echo "baseline-health: UNSUPPORTED FLOW-STYLE STEP in $WORKFLOW"
+    echo "  Step names cannot be verified safely; nothing ran. Use block-style steps."
+    exit 3
+fi
+
 for step in "${STEPS[@]}"; do
     # WHY uniqueness is checked BEFORE extraction, and separately from emptiness:
     # extract_step matches on the step name and is not job-scoped, so a second step with the same
@@ -190,6 +199,7 @@ for step in "${STEPS[@]}"; do
     # GitHub accepts, and the resulting body is non-empty, which means the emptiness guard below
     # passes it. That combination executes content nobody intended, under a known check's name,
     # and still reports PASS. The emptiness guard cannot catch it; only a count can.
+    #
     matches=$(grep -Fxc "      - name: ${step}" "$WORKFLOW" || true)
     if [ "${matches:-0}" -eq 0 ]; then
         echo ""

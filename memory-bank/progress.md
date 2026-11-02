@@ -4,7 +4,7 @@ review-cycle: 30d
 retention: archive-after-6m
 staleness-threshold: 90d
 tags: [work/completed, work/in-progress, work/backlog]
-last-reviewed: 2026-09-22
+last-reviewed: 2026-10-31
 compaction_generation: 0
 source_type: canonical
 confidence: high
@@ -13,81 +13,121 @@ lineage: []
 
 # Progress
 
-## 2026-09-21 — Next-Steps audit; NPM_TOKEN resolved; false "unmerged" claims found
+## 2026-10-31 — PR #111 (`2e1bd4e`): `mb upgrade` merges `settings.json` permissions
 
-Set out to verify all 50 active `[NS-N]` entries against live state, not their own text (8 batches +
-a 9th fixing a self-caught gap). **Blind spot, found by a 2nd opposition round: grepping for
-"unmerged"-style phrasing missed 2 entries stale in different words** — `[NS-8]` (`mb.sh` no longer
-hardcodes; deleted) and `[NS-29]` (both agents have had `model:` since 2026-08-26; corrected to keep
-only the real `effort:` gap). `[NS-11]` resolved — ACR's OIDC migration removed `NPM_TOKEN`
-(ACR `cd57cf5`, `CHANGELOG.md` v1.12.1). `[NS-41]`/`[NS-45]`/`[NS-43]`(b) falsely claimed "unmerged"
-work already live on `main`, found by
-grep, deleted/trimmed. Other corrections: `[NS-4]` branches both live, pure cleanup; `[NS-42]` write
-rate dropped ~92%, gap still open; `[NS-25]` reproduced live twice, raised; `[NS-17]` NOT actually
-resolved; `[NS-16]` dropped sub-item restored.
+Closes `[NS-50]`(a), unblocks ACR (`[NS-14]`). Follow-ups: its PR body.
 
-**`[NS-13]` corrected twice.** Deleted on a shallow check, restored by 3 domain reviewers as
-"unmerged work" via `git merge-base --is-ancestor` — opposition proved that test false-negatives in
-this shallow, squash-merged repo. Content-diffed instead: **zero** novel files (vs. `[NS-3]`'s 7,
-`[NS-18]`'s 6), 26,347 deletions *behind* main. Real state: hook never implemented anywhere, only
-artifact an uncommitted plan edit. Root cause: `code-review.md` missing `--no-fetch` (`[NS-55]`, 3rd
-hit) — fixed, but the first attempt missed its `templates/claude-commands/` mirror; `tests/test-mirror-parity.sh`
-caught the drift before merge (would've shipped red CI, self-reverting via `mb upgrade`). Both copies
-now identical. `[NS-33]`'s stash cite hardened too — a prior `stash@{0}` cite is already a different
-stash today; now keyed off message. **Cross-session:** `mb upgrade` force-overwrite confirmed for the
-ACR peer, deferred; "Token waste audit" peer answered, their hardcoded-caps finding logged `[NS-57]`.
+## 2026-10-30 — PRs #99–#103 (`mb --dry-run`/`mb update`) and #67 (`[NS-59]`) merged
 
-## 2026-09-21 — `ai-review.config.json` test guard ships (PR #40); mid-session data-loss recovery
+- **#99 (`73048b2`) – #102 (`d7f2450`):** `mb` refuses `--dry-run` except on `upgrade` (and mb.sh's `update` alias),
+  which honour it in any position; the chat shortcut is now "update memory bank", the CLI keeps `mb update`. Detail: PR bodies.
+- **#103 (`dd4b532`):** cleanup, test pins; its PR body's "Non-blocking follow-ups" are open.
+- **#67 (`2b8a9fc`):** Pre-Approval Protocol trial. **The user owns the 2026-11-16 `PA_TRIAL_EXPIRES` decision:
+  promote it to `templates/` or withdraw it.** First steps: `[NS-59]`.
 
-Built `tests/test-ai-review-config.sh` (20 assertions, closes the loop `[NS-48]` opened) asserting only
-on ACR's deterministic `policy`/`filteredFiles` fields, never finding content (non-deterministic: 3/4 runs
-of the identical diff found nothing, 1 found `high`).
+## 2026-10-29 — PR #78 merged; v1.3.0 released; merge-aware review spec merged
 
-**Mid-session data loss:** `git checkout -- <file>` on a file only ever `git add -N`'d (intent-to-add, no
-blob) reverted it to 0 bytes, not prior content — destroyed a fully-reviewed ~411-line draft with no
-backup/stash/reflog trace. Reconstructed from conversation memory. General git pitfall, not PMB-specific.
+- **PR #78 (`6ecda5a`, 2026-10-27):** the ps1 review-gate classifier compares ordinally; two measured commits
+  that got NONE from the ps1 hook are now denied. New `tests/test-review-gate-classify-parity.sh`. Detail,
+  open follow-ups and the still-incomplete list: `[NS-68]`, `changelog.d/fix-review-gate-classify-ordinal.md`,
+  the PR body's "Follow-ups" and `docs/backlog/review-gate-classifier-gaps-beyond-culture-compari.md`. PR #104
+  (open; replays closed #90) stacks test and guard hardening on it. After approval it took seven merges from `main` (two made
+  by GitHub's "Update branch"), one merge reconciling two parallel syncs of the same `main` tip, and one fragment
+  commit (`gh pr view 78 --json commits`, parents via `git log -1 --format=%p`). The PR body is stale: it lists
+  four merges and records reviews for three. This is the cost PR #92 targets; its §6 step 4 would count syncs like these (its own #78 baseline lists three).
+- **PR #92 (`76a8491`):** the merge-aware review-gate spec,
+  `docs/superpowers/specs/2026-10-23-merge-aware-review-budget-design.md`; the user's decisions are its §7.
+  Fragments (PR #97) and the release (PR #96) came out of it; the gate itself is `[NS-70]`.
+- **v1.3.0 (annotated tag `v1.3.0` on `2ae44a6`, PR #96):** the first release since 1.2.1. Notes:
+  `docs/archive/changelog-1.3.0.md`. PR #97 (`8d21b56`) moved release notes into per-PR fragments in
+  `changelog.d/`. PR #78 is not in the tag; its fragment ships in the next release.
+- The 2026-09-11 section moved verbatim to `docs/archive/` to fund this entry (stub below).
 
-CI-enforcement scope, array-symmetry correction: see commit `cf301a0` (not restated, per `[NS-42]`).
+## 2026-10-23 — PR #85 merged (`c2a5d1c`): merge-gate follow-ups; their sessions; an ACR timeout
 
-## 2026-09-19 — `ai-review.config.json` ships NS-48; first draft was a near-miss
+- What changed, the verification figures and the /change-review conditions: the PR #85 body and the messages of
+  `73deeeb`, `dadda3e`, `3439d4b` and `208ab36`. The gate merged its own PR (the user clicked Allow; logged in
+  `.claude/merge-asks.log`). Open conditions and owners: `[NS-65]`.
+- Also 2026-10-23: `[NS-58]` got an owner; ACR 1.15.0's ~307 s "fetch failed" is undici's 300 s headersTimeout
+  (`[NS-48]`).
 
-First draft dropped `memory-bank/**`/`docs/**` from NS-48's own plan — caught by 2 domain reviewers
-plus a peer's live ACR run reproducing 3 hallucinated findings on real `activeContext.md` prose.
-Revised to restore those excludes plus `templates/docs/**`, narrow `fixtures/security/**` to its
-README, and empirically confirm (live runs, not grep) `.claude/commands/security-review.md` and
-`.claude/agents/security-reviewer.md` are safe to admit. Grep alone missed that narrative prose,
-not just code fences, triggers the misread. **Round 2:** same gap on `templates/memory-bank/**`
-— reproduced live (one run hit `high`); `examples/**` mirror added by analogy, confirmed via policy
-check only.
+## 2026-10-23 — PR #81 merged: the merge deny became a user-clicked permission prompt
 
-## 2026-09-19 — NS-44 design (PR #33); NS-55 opened; write-rate fix confirmed insufficient
+- Detail and open items (G1-G3; `327c6c2`, rebased as `73deeeb`, merged in PR #85): `[NS-65]` in `activeContext.md`; spec
+  `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`.
 
-Design narrative in commit `31ad347`/PR body; shallow-clone mechanism in `[NS-55]` — not restated. Recorded here:
-- `[NS-37]`/`[NS-51]`/`[NS-53]` verified genuinely done (PRs #25/#28 `MERGED`, fixes present in code) — evicted to fund this entry plus `[NS-44]`/`[NS-55]` inside the zero-margin ratchet.
-- The write-rate fix ("stop restating commit messages") is correct but insufficient: this entry is compliant and still cost bytes against a ratchet at exactly 0 margin. `[NS-42]` remains open.
+## 2026-10-20 — PRs #77 (`1b086c7`) and #58 (`25515a2`) merged
 
-## 2026-09-19 — Review-gate marker writes intermittently vanish; a platform classifier, not a repo hook
+- **#77:** the review gate's empty-diff denial now names the root it checked (`review-reminders` sh/ps1 + templates
+  mirrors); J5-1 path pinned in `tests/test-review-reminders.sh`. Merged 2026-10-19.
+- **#58:** `docs/CLAUDE-CODE-PLUGINS.md` limits external skill-library guidance to actual plugin choices.
 
-Two sessions hit the same symptom today on different gates: `opposition` reports writing
-`.claude/.code-review-ok`/`.change-review-ok` with a verified hash, but the file is absent moments
-later — no `.claimed` residue, no `.pending-commit-presha`, diff unchanged. Repo hooks show no such
-mechanism. **Likely cause**: asked an opposition subagent to mint a marker from synthetic (non-diff)
-content — it correctly refused; a separate step it tried was denied: "Permission for this action was
-denied by the Claude Code auto mode classifier. Reason: [Auto-Mode Bypass]" — a harness-level
-classifier above any repo hook that can intercept actions pattern-matching "minting a security
-certificate." Explains the intermittency and why an unrelated file write persists while a
-hash-into-`.code-review-ok` sometimes silently doesn't. Only the loud/denial variant reproduced; the
-silent one couldn't be forced without asking an agent to fake a marker, correctly declined. Mitigation
-in use: never trust a subagent's marker-write self-report — verify independently, re-dispatch if
-absent. Sharpens `[NS-27]`; a diagnosis, not a fix.
+## 2026-10-20 — PRs #59 (`5c6f8e4`) and #71 (`2c4088f`) merged
 
-## 2026-09-18 — PR #28 and #29 merged; both change-review push-gates run for the first time
+- **#59:** `update-reviewed.sh` bash fallback: no file loss on a backslash Windows path, stdin read under a
+  native pipe (SQA #25/#26). Its advisory, paths-filtered Windows CI workflow must not become a required check.
+- **#71 (OPP6-1):** the commit gate refuses while any tracked change is unstaged (marker hashes the working
+  tree, a commit records the index; near-miss 2026-10-16). Stage in a separate command; `git commit -a` is
+  refused. Outside-pushed `1be7055c`, `e2b52866` retired by an `-s ours` merge. Follow-ups: `[NS-69]`.
 
-- Opposition re-verification of the O-1/O-2 fixes (file-size relocation, fail-open test regression) confirmed both closed via fresh measurement and 8 mutation scenarios, not by re-reading the fix. Verdict Approve with conditions, no blocking findings; `/code-review` marker written. Committed as `065d0ae` on `fix/codex-precompact-recovery-only`.
-- Discovered mid-session that this repo's push gate is a SEPARATE review from the commit gate: `scripts/review-reminders.sh` requires `.claude/.change-review-ok` (written by `/change-review`, bound to `diff_hash origin/main...HEAD`) before `git push`, not `.claude/.code-review-ok`. Ran `/change-review`'s full 9-job process for the first time this session. ACR (v1.15.0) flagged one Critical "command injection" finding that opposition traced to a hallucinated misattribution — it cited a `-` (deleted) line from `.codex/hooks.json`'s old `pre`-mode invocation, content this diff removes, not ships; no real injection vector either way. Verdict Approve with conditions, no blocking findings; marker written. Pushed, opened #28, user merged after CI went 10/10 green.
-- `docs/cursor-vs-claude-add-codex` (the CURSOR-VS-CLAUDE.md three-way rewrite, opposition-approved earlier) had never actually been committed — still sitting as an uncommitted working-tree diff based on stale `main`. Fast-forwarded to post-#28 `main` (safe: PR #28 never touched that file, hash re-verified unchanged), committed as `a394a41`. Ran `/change-review` here too; opposition independently re-verified every comparative claim in the doc against real files/tests and found the flagged "migration section overstates parity" concern didn't hold up as scoped — the doc states the capability asymmetry five times before a reader reaches that section — downgraded to Low. Verdict Approve, marker written. Pushed, opened #29, user merged after CI went 10/10 green.
-- Non-blocking follow-ups: `CHANGELOG.md` entry for the Codex gate; a migration-section caveat in `CURSOR-VS-CLAUDE.md`; `AGENTS.md`'s remaining Claude-Code-only claims at :82/:154 (Codex-facing vs tool-general unresolved); `AGENTS.md:39` vs the pre-compact-check gate message (no gate exists in Codex to pause); a case-sensitivity gap in the Codex adapters (bash `case` sensitive, PowerShell `-ne` isn't; unreachable, `.codex/hooks.json` only sends lowercase `recover`). PR #31 closed the link-text and test-coverage items.
-- Logged `[NS-54]`: a peer Claude session (Side-Quest-Atlas) flagged expected memory-bank staleness pending its own feature branch merge — cross-session fleet-tracking, matching the `[NS-6]`/`[NS-7]` pattern.
+## Relocated 2026-10-04 → 2026-10-19 — five sections moved verbatim 2026-10-23
+
+Moved to `docs/archive/progress-2026-10-04-to-19-c1-plan-a-and-journal-hardening.md` **verbatim**, to fund
+the PR #85 entry under the ratchet. Citation check: that file's header. The original headings are kept
+below, so `progress.md <date>` references still resolve. Three earlier stubs are folded in, with their files.
+
+- **2026-10-19 — PRs #64, #72, #69, #74 and #75 merged**
+- **2026-10-19 — PR #65 merged (`0b67d9d`): no FIFO hang at `started` or the gate probe**
+- **2026-10-19 — PR #63 merged (`d3f87f8`): FIFO-safe journal gate, ps1 regular-file check**
+- **2026-10-18 — C1 Plan A merged (#57, `d751b73`); PreCompact lock-up recorded (#62, `e38620f`)**
+- **2026-10-14 — PR #55 opened (WARN-tier hooks → JSON); its review's findings recorded**
+- **2026-10-13 — Memory-bank reconciliation committed after an 8-day pause**
+  (both: `docs/archive/progress-2026-10-13-and-10-14-reconciliation-and-pr55.md`)
+- **2026-10-05 — PRs #51 (`07e3bd2`) and #53 (`3cadb06`, [NS-19]) merged**: `docs/archive/progress-2026-10-05-prs-51-and-53.md`
+- **2026-10-04 — `mb doctor --check` and pre-push Check 7 (PR #51)**
+
+## 2026-10-04 — PR #47 merged (`19931dc`); `fix/ns19` rebased onto it
+
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`. Still open: PR #48
+and the track-or-ignore decision for `.agents/`/`.codex/`.
+
+## 2026-09-30 — PR #49 merged (`584a8e4`); two review-gate escapes open
+
+- **Unfixed:** an apostrophe in a heredoc body before a commit in one command makes both
+  classifiers return NONE (chip 08). A wrapper's own options do the same; fix `0e04fa0` is
+  unpushed on `docs/wrapper-option-classifier-escape`.
+
+## 2026-09-26 — [NS-19] plan workflow fixed; diff-only standards reversed by fleet data
+
+Moved verbatim to `docs/archive/progress-2026-09-26-and-10-04-ns19-and-pr47.md`.
+
+## Relocated 2026-09-21 → 2026-09-25 — three sections moved verbatim 2026-10-05
+
+Moved to `docs/archive/progress-2026-09-21-to-25-ns-audit-preapproval-plan-and-pr46.md`
+**verbatim**, to fund PR #51's owed delta under the ratchet. Delta and citation check: that file's
+header. The original headings are kept below, so `progress.md <date>` references still resolve.
+
+- **2026-09-24 → 25 — PR #46 merged; local `main` reconciled; two more merge-gate escapes**
+- **2026-09-22 — Pre-Approval Protocol plan: six review rounds, and my "Approve" was wrong twice**
+- **2026-09-21 — Next-Steps audit; NPM_TOKEN resolved; false "unmerged" claims found**
+
+## Relocated 2026-09-19 → 2026-09-21 — three sections moved verbatim 2026-09-25
+
+Moved to `docs/archive/progress-2026-09-19-to-21-ai-review-config-and-ns44.md` **verbatim** to fund
+the 2026-09-24 → 25 entry under the ratchet. Delta and citation check: that file's header.
+
+- **2026-09-21 — `ai-review.config.json` test guard ships (PR #40); mid-session data-loss recovery**
+- **2026-09-19 — `ai-review.config.json` ships NS-48; first draft was a near-miss**
+- **2026-09-19 — NS-44 design (PR #33); NS-55 opened; write-rate fix confirmed insufficient**
+
+## Relocated 2026-09-15 → 2026-09-19 — three sections moved 2026-09-22
+
+Moved to `docs/archive/progress-2026-09-15-to-19-review-gate-pr28-29-and-marker-writes.md` without rewriting the narrative text; section separators were normalized. See its header for why.
+The original headings are kept below, so `progress.md <date>` references still resolve.
+
+- **2026-09-19 — Review-gate marker writes intermittently vanish; a platform classifier, not a repo hook**
+- **2026-09-18 — PR #28 and #29 merged; both change-review push-gates run for the first time**
+- **2026-09-15 — review-gate paired paths corrected and opposition-approved**
 
 ## Relocated 2026-09-16 → 2026-09-17 — two sections moved verbatim 2026-09-19
 
@@ -101,12 +141,6 @@ citation between this archive file and the live 09-18 entry). Original headings 
 
 - **2026-09-17 — Recovery-only Codex review**
 - **2026-09-16 — Codex PreCompact reproduction and pending UX review**
-
-## 2026-09-15 — review-gate paired paths corrected and opposition-approved
-
-This branch closes three reviewed bypasses: classifiers collect every guarded invocation and emit `MULTI`; quote-aware, syntax-specific launcher handling avoids scanning arbitrary data; and unverifiable push recovery is declined while commit recovery remains bound to `HEAD` and the reviewed hash. Live/template twins match.
-Focused evidence: classifier 39/39, classifier/wiring Pester 23/23, hooks 71/71, installer 23/23, upgrade 49/49, presence 14/14, Windows installer 14/14, and mutation baseline 44/44 with 15/15 removals detected; the corrected harness recovered two unintended local baseline commits without losing changes.
-The permitted opposition re-check approved the corrections. Final CI-equivalent suites passed once: every registered Bash suite and Pester 128/128. PR delivery remains.
 
 ## Relocated 2026-08-12 → 2026-08-18 — five sections moved verbatim 2026-08-28
 
@@ -181,168 +215,8 @@ resolve.
 
 ## 2026-09-11 — whole-repo review: the enforcement layer does not enforce; and a scratchpad collision
 
-**Eleven blocking findings, five domains, whole repository rather than a diff.** Full report preserved
-in `WHOLE-REPO-REVIEW.md`, held outside the repository (see "The patch and the report are NOT in
-this repository" below) rather than committed:
-the payload and the record were split after two review rounds found the payload was 88% of the diff
-and essentially all of the blocking findings.
-The ones that matter, and the Tier-1 conflict they sit inside:
-
-- **The review gate mints a valid marker for an UNREVIEWED tree — REPRODUCED on both shells.**
-  `review-reminders.sh` consumes the marker and writes `.pending-commit-presha` *before* the guarded
-  tool runs; if the call is then denied by any other hook, PostToolUse never fires and the residue
-  survives. `review-reminders-post.sh:43` then recomputes `diff_hash HEAD` at post time and writes it
-  as a fresh marker, so any later command whose text matches the verb launders the current tree into
-  an approved one. An `echo` is sufficient. Nothing stores the reviewed hash, so the reissue could not
-  be validated even in principle: the binding was missing, not the check. Sharpens `[NS-45]` (filed
-  INFERRED, never reproduced) and `[NS-24]` Task #33; strengthens `[NS-26]`'s `peek_marker()` case.
-  Two orphaned presha files sit in `.claude/worktrees/strange-bun-9a0ffc` and `sweet-poincare-ee03fc`.
-- **Two CI jobs cannot fail.** `.gitleaks.toml` has no `[[rules]]` and no `[extend] useDefault = true`,
-  so gitleaks runs an empty ruleset — reproduced with 8.30.1: no config finds two planted secrets, this
-  config finds zero. `standards/SECURITY-GUARDRAILS.md:394` asserts the opposite, on a public repo.
-  Separately `show_doctor()` contains no `exit` in either runtime, so `MB Doctor Self-Check` passes
-  while printing `[ERROR]` lines. Both are among PR #25's passing checks; `gh pr checks 25` names
-  them as `Secret Scan` (`pmb-health.yml`'s gitleaks job) and `MB Doctor Self-Check`; no tally is
-  stated here because the live one moves.
-  **No historical hit is a live credential** — checked before recording any of this on a public repo:
-  running gitleaks with `[extend] useDefault = true` over this branch's own line of history — the clone
-  is grafted at the parentless `030662c` (`cat .git/shallow`), so the scanned range is at most
-  `git rev-list --count 030662c..HEAD` plus that commit, NOT the project's full history, and no
-  full-history scan has been run from this clone — returns findings confined
-  to `fixtures/security/`, two `docs/superpowers/plans/` files and the two `MCP-SECURITY.md` copies,
-  and every secret value inspected is a visible placeholder. A planted canary was detected by the same
-  config, so it discriminates. The count is deliberately unstated: it differs between history mode and
-  worktree mode, and the report's own figure did not reproduce in either.
-- **Two Tier-1 conflicts, surfaced not reconciled.** `projectbrief.md:26` requires that security
-  guardrails "are always active" and `:43` forbids external dependencies. The findings above are
-  measured breaches of the first. The second is contradicted already, and was before this work:
-  `_review-gate-lib.sh`'s `resolve_cd_root()` shells out to `python3` and `check-contract.sh`
-  requires it outright, under a documented "fail open on missing dependency" convention. The fix adds
-  another caller, not a new class of dependency — for the current caller set run
-  `grep -rln 'python3 -c\|python3 -' scripts/`, which is wider than the two named here — an earlier draft of this entry mis-scoped it as
-  something the fix would introduce, which was wrong. `techContext.md`, the stable-tier authority on
-  the toolchain, records none of it. Tier 1 governs, so this is a decision to be taken rather than a
-  drift to close quietly: amend the constraint deliberately, or reimplement the python3 callers in
-  shell. Not taken, and older than this change.
-- **The gate is wired to one of two doors.** The `PowerShell` matcher runs `dangerous-commands.ps1`
-  only; `review-reminders` is bound to `Bash` alone, so a commit, push or PR merge issued through the
-  PowerShell tool meets no marker check. `review-reminders.ps1:56` never inspects `tool_name`, so the
-  gap is wiring, not capability. Most hook entries also fail OPEN when their pwsh twin launches,
-  drains stdin, then exits non-zero: the bash fallback reads an empty stream and exits 0. No count
-  is stated — an earlier draft said "eight of nine" and both numbers were wrong; parse
-  `.claude/settings.json` for the current one.
-- **Fourteen ordinary argument forms walk past both tiers**, each measured against a matched control
-  that was correctly denied: `git -C <dir> commit`, `git -c k=v commit`, `git -C <dir> push`,
-  `gh api .../pulls/N/merge`, and ten BLOCK-tier forms including `git push origin main --force`,
-  `rm -fr`, `rm -r -f`, `dd bs=... of=... if=...`, `curl | /bin/bash` and `curl | python3`. Both twins
-  also allow `rm -rf /` under a `toolInput.command` harness, widening `[NS-50]`(b) to the ps1 side.
-
-- **Four findings summarised here because the report that holds them is out of repo**, and this entry
-  itself calls it unrecoverable if that directory is lost. No sole-record claim is made: that needs a
-  per-finding search with its scope stated, and B10 in fact has a fuller in-repo record than this
-  summary at `scripts/mb.sh:2062-2076` — an earlier draft of this bullet asserted the opposite for all
-  four at once, which is the absence-claim shape `standards/CODE-REVIEW.md` rejects. (B8) The push gate's hash comparison had zero
-  test coverage — a mutation deleting the comparison left the suite fully green. (B9) A test removes
-  the live review-gate library from the working tree while it runs, disarming the gate for any
-  concurrent session. (B10) `mb upgrade` on PowerShell force-overwrites `standards/` from templates
-  that are known stale, so it can replace a correct governance file with a wrong one. (B11) Two
-  `mb doctor` checks cannot fire in this repo or in a fresh adopter. Full text: `WHOLE-REPO-REVIEW.md`
-  in the preserved directory.
-
-**A fix for the marker binding, the argument forms and the case hole is built and mutation-proved,
-and is NOT applied. It does NOT cover the interpreter wiring** — an earlier draft of this entry
-claimed it did, which was false: `grep '^+++ ' gate-fix-v2.patch` lists eight files, none of them
-`.claude/settings.json`, where the wiring defect lives. That matters more than the error, because
-the wiring is the bypass on the PRIMARY path here: pwsh runs first, and `review-reminders` is bound
-to the `Bash` matcher alone, so the fix as built leaves the live hole open. Named rather than numbered: an earlier draft said "the first,
-third and fourth" into a list that has since gained a bullet. It also closes a PRE-EXISTING hole this
-branch is named for — both matchers compared the executable case-sensitively, the parser via a
-case-sensitive basename that kept `.exe` and the raw fallback via lowercase literals in a `case`
-statement, so the uppercase and `.exe` spellings walked past both. Windows and macOS default
-filesystems are case-insensitive and this repo develops on Windows.
-
-The patch and the report are NOT in this repository. They are preserved at
-`C:/Users/Mizzo/Claude/pmb-session-artifacts/2026-09-11/`, deliberately: their whole reason for existing is
-that the fix cannot land until the PowerShell half is written, so committing them meant carrying a
-holding pen through review. Two rounds established the cost — the payload was 88% of the diff and
-23 of round 2's 38 findings were introduced by the previous round's own remediation. The durable
-record is what belongs in the memory bank; the payload gets its own review when it is worth one, and
-may not need one at all: once the fix is applied, the classifier and harnesses exist as real files
-under `scripts/` and `tests/` and a copy of an applied patch is dead weight.
-
-**The figures that were here have been deleted
-rather than corrected.** They were v1's, and every count disagreed with the harnesses; deleting
-decaying figures beat correcting them every time (`f70e84a`). What survives restating
-is qualitative: every guard in v2 goes red when removed, and the one guard whose mutation left the
-suite GREEN was redesigned out rather than kept, because a race is not something a sequential test can
-prove. Only the bash half exists; applying it alone would leave the primary path unfixed, since
-pwsh runs first here.
-
-**`activeContext.md`'s cap is still open and 29% of its pending-work list was mis-declared.** Read
-its margins the way the 2026-09-01 bullet below already prescribes — both dimensions live, act on the
-tighter — not from any level named here. Two attempts to trim it were reverted, and the pressure is
-`[NS-42]` in the field: the same squeeze pushed the PR #12 disposition into a gitignored `handoff.md`
-that the tooling then tells the operator to delete (`[NS-52]`). `Next Steps` holds almost all of the
-file, so any trim has to come from there.
-
-Every `[NS-N]` entry then present was re-verified against the repository rather than read — the rule
-being that a self-attested completion counts as UNMET — and it held: **14 carried a status the repo
-contradicts.** For the current denominator run
-`grep -cE '^[0-9]+\. \[NS-[0-9]+\]' memory-bank/activeContext.md`; it is one higher than the pass
-saw, because `[NS-52]` is added by this same change. `[NS-33]`'s WIP is in `stash@{0}`, not the working tree it claims, so a successor would
-look, find nothing, and conclude it was lost. `[NS-13]` still tracks writing an implementation plan
-that is already written and committed. `[NS-8]` says `mb.sh` hardcodes a command list it no longer
-hardcodes. Those corrections are NOT applied here; only the finding is recorded.
-
-**Attempt 1 — have the verifying agents rewrite the entries they had just checked.** Reverted. Its
-own review found the rewrite introducing factual errors at close to the rate it corrected them: a
-miscount inside a correction, a branch tip pinned into the very file that forbids pinning counts, and
-a commit cited that `merge-base --is-ancestor` places outside this shallow clone's history. **A
-verifying pass is a good detector and a bad author.**
-
-**Attempt 2 — move the eight largest entries out verbatim, leaving generated pointers.** Also
-reverted, for two reasons worth keeping. First, "a move cannot fabricate" was true of the move and
-false of the pointer generator: a non-greedy `**...**` match terminated on the `**` inside `[NS-48]`'s
-inline code span, emitting a truncated title that dropped both the consequence and "NOT APPLIED",
-while `[NS-26]` lost its operative rule — "do NOT rebase or replay" fell to zero occurrences in the
-live file, the rule that stops a worktree-branch merge regressing the review gate. Second, the
-destination is measured unread: `docs/RETRIEVAL-BASELINE-2026-09-09.md`, committed the same day,
-found content unique to `docs/archive/` entering zero of sixteen sessions while the pointer loaded in
-all sixteen. `CLAUDE.md` loads `memory-bank/` only. Relocating RESOLVED narrative is the validated
-use of that convention; relocating live rules is not the same move.
-
-**What the two failures establish is that this cap is not reachable by eviction or by paraphrase.**
-Eviction breaks retrieval, paraphrase fabricates, and condensation-in-place does both. The remaining
-option is the one `projectbrief.md` already mandates and `CLAUDE.md:9-16` already admits does not
-exist — state available at session start, detail fetched on demand — i.e. an index, not a list.
-That is `[NS-44]`, it is a design decision rather than an edit, and it is left open deliberately
-rather than approximated a third time in the same session.
-
-**The repo's own guards blocked their own repair three times in one session** — an `rm -rf` on a
-scratch path, a patch script containing the PR-merge phrase, and a JSON payload piped to a local
-script. Each was correct by the rule as written and wrong by intent. That is the false-positive half
-of the same text-matching defect the fix addresses, and it is why the substring matcher cannot simply
-be widened.
-
-**The `opposition` tool-allowlist caveat got a second, independent observation.**
-`.claude/agents/opposition.md:26-35` — added by `d795abb`, the same commit that added the allowlist —
-already records that those `Bash(...)` entries "declare INTENT, not an enforced boundary", measured
-once on 2026-08-27, and explicitly marks it **NOT established** whether that is general harness
-behaviour, version-specific, or a misread. It reproduced on 2026-09-11 in a different session: an
-agent spawned under that list ran `sha256sum`, `bash <script>` and a `> file` redirect. A second
-observation fifteen days later weakens the version-specific reading without settling the question,
-and nothing else changes — that file's operational consequence, that the list is not a security
-boundary and a real prohibition belongs in the agent's instructions and in hooks, already stands.
-**Orchestration finding, not a repo defect: a subagent silently overwrote another's scratch file.**
-Roughly thirty subagents across seven review rounds were all told to write scratch files to one shared
-session directory. A round-7 reviewer wrote its own `classify.py` (a transcript hit-counter) over the
-gate fix's `classify.py` (the payload classifier) — same name, no namespacing, no collision detection.
-The source survived only because it had already been copied into a scratch clone under a different
-name. The loss would have been silent, and the worse shape is the one that did not happen: reading
-another agent's file as if it were one's own and drawing conclusions from it. **Give each dispatched
-agent its own subdirectory, or require a per-agent filename prefix** — a shared flat scratch directory
-across parallel agents is a silent data-loss vector, and "write only under <scratch>" is not
-sufficient instruction.
+Moved verbatim 2026-10-29 to `docs/archive/progress-2026-09-11-whole-repo-review.md`, to fund the
+v1.3.0 entry. Its eleven findings, and where the report and patch are held, are there.
 
 ## Relocated 2026-09-09 — one section moved verbatim 2026-09-17
 
@@ -420,33 +294,12 @@ there, so a citation to any of them still resolves:
 - 📌 ACR drifted 2 versions behind PMB and ran a 13-task feature under stale governance hooks before
   it was caught; still unfixed. Current state: `activeContext.md`'s `[NS-14]`.
 
-## Earlier Work (2026-07-02 through 2026-08-10) — condensed, full detail archived
+## Relocated 2026-07-02 → 2026-08-10 — "Earlier Work", moved verbatim 2026-10-14
 
-- **2026-07-16 through 2026-08-05 — Review-gate mechanism evolution**: self-attestation fix (marker-write
-  moved into the last dispatched review subagent), a false-positive fix in `review-reminders.sh`'s
-  command matching, the confirm-step redesign (durable `docs/review-log/` + user-confirmed marker write),
-  a worktree-root-resolution fix (closed a real denial-from-inside-a-worktree bug), a hook-lib dedup
-  (`_review-gate-lib.sh`/`.ps1`), and the confirm-step's first live whole-branch review (found and fixed
-  one real Blocking finding). Full detail: `docs/archive/progress-2026-07-review-gate-evolution.md`.
-- **2026-07-02 through 2026-07-13 — Repo governance, CI hardening, branch protection**: `mb upgrade`
-  slash-command auto-discovery fixes, 4 pre-existing CI failures closed (SAST config, 2 false-positive
-  greps, PowerShell lint), CI hardening across 3 downstream repos, branch protection rolled out to 5
-  public repos, a real hash byte-mismatch bug fixed (bash vs. PowerShell diverged on trailing-newline
-  handling), the cross-repo write boundary hook built after a real incident (this session wrote into
-  another repo's working directory without checking ownership), and the review-flow fleet audit (found
-  real enforcement in only 2 of 11 repos). Full detail:
-  `docs/archive/progress-2026-07-repo-governance-and-ci.md`.
-- **2026-07-14, 2026-07-23 — `mb backlog` Task 1 + mb update-notifier**: `mb backlog`'s Task 1 shipped
-  with two real Critical/High security bugs found and fixed (path traversal, sed-delimiter injection);
-  Tasks 2-5 not started (`[NS-0]`). The update-notifier shipped clean, but the same session produced an
-  authorization-drift incident (a "what do you suggest" non-answer treated as merge approval) that
-  produced the "What Counts as Approval" rule. Full detail:
-  `docs/archive/progress-2026-07-mb-backlog-and-notifier.md`.
-- **2026-08-08, 2026-08-10 — Concurrent session claims + memory-bank freshness hook**: session-claims
-  shipped (13 tasks + 5 post-review fixes, including one found only by a final whole-branch review after
-  every individual task had already passed its own two-stage review); the freshness-hook spec was
-  designed and committed but not yet implemented (`[NS-13]`). Full detail:
-  `docs/archive/progress-2026-08-freshness-and-session-claims.md`.
+Moved to `docs/archive/progress-2026-07-02-to-08-10-earlier-work.md` **verbatim** to fund the
+PR #55 delta under the ratchet. Delta and citation check: that file's header.
+
+- **Earlier Work (2026-07-02 through 2026-08-10) — condensed, full detail archived**
 
 ## Backlog
 

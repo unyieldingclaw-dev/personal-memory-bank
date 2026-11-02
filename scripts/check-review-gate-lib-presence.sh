@@ -39,5 +39,15 @@ if [ -f "$dir/review-reminders.ps1" ] && [ ! -f "$dir/_review-gate-classify.ps1"
     echo "ERROR: $dir/_review-gate-classify.ps1 missing but $dir/review-reminders.ps1 present -- global-option command forms can bypass classification"
     fail=1
 fi
+# A missing merge helper fails closed (every merge is denied), so this catches a silently broken
+# feature, not a hole. mb.ps1's doctor carries the same two checks inline.
+if [ -f "$dir/review-reminders.sh" ] && [ ! -f "$dir/_review-gate-merge.py" ]; then
+    echo "ERROR: $dir/_review-gate-merge.py missing but $dir/review-reminders.sh present -- every gh pr merge will be denied instead of put to the user"
+    fail=1
+fi
+if [ -f "$dir/review-reminders.ps1" ] && [ ! -f "$dir/_review-gate-merge.ps1" ]; then
+    echo "ERROR: $dir/_review-gate-merge.ps1 missing but $dir/review-reminders.ps1 present -- every gh pr merge will be denied instead of put to the user"
+    fail=1
+fi
 
 exit $fail

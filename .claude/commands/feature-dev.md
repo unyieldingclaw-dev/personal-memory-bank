@@ -38,3 +38,5 @@ Run /security-review on the current diff. Resolve all [CRITICAL] and [HIGH] find
 git add <specific changed files>
 git commit -m "feat: <what was built and why>"
 ```
+
+Stage in a command of its own, then commit: the commit review gate runs before a chained `git add` or `git commit -a` stages anything, and refuses while any tracked change is unstaged. To commit only some files, set the rest aside with a tagged stash (`git stash push -m <unique-tag> -- <paths>`), re-run `/code-review` on what remains, and commit. Then restore them with `git stash apply <sha>` (the SHA from `git stash list --format='%H %gs'`) and drop that entry by its current `stash@{n}`. The stash stack is shared across worktrees, so never use a bare `git stash pop`.

@@ -1,6 +1,6 @@
 """Behaviour matrix for the restructured review gate.
 
-Runs the real hook script with a real payload on stdin and reports ALLOW / DENY, so every
+Runs the real hook script with a real payload on stdin and reports ALLOW / DENY / ASK, so every
 row is executed rather than reasoned about. Invoked via subprocess (not a shell pipe) because
 this repo's BLOCK tier refuses `<anything> | bash <script>` and cannot distinguish a local
 script from a downloaded one.
@@ -108,17 +108,19 @@ def shell_path():
     return shutil.which('bash') or 'bash'
 
 
-def sh(args, cwd=ROOT, stdin=None):
-    return subprocess.run(args, cwd=cwd, input=stdin, capture_output=True)
+def sh(args, cwd=ROOT, stdin=None, env=None):
+    return subprocess.run(args, cwd=cwd, input=stdin, capture_output=True, env=env)
 
 
 def git(*a):
     return sh(['git'] + list(a)).stdout.decode().strip()
 
 
-def run_hook(cmd, tool='Bash'):
-    payload = json.dumps({'tool_name': tool, 'tool_input': {'command': cmd}}).encode()
-    p = sh([shell_path(), HOOK], stdin=payload)
+def run_hook(cmd, tool='Bash', extra=None, env=None):
+    data = {'tool_name': tool, 'tool_input': {'command': cmd}}
+    data.update(extra or {})
+    payload = json.dumps(data).encode()
+    p = sh([shell_path(), HOOK], stdin=payload, env=env)
     out = p.stdout.decode()
     if '"permissionDecision":"deny"' in out:
         reason = ''
@@ -127,6 +129,10 @@ def run_hook(cmd, tool='Bash'):
         except Exception:
             pass
         return 'DENY', reason
+    # A merge can now be put to the user. Reported separately so that a regression from ask to
+    # no decision -- which reads as ALLOW here -- cannot pass a check expecting ASK.
+    if '"permissionDecision":"ask"' in out:
+        return 'ASK', ''
     return 'ALLOW', ''
 
 
@@ -197,6 +203,9 @@ assert git('status', '--porcelain') == '', 'baseline commit did not produce a cl
 DIRTY_FILE = os.path.join(ROOT, 'README.md')
 with open(DIRTY_FILE, 'a') as fh:
     fh.write('\n<!-- gate matrix: a real tracked modification to review -->\n')
+# STAGED, too: the commit gate refuses while tracked changes are unstaged (OPP6-1, row 9b), so an
+# unstaged DIRTY_FILE would turn every allow row into that refusal instead of the one it tests.
+subprocess.run(['git', 'add', 'README.md'], cwd=ROOT, capture_output=True, check=True)
 
 clear(MARKER, PMARKER)
 if os.path.exists(PRESHA):
@@ -274,6 +283,7 @@ subprocess.run(['git', 'commit', '-qm', 'initial'], cwd=target, capture_output=T
 os.makedirs(os.path.join(target, '.claude'))
 with open(os.path.join(target, 'file.txt'), 'a') as fh:
     fh.write('target change\n')
+subprocess.run(['git', 'add', 'file.txt'], cwd=target, capture_output=True, check=True)
 
 set_marker(MARKER, real_hash('HEAD'))
 target_rel = os.path.relpath(target, ROOT)
@@ -304,7 +314,9 @@ check('presha records reviewed hash', True, line.split()[-1] == h if line else F
 # 8. HOLE C: on a CLEAN tree the expected hash degenerates to the public empty-diff
 # constant, which anyone can write into the marker. Revert the tracked modification rather
 # than stashing -- stashing would revert the fix under test along with it.
-subprocess.run(['git', 'checkout', '--', 'README.md'], cwd=ROOT, capture_output=True)
+# `checkout HEAD --`, not `checkout --`: the latter restores from the index, where the staged
+# modification would survive and leave the tree dirty.
+subprocess.run(['git', 'checkout', 'HEAD', '--', 'README.md'], cwd=ROOT, capture_output=True)
 assert git('status', '--porcelain') == '', 'tree must be clean for the empty-diff row'
 assert real_hash('HEAD') == EMPTY_SHA, 'clean tree must hash to the empty-diff constant'
 set_marker(MARKER, EMPTY_SHA)
@@ -312,6 +324,7 @@ d, r = run_hook('git %s --amend --no-edit' % V)
 check('HOLE C: empty-diff constant denied (was ALLOW)', 'DENY', d, r[:70])
 with open(DIRTY_FILE, 'a') as fh:
     fh.write('\n<!-- gate matrix: restored modification -->\n')
+subprocess.run(['git', 'add', 'README.md'], cwd=ROOT, capture_output=True, check=True)
 
 # 8b. PostToolUse must use the same classifier as PreToolUse: prose must not consume
 # recovery state, while the global-option form must be reconciled.
@@ -348,11 +361,38 @@ d, _ = run_hook('git %s -m x' % V)
 check('HOLE B: matching marker allows', 'ALLOW', d)
 check('HOLE B: matching marker consumed', False, os.path.exists(MARKER))
 
-# 10. merge is refused unconditionally, with no marker and no lib needed
+# 9b. OPP6-1: the marker binds `git diff HEAD` (working tree) but a commit records the index, so a
+# reviewed change left partly unstaged must be refused even though its marker matches -- and the
+# refusal must leave that marker in place for the retry once everything is staged.
+with open(DIRTY_FILE, 'a') as fh:
+    fh.write('\n<!-- gate matrix: reviewed but left unstaged -->\n')
+set_marker(MARKER, real_hash('HEAD'))
+d, r = run_hook('git %s -m x' % V)
+check('OPP6-1: partly-staged commit denied', 'DENY', d, r[:60])
+check('OPP6-1: partly-staged denial keeps marker', True, os.path.exists(MARKER))
+subprocess.run(['git', 'add', 'README.md'], cwd=ROOT, capture_output=True, check=True)
+clear(MARKER)
+
+# 10. a merge needs no marker and no lib; every form but the canonical one is denied
 shutil.move(LIB, LIB + '.hidden')
 d, r = run_hook('gh pr m%s 25' % 'erge')
 check('merge denied even with lib missing', 'DENY', d, r[:60])
 shutil.move(LIB + '.hidden', LIB)
+
+# 10a. The canonical form is put to the user. Its own project and config directories, so neither
+# ROOT's settings files nor the user's real ones decide the row, and a payload with a mode that
+# can show a prompt.
+mg_dir = tempfile.mkdtemp(prefix='gate-matrix-merge-').replace('\\', '/')
+os.makedirs(os.path.join(mg_dir, 'proj', '.claude'))
+os.makedirs(os.path.join(mg_dir, 'cfg'))
+with open(os.path.join(mg_dir, 'proj', '.claude', 'merge-gate.json'), 'w') as fh:
+    json.dump({'repos': ['acme/web.app']}, fh)
+mg_env = {k: v for k, v in os.environ.items() if k not in ('GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR')}
+mg_env.update(CLAUDE_PROJECT_DIR=mg_dir + '/proj', CLAUDE_CONFIG_DIR=mg_dir + '/cfg')
+d, _ = run_hook('gh pr m%s 12 -R acme/web.app --squash --match-head-commit %s' % ('erge', '0' * 40),
+                extra={'permission_mode': 'default'}, env=mg_env)
+check('canonical merge asked', 'ASK', d)
+shutil.rmtree(mg_dir, ignore_errors=True)
 
 # 10b. HOLE F: root unresolvable + guarded verb -> must DENY. Run the hook with its cwd
 # OUTSIDE any git repository, which is what `git rev-parse --show-toplevel` failing looks

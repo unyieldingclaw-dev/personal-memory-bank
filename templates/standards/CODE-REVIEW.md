@@ -76,6 +76,27 @@ Evidence must include a `file:line` reference. Prose alone ("this may cause...")
 
 High findings default to `Blocking: true` unless the reviewer has specific evidence that risk is contained.
 
+## Enforcement Severity Floor
+
+In code that enforces a rule (a hook, gate or guard), severity is set by the worst reachable outcome. Each of these is High by definition and is fixed, never deferred:
+
+- a path that allows what the code should deny or ask about, including evasion by Unicode, case, quoting, encoding or a difference between twins;
+- a fail-open path on error, timeout or unreadable input, unless a spec requires that fail-open and the code's comment cites it;
+- silent loss or corruption of review markers, logs or memory state;
+- twins (sh and ps1) that disagree on an allow, deny or ask decision.
+
+A reviewer who cannot show the defect is unreachable rates it High. Only defects with no effect on decisions or state integrity (message text, performance within budget, test-only gaps, documentation drift) may be non-blocking. A floor finding whose Basis is SPECULATIVE stays `Blocking: false` under Blocking Semantics, but its disposition can only be Fix (see below).
+
+## Non-blocking Dispositions
+
+After the review, the author gives every non-blocking finding (`Blocking: false`, or `Blocking: No` in `/change-review` and Opposition output) — and every Testing Gap, Predicted Risk and condition of an "Approve with conditions" verdict — exactly one disposition, recorded in the PR body:
+
+- **Fix** — changed in this PR before push. The author may fix without a further request.
+- **Drop** — not acted on; one clause says why.
+- **Backlog** — one line in the project's backlog, citing the PR.
+
+A finding the Enforcement Severity Floor makes High may only be Fixed, whatever its Basis. A finding never becomes its own PR or session unless the user names it in a message; a button or a one-word reply to a suggestion is not naming it. A PR that exists to apply another PR's findings may use only Fix or Drop. Non-blocking findings from re-reviewing a Fix may only be Dropped or Backlogged. A finding that misses its PR's merge, or is found later in merged code, goes to Backlog, unless the Enforcement Severity Floor makes it High or it is a Critical or High security finding, which is reported to the user at once.
+
 ## Required Report Sections
 Scope, Files reviewed, Domain coverage, Supported Findings, Predicted Risks (omit if empty), Testing gaps, Opposition review, Verdict
 
@@ -149,7 +170,7 @@ check discriminates. The vacuous test above would have passed such a gate cleanl
 - Repo mutation during review without explicit user request
 
 ## Remediation
-Review identifies and recommends by default. Remediation (editing files, generating tests,
+The reviewer identifies and recommends; the author applies dispositions (see Non-blocking Dispositions). Remediation by the reviewer (editing files, generating tests,
 applying fixes) requires explicit user request after findings are presented.
 
 ## Compatibility Note

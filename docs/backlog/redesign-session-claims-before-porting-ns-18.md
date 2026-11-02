@@ -1,12 +1,18 @@
 ---
-status: open
+status: resolved
 created: 2026-09-21
-last-reviewed: 2026-09-21
+last-reviewed: 2026-10-18
 staleness-threshold: 90d
 related_plan: null
 ---
 
 # Redesign session-claims before porting NS-18
+
+**RESOLVED 2026-10-18.** The redesign was done as the C1 multi-session spec
+(`docs/superpowers/specs/2026-09-26-multi-session-memory-design.md`, approved 2026-09-29). Its
+decision M1 closed the `[NS-18]` session-claims port as superseded, so this branch will not be
+ported. The spec's journal keys records by `CLAUDE_CODE_SESSION_ID`, which answers point 1 below.
+Plan A shipped as PR #57 (`d751b73`). The assessment below is kept as written.
 
 Assessment of branch `worktree-concurrent-session-claims` (tip f65ed0c) against current main, 2026-09-21. Verdict: targeted redesign, then a main-forward port. The lock/prune/atomic-write core is sound; these parts are not.
 

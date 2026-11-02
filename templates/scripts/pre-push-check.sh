@@ -163,34 +163,78 @@ fi
 # check. An exit code cannot distinguish "ran and passed" from "ran and failed" from "never
 # ran" — that is the general trap, and every deprecated alias inherits it.
 #
-# WHY the verdict is parsed from output rather than taken from an exit code: `mb doctor`
-# also exits 0 regardless of what it finds, so switching commands alone would have
-# preserved the bug. Its output is structured — every check emits [OK], [WARN] or
-# [ERROR] — so counting those lines yields both the verdict AND a positive assertion
-# that the command actually ran. Zero result lines means no checks executed (deprecated
-# shim, crash, missing binary), which is UNKNOWN, never success. Measured: a real run
-# emits ~51 result lines; the shim emits 0.
+# WHY the verdict is parsed from output rather than taken from an exit code: doctor exits 1
+# only for a FATAL finding; its advisory [ERROR] lines (checksum mismatch, startup-context
+# ceiling) leave the exit code at 0, so the exit code cannot carry the verdict this check
+# reports — and `|| true` below discards it anyway so a fatal run still gets parsed. Its
+# output is structured — every check emits [OK], [WARN] or [ERROR] — so counting those lines
+# yields both the verdict AND a positive assertion that the command actually ran. Zero result
+# lines means no checks executed (deprecated shim, crash, missing binary, or an mb.ps1 old
+# enough to reject --check), which is UNKNOWN, never success. Measured: a real run emits ~51
+# result lines; the shim emits 0.
+#
+# WHY `--check`, and why the marker is required: plain `mb doctor` rewrites .pmb-checksums at
+# the end of every run, so calling it here re-baselined on every push — a memory-bank
+# mismatch was reported once, by the run that then erased it. `--check` compares without
+# writing, and confirms so with a fixed ASCII marker line. An mb.sh that predates --check
+# ignores the flag and rewrites silently; the missing marker is how that run is caught, as
+# UNKNOWN rather than trusted.
+#
+# WHY the checksum mismatch gets its own line: it would otherwise be folded into the generic
+# error count and can fall outside the first-five echo. It counts as a warning, so
+# ENFORCE=true blocks until the mismatch is accepted with `mb verify-integrity`.
 if command -v mb >/dev/null 2>&1; then
-    DOCTOR_OUT=$(mb doctor 2>&1 || true)
+    DOCTOR_OUT=$(mb doctor --check 2>&1 || true)
     RESULT_LINES=$(printf '%s\n' "$DOCTOR_OUT" | grep -cE '\[(OK|WARN|ERROR)\]' 2>/dev/null || true)
     RESULT_LINES=${RESULT_LINES:-0}
     if [ "$RESULT_LINES" -eq 0 ]; then
         echo -e "${YELLOW}[UNKNOWN] mb doctor produced no check results — memory bank NOT verified.${RESET}"
         echo "          The command ran but emitted no [OK]/[WARN]/[ERROR] lines."
+        # WHY the fix names the clone, not just `mb upgrade`: upgrade copies templates FROM the
+        # PMB clone behind `mb` (MB_HOME), so run from an outdated clone it reinstalls the old
+        # hook — clearing this message by bringing back the silent re-baseline.
+        echo "          One cause: an mb older than this hook, which rejects --check."
+        echo "          Fix: update the PMB clone that MB_HOME points at, then run: mb upgrade"
         UNKNOWN=$((UNKNOWN + 1))
         echo ""
     else
-        DOCTOR_ERRORS=$(printf '%s\n' "$DOCTOR_OUT" | grep -cE '\[ERROR\]' 2>/dev/null || true)
-        DOCTOR_ERRORS=${DOCTOR_ERRORS:-0}
-        if [ "$DOCTOR_ERRORS" -gt 0 ]; then
-            echo -e "${YELLOW}[WARN] mb doctor reported ${DOCTOR_ERRORS} error(s) across ${RESULT_LINES} result lines:${RESET}"
-            # `|| true` guards the pipeline: `head -5` closes the pipe once satisfied, and
-            # under `set -o pipefail` grep's resulting SIGPIPE would abort the script before
-            # the summary block ever runs — turning a warning into a verdict-less exit.
-            { printf '%s\n' "$DOCTOR_OUT" | grep -E '\[ERROR\]' | head -5 || true; } | while IFS= read -r line; do echo "       $line"; done
+        CHECK_MODE_SEEN=false
+        printf '%s\n' "$DOCTOR_OUT" | grep -qF 'Integrity check mode:' && CHECK_MODE_SEEN=true
+        if [ "$CHECK_MODE_SEEN" != true ]; then
+            echo -e "${YELLOW}[UNKNOWN] mb doctor did not confirm check mode — integrity NOT verified.${RESET}"
+            echo "          The mb on PATH predates 'doctor --check' and may have re-baselined .pmb-checksums."
+            echo "          Fix: update the PMB clone that MB_HOME points at, then run: mb upgrade"
+            UNKNOWN=$((UNKNOWN + 1))
+            echo ""
+        fi
+        MISMATCH_LINES=$(printf '%s\n' "$DOCTOR_OUT" | grep -E '\[ERROR\].*hash mismatch' || true)
+        OTHER_ERRORS=$(printf '%s\n' "$DOCTOR_OUT" | grep -E '\[ERROR\]' | grep -v 'hash mismatch' || true)
+        if [ -n "$MISMATCH_LINES" ]; then
+            MISMATCH_COUNT=$(printf '%s\n' "$MISMATCH_LINES" | grep -c . || true)
+            echo -e "${YELLOW}[WARN] memory-bank changed since the last accepted integrity baseline: ${MISMATCH_COUNT} file(s)${RESET}"
+            printf '%s\n' "$MISMATCH_LINES" | while IFS= read -r line; do echo "       $line"; done
+            echo "       Review the changes, then accept them with: mb verify-integrity"
             WARNED=$((WARNED + 1))
             echo ""
-        else
+        fi
+        if [ -n "$OTHER_ERRORS" ]; then
+            DOCTOR_ERRORS=$(printf '%s\n' "$OTHER_ERRORS" | grep -c . || true)
+            echo -e "${YELLOW}[WARN] mb doctor reported ${DOCTOR_ERRORS} error(s) across ${RESULT_LINES} result lines:${RESET}"
+            # `|| true` guards the pipeline: `head -5` closes the pipe once satisfied, and
+            # under `set -o pipefail` printf's resulting SIGPIPE would abort the script before
+            # the summary block ever runs — turning a warning into a verdict-less exit.
+            { printf '%s\n' "$OTHER_ERRORS" | head -5 || true; } | while IFS= read -r line; do echo "       $line"; done
+            WARNED=$((WARNED + 1))
+            echo ""
+        fi
+        if printf '%s\n' "$DOCTOR_OUT" | grep -qF 'Integrity checksums: no baseline'; then
+            # INFO, not a warning: a fresh clone or worktree has no baseline (.pmb-checksums is
+            # gitignored) and --check never creates one, so counting it would warn — and with
+            # ENFORCE, block — on every push until someone ran a command unrelated to the push.
+            echo "[INFO] No memory-bank integrity baseline yet — run 'mb verify-integrity' to start tracking edits."
+            echo ""
+        fi
+        if [ "$CHECK_MODE_SEEN" = true ] && [ -z "$MISMATCH_LINES" ] && [ -z "$OTHER_ERRORS" ]; then
             # "result lines", not "checks": this counts emitted [OK]/[WARN]/[ERROR] markers,
             # which exceeds the number of named doctor checks. Claiming a check count this
             # figure does not represent would repeat the unearned-assertion bug being fixed.

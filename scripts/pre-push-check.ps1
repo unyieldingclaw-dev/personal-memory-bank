@@ -168,33 +168,76 @@ if ($largeFiles) {
 # check. An exit code cannot distinguish "ran and passed" from "ran and failed" from "never
 # ran" — that is the general trap, and every deprecated alias inherits it.
 #
-# WHY the verdict is parsed from output rather than taken from an exit code: `mb doctor`
-# also exits 0 regardless of what it finds, so switching commands alone would have
-# preserved the bug. Its output is structured — every check emits [OK], [WARN] or
-# [ERROR] — so counting those lines yields both the verdict AND a positive assertion
-# that the command actually ran. Zero result lines means no checks executed (deprecated
-# shim, crash, missing binary), which is UNKNOWN, never success. Measured: a real run
-# emits ~51 result lines; the shim emits 0.
+# WHY the verdict is parsed from output rather than taken from an exit code: doctor exits 1
+# only for a FATAL finding; its advisory [ERROR] lines (checksum mismatch, startup-context
+# ceiling) leave the exit code at 0, so the exit code cannot carry the verdict this check
+# reports. Its output is structured — every check emits [OK], [WARN] or [ERROR] — so
+# counting those lines yields both the verdict AND a positive assertion that the command
+# actually ran. Zero result lines means no checks executed (deprecated shim, crash, missing
+# binary, or an mb.ps1 old enough to reject --check), which is UNKNOWN, never success.
+# Measured: a real run emits ~51 result lines; the shim emits 0.
+#
+# WHY `--check`, and why the marker is required: plain `mb doctor` rewrites .pmb-checksums at
+# the end of every run, so calling it here re-baselined on every push — a memory-bank
+# mismatch was reported once, by the run that then erased it. `--check` compares without
+# writing, and confirms so with a fixed ASCII marker line. An mb.sh that predates --check
+# (reached from here via install.sh's launcher when pwsh runs on Linux/macOS) ignores the
+# flag and rewrites silently; the missing marker is how that run is caught, as UNKNOWN.
+#
+# WHY the checksum mismatch gets its own line: it would otherwise be folded into the generic
+# error count and can fall outside the first-five echo. It counts as a warning, so
+# ENFORCE=true blocks until the mismatch is accepted with `mb verify-integrity`.
 if (Get-Command mb -ErrorAction SilentlyContinue) {
-    $doctorOut = (& mb doctor 2>&1 | Out-String)
+    $doctorOut = (& mb doctor --check 2>&1 | Out-String)
+    $doctorLines = $doctorOut -split "`r?`n"
     # Count LINES carrying a marker, not marker occurrences — bash uses `grep -c`, which is
     # line-based. Counting matches here would double-count any line bearing two markers and
     # silently diverge from the POSIX path.
-    $resultLines = (($doctorOut -split "`r?`n") | Where-Object { $_ -match '\[(OK|WARN|ERROR)\]' }).Count
+    $resultLines = ($doctorLines | Where-Object { $_ -match '\[(OK|WARN|ERROR)\]' }).Count
     if ($resultLines -eq 0) {
         Write-Host "[UNKNOWN] mb doctor produced no check results — memory bank NOT verified." -ForegroundColor Yellow
         Write-Host "          The command ran but emitted no [OK]/[WARN]/[ERROR] lines."
+        # WHY the fix names the clone, not just `mb upgrade`: upgrade copies templates FROM the
+        # PMB clone behind `mb` (MB_HOME), so run from an outdated clone it reinstalls the old
+        # hook — clearing this message by bringing back the silent re-baseline.
+        Write-Host "          One cause: an mb older than this hook, which rejects --check."
+        Write-Host "          Fix: update the PMB clone that MB_HOME points at, then run: mb upgrade"
         $unknown++
         Write-Host ""
     } else {
-        $errorLines = (($doctorOut -split "`r?`n") | Where-Object { $_ -match '\[ERROR\]' }).Count
-        if ($errorLines -gt 0) {
-            Write-Host "[WARN] mb doctor reported $errorLines error(s) across $resultLines result lines:" -ForegroundColor Yellow
-            ($doctorOut -split "`n" | Select-String -Pattern '\[ERROR\]' | Select-Object -First 5) |
-                ForEach-Object { Write-Host "       $($_.ToString().Trim())" }
+        # .Contains / -cmatch rather than -match: grep in the POSIX twin is case-sensitive, and
+        # PowerShell's -match is not, so -match would let the twins disagree on the same output.
+        $checkModeSeen = [bool]($doctorLines | Where-Object { $_.Contains('Integrity check mode:') })
+        if (-not $checkModeSeen) {
+            Write-Host "[UNKNOWN] mb doctor did not confirm check mode — integrity NOT verified." -ForegroundColor Yellow
+            Write-Host "          The mb on PATH predates 'doctor --check' and may have re-baselined .pmb-checksums."
+            Write-Host "          Fix: update the PMB clone that MB_HOME points at, then run: mb upgrade"
+            $unknown++
+            Write-Host ""
+        }
+        $mismatchLines = @($doctorLines | Where-Object { $_ -cmatch '\[ERROR\].*hash mismatch' })
+        $otherErrors = @($doctorLines | Where-Object { $_ -cmatch '\[ERROR\]' -and $_ -cnotmatch 'hash mismatch' })
+        if ($mismatchLines.Count -gt 0) {
+            Write-Host "[WARN] memory-bank changed since the last accepted integrity baseline: $($mismatchLines.Count) file(s)" -ForegroundColor Yellow
+            $mismatchLines | ForEach-Object { Write-Host "       $($_.Trim())" }
+            Write-Host "       Review the changes, then accept them with: mb verify-integrity"
             $warned++
             Write-Host ""
-        } else {
+        }
+        if ($otherErrors.Count -gt 0) {
+            Write-Host "[WARN] mb doctor reported $($otherErrors.Count) error(s) across $resultLines result lines:" -ForegroundColor Yellow
+            $otherErrors | Select-Object -First 5 | ForEach-Object { Write-Host "       $($_.Trim())" }
+            $warned++
+            Write-Host ""
+        }
+        if ($doctorLines | Where-Object { $_.Contains('Integrity checksums: no baseline') }) {
+            # INFO, not a warning: a fresh clone or worktree has no baseline (.pmb-checksums is
+            # gitignored) and --check never creates one, so counting it would warn — and with
+            # ENFORCE, block — on every push until someone ran a command unrelated to the push.
+            Write-Host "[INFO] No memory-bank integrity baseline yet — run 'mb verify-integrity' to start tracking edits."
+            Write-Host ""
+        }
+        if ($checkModeSeen -and $mismatchLines.Count -eq 0 -and $otherErrors.Count -eq 0) {
             # "result lines", not "checks": this counts emitted [OK]/[WARN]/[ERROR] markers,
             # which exceeds the number of named doctor checks. Claiming a check count this
             # figure does not represent would repeat the unearned-assertion bug being fixed.

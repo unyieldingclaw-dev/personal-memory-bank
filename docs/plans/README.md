@@ -48,6 +48,6 @@ source: ai-draft             # human | ai-draft | approved | imported
 ```bash
 mb plan status     # overview: counts by status, problems
 mb plan list       # all plans grouped by status
-mb plan promote .claude/plans/my-draft.md   # move draft to docs/plans/
+mb plan promote .claude/plans/my-draft.md   # copy draft to docs/plans/
 mb plan archive docs/plans/my-plan.md       # move done plan to archive
 ```

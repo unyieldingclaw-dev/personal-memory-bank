@@ -71,9 +71,19 @@ MUTATIONS = [
      'HOLE D: missing lib denies (was ALLOW)'),
 
     ('empty-diff-rejected', 'scripts/review-reminders.sh',
-     'if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then\n            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself."\n        elif',
+     'if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then\n            deny "Review gate: there is no diff to review (git diff HEAD is empty, or git diff failed). The hash of an empty diff is a public constant, so it cannot serve as proof of review. If you are amending or committing an empty change, run the command yourself. $root_hint"\n        elif',
      'if [ -z "$expected" ]; then\n            deny "no diff"\n        elif',
      'HOLE C: empty-diff constant denied (was ALLOW)'),
+
+    # Remove the index == working tree check: a partly-staged commit with a matching marker
+    # is allowed again (OPP6-1). empty-diff-rejected's anchor above ends in the next line's
+    # `elif`, so nothing (a comment included) may sit between the empty-diff deny and this
+    # elif in the hook. A missing anchor is reported below with the same STILL GREEN label as
+    # a surviving mutant.
+    ('commit-index-matches-worktree', 'scripts/review-reminders.sh',
+     '        elif ! git diff --quiet --no-ext-diff --no-textconv 2>/dev/null; then',
+     '        elif false; then',
+     'OPP6-1: partly-staged commit denied'),
 
     # Consume on the mismatch path instead of restoring -- i.e. the original burn-on-denial
     # behaviour. The stale-marker row must notice the marker is gone.

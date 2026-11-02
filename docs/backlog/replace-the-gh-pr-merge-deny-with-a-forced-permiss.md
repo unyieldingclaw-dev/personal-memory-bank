@@ -1,12 +1,32 @@
 ---
-status: open
+status: resolved
 created: 2026-09-22
-last-reviewed: 2026-09-22
+last-reviewed: 2026-10-20
 staleness-threshold: 90d
 related_plan: null
 ---
 
 # Replace the gh pr merge deny with a forced permission prompt
+
+**RESOLVED 2026-10-20 — Option B shipped, hardened.** The design is
+`docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md`. That spec answers the
+"must be measured" list below:
+- **Item 1:** in-app, auto mode, gate G0 passed.
+- **Items 2 and 3:** subagents and headless runs are denied.
+- **Item 4:** `PermissionRequest` hooks and merge-capable allow rules make the hook deny.
+- **Item 5:** the prompt shows the command, the hook's reason and the agent's description, so
+  the description is pinned to a fixed string.
+- **Items 6 and 9:** crash path, parity and tests.
+- **Item 12:** policy. The repo is pinned with `-R`, and only `--squash` or `--merge` with
+  `--match-head-commit` are accepted.
+
+**Owed after merge, from the main checkout only:** `memory-bank/activeContext.md:58` still says
+the agent never runs `gh pr merge`, and `[NS-65]` still lists merge-gate work as future. Both
+must be updated there; worktree sessions may not edit `memory-bank/`.
+
+It overrode this item's "Blocked" ordering, with the user's approval. The escape-spelling fix
+stays open in its own item, and the spec's §7 explains why it is not a prerequisite. The text
+below is the original proposal, kept as history.
 
 **This is a proposal. It is not approved, and it must be fully vetted before any design work starts.**
 - **Origin.** The user raised it on 2026-09-22, after PR #45 was merged by hand from a command a
@@ -36,19 +56,25 @@ related_plan: null
   the source of truth for how they match and which forms they miss** — it is not restated here, so
   that only one file needs correcting when the code changes.
 - **Several merge forms are not classified as MERGE and get no decision from any wired hook**
-  (measured; see that item): a flag-shaped token before the subcommand, the GraphQL merge route, and
-  PowerShell string or process wrappers. A mixed-case subcommand is a bash-only classifier-parity
-  case: gh rejects it as an unknown command, so it is not an executable merge route.
+  (measured; see that item): a flag-shaped token before the subcommand, the GraphQL merge route,
+  PowerShell string or process wrappers, and a quoted environment assignment before `gh`. A leading
+  wrapper spelled with a path or `.exe` escapes the bash path only; `.ps1` denies it. A mixed-case
+  subcommand is a bash-only classifier-parity case: gh rejects it as an unknown command, so it is
+  not an executable merge route.
 - **Both entry points are wired.** In `.claude/settings.json`, `PreToolUse` runs `review-reminders`
-  for the `Bash` matcher and for the `PowerShell` matcher. The `PowerShell` matcher has no bash
-  fallback.
+  for the `Bash` matcher and for the `PowerShell` matcher. Since 2026-10-30 both fall back to the
+  `.sh` twin when the `.ps1` is missing, `pwsh` is absent, or `pwsh` fails before reading stdin; on
+  that path a PowerShell-tool merge is classified by the bash side, which misses the path/`.exe`
+  wrapper forms that `.ps1` denies.
 - **The auto-mode classifier's observed behaviour** is recorded in the blocking item, under "What
   actually stands in the way today". It is not restated here: it is a single-day observation that
   will be re-measured, and it should change in one place.
 - **"Platform-enforced" is recorded but cannot be separated from the repo hook.**
-  - `memory-bank/activeContext.md:56` says the agent never runs `gh pr merge`, and calls it
-    "platform-enforced, not just repo convention". Its source,
+  - `memory-bank/activeContext.md`'s Architecture Constraints said the agent never runs
+    `gh pr merge`, and called it "platform-enforced, not just repo convention". Its source,
     `docs/archive/progress-2026-08-19-to-21-escalation-and-bundle-1.md:47-50`, says the same.
+    Corrected 2026-09-25: that line now says the merge refusal is not established as
+    platform-enforced, for the reason below. It still says the agent never runs `gh pr merge`.
   - But the repo hook's unconditional deny was already live in both twins at `5d573fd`, the commit
     that entry records, so a refusal observed that day is equally explained by the hook.
   - Whether a platform refusal exists independently is therefore unknown, and if it does, it would
@@ -144,7 +170,8 @@ Reading the docs does not count. Each item has a pass condition.
    "no decision" hands the call to the permission flow.
    - Today, if the pwsh hook drains stdin and then crashes, the bash fallback reads an empty stream
      and exits 0 (2026-09-11 whole-repo review, `memory-bank/progress.md`).
-   - The `PowerShell` matcher has no bash fallback.
+   - The `PowerShell` matcher's bash fallback (added 2026-10-30) has the same drained-stdin
+     weakness, and the bash classifier misses the path/`.exe` merge wrappers.
 7. **Parsing, in both classifiers and both raw-text fallbacks.**
    - Find the gh subcommand after skipping any flag-shaped token before it, and match it
      case-insensitively for classifier parity; gh rejects mixed-case subcommands, so this is
@@ -175,7 +202,8 @@ Reading the docs does not count. Each item has a pass condition.
     - `standards/SECURITY-GUARDRAILS.md:86` and its `templates/` twin say "What Counts as Approval"
       cannot be hook-enforced and is "advisory by necessity";
     - the worked examples at `docs/HOOKS-GUIDE.md:35` and `:37`;
-    - `memory-bank/activeContext.md:56`;
+    - `memory-bank/activeContext.md`'s Architecture Constraints line saying the agent never runs
+      `gh pr merge`;
     - `CLAUDE.md`'s layering line, which says hooks "cannot be talked around", **and its
       `templates/` twin** (`templates/CLAUDE.md:40`, byte-identical sentence, shipped to every new
       adopter by `mb init`). A prompt a person approves is a different property from that.

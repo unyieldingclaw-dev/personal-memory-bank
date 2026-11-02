@@ -22,7 +22,7 @@ One-page cheatsheet for daily use.
 |---------|--------------|
 | `mb init` | Scaffold memory-bank/ in the current project |
 | `mb status` | Quick state check — initialized, memory, context, standards, tasks |
-| `mb doctor` | Full 24-check diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, drift flags, integrity, plan hygiene |
+| `mb doctor` | Full diagnostic — git, templates, hooks, file sizes, version, startup context, hook errors, semantic drift, drift flags, integrity, plan hygiene. `--check`: same checks, never rewrites `.pmb-checksums` (what the pre-push hook runs) |
 | `mb query TAG` | Find all memory tagged with TAG |
 | `mb preflight` | Check tool availability for /change-review (git, gh, ai-review-agent, semgrep) |
 | `mb change-check` | Post-change summary — diff stats, file types, /change-review job preview |
@@ -184,5 +184,5 @@ Skip to Implement for: single-file fixes, typos, config changes.
 ## Daily Workflow
 
 ```
-Start Session -> AI reads Memory Bank automatically -> Work on tasks (use /feature-dev for new features) -> If context gets full -> Update Memory Bank, then type "Handoff" -> Start new chat -> Read Memory Bank first and handoff second -> When done for the day -> "mb update" -> Commit
+Start Session -> AI reads Memory Bank automatically -> Work on tasks (use /feature-dev for new features) -> If context gets full -> type "Handoff" -> Start new chat -> Read Memory Bank first and handoff second -> When an open item changes state -> record it for the next memory-bank batch -> Commit
 ```

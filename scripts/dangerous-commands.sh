@@ -68,16 +68,41 @@
 # The rule this encodes: extraction may fail only when the payload is genuinely unparseable, never
 # because a legal command contains an awkward character.
 #
-# WHY fall back to raw-stdin matching (not to no matching at all) when python3 is
-# missing or JSON parsing fails: this hook's whole purpose is catching genuinely
-# dangerous commands, and a real dangerous command's text is still present SOMEWHERE
-# in the raw payload even when extraction isn't possible -- raw matching never misses
-# a true positive, it only risks occasional false ones. Disabling the guardrail
-# entirely on a missing dependency would trade a rare false-positive-block for a
-# silent, total loss of protection, the wrong direction for a safety gate. This
-# fallback does NOT apply when python3 succeeds and tool_input.command is genuinely
-# empty -- that's a real, parsed answer ("no command to check"), not an extraction
-# failure, so it's trusted as-is rather than falling back to raw matching.
+# WHY fall back to matching the whole payload (not to no matching at all) when python3 is
+# missing or JSON parsing fails: disabling the guardrail on a missing dependency would trade
+# a false-positive block for a silent, total loss of protection, the wrong direction for a
+# safety gate. Its cost is that text in every OTHER field, such as `description`, is matched
+# too. This fallback does NOT apply when python3 succeeds and tool_input.command is genuinely
+# empty -- that's a real, parsed answer ("no command to check"), not an extraction failure.
+#
+# WHY the fallback DECODES the payload's JSON escapes first, CORRECTED 2026-10-14: this comment
+# used to say raw matching "never misses a true positive". It missed every command whose danger
+# needs whitespace other than a space. JSON writes a newline as the two characters `\n` and a tab
+# as `\t`, so with python3 off PATH a pipe to `bash` split across a newline, a tab-separated
+# signing key, a backslash-continued `git push --force`, and any `(^|[^a-z])git` row straight
+# after a newline all got NO verdict, while the parsed path refused or prompted (measured). So
+# did a bare `git merge`: in the payload it is followed by the closing `"`, not the end of string.
+# The decoder below models json.loads for every string in the payload:
+#   - `\" \\ \/ \b \f \n \r \t` and an ASCII `\uXXXX` become the character they stand for, and
+#     `\u0000` becomes nothing, as the shell drops a NUL from the extracted command;
+#   - a non-ASCII `\uXXXX` becomes `?`, and a surrogate PAIR becomes one `?`, since it is one
+#     character. awk cannot portably write UTF-8, and no row treats a non-ASCII character as a
+#     space, so a non-letter stand-in gets the same verdicts with two measured kinds of exception.
+#     It is stricter where the C-locale pass counts a `?` as 1 byte and the real character as 2 to
+#     4. It is weaker where a UTF-8 locale's `grep -i` folds a real character to an ASCII letter --
+#     a class, not one character: U+017F (long s) matches `s` and U+0131 (dotless i) matches `i`,
+#     so `commit.gpg<U+017F>ign` prompts on the parsed path and not here. In every measured case the
+#     shell or git rejected the word, or git failed on the value, so the misses are false
+#     positives', not bypasses. A pair once written as `??` let 140 escaped emoji in a signing gap
+#     pass the {0,255} bound under a UTF-8 locale (measured). The .ps1 twin writes the real character, which is what its own
+#     parsed path sees;
+#   - an UNESCAPED `"` -- a JSON string delimiter, never command text -- becomes a space, so the
+#     end of the command string reads as a word boundary, as the end of the extracted command does.
+# Splitting on backslashes makes it one linear pass in which `\\` is consumed as a pair, so
+# `\\n` (a backslash, then n) is never read as a newline. Any other escape is kept verbatim.
+# WHY out() splits on quotes instead of calling gsub: gsub was measured QUADRATIC in the number of
+# matches on gawk 5.4 (128K unescaped quotes: 10.6 s; split: 0.17 s), and this runs before the
+# length bound, so a malformed payload full of raw quotes hung the hook for minutes.
 #
 # WHY hookSpecificOutput.permissionDecision, not exit code: settings.json wires this hook
 # as "... 2>/dev/null || bash ... || true" for cross-platform fail-open portability, and
@@ -87,11 +112,15 @@
 
 input=$(cat 2>/dev/null)
 if [ -z "$input" ]; then
-    printf "[HOOK ERROR] dangerous-commands.sh: could not read stdin.\nProceeding in fails-open mode.\n"
+    # WHY systemMessage JSON, not plain text: a PreToolUse hook's plain stdout never reaches the
+    # model and is not shown in the visible transcript (per Claude Code's docs), so the fails-open
+    # notice reached no one. systemMessage is shown to the user.
+    printf '{"systemMessage":"[HOOK ERROR] dangerous-commands.sh: could not read stdin. Proceeding in fails-open mode."}\n'
     exit 0
 fi
 
-cmd="$input"
+cmd=""
+dc_parsed=0
 if command -v python3 >/dev/null 2>&1; then
     extracted=$(printf '%s' "$input" | python3 -c "
 import sys, json
@@ -105,7 +134,39 @@ try:
 except Exception:
     sys.exit(1)
 " 2>/dev/null)
-    [ $? -eq 0 ] && cmd="$extracted"
+    [ $? -eq 0 ] && cmd="$extracted" && dc_parsed=1
+fi
+if [ "$dc_parsed" -eq 0 ]; then
+    cmd=$(printf '%s' "$input" | LC_ALL=C awk '
+        function out(s,   q, m, i) { m = split(s, q, /"/); printf "%s", q[1]; for (i = 2; i <= m; i++) printf " %s", q[i] }
+        {
+            n = split($0, p, /\\/)
+            out(p[1])
+            hi = 0
+            for (k = 2; k <= n; k++) {
+                ph = hi; hi = 0
+                if (p[k] == "" && k < n) { printf "\\"; out(p[++k]); continue }
+                c = substr(p[k], 1, 1); r = substr(p[k], 2)
+                if (c == "\"" || c == "/") printf "%s", c
+                else if (c == "b") printf "\b"
+                else if (c == "f") printf "\f"
+                else if (c == "n") printf "\n"
+                else if (c == "r") printf "\r"
+                else if (c == "t") printf "\t"
+                else if (c == "u" && r ~ /^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/) {
+                    v = 0
+                    for (j = 1; j <= 4; j++) v = v * 16 + index("0123456789abcdef", tolower(substr(r, j, 1))) - 1
+                    r = substr(r, 5)
+                    if (ph && v >= 56320 && v <= 57343) ;   # low half of a pair: the high half wrote the ?
+                    else if (v >= 128) printf "?"
+                    else if (v > 0) printf "%c", v
+                    hi = (v >= 55296 && v <= 56319 && r == "")
+                }
+                else printf "\\%s", c
+                out(r)
+            }
+            printf "\n"
+        }')
 fi
 
 # WHY join backslash-newline continuations before any tier matching: the shell parser
@@ -214,18 +275,49 @@ fi
 # single-gap ones; measuring both on the shape that is worst for each gives:
 #     one unbounded gap  (`-c ...`, `--no-gpg-sign`)  4.3s   on dense `git ` text
 #     two nested gaps    (`config (gap)...(gap)`)     >30s   times out; ~47 min extrapolated
-# Only the NESTED pair blows up superlinearly, so only those four groups are bounded, at {0,300}
-# (0.74s at 50000 chars). The two single-gap patterns are left UNBOUNDED on purpose.
+# Only the NESTED pair blows up superlinearly, so only those four groups are bounded, now at
+# {0,255} (0.74s at 50000 chars, measured at the earlier {0,300}). The two single-gap patterns
+# are left UNBOUNDED on purpose.
 #
-# WHOLE-HOOK worst case at the 50000-byte bound, measured end to end, .ps1 side:
-#     dense `git `        17.55s      <- the real number to reason about
-#     dense `git config `  9.33s
-#     ordinary text        0.44s
-# 17.55s is not a hang (the ~47-minute cubic case is gone) but a PreToolUse hook blocks the tool
-# call for its whole duration, so this is the honest figure for "what does a pathological 50 KB
-# command cost". It is quadratic, not cubic: halving DC_MAX_CMD would quarter it. That trade has
-# NOT been made here -- it is recorded so the next person changing DC_MAX_CMD knows the shape.
-# The sh twin stays flat (~1.0s) on every shape; GNU grep is a DFA.
+# WHY 255 and not 300: POSIX guarantees a repetition bound only up to RE_DUP_MAX, whose minimum is
+# 255. A grep that supports -z but caps bounds there would reject `.{0,300}` with exit 2, which
+# dc_grep turns into a denial of EVERY command, because the signing rows run on every call. No such
+# grep has been measured; macOS/BSD grep is the plausible case and is untested. BusyBox is NOT that
+# case: it rejects -z before compiling any pattern, so this hook denies every command there at 255
+# and at 300 alike (measured end to end, BusyBox 1.37.0 on Alpine with bash). GNU grep accepts both
+# bounds. The .ps1 twin uses the same 255 so the two shells keep one regex text and one bound.
+#
+# WHOLE-HOOK cost on 50000-byte shapes, measured end to end, .ps1 side: median of 3 interleaved
+# runs (min-max in brackets), without -> with the structural rm / force-push / command-execution
+# rows, 2026-10-30 on one Windows machine. "+CR" is the same shape with one carriage return in the
+# middle, so the CR-deleted view runs too:
+#     dense `git ` +CR         30.81s [29.88-31.19] -> 32.78s [32.50-34.30]  <- slowest shape found so far
+#     dense `git `             26.82s [22.12-29.15] -> 22.54s [21.86-24.86]  (ranges overlap: no change
+#                                                                           resolved on this shape)
+#     dense `git push ` +CR    18.30s [15.28-21.54] -> 22.81s [19.18-22.94]
+#     dense `git push `         9.56s [9.33-11.31]  -> 12.28s [11.96-13.13]
+#     dense `git config `      10.61s [10.37-11.49] -> 11.05s [10.23-11.31]
+#     `rm -rrrrrrrr ` rep +CR   0.95s [0.67-1.14]   -> 11.54s [10.99-14.14]
+#     `rm -rrrrrrrr ` repeated  0.60s [0.58-0.64]   ->  7.49s [7.43-8.05]
+#     dense `rm -r `            0.66s [0.66-0.82]   ->  3.78s [3.61-3.96]
+#     `rm -` + r x 49986        0.60s [0.56-0.61]   ->  0.57s [0.56-0.60]  (18.99s, median of 2, with
+#                                                                           the flag letters unbounded,
+#                                                                           2026-10-14)
+#     ordinary text             0.63s [0.59-0.71]   ->  0.61s [0.56-0.65]
+# Figures move between days on the same machine (dense `git ` without the rows: 18.04s on
+# 2026-10-14, 26.82s here), so compare a row's two columns, not one date with another.
+# ~33s is not a hang (the ~47-minute cubic case is gone) but a PreToolUse hook blocks the tool
+# call for its whole duration, so this is the honest .ps1 figure for "what does a pathological
+# 50 KB command cost". It is quadratic, not cubic: halving DC_MAX_CMD would quarter it. That trade
+# has NOT been made here -- it is recorded so the next person changing DC_MAX_CMD knows the shape.
+# The sh twin's medians were 1.4-4.1s on the periodic shapes above (Windows Git Bash, where process
+# start-up dominates), and 1.58s to 1.92s on the first 50 KB of scripts/mb.sh. Its slow case is
+# NON-periodic text instead. On ~50 KB of random draws from a handful of tokens (`git `, `push `,
+# `stash `, `=`, `-a`, `x` and space; or `rm `, `-r`, `-`, `r`, `x` and space; or a mix of the
+# two, plus one CR), the whole sh hook took 52.99s, 27.92s and 99.90s respectively, against
+# 1.57-3.29s without these three rows (median of 3, 2026-10-31, one Windows machine). That is
+# inside the 600s hook timeout, but slower than the .ps1 figure above. On a short command the rows
+# add about 0.2s per call on the sh side (1.25s to 1.43s, median of 15).
 #
 # WHY leaving them unbounded is not laziness: in `git (<gap>)--no-gpg-sign` the gap holds the
 # COMMIT MESSAGE, not flags. Bounding it to 200 silently disabled that CONFIRM for any commit
@@ -233,7 +325,7 @@ fi
 # exceed that. It is exactly the shape the round-6 note below cites as canonical. The reasoning
 # that justified the uniform bound ("real gaps are tiny: `--global` is 9 characters") is true of
 # the `config` gaps and false of the message gap; one bound was applied to two different things.
-# KNOWN COST of the {0,300} bound that remains: 300+ characters between `git` and `config`, or
+# KNOWN COST of the {0,255} bound that remains: 256+ characters between `git` and `config`, or
 # between `config` and the key, no longer matches. That is flag-and-path territory, where gaps
 # really are short, and it does not lower the bar for an adversary -- anyone able to pad the
 # command text already has the strictly easier S4/S5 bypasses documented as unfixable by any
@@ -290,11 +382,45 @@ if [ "$cmd_len" -gt "$DC_MAX_CMD" ]; then
     exit 0
 fi
 
-# WHY a lowered view of each of the two views above, hoisted here rather than folded per
-# matcher: POSIX `case` is case-SENSITIVE, and every corresponding site in the .ps1 twin uses
-# OrdinalIgnoreCase (literals) or RegexOptions.IgnoreCase (regexes). Four of the six matchers
-# below -- block(), block_boundary(), confirm(), warn() -- used a bare `case` and so returned NO
-# VERDICT AT ALL on a mixed-case payload the .ps1 twin caught. Only confirm_regex() (grep -i) and
+# WHY a THIRD view with carriage returns deleted, added 2026-10-14: Git Bash deletes a CR while
+# parsing, even with igncr off (measured: `ab<CR>cd` reaches the command as `abcd`), so
+# `git push --for<CR>ce` runs as a force push. One CR inside a word walked past every tier, on both
+# hooks and both paths.
+# WHY in ADDITION rather than deleting CRs inside cmd_loose, as a first version did: deleting them
+# there glued the words on either side of a CR together, so `x`, CR, `g"it" merge` lost the CONFIRM
+# the CR-keeping view gave it. On Bash those were false positives, but the .ps1 twin judges the Bash
+# tool too whenever pwsh is present, and it keeps every verdict (it must: PowerShell reads a lone CR
+# as a statement break). Two policies made the verdict depend on which hook ran. An added view can
+# only add a match, so both hooks now give one verdict on CR shapes, by the rule every view here
+# follows.
+# WHY computed only when the command holds a CR: otherwise this view equals cmd_loose and matching it
+# again finds nothing new, while each `$(...)` here is a subprocess on every Bash tool call. Left
+# empty, it matches no row: every case arm needs the pattern's text, and dc_grep is not given it.
+# WHY after the length bound, and through a `case` in dc_has_cr(): the first version tested for a CR
+# with `${cmd_loose#*<CR>}` above the bound. bash runs that in time quadratic in the string's
+# length (measured on Git Bash: 0.35 s at 50K characters, 8.8 s at 200K), so an oversized command
+# could outlast the hook's timeout, and a timed-out hook does not block the call. A `case` glob is
+# linear (0.0012 s at 200K, measured). It sits in a helper because a `case` on a raw view is what
+# the completeness tests forbid every matcher to do.
+# dc_nl and dc_cr are also the trailing boundaries of confirm_boundary() below.
+dc_nl='
+'
+dc_cr=$(printf '\r')
+dc_has_cr() {
+    case "$1" in *"$dc_cr"*) return 0 ;; esac
+    return 1
+}
+cmd_loose_nocr=""
+if dc_has_cr "$cmd_loose"; then
+    cmd_loose_nocr=$(printf '%s' "$cmd_loose" | tr -d '\r' | sed 's/  */ /g')
+fi
+
+# WHY a lowered copy of each view above (the CR-deleted one only when it exists), hoisted here
+# rather than folded per matcher: POSIX `case` is case-SENSITIVE, and every corresponding site in
+# the .ps1 twin uses OrdinalIgnoreCase (literals) or RegexOptions.IgnoreCase (regexes). Four of
+# the six matchers below -- block(), block_boundary() (since replaced by block_regex() for
+# [NS-38]), confirm(), warn() -- used a bare `case` and so returned NO VERDICT AT ALL on a
+# mixed-case payload the .ps1 twin caught. Only confirm_regex() (grep -i) and
 # confirm_boundary() (which folded per call) already agreed. That is a live divergence across
 # three tiers, not a cosmetic one: SQL keywords are case-insensitive to the engine, so a
 # mixed-case drop executes exactly as the upper-case one does, and on the default
@@ -309,7 +435,7 @@ fi
 # makes, and the same accepted cost: at CONFIRM and WARN tier a false positive is a prompt, at
 # BLOCK tier it is a refusal. The word-boundary checks below are what keep that cost bounded.
 #
-# WHY hoisted: computing it once beside cmd_loose keeps every matcher reading the SAME pair, so
+# WHY hoisted: computing it once beside cmd_loose keeps every matcher reading the SAME views, so
 # "did this matcher fold?" is answerable by reading one line of the matcher instead of tracing
 # which of them recomputed it. confirm_boundary() used to recompute both per call.
 #
@@ -330,7 +456,7 @@ fi
 # adds a `printf | tr` subshell per matcher CALL, about 25 per invocation, and this hook runs on
 # every single Bash tool call. Measured on this machine over 10 runs of a benign command:
 # 1.07s -> 2.33s per invocation, a 2.2x regression paid by every command the operator ever runs.
-# Folding the two subjects once costs two subshells total.
+# Folding the subjects once costs two subshells total, three when the command holds a CR.
 #
 # THE TRAP THIS CREATES, and the guard for it: because the subjects are lower case, an UPPER-case
 # pattern can now never match anything -- silently, and FAIL-OPEN, which is the worst direction
@@ -339,11 +465,13 @@ fi
 # into a red test the moment someone writes one.
 cmd_lc=$(printf '%s' "$cmd" | tr 'A-Z' 'a-z')
 cmd_loose_lc=$(printf '%s' "$cmd_loose" | tr 'A-Z' 'a-z')
+cmd_loose_nocr_lc=""
+[ -n "$cmd_loose_nocr" ] && cmd_loose_nocr_lc=$(printf '%s' "$cmd_loose_nocr" | tr 'A-Z' 'a-z')
 
 block() {
     # BLOCK: irreversible or highly destructive — refuse unconditionally.
-    # Checks the de-escaped view too -- see the cmd_loose note above -- and both views folded
-    # to lower case -- see the cmd_lc note above. $1 MUST be written lower case.
+    # Checks the de-escaped view too -- see the cmd_loose note above -- and its CR-deleted copy,
+    # and all of them folded to lower case -- see the cmd_lc note above. $1 MUST be written lower case.
     case "$cmd_lc" in
         *"$1"*)
             deny "BLOCK: $2. Refusing this command."
@@ -351,6 +479,12 @@ block() {
             ;;
     esac
     case "$cmd_loose_lc" in
+        *"$1"*)
+            deny "BLOCK: $2. Refusing this command."
+            exit 0
+            ;;
+    esac
+    case "$cmd_loose_nocr_lc" in
         *"$1"*)
             deny "BLOCK: $2. Refusing this command."
             exit 0
@@ -358,39 +492,108 @@ block() {
     esac
 }
 
-block_boundary() {
-    # Like block(), but requires $1 to end at a word boundary (not immediately followed
-    # by a letter) -- for short patterns prone to colliding with longer words, e.g. a
-    # plain "| sh" substring check false-positives on "| sha256sum"/"| shasum", tools
-    # this repo's own review-gate hash verification depends on (found when fixing the
-    # field-path bug that had made this pattern a no-op made the collision real). POSIX
-    # case globs have no \b, so this approximates it: match $1 followed by a non-letter,
-    # or match $1 as the literal end of the string.
+dc_grep() {
+    # dc_grep <ERE> <locale> <subject>... -- 0 on a match, 1 on no match. Shared by the two regex
+    # matchers. A non-empty <locale> runs grep under LC_ALL=<locale>; an empty one runs it under
+    # the caller's locale. Grep exiting 2 or higher denies and exits the script instead.
     #
-    # WHY the boundary class stays [!a-zA-Z] on an already-lowered string: [!a-z] would be
-    # equivalent here, and writing it that way would encode an assumption -- "the subject is
-    # always folded" -- that a future edit could quietly falsify. Keeping the class case-blind
-    # costs nothing and cannot be wrong either way. $1 MUST be written lower case.
-    case "$cmd_lc" in
-        *"$1"[!a-zA-Z]*|*"$1")
-            deny "BLOCK: $2. Refusing this command."
-            exit 0
-            ;;
-    esac
-    case "$cmd_loose_lc" in
-        *"$1"[!a-zA-Z]*|*"$1")
-            deny "BLOCK: $2. Refusing this command."
-            exit 0
-            ;;
-    esac
+    # WHY the subjects are joined by NUL into ONE grep: under -z a NUL ends a record, so each view
+    # is still matched on its own -- no pattern can span from one view into the other, and `^`
+    # and `$` anchor per view. It halves the grep calls. Each is a subprocess (~40ms measured on
+    # Windows, against a ~1s hook that runs on every Bash tool call), and confirm_regex() below
+    # can run two passes per row.
+    #
+    # WHY any other status denies instead of returning: grep exits 2 when it cannot evaluate
+    # the pattern at all -- an option it does not support, a malformed expression. Inside an
+    # `if`, that status reads exactly like "no match", so a grep that rejected -z would have
+    # silently disabled every regex row, including the single-line `curl | bash` BLOCK that the
+    # glob matcher this replaced handled with no external tool. Same honest direction as the
+    # length bound above: a command the guard cannot analyze prompts, it does not pass.
+    # That makes a grep with -z a hard requirement of the sh hook. Measured on Alpine: BusyBox grep
+    # rejects -z ("unrecognized option: z"), so with bash but no pwsh every Bash command is refused:
+    # with CONFIRM REQUIRED, unless a literal BLOCK row, which runs before any regex row, matches
+    # first (measured on Alpine: `rm -rf` gets BLOCK, `ls` gets CONFIRM REQUIRED).
+    # The hook's full requirement, python3 included, is stated once, in
+    # standards/SECURITY-GUARDRAILS.md under "Platform requirement (sh hook)"; the deny message
+    # points there rather than restating it.
+    #
+    # WHY block_regex() passes C: grep's character classes follow the locale. Measured under GNU
+    # grep 3.0, C.UTF-8 made [[:space:]] match NBSP and em-space (which this file keeps
+    # non-boundaries everywhere, see the whitespace note above) and made [^a-z] stop matching an
+    # invalid byte such as 0xFF, which the replaced glob matched in every locale -- reachable
+    # through the raw-stdin fallback, since a parsed JSON string cannot carry that byte. Under the
+    # byte locale, each class in the pipe row means one fixed set of bytes.
+    #
+    # WHY confirm_regex() runs the caller's locale AND C, not either one alone -- each alone
+    # misses a signing bypass the other catches (all measured):
+    #   - C alone: the rows bound their gaps with `.{0,255}`, and C counts that bound in BYTES
+    #     while a UTF-8 locale counts CHARACTERS and the .ps1 twin counts UTF-16 code units.
+    #     `git config --file /tmp/<120 CJK chars>/cfg` plus the key and a falsey value (408
+    #     bytes) matches under C.UTF-8 and .NET and not under C, so the sh CONFIRM went silent
+    #     while ps1 prompted.
+    #   - The caller's locale alone: under tr_TR.UTF-8, -i does not fold `I` to `i`, so an
+    #     upper-case key -- `git config COMMIT.GPGSIGN false`, which git accepts -- got no
+    #     verdict; under a UTF-8 locale on a strict grep (GNU 3.7 and 3.11 measured; 3.0 is not
+    #     strict) `.` does not match an invalid sequence, so a lone surrogate escape in a gap (the
+    #     extraction writes it as bytes ED B3 BF) got none either; and under a UTF-8 locale on GNU
+    #     grep 3.0 the full row misses a gap holding an astral character such as an emoji, though
+    #     every fragment of the row matches it (3.11 does not). All pass under C. The first two
+    #     are the sh twin of defects the .ps1 closes with CultureInvariant and .NET's `.`.
+    # The union can only add matches. Its cost is a second grep per row, paid only when the
+    # first misses -- that is, on almost every command -- and the NUL join above pays for it.
+    # What the union guarantees, and when, is stated once in standards/SECURITY-GUARDRAILS.md.
+    # The list above is the measured record of the caller's pass missing; it is not exhaustive.
+    #
+    # WHY the argument count is checked: with no subject, printf emits one empty record and grep
+    # answers "no match", so a caller that lost its subjects would pass every command silently.
+    if [ "$#" -lt 3 ]; then
+        deny "CONFIRM REQUIRED: internal error: dc_grep needs a pattern, a locale and at least one subject (got $# arguments), so this command cannot be checked reliably. Run manually if intentional."
+        exit 0
+    fi
+    _dc_re=$1
+    _dc_lc=$2
+    shift 2
+    if [ -n "$_dc_lc" ]; then
+        printf '%s\0' "$@" | LC_ALL="$_dc_lc" grep -qziE -e "$_dc_re"
+    else
+        printf '%s\0' "$@" | grep -qziE -e "$_dc_re"
+    fi
+    _dc_rc=$?
+    if [ "$_dc_rc" -gt 1 ]; then
+        deny "CONFIRM REQUIRED: grep could not evaluate a guard pattern (exit ${_dc_rc}), so this command cannot be checked reliably. The sh hook needs a grep that supports -z, such as GNU grep; BusyBox grep does not. Its full platform requirement is in standards/SECURITY-GUARDRAILS.md under Platform requirement (sh hook). Run manually if intentional."
+        exit 0
+    fi
+    return "$_dc_rc"
+}
+
+block_regex() {
+    # Like block(), but matches an extended regex, case-insensitively, via dc_grep -- the
+    # BLOCK-tier counterpart of confirm_regex() below, which documents the -z/-e rationale.
+    #
+    # WHY it exists, [NS-38]: a trailing pipe is a real shell line continuation. `curl x |`
+    # followed by a newline and then `bash` runs exactly as `curl x | bash`. So do blank lines
+    # between the two (verified live in bash). The literal-substring rows this replaced could
+    # not span that newline, so a piped-to-interpreter command split across lines passed the
+    # BLOCK tier with no verdict at all on the sh side. The .ps1 twin's `\s*` already spanned
+    # it. A case glob cannot say "zero or more whitespace", so this tier needs a regex, and
+    # grep -z lets the whitespace class reach across newlines.
+    #
+    # WHY the pipe rows are merged into one alternation rather than one row per interpreter:
+    # each row costs a grep subprocess on every Bash tool call (see dc_grep), so one row is one
+    # call, not two. Runs under LC_ALL=C -- see dc_grep for why.
+    # Checks the de-escaped view and its CR-deleted copy too -- see the cmd_loose notes above.
+    if dc_grep "$1" C "$cmd" "$cmd_loose" ${cmd_loose_nocr:+"$cmd_loose_nocr"}; then
+        deny "BLOCK: $2. Refusing this command."
+        exit 0
+    fi
 }
 
 confirm() {
     # CONFIRM: advanced op with legitimate uses — require explicit manual invocation.
-    # Checks the de-escaped view too -- see the cmd_loose note above -- and both views folded
-    # to lower case -- see the cmd_lc note above. Without the fold, `--No-Verify` and `SUDO RM`
-    # walked through this tier on the sh side while the .ps1 twin gated both.
-    # $1 MUST be written lower case.
+    # Checks the de-escaped view too -- see the cmd_loose note above -- and its CR-deleted copy,
+    # and all of them folded to lower case -- see the cmd_lc note above. Without the fold,
+    # `--No-Verify` and `SUDO RM` walked through this tier on the sh side while the .ps1 twin gated
+    # both. $1 MUST be written lower case.
     case "$cmd_lc" in
         *"$1"*)
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
@@ -398,6 +601,12 @@ confirm() {
             ;;
     esac
     case "$cmd_loose_lc" in
+        *"$1"*)
+            deny "CONFIRM REQUIRED: $2. Run manually if intentional."
+            exit 0
+            ;;
+    esac
+    case "$cmd_loose_nocr_lc" in
         *"$1"*)
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
@@ -441,12 +650,11 @@ confirm_regex() {
     # .NET -replace is not; the replacement then reintroduced the identical defect one function
     # over, via grep. Recorded here so a third instance is harder to write.
     #
-    # Checks the de-escaped view too -- see the cmd_loose note above.
-    if printf '%s' "$cmd" | grep -qziE -e "$1"; then
-        deny "CONFIRM REQUIRED: $2. Run manually if intentional."
-        exit 0
-    fi
-    if printf '%s' "$cmd_loose" | grep -qziE -e "$1"; then
+    # Checks the de-escaped view and its CR-deleted copy too -- see the cmd_loose notes above.
+    # Matched through dc_grep, which refuses to read a grep failure as "no match": first under the
+    # caller's locale, then under C -- see dc_grep for the three bypasses that need both passes.
+    if dc_grep "$1" "" "$cmd" "$cmd_loose" ${cmd_loose_nocr:+"$cmd_loose_nocr"} \
+        || dc_grep "$1" C "$cmd" "$cmd_loose" ${cmd_loose_nocr:+"$cmd_loose_nocr"}; then
         deny "CONFIRM REQUIRED: $2. Run manually if intentional."
         exit 0
     fi
@@ -454,13 +662,13 @@ confirm_regex() {
 
 confirm_boundary() {
     # Like confirm(), but requires $1 to be bounded on BOTH sides: preceded by the
-    # start of the string or a non-letter, and followed by whitespace or the literal
-    # end of the string — not just any non-letter on the trailing side, which
-    # block_boundary() accepts. WHY the stricter trailing boundary: "git merge" as a
-    # plain substring (or under block_boundary's non-letter check) also matches
+    # start of the string or a non-letter, and followed by a space, a newline, a CR or the literal
+    # end of the string — not just any non-letter on the trailing side, which the
+    # pipe row's `([^a-z]|$)` accepts. WHY the stricter trailing boundary: "git merge" as a
+    # plain substring (or under that non-letter check) also matches
     # "git merge-base", a common, harmless read-only command this repo's own session
     # tooling uses constantly — the character after "merge" in "merge-base" is "-", a
-    # non-letter, so block_boundary's boundary rule would still false-positive there.
+    # non-letter, so a non-letter boundary rule would still false-positive there.
     # WHY a leading boundary too (found by code review, not present in the original
     # version): without one, "$1" also matches as a substring of a longer word — e.g.
     # "git commit -m 'legit merge of feature A'" contains the literal substring
@@ -472,8 +680,8 @@ confirm_boundary() {
     # side: $cmd already had tabs folded to spaces before this function ever
     # runs (see the blank-run collapse above), and dangerous-commands.ps1
     # does the same normalization -- so both sides only ever need to check for a
-    # plain ASCII space here, with no character-class/locale/Unicode ambiguity to
-    # keep in parity.
+    # plain ASCII space, a newline or a CR here, literal characters with no
+    # character-class/locale/Unicode ambiguity to keep in parity.
     # WHY case-fold both sides before matching (found by opposition review, not
     # present in the original version): POSIX case globs are case-sensitive, but
     # dangerous-commands.ps1's `-imatch` is not -- so "GIT merge main" (the
@@ -483,33 +691,53 @@ confirm_boundary() {
     # resolves "GIT" to git.exe case-insensitively, and git's own subcommand
     # parsing only requires "merge" (not "GIT") to be lowercase. Folding both
     # $cmd and $1 to lowercase before the case match closes that platform gap
-    # without touching confirm()/block()/block_boundary(), which are unaffected
+    # without touching confirm()/block()/block_boundary() (the last since replaced by
+    # block_regex() for [NS-38]), which are unaffected
     # by this pattern and use the file's existing explicit-lowercase-variant
     # convention (see the "drop table"/"DROP TABLE" pairs above) instead.
     # Checks the de-escaped view too -- see the cmd_loose note above. This function was the
-    # ONE matcher of five the de-escaped-view retrofit missed, and the gap was live: with only
+    # FIRST matcher the de-escaped-view retrofit missed (warn() was the second, [NS-40]), and
+    # the gap was live: with only
     # the faithful view, `git m\erge main` and `git "merge" main` were both SILENT here while
     # the .ps1 twin CONFIRMed both -- a sh/ps1 divergence in the git merge CONFIRM tier,
     # reachable by the same escape and adjacent-quote techniques the retrofit closed in
-    # block()/block_boundary()/confirm()/confirm_regex(). The ps1 side never had the gap
+    # block()/block_boundary() (since replaced by block_regex())/confirm()/confirm_regex().
+    # The ps1 side never had the gap
     # because its `git merge` entry is one more row in the uniform $confirmPatterns loop.
     #
     # WHY the mutation proof did not catch this: deleting cmd_loose turned the escape tests red,
     # which proves the MECHANISM works where it is wired -- it says nothing about whether every
     # matcher is wired to it. Coverage failures wear correctness clothing. The cheap guard is a
-    # COMPLETENESS invariant (enumerate every matcher, assert each references both views), which
+    # COMPLETENESS invariant (enumerate every matcher, assert each references every view), which
     # is a different tool from a discrimination check.
     # The two folded views this used to recompute per call are now hoisted beside cmd_loose --
     # see the cmd_lc note above. This function was the only one that folded, which is what made
     # the other four's omission look deliberate rather than missed.
+    #
+    # WHY a newline is a trailing boundary too, added 2026-10-14: tabs are folded to spaces above
+    # but newlines are not, so `git merge`, a newline, then another command -- which runs a bare
+    # `git merge` -- got no verdict on either shell. The .ps1 twin's row gained `\n` alongside.
+    # A CR is a boundary too, matching the .ps1 row: PowerShell reads a lone CR as a statement
+    # break, and that hook judges the PowerShell tool. The arm decides a verdict alone only when
+    # another character follows the CR (`git merge`, CR, `ls`): Git Bash deletes the CR and runs
+    # `git mergels`, so on this hook that one is an accepted false positive, kept so the two hooks
+    # give one verdict. A CR before a space, a newline or the end is a true positive on Git Bash,
+    # and the CR-deleted view catches it as well.
     case "$cmd_lc" in
-        "$1 "*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1")
+        "$1 "*|"$1$dc_nl"*|"$1$dc_cr"*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1$dc_nl"*|*[!a-zA-Z]"$1$dc_cr"*|*[!a-zA-Z]"$1")
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
             ;;
     esac
     case "$cmd_loose_lc" in
-        "$1 "*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1")
+        "$1 "*|"$1$dc_nl"*|"$1$dc_cr"*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1$dc_nl"*|*[!a-zA-Z]"$1$dc_cr"*|*[!a-zA-Z]"$1")
+            deny "CONFIRM REQUIRED: $2. Run manually if intentional."
+            exit 0
+            ;;
+    esac
+    # No CR arms here: this view has none.
+    case "$cmd_loose_nocr_lc" in
+        "$1 "*|"$1$dc_nl"*|"$1"|*[!a-zA-Z]"$1 "*|*[!a-zA-Z]"$1$dc_nl"*|*[!a-zA-Z]"$1")
             deny "CONFIRM REQUIRED: $2. Run manually if intentional."
             exit 0
             ;;
@@ -522,13 +750,44 @@ warn() {
     # default Windows and macOS filesystems are case-insensitive, so `ID_RSA` and `id_rsa` name
     # the same file; the .ps1 twin's OrdinalIgnoreCase already surfaced both.
     #
-    # WHY only the faithful view and not cmd_loose_lc: this matcher checks ONE view on both
-    # shells -- the .ps1 warn loop tests $cmd alone as well -- so adding the de-escaped view
-    # here would create a divergence rather than close one. That shared single-view limit is a
-    # real gap, but it is a gap in BOTH shells and out of scope for the case-folding fix.
+    # WHY this checks the de-escaped view too, [NS-40]: it was the second matcher the cmd_loose
+    # retrofit missed, after confirm_boundary(). Every warn pattern was evadable by one
+    # backslash or one pair of quotes -- `cat ~/.ssh/id\_rsa` and `cat ~/.ssh/"id"_rsa` warned
+    # on NEITHER shell, while plain `id_rsa` warned on both, and no BLOCK or CONFIRM row covers
+    # these paths as a fallback. A bypass of SURFACING, not of enforcement: WARN never blocks,
+    # so the command ran either way and what was lost was the notice. The .ps1 warn loop had
+    # the same single-view limit and gets the same fix, so the two shells still agree.
+    #
+    # WHY `return` after a match, unlike the other matchers: warn() does NOT exit -- the
+    # command proceeds. Without the return, a command matching several views (most of them, since
+    # the loose view differs only when backslashes or quotes are present) would record the
+    # warning twice.
+    #
+    # WHY record here and emit once at the end of the file, not print per row: stdout must be
+    # nothing but ONE JSON object, so two matching rows must share one object. Inline rather than
+    # a helper function, because the escape-parity test treats every top-level function in this
+    # file as a matcher that must have rows unless it is excluded there by name, as deny(),
+    # dc_grep() and dc_has_cr() are. The CR-deleted arm records too: a plain line would sit
+    # beside the JSON object and void it.
     case "$cmd_lc" in
         *"$1"*)
-            printf "WARNING: %s. Proceeding.\n" "$2"
+            dc_warn_sys="${dc_warn_sys:+$dc_warn_sys }WARNING: $2. Proceeding."
+            dc_warn_list="${dc_warn_list:+$dc_warn_list, }$2"
+            return
+            ;;
+    esac
+    case "$cmd_loose_lc" in
+        *"$1"*)
+            dc_warn_sys="${dc_warn_sys:+$dc_warn_sys }WARNING: $2. Proceeding."
+            dc_warn_list="${dc_warn_list:+$dc_warn_list, }$2"
+            return
+            ;;
+    esac
+    case "$cmd_loose_nocr_lc" in
+        *"$1"*)
+            dc_warn_sys="${dc_warn_sys:+$dc_warn_sys }WARNING: $2. Proceeding."
+            dc_warn_list="${dc_warn_list:+$dc_warn_list, }$2"
+            return
             ;;
     esac
 }
@@ -547,10 +806,103 @@ block "git push -f"      "force push (short form)"              # WHY: same as -
 # This also restores structural parity with the .ps1 twin, whose $blockPatterns never had them.
 block "drop table"       "SQL table drop"                       # WHY: irreversible schema destruction
 block "drop database"    "SQL database drop"                    # WHY: destroys entire database
-block_boundary "| bash" "command piped to bash (curl|bash, wget|bash, etc.)"  # WHY: remote code execution vector
-block_boundary "| sh"   "command piped to sh"                  # WHY: remote code execution via sh
-block_boundary "|bash"  "command piped to bash (no-space form)"  # WHY: curl|bash without spaces evades space-prefixed pattern
-block_boundary "|sh"    "command piped to sh (no-space form)"    # WHY: wget|sh without spaces evades space-prefixed pattern
+# WHY one regex replaces the four literal pipe rows ("| bash", "| sh", "|bash", "|sh"), [NS-38]:
+# see block_regex() -- a trailing pipe continues the command onto the next line, and a literal
+# cannot span the newline. It matches every input the four rows matched: measured over a
+# 4,900-input differential (spacing, case, CR/LF, NBSP, trailing byte) with zero losses.
+#   `\|&?`          -- also bash's `|&`, which pipes stdout AND stderr into the interpreter.
+#                      The four rows missed `curl x |& bash` on both shells.
+#   `[[:space:]]*`  -- no space, one space, and now newlines and blank lines after the pipe.
+#   `([^a-z]|$)`    -- the trailing boundary the rows had. Without it, "| sh" false-positives
+#                      on "| sha256sum" / "| shasum", tools this repo's own review-gate hash
+#                      verification depends on. A digit, `_`, `-`, `.` or `/` after the name
+#                      still counts as a boundary, as before: `| bash5` blocks.
+# KNOWN GAPS, recorded in standards/SECURITY-GUARDRAILS.md rather than matched. Both shells: a
+# comment line between the pipe and the interpreter (a real shell skips it), an interpreter
+# reached through another word (`| sudo sh`, `| env bash`, `| /bin/bash`), and any interpreter
+# other than bash and sh (zsh, dash, python, ...). The .ps1 twin only: its `\b` treats a digit or
+# `_` after the name as part of the word, so `| bash5` and `| bash_x` block here but not there.
+#
+# Each *_regex row needs one example in tests/test-dangerous-commands.sh's `_dc_ex` table, keyed by
+# row order within its matcher. The escape-parity invariant fails loudly on a row without one;
+# when inserting a row between existing ones, renumber the examples after it.
+block_regex "\|&?[[:space:]]*(bash|sh)([^a-z]|$)" "command piped to a shell interpreter (curl|bash, wget|sh, etc.)"  # WHY: remote code execution vector
+
+# WHY three STRUCTURAL rows beside the literal ones above, ported from a sibling project's local fix
+# and rewritten from its PCRE into POSIX ERE: the literals match one
+# spelling each, and real commands reorder, split and abbreviate. `git push origin main --force`,
+# `git -C . push -f`, `git push origin +main`, `rm -r -f x`, `rm x -rf` and `rm --rec --forc x` all
+# executed with no verdict from this file. The literals STAY: a regex row can only add matches, so
+# nothing they caught can regress, and they cost no subprocess.
+#
+# WHY these matter more than defense in depth: the template ships `Bash(git *)` as an allow rule,
+# and /code-review's `allowed-tools` pre-approves `Bash(awk *)` for its turn. An allow rule resolves
+# BEFORE Claude Code's auto-mode classifier (docs: permission-modes, "How the classifier evaluates
+# actions"), so a force push or `git -c alias.x='!cmd' x` reached through `Bash(git *)` is approved
+# with no review of any kind unless this hook stops it.
+#
+# Shared shape, and why each part is there:
+#   `[^;&|[:cntrl:]]` -- the SEGMENT class: a flag only counts inside the same simple command, so
+#                        `rm -r x` then a newline then `tail -f log` is not a force-delete. It excludes
+#                        newline without a literal newline in the row. The .ps1 twin spells the same
+#                        byte set `[^;&|\x00-\x1F\x7F]`. Backslash-newline needs no special case: the
+#                        join above has already removed it.
+#   `{0,255}`         -- the gaps between words. Unbounded, .NET backtracking on them was quadratic:
+#                        per view on a 50 KB payload, `rm -r -r ...` took 11.24s and `git push push
+#                        ...` 6.11s, against 0.01s and 0.00s bounded. 255 is the POSIX ceiling (see
+#                        WHY 255 above). The bound counts bytes here and CHARACTERS in the .ps1 twin,
+#                        so a long non-ASCII gap can block there and not here (measured: 90 CJK
+#                        characters, 294 bytes).
+#   `{0,32}`          -- runs of letters inside a flag token. The rm cluster alternative's outer and
+#                        inner runs, unbounded together, took about 8-9s per view on `rm -rrrr...`
+#                        (50 KB). Unbounded one at a time, each of the other runs measured no slower
+#                        than the bounded row on the shapes tried, so they are bounded for
+#                        uniformity, not for a measured need.
+#                        The cost: more than 32 letters before or between the flag letters is not
+#                        matched.
+#   no quote classes  -- the de-escaped view strips quotes and backslashes before matching, so
+#                        `git push origin '+main'` and `alias.x='!cmd'` arrive unquoted there. A quote
+#                        class here would also defeat the escape-parity guard in the tests.
+# These rows match common spellings and are NOT exhaustive: a command deliberately respelled --
+# padded past a bound, abbreviated further, quoted around a separator, held in a variable, or set up
+# by an earlier command or user config -- can get through. The forms tested, blocked and not, are the
+# fixture table in the PMB repository's tests/test-dangerous-commands.sh.
+#
+# rm: `rm` (or `rm.exe`) as a word -- not after `-`, so docker's `--rm` is not it -- then, within one
+# segment, a recursive token and a force token in either order, or one short token holding both.
+# `-(-|[a-z]{0,32})r` takes `-r`, `-vr`, `--recursive` and getopt's unambiguous `--rec`; `f`
+# likewise. On the PowerShell side the same row also reads `rm -r -fo x` and `rm x -Recurse -Force`,
+# since `rm` is an alias of Remove-Item there. This row needs the word `rm`, so other Remove-Item
+# spellings are not matched by it.
+block_regex "(^|[^a-z0-9_-])rm(\.exe)? ([^;&|[:cntrl:]]{0,255} )?(-(-|[a-z]{0,32})r[^;&|[:cntrl:]]{0,255} -(-|[a-z]{0,32})f|-(-|[a-z]{0,32})f[^;&|[:cntrl:]]{0,255} -(-|[a-z]{0,32})r|-[a-z]{0,32}(r[a-z]{0,32}f|f[a-z]{0,32}r))" "irreversible recursive deletion (rm with recursive and force flags, in any order)"
+# force push: `git` as a word, then `push` after a space or `=` within the segment -- `=` so that
+# `git -c alias.p=push p origin main --force` counts -- then a force indicator anywhere after it:
+# `--force` (and so its `-with-lease`/`-if-includes` forms), `--mir` and longer prefixes of
+# `--mirror` (which overwrites and deletes remote refs), a short flag cluster holding `f` (`-uf`,
+# `-4f`), or a `+refspec`. `push.default` and `--push-option` do not count: `push` must be followed
+# by a space. Git also accepts `--mi` and `--m` for `--mirror`; those are not matched.
+# `git stash push` must not count -- it never touches a remote -- and ERE has no lookbehind. So the
+# space before `push` must follow one of six alternatives, each "a character that is not the next
+# letter back, then the tail of `stash`": [^h], [^s]h, [^a]sh, [^t]ash, [^s]tash, [^ ]stash. They
+# fail, and the row does not match, when the word before ` push` is a standalone `stash` (any case;
+# preceded by a space, or the first word), and when the first word is a bare tail of it (`h`, `sh`,
+# `ash`, `tash`). So `git -C stash push --force` and `git --namespace stash push --force` are not
+# matched; `git -C /tmp/stash push --force` is. The `-C /x/<tail>` fixtures and `git -C . push`
+# pin the alternatives.
+# ACCEPTED FALSE POSITIVES: text naming the flags, e.g. `git log --grep 'push --force'` and
+# `git commit -m 'drop rm -r and -f'` -- quotes do not end a segment.
+block_regex "(^|[^a-z])git(\.exe)? ([^;&|[:cntrl:]]{0,255}([^;&|[:cntrl:]h]|[^;&|[:cntrl:]s]h|[^;&|[:cntrl:]a]sh|[^;&|[:cntrl:]t]ash|[^;&|[:cntrl:]s]tash|[^;&|[:cntrl:] ]stash) |[^;&|[:cntrl:]]{0,255}=)?push( [^;&|[:cntrl:]]{0,255})? (--force|--mir|-[a-z0-9]{0,32}f|\+[^ [:cntrl:]])" "force push (--force, --mirror or -f in any position, or a +refspec)"
+# Commands run through a tool's own arguments: a git alias whose value starts with `!` runs as a
+# shell command (also reached through `GIT_CONFIG_PARAMETERS`), and awk runs one through system()
+# or `"cmd" | getline` (and gawk's coprocess `"cmd" |& getline`). `system` must not follow a `.`, so
+# `grep 'os.system('` later in the same command is not awk's. The awk gap is bounded too: unbounded
+# it took 5.91s per view on 50 KB. Unlike the other rows that gap is `.`, not the segment class,
+# because an awk program holds `;` between its statements and this matcher cannot tell a quoted `;`
+# from a command separator. ACCEPTED FALSE POSITIVE as a result: `awk ... ; grep "system(" f` blocks.
+# DELIBERATELY NOT PORTED, with the reason in the standard: find -exec/-ok (Claude Code never lets a
+# prefix rule approve find's exec actions) and sed's `e` command (no shipped settings allow rule or
+# command `allowed-tools` approves sed, so it already meets the prompt or the classifier).
+block_regex "alias\.[a-z0-9_.-]+(=| +)!|(^|[^a-z0-9_-])[gmn]?awk .{0,255}([^.a-z0-9_]system ?\(|\|&? ?getline)" "arbitrary command execution through a tool's own arguments (git alias !cmd, awk system() or cmd | getline)"
 
 # CONFIRM: advanced ops with legitimate uses — require explicit manual invocation
 confirm "git filter-branch" "history rewriting"                 # WHY: rewrites commit history, rarely intentional
@@ -632,7 +984,7 @@ confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WH
 # The class also did not achieve what it cost: NEWLINE was never in the excluded set, so the gap
 # already spanned commands freely. It blocked ordinary messages and not the thing it was for.
 #
-# The two nested-gap `config` patterns keep a BOUND (`.{0,300}`) because they are the cubic pair
+# The two nested-gap `config` patterns keep a BOUND (`.{0,255}`) because they are the cubic pair
 # and need one -- but they no longer exclude separators either. That exclusion was left in place
 # for one round on the argument that a separator there means a different command; it was then
 # measured to be a live hole of its own:
@@ -649,15 +1001,31 @@ confirm "--no-verify"       "bypasses pre-commit hooks (local governance)"  # WH
 # silent miss is not. Both are recorded in the accepted-false-positive list in
 # standards/SECURITY-GUARDRAILS.md rather than left for the next reviewer to rediscover.
 confirm_regex "(^|[^a-z])git (.*)-c *[\"']?commit\.gpgsign[\"']? *= *[\"']?(false|no|off|0)([^a-z0-9]|$)" "bypasses commit signing (local governance)"
-confirm_regex "(^|[^a-z])git (.{0,300})config (.{0,300})[\"']?commit\.gpgsign[\"']? *[= ] *[\"']?(false|no|off|0)([^a-z0-9]|$)" "bypasses commit signing (local governance)"
-confirm_regex "(^|[^a-z])git (.{0,300})config (.{0,300})--unset(-all)? +[\"']?commit\.gpgsign" "bypasses commit signing (local governance)"
+confirm_regex "(^|[^a-z])git (.{0,255})config (.{0,255})[\"']?commit\.gpgsign[\"']? *[= ] *[\"']?(false|no|off|0)([^a-z0-9]|$)" "bypasses commit signing (local governance)"
+confirm_regex "(^|[^a-z])git (.{0,255})config (.{0,255})--unset(-all)? +[\"']?commit\.gpgsign" "bypasses commit signing (local governance)"
 confirm_regex "(^|[^a-z])git (.*)--no-gpg-sign" "bypasses commit signing (local governance)"
 confirm_boundary "git merge" "merge into a shared/base branch — standards/SECURITY-GUARDRAILS.md CONFIRM tier"  # WHY: precipitating incident for that CONFIRM-tier row was a plain `git merge`, not `gh pr merge` (already denied elsewhere)
 
 # WARN: credential/secrets access — legitimate workflows exist, surface the access only
-warn "id_rsa"           "SSH private key access"                # WHY: SSH private key — may be intentional (key setup)
+dc_warn_sys=""; dc_warn_list=""  # filled by warn(), emitted once below
+warn "id_rsa"          "SSH private key access"                # WHY: SSH private key — may be intentional (key setup)
 warn ".pem"             "certificate or key file access"        # WHY: cert/key files — may be intentional (TLS mgmt)
 warn ".env.production"  "production secrets file"               # WHY: production secrets — surface access, don't block
 warn "credentials.json" "credential file access"                # WHY: credential file — may be intentional (auth setup)
+
+# WHY JSON, not the plain "WARNING:" lines this tier used to print: a PreToolUse hook's plain
+# stdout never reaches the model and is not shown in the visible transcript (per Claude Code's
+# docs; it only records it) -- neither the user nor the model ever saw a WARN.
+# systemMessage reaches the user per Claude Code's docs (a headless run cannot show it);
+# additionalContext reaches the model (measured 2026-10-14, main agent and subagent). The
+# model-facing text omits the "WARNING:" token so each match still yields exactly one, which the
+# existing one-notice-per-match tests count.
+# WHY no JSON escaping: every value is a reason literal from the warn rows above. A future reason
+# containing `"` or `\` would emit invalid JSON here -- tests/test-hook-warn-output.sh catches it
+# by byte-comparing this output with the .ps1 twin, whose ConvertTo-Json escapes properly.
+if [ -n "${dc_warn_sys:-}" ]; then
+    printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' \
+        "$dc_warn_sys" "dangerous-commands hook: this command matches $dc_warn_list (WARN tier: surfaced, not blocked)."
+fi
 
 exit 0
