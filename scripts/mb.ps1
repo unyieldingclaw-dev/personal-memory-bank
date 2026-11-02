@@ -6,7 +6,7 @@
     Quick commands for managing Memory Bank files.
 
 .PARAMETER Command
-    The command to run: status, update, archive, slim, commit, budget
+    The command to run. Run `mb help` for the list; Show-Help is its single source.
 
 .EXAMPLE
     .\mb.ps1 status
@@ -32,8 +32,13 @@ param(
     # command currently needs more than 3.
     [Parameter(Position=3)]
     [string]$Arg3 = "",
-    # WHY: PowerShell parses --dry-run as a named parameter flag, not a positional
-    # string. A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag.
+    # WHY: under `pwsh -File` PowerShell parses --dry-run as a named parameter flag, not a
+    # positional string (under the call operator it lands in $Arg instead -- see Invoke-Upgrade).
+    # A dedicated [switch] is the idiomatic PS7 way to accept a boolean flag. The 'dry-run' alias is load-bearing: under `pwsh -File` (the mb.bat launcher) the binder
+    # looks up `--dry-run` as a parameter named `dry-run`, which the switch name alone does not
+    # match -- measured: "A parameter cannot be found that matches parameter name '-dry-run'".
+    # `--all` and `--check` never needed one because their names already match.
+    [Alias('dry-run')]
     [switch]$DryRun,
     # WHY: same reasoning as $DryRun above — "mb backlog list --all" would otherwise
     # have PowerShell's binder intercept the bare "--all" token as an attempted
@@ -543,78 +548,6 @@ function Show-Status {
         Write-Host $label -ForegroundColor Yellow
     } else {
         Write-Host "0 Issues" -ForegroundColor Green
-    }
-    Write-Host ""
-}
-
-# WHY: Show-Update / Show-Archive / Show-Slim print terminal instructions instead of
-# living as documentation files. The friction of opening a browser or README mid-session
-# is exactly the moment developers skip the Memory Bank discipline -- surfacing the
-# canonical AI prompt at the shell (copy-paste ready) is what makes the workflow stick.
-# These commands are guidance, not automation, because the actual edits require AI
-# judgement about what to keep vs. archive; the script can't safely do that itself.
-function Show-Update {
-    Write-Host ""
-    Write-Host "Update Memory Bank" -ForegroundColor Cyan
-    Write-Host "==================" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "To update Memory Bank, tell the AI:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host '  "Update memory-bank files with the progress from this session"' -ForegroundColor White
-    Write-Host ""
-    Write-Host "The AI will update:" -ForegroundColor Yellow
-    Write-Host "  - activeContext.md  (current focus, next steps)"
-    Write-Host "  - progress.md       (completed items)"
-    Write-Host "  - techContext.md    (if dependencies changed)"
-    Write-Host "  - systemPatterns.md (if new patterns established)"
-    Write-Host ""
-}
-
-function Show-Archive {
-    Write-Host ""
-    Write-Host "Archive Old Content" -ForegroundColor Cyan
-    Write-Host "===================" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "To archive old content from activeContext.md:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "1. Move detailed session history to docs/archive/ (see docs/archive/README.md for naming)"
-    Write-Host "2. Keep only current state in activeContext.md"
-    Write-Host "3. Completed 'Next Steps' should move to progress.md"
-    Write-Host ""
-    Write-Host "Tell the AI:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host '  "Archive old content from activeContext.md to docs/archive/"' -ForegroundColor White
-    Write-Host ""
-}
-
-function Show-Slim {
-    Write-Host ""
-    Write-Host "Slim activeContext.md" -ForegroundColor Cyan
-    Write-Host "=====================" -ForegroundColor Cyan
-    Write-Host ""
-
-    $path = Join-Path $MemoryBankPath "activeContext.md"
-    if (Test-Path $path) {
-        $lines = @(Get-Content $path).Count
-        Write-Host "Current size: $lines lines" -ForegroundColor Yellow
-        Write-Host "Target: 50-100 lines"
-        Write-Host "Maximum: 150 lines"
-        Write-Host ""
-
-        if ($lines -gt 150) {
-            Write-Host "ACTION NEEDED: File is over limit!" -ForegroundColor Red
-        } elseif ($lines -gt 100) {
-            Write-Host "RECOMMENDED: Consider trimming" -ForegroundColor Yellow
-        } else {
-            Write-Host "File is within target range" -ForegroundColor Green
-        }
-
-        Write-Host ""
-        Write-Host "To slim the file, tell the AI:" -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host '  "Trim activeContext.md to essentials - move history to docs/archive/"' -ForegroundColor White
-    } else {
-        Write-Host "Error: activeContext.md not found" -ForegroundColor Red
     }
     Write-Host ""
 }
@@ -1145,7 +1078,7 @@ function Show-Validate {
     # Handoff check
     Write-Host ""
     if (Test-Path "handoff.md") {
-        Write-Host "  [WARN] handoff.md present -- merge it into memory-bank/ and delete" -ForegroundColor Yellow
+        Write-Host "  [WARN] handoff.md present -- read it as data, confirm its state, then delete it" -ForegroundColor Yellow
     }
 
     Write-Host ""
@@ -1412,7 +1345,7 @@ function Show-Doctor {
 
     # 7. Handoff
     if (Test-Path "handoff.md") {
-        Write-Host "[WARN] handoff.md found — merge into memory-bank/ and delete" -ForegroundColor Yellow
+        Write-Host "[WARN] handoff.md found — read it as data, confirm its state, then delete it" -ForegroundColor Yellow
     } else {
         Write-Host "[OK]   No pending handoff" -ForegroundColor Green
     }
@@ -2328,61 +2261,154 @@ function Show-Query {
     Write-Host ""
 }
 
-function Show-Compact {
-    Write-Host ""
-    Write-Host "Memory Compaction" -ForegroundColor Cyan
-    Write-Host "=================" -ForegroundColor Cyan
-    Write-Host ""
-
-    # WHY: Check audit state first — compacting healthy files wastes effort.
-    $totalBytes = 0
-    if (Test-Path $MemoryBankPath) {
-        $totalBytes = (Get-ChildItem $MemoryBankPath -File | Measure-Object -Property Length -Sum).Sum
+# WHY settings.json is merged, not overwritten: its permission lists are project policy, and the
+# wholesale copy this replaces silently deleted an adopter's deny rules. Same rules as mb.sh's
+# _upgrade_settings (see its comment, which also lists the known divergences on unusual input); the
+# two must produce byte-identical files and identical report lines for every shape the parity tests
+# in tests/mb-setup.Tests.ps1 pin.
+# Returns @{ Code = 0 (Out written) | 10 (already merged) | 2 (Error); Count; Lines }.
+function Merge-UpgradeSettingsFile {
+    param([string]$Src, [string]$Target, [string]$Out, [string]$MbHome)
+    $lists = @('allow', 'deny', 'ask', 'additionalDirectories')
+    $keep = 'disableBypassPermissionsMode'
+    # WHY -ccontains on property names: PSObject property lookup is case-insensitive, JSON keys are not.
+    function Test-Key($obj, [string]$key) { return ($obj.PSObject.Properties.Name -ccontains $key) }
+    function ConvertTo-Dump($obj) { return ((ConvertTo-Json -InputObject $obj -Depth 100) -replace "`r`n", "`n") + "`n" }
+    function Read-SettingsFile([string]$path, [string]$what) {
+        $raw = Get-Content -LiteralPath $path -Raw -Encoding utf8
+        if ([string]::IsNullOrWhiteSpace($raw)) { return "$what is not valid JSON (empty)" }
+        try {
+            # WHY -NoEnumerate: the pipeline would unroll a one-element top-level array into its element.
+            $obj = ConvertFrom-Json -InputObject $raw -NoEnumerate -ErrorAction Stop
+        } catch {
+            return "$what is not valid JSON ($($_.Exception.GetType().Name))"
+        }
+        # WHY the full type name: the [pscustomobject] accelerator is PSObject, which every value
+        # matches -- a file holding 42 or true would pass and be overwritten with the template.
+        if ($obj -isnot [System.Management.Automation.PSCustomObject]) { return "$what is not a JSON object" }
+        if (Test-Key $obj 'permissions') {
+            $perms = $obj.permissions
+            if ($perms -isnot [pscustomobject]) { return "${what}: permissions is not an object" }
+            foreach ($k in $lists) {
+                if (-not (Test-Key $perms $k)) { continue }
+                $v = $perms.$k
+                if ($v -isnot [array] -or @($v | Where-Object { $_ -isnot [string] }).Count -gt 0) {
+                    return "${what}: permissions.$k is not a list of strings"
+                }
+            }
+        }
+        return $obj
     }
-    $totalKB = [math]::Round($totalBytes / 1KB, 1)
+    $T = Read-SettingsFile $Src 'template'
+    if ($T -is [string]) { return @{ Code = 2; Error = $T } }
+    $P = Read-SettingsFile $Target 'project file'
+    if ($P -is [string]) { return @{ Code = 2; Error = $P } }
 
-    if ($totalKB -lt 60) {
-        Write-Host "memory-bank/ is $totalKB KB — below the 60 KB compaction threshold." -ForegroundColor Green
-        Write-Host "Compaction is most valuable when size > 60 KB and mb doctor shows stale files." -ForegroundColor Yellow
-        Write-Host ""
+    $M = Get-Content -LiteralPath $Src -Raw -Encoding utf8 | ConvertFrom-Json
+    if (-not (Test-Key $M 'permissions')) { $M | Add-Member -NotePropertyName permissions -NotePropertyValue ([pscustomobject]@{}) }
+    $MP = $M.permissions
+    $kept = [System.Collections.Generic.List[object]]::new()
+    $flags = [System.Collections.Generic.List[string]]::new()
+    $notes = [System.Collections.Generic.List[string]]::new()
+    if (Test-Key $P 'permissions') {
+        foreach ($prop in $P.permissions.PSObject.Properties) {
+            $k = $prop.Name; $v = $prop.Value
+            if ($lists -ccontains $k) {
+                $have = [System.Collections.Generic.List[object]]::new()
+                if (Test-Key $MP $k) { foreach ($e in $MP.$k) { $have.Add($e) } }
+                foreach ($e in $v) {
+                    if (-not $have.Contains($e)) { $have.Add($e); $kept.Add(@($k, $e)) }
+                }
+                # WHY assign when present: Add-Member -Force re-adds the property at the end, which
+                # reorders permissions and breaks byte parity with the Python merge.
+                if (Test-Key $MP $k) { $MP.$k = [object[]]$have.ToArray() }
+                else { $MP | Add-Member -NotePropertyName $k -NotePropertyValue ([object[]]$have.ToArray()) }
+            } elseif ($k -ceq $keep -and -not (Test-Key $MP $k)) {
+                $MP | Add-Member -NotePropertyName $k -NotePropertyValue $v
+                $kept.Add(@('permissions', $k))
+            } elseif (-not (Test-Key $MP $k)) {
+                $notes.Add("dropped permissions.$k (only the permission lists and $keep are kept)")
+            } elseif ((ConvertTo-Dump $v) -cne (ConvertTo-Dump $MP.$k)) {
+                $notes.Add("replaced permissions.$k with the template's")
+            }
+        }
     }
-
-    Write-Host "Paste this prompt to the AI to compact your memory:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "---" -ForegroundColor DarkGray
-    Write-Host @"
-Read all files in memory-bank/ in this authority order:
-  1. projectbrief.md (immutable — never remove)
-  2. systemPatterns.md
-  3. techContext.md
-  4. activeContext.md
-  5. progress.md
-
-Then compact the memory bank:
-  - Identify and remove duplicate decisions (keep the most recent / authoritative copy)
-  - Flag and surface any contradictions between files for my review
-  - Remove entries from activeContext.md that are already captured in progress.md
-  - Remove progress.md entries for work completed more than 6 months ago (archive them to docs/archive/ using filename progress-YYYY-MM-<topic>.md)
-  - Condense verbose descriptions to their essential decision + rationale
-  - Preserve all unique architectural decisions, constraints, and active work
-
-After compacting, show me:
-  - What was removed from each file and why
-  - Any contradictions found (do not resolve them — surface them for my decision)
-  - New line counts for each file
-
-Do not commit the changes until I confirm.
-"@ -ForegroundColor White
-    Write-Host "---" -ForegroundColor DarkGray
-    Write-Host ""
+    foreach ($prop in $P.PSObject.Properties) {
+        $k = $prop.Name; $v = $prop.Value
+        if ($k -ceq 'permissions') { continue }
+        if (-not (Test-Key $T $k)) {
+            $notes.Add("dropped top-level key $k (not in the template)")
+            continue
+        }
+        if ($v -is [pscustomobject] -and $T.$k -is [pscustomobject]) {
+            foreach ($sk in $v.PSObject.Properties.Name) {
+                if (-not (Test-Key $T.$k $sk)) { $notes.Add("dropped $k.$sk (not in the template)") }
+            }
+        }
+        if ((ConvertTo-Dump $v) -cne (ConvertTo-Dump $T.$k)) { $notes.Add("replaced $k with the template's") }
+    }
+    if ($kept.Count -gt 0) {
+        $tmpl = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        if (Test-Key $T 'permissions') {
+            foreach ($k in $lists) { if (Test-Key $T.permissions $k) { foreach ($e in $T.permissions.$k) { [void]$tmpl.Add($e) } } }
+        }
+        $retired = $null
+        $shallow = git -C $MbHome rev-parse --is-shallow-repository 2>$null
+        $shallowOk = ($LASTEXITCODE -eq 0)
+        $log = git -C $MbHome log -p --format= -- templates/.claude/settings.json 2>$null
+        if ($shallowOk -and $LASTEXITCODE -eq 0 -and "$shallow".Trim() -eq 'false') {
+            $retired = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($line in @($log)) {
+                if ($line -cmatch '\A-\s*("(?:[^"\\]|\\.)*")\s*,?\s*\z') { [void]$retired.Add(($Matches[1] | ConvertFrom-Json)) }
+            }
+        }
+        if ($null -eq $retired) { $notes.Add("retired-rule check unavailable: no full PMB git history at $MbHome") }
+        foreach ($pair in $kept) {
+            $k = $pair[0]; $e = $pair[1]
+            if ($retired -and $retired.Contains($e) -and -not $tmpl.Contains($e)) {
+                $flags.Add("[!] PMB no longer ships this rule; kept -- remove it if unneeded: $k $e")
+            }
+            if ($k -ceq 'allow' -and $e -match 'merge') {
+                $flags.Add("[!] kept allow rule mentions merge -- check it is not a merge route the merge gate cannot see: $e")
+            }
+            if ($k -ceq 'allow' -and (($e -cmatch '\A[A-Za-z]\w*\z' -and -not $e.StartsWith('mcp__')) -or $e -cmatch '\A\w+\((:?\*)?\)\z')) {
+                $flags.Add("[!] kept allow rule is broad: $e")
+            }
+        }
+    }
+    $lines = @($kept | ForEach-Object { "kept $($_[0]): $($_[1])" }) + @($flags) + @($notes)
+    $result = @{ Code = 0; Count = $kept.Count; Lines = $lines }
+    $dumpM = ConvertTo-Dump $M
+    if ($dumpM -ceq (ConvertTo-Dump $P)) { $result.Code = 10; return $result }
+    if ($dumpM -ceq (ConvertTo-Dump $T)) {
+        Copy-Item -LiteralPath $Src -Destination $Out -Force
+    } else {
+        # WHY the provider resolver: .NET resolves relative paths against the process directory, not $PWD.
+        $outPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out)
+        [System.IO.File]::WriteAllText($outPath, $dumpM, [System.Text.UTF8Encoding]::new($false))
+    }
+    $back = Read-SettingsFile $Out 'merged file'
+    if ($back -is [string] -or (ConvertTo-Dump $back) -cne $dumpM) {
+        Remove-Item -LiteralPath $Out -Force -ErrorAction SilentlyContinue
+        return @{ Code = 2; Error = 'merged file did not read back identically' }
+    }
+    return $result
 }
 
 function Invoke-Upgrade {
     param([string]$ProjectPath = "")
-    # WHY: $DryRun is read from the script-level switch parameter rather than
-    # checking $Arg for "--dry-run". PS7 parses --dry-run as a named parameter
-    # flag, not a positional string; a [switch] is the idiomatic PS7 equivalent.
-    $dryRun = $DryRun.IsPresent
+    # WHY both: under `pwsh -File` (mb.bat) --dry-run binds to the script-level $DryRun switch;
+    # under the call operator (`& mb.ps1 upgrade --dry-run`) the same token lands in positional
+    # $Arg instead -- the split `mb doctor --check` documents at its param. Reading only the
+    # switch made that second form run a REAL upgrade when a preview was asked for (measured:
+    # template files written into the project).
+    # Every guard below must read this local, never the switch. Variable names are
+    # case-insensitive, so `$DryRun` here already resolves to this local -- which is why the two
+    # git guards that spelled it that way still worked, and why renaming the local would have
+    # silently pointed them back at the switch and run `git config` during a preview.
+    # Every positional slot is read, as the dispatch guard does: `& mb.ps1 upgrade x --dry-run`
+    # puts the token in $Arg2, and reading $Arg alone ran a REAL upgrade there (measured).
+    $dryRun = $DryRun.IsPresent -or '--dry-run' -in @($Arg, $Arg2, $Arg3)
 
     if ($ProjectPath) { Push-Location $ProjectPath }
 
@@ -2427,7 +2453,8 @@ function Invoke-Upgrade {
         ".cursor/rules/security.mdc"
         ".cursor/rules/code-review.mdc"
         ".cursor/rules/rules-file-integrity.mdc"
-        # Claude Code settings — hook wiring, not project-specific
+        # Claude Code settings — hook wiring is template-owned, but the permission lists are
+        # project policy: merged by Merge-UpgradeSettingsFile, never overwritten
         ".claude/settings.json"
         # Codex hook wiring — deterministic lifecycle configuration, trusted explicitly in /hooks
         ".codex/hooks.json"
@@ -2557,7 +2584,42 @@ function Invoke-Upgrade {
         }
     }
 
-    # Process TEMPLATE_OWNED — overwrite unconditionally if stale
+    # WHY a line count on dry run: see _upgrade_numstat in mb.sh -- same git command, same numbers.
+    function Get-UpgradeNumstat {
+        param([string]$Old, [string]$New)
+        $ns = @(git diff --no-index --numstat -- $Old $New 2>$null)
+        if ($ns.Count -eq 0) { return "" }
+        $parts = "$($ns[0])" -split "`t"
+        if ($parts[0] -eq '-') { return ", binary" }
+        if ($parts.Count -ge 2) { return ", +$($parts[0])/-$($parts[1]) lines" }
+        return ""
+    }
+
+    function Invoke-SettingsFileUpgrade {
+        param([string]$Src, [string]$Target)
+        $tmp = Join-Path (Split-Path -Parent $Target) ".settings.json.mb-upgrade.$PID"
+        $r = Merge-UpgradeSettingsFile -Src $Src -Target $Target -Out $tmp -MbHome $RepoRoot
+        if ($r.Code -eq 2) {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            Write-Host "[!] $Target not updated: $($r.Error) -- merge $Src by hand" -ForegroundColor Red
+            return
+        }
+        if ($r.Code -eq 10) {
+            Write-Host "[=] $Target (unchanged; keeps $($r.Count) project permission rules)" -ForegroundColor DarkGray
+        } elseif ($dryRun) {
+            Write-Host "[~?] $Target (would update$(Get-UpgradeNumstat -Old $Target -New $tmp); keeps $($r.Count) project permission rules)" -ForegroundColor Yellow
+        } else {
+            Move-Item -LiteralPath $tmp -Destination $Target -Force
+            Write-Host "[~] $Target (updated; kept $($r.Count) project permission rules)" -ForegroundColor Yellow
+        }
+        foreach ($line in $r.Lines) { Write-Host "      $line" }
+        if ($r.Code -eq 0 -and $dryRun) {
+            git diff --no-index -- $Target $tmp 2>$null | ForEach-Object { Write-Host "      $_" }
+        }
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+
+    # Process TEMPLATE_OWNED — overwrite unconditionally if stale (settings.json: merged instead)
     foreach ($target in $templateOwned) {
         $src = Get-TemplateSrc -Target $target
         if (-not (Test-Path $src)) {
@@ -2575,9 +2637,11 @@ function Invoke-Upgrade {
             }
         } elseif ((Get-FileHash $src).Hash -eq (Get-FileHash $target).Hash) {
             Write-Host "[=] $target (unchanged)" -ForegroundColor DarkGray
+        } elseif ($target -eq ".claude/settings.json") {
+            Invoke-SettingsFileUpgrade -Src $src -Target $target
         } else {
             if ($dryRun) {
-                Write-Host "[~?] $target (would update)" -ForegroundColor Yellow
+                Write-Host "[~?] $target (would update$(Get-UpgradeNumstat -Old $target -New $src))" -ForegroundColor Yellow
             } else {
                 Copy-Item -Path $src -Destination $target -Force
                 Write-Host "[~] $target (updated)" -ForegroundColor Yellow
@@ -2589,7 +2653,7 @@ function Invoke-Upgrade {
     if (Test-Path ".git") {
         $currentHooksPath = git config core.hooksPath 2>$null
         if ($currentHooksPath -ne ".githooks") {
-            if (-not $DryRun) {
+            if (-not $dryRun) {
                 git config core.hooksPath .githooks
                 Write-Host "[+] core.hooksPath set to .githooks" -ForegroundColor Green
             } else {
@@ -2601,7 +2665,7 @@ function Invoke-Upgrade {
         # Migration cleanup: remove old PMB shim from .git/hooks/pre-push
         $oldHook = ".git/hooks/pre-push"
         if ((Test-Path $oldHook) -and ((Get-Content $oldHook -Raw) -match "pre-push-check")) {
-            if (-not $DryRun) {
+            if (-not $dryRun) {
                 Remove-Item $oldHook -Force
                 Write-Host "[~] .git/hooks/pre-push (removed — migrated to .githooks/)" -ForegroundColor Green
             } else {
@@ -3368,6 +3432,17 @@ function Invoke-PlanArchive {
     Write-Host ""
 }
 
+# WHY refuse rather than ignore: $DryRun binds on every command (it is script-level, and its
+# 'dry-run' alias makes `--dry-run` bind under `pwsh -File` too), but only Invoke-Upgrade reads
+# it -- so `mb init --dry-run` ran a REAL init while the user asked for a preview. Under the call
+# operator the same token lands in whichever positional slot it occupies instead
+# (`& mb.ps1 backlog add t --dry-run` puts it in $Arg3), so every slot is checked. Only the literal
+# flag is refused, so a real positional value (`mb init <path>`) is unaffected.
+if ($Command -ne 'upgrade' -and ($DryRun.IsPresent -or '--dry-run' -in @($Arg, $Arg2, $Arg3))) {
+    Write-Host "[ERROR] --dry-run is only supported by 'mb upgrade', not 'mb $Command'. Nothing was run." -ForegroundColor Red
+    exit 1
+}
+
 # Run command
 switch ($Command) {
     "init"             { Invoke-Init }
@@ -3422,10 +3497,9 @@ switch ($Command) {
     # same notice, scripts can tell it did not run.
     #
     # KNOWN CROSS-SHELL DIVERGENCE (pre-existing, not introduced here): `mb update` is a
-    # dead redirect here but a LIVE alias for `invoke_upgrade` in mb.sh, and this file's
-    # redirect text ("part of mb clean") is wrong regardless — update maps to upgrade,
-    # not clean. Exiting 2 makes the divergence detectable instead of silent; it removes
-    # no working behaviour, since this path never upgraded anything. Reconciling which
+    # dead redirect here but a LIVE alias for `invoke_upgrade` in mb.sh. Exiting 2 makes
+    # the divergence detectable instead of silent; it removes no working behaviour, since
+    # this path never upgraded anything. Reconciling which
     # platform is correct is a deliberate cross-shell decision, not a side effect of this
     # change — left for that decision.
     "install-hooks" { Write-Host "mb install-hooks is now part of mb upgrade. Run: mb upgrade" -ForegroundColor Yellow; exit 2 }
@@ -3445,10 +3519,11 @@ switch ($Command) {
 # WHY "update" isn't excluded here the way mb.sh excludes it: mb.sh's "update" case still
 # dispatches to Invoke-Upgrade's bash equivalent, so without an exclusion it would
 # double-print that command's own [WARN] followed immediately by this [NOTICE]. This
-# PowerShell "update" case (~line 2573) only prints a one-line deprecation notice pointing at
-# `mb clean` — it never calls Invoke-Upgrade — so no double-print exists here and no exclusion
-# is needed. Documented explicitly so a future sync of this exclusion list between the two
-# scripts doesn't add "update" here by copy-paste assumption without re-checking this.
+# PowerShell "update" case (in the switch above) only prints a one-line deprecation notice
+# pointing at `mb upgrade` — it never calls Invoke-Upgrade — so no double-print exists here
+# and no exclusion is needed. Documented explicitly so a future sync of this exclusion list
+# between the two scripts doesn't add "update" here by copy-paste assumption without
+# re-checking this.
 if ($Command -ne "upgrade" -and $Command -ne "help") {
     Get-CachedPmbVersion
     if (Test-PmbVersionStale) {

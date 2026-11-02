@@ -1,9 +1,19 @@
 #!/usr/bin/env sh
-# PreToolUse hook — blocks git commit/push until the matching review slash command has run,
-# and puts `gh pr merge` to the user as a permission prompt in one canonical form only.
+# PreToolUse hook — blocks git commit/push until the matching review slash command has run
+# (except a tag-only push of an already-merged commit, below), and puts `gh pr merge` to the
+# user as a permission prompt in one canonical form only.
 # /code-review writes .claude/.code-review-ok on an Approve verdict; /change-review writes
 # .claude/.change-review-ok when no finding is Blocking. Each marker authorizes exactly one
 # commit or push attempt for a SPECIFIC diff -- see below.
+#
+# WHY a tag-only push of a merged commit needs no marker, and no prompt either: the push marker
+# binds `git diff origin/main...HEAD`, which says nothing about what a tag push publishes, so a
+# release tag needed a fresh review of whatever branch was checked out (and from main, whose
+# diff is empty, could not pass at all). A tag on a commit already in refs/remotes/origin/main
+# publishes nothing unreviewed, so the PUSH case checks where the tags point instead. The user
+# chose an allow over a merge-style ask on 2026-10-25: the check is about review, and the
+# publish itself is authorized by the user's go-ahead in chat, as for branch pushes. The shape
+# is TAG_PUSH in _review-gate-classify.py; the residuals are in docs/HOOKS-GUIDE.md section 7.
 #
 # WHY a merge gets a permission prompt ("ask") instead of a third diff-bound marker: by the
 # time a PR is mergeable, its diff already passed the commit gate, the push gate, and (per
@@ -258,6 +268,12 @@ fi
 # this script to $root once, here, means every git call downstream is correct by construction
 # instead of each one needing to remember -C "$root" individually (and any git call added to
 # this file later inherits correctness for free instead of silently reintroducing the bug).
+#
+# script_dir is fixed BEFORE that cd, because settings.json runs this hook by a relative path. A
+# "$(dirname "$0")" evaluated after the cd names the TARGET repository's scripts/, so the tag
+# route below ran that repository's own classifier (measured 2026-10-30: a crafted one let a
+# branch push through with no marker). An empty value fails closed: the call then finds nothing.
+script_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)
 if ! cd "$root" 2>/dev/null; then
     deny "Review gate cannot run: the resolved repository root $root is not enterable, so the marker check is unavailable."
     exit 0
@@ -310,6 +326,60 @@ case "$verdict" in
         fi
         ;;
     PUSH)
+        # A TAG-ONLY PUSH IS CHECKED BY WHERE ITS TAGS POINT, NOT BY A MARKER. The marker binds
+        # `git diff origin/main...HEAD`, which says nothing about what a tag push publishes:
+        # pushing a release tag needed a fresh /change-review of whatever branch was checked
+        # out, and from main (an empty diff) could not pass at all. A tag on a commit already
+        # in refs/remotes/origin/main publishes nothing unreviewed. --tag-push prints names only
+        # for the exact shape its TAG_PUSH regex describes; anything else takes the marker path
+        # below. So does a fallback verdict: --tag-push skips the verdict computation, so it
+        # could still answer when that computation failed, and the .ps1 twin never takes the
+        # route then either.
+        # show-ref --verify: refs/tags/<t> must exist as written, or rev-parse would resolve a
+        # look-alike such as refs/heads/refs/tags/<t>, which git would push as a branch.
+        # symbolic-ref: a refs/tags/<t> that is a symref to a branch is pushed as that branch
+        # (measured with git 2.55: `* [new branch] sym -> feat`).
+        # merge-base peels an annotated tag to its commit and fails on a tag of a tree or blob.
+        # --no-replace-objects: a `git replace --graft` can make an unreviewed commit look like
+        # an ancestor of origin/main, while the pack a push sends ignores replace refs
+        # (measured 2026-10-30, git 2.39).
+        # refs/remotes/origin/main spelled out: a local branch named origin/main would win.
+        # Any remote.<name>.push refspec refuses the route: git maps a refs/tags/<t> with no
+        # :<dst> onto that refspec's destination, which can be a branch, with its force flag
+        # (git-push(1), <refspec>).
+        # Off Windows, a C:/... cd path is relative (a directory named C:), so the gate and the
+        # shell would resolve it in two places. The .ps1 twin refuses it as not fully qualified.
+        # The TAG-PUSH header line is required: a classifier from before --tag-push prints its
+        # verdict, PUSH, which would otherwise be read as a tag name.
+        tag_names=""
+        if [ "$verdict_source" = classifier ]; then
+            tag_output=$(printf '%s' "$input" | python3 "$script_dir/_review-gate-classify.py" --tag-push 2>/dev/null | tr -d '\r')
+            if [ "$(printf '%s\n' "$tag_output" | sed -n 1p)" = TAG-PUSH ]; then
+                tag_names=$(printf '%s\n' "$tag_output" | sed 1d)
+            fi
+        fi
+        case "$(uname -s)" in
+            MINGW*|MSYS*|CYGWIN*) ;;
+            *) case "$context" in [A-Za-z]:*) tag_names="" ;; esac ;;
+        esac
+        if git config --get-regexp '^remote\..*\.push$' >/dev/null 2>&1; then
+            tag_names=""
+        fi
+        if [ -n "$tag_names" ]; then
+            while IFS= read -r tag; do
+                if ! git show-ref --verify --quiet "refs/tags/$tag" \
+                    || git symbolic-ref -q "refs/tags/$tag" >/dev/null 2>&1 \
+                    || ! tag_target=$(git rev-parse --verify --quiet "refs/tags/$tag") \
+                    || ! git --no-replace-objects merge-base --is-ancestor "$tag_target" refs/remotes/origin/main 2>/dev/null; then
+                    deny "Review gate: refs/tags/$tag does not exist, is a symbolic ref, does not point at a commit, or points at a commit that is not in refs/remotes/origin/main, so pushing it could publish unreviewed history. A tag push needs no review marker only when every tag it names is on a commit already merged to main; if the merge is recent, run git fetch origin first. $root_hint"
+                    exit 0
+                fi
+            done <<EOF
+$tag_names
+EOF
+            exit 0
+        fi
+        tag_hint="To push a tag of a commit already on origin/main, make the whole command cd \"<absolute repo path>\" && git push <remote> refs/tags/<tag> (or tag <tag>), with nothing else chained."
         expected=$(diff_hash origin/main...HEAD)
         rc=$?
         if [ "$rc" -ne 0 ]; then
@@ -317,7 +387,7 @@ case "$verdict" in
         fi
         marker="$root/.claude/.change-review-ok"
         if [ -z "$expected" ] || [ "$expected" = "$EMPTY_DIFF_SHA" ]; then
-            deny "Review gate: there is no diff to review (both origin/main...HEAD and HEAD produced an empty diff, or git diff failed). The hash of an empty diff is a public constant and cannot serve as proof of review. $root_hint"
+            deny "Review gate: there is no diff to review (both origin/main...HEAD and HEAD produced an empty diff, or git diff failed). The hash of an empty diff is a public constant and cannot serve as proof of review. $tag_hint $root_hint"
         elif actual=$(claim_marker "$marker"); then
             if [ "$actual" = "$expected" ]; then
                 drop_marker "$marker"
@@ -326,10 +396,10 @@ case "$verdict" in
                 rm -f "$root/.claude/.pending-push-presha"
             else
                 release_marker "$marker"
-                deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
+                deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review. $tag_hint"
             fi
         else
-            deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review."
+            deny "Run /change-review before pushing -- it writes a diff-bound review-ok marker this hook checks. If you already reviewed, the diff changed since then; re-run /change-review. $tag_hint"
         fi
         ;;
     *)

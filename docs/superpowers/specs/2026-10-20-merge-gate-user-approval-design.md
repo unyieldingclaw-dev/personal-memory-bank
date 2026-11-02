@@ -289,6 +289,7 @@ Evaluated top to bottom; the first match wins.
 | Any of those settings files has a merge-capable allow rule (§5.5) | deny, generic message |
 | Any of those settings files exists but is unreadable, not strict JSON, or not an object | deny, generic message |
 | The raw command fails the §5.1 full match | deny, and print the canonical form |
+| Any allow rule in those files matches that exact command as a wildcard pattern (§5.5) | deny, generic message |
 | `tool_input.description` is present and not exactly the fixed string (§5.4) | deny, and print the string |
 | Otherwise | **ask** |
 
@@ -297,6 +298,8 @@ with the allowlisted repos (§5.5). **"Strict JSON"** means RFC 8259 in both twi
 trailing commas, `NaN`/`Infinity`, single quotes or bare keys. PowerShell 7's `ConvertFrom-Json`
 accepts all of those, and Python's `json` accepts `NaN` (measured 2026-10-21), so the twins used
 to disagree. A one-element JSON array used to read as the object inside it in the PowerShell twin.
+The hook payload is not read as strict JSON, but the PowerShell twin reads it with `-NoEnumerate`
+too, so a one-element array payload denies in both twins; it used to ask in PowerShell only.
 **Known residual:** a settings file with two keys that differ only in case (`permissions` and
 `Permissions`) is denied by the PowerShell twin, whose `ConvertFrom-Json` refuses it. The Python
 twin reads the exact-case key. The divergence costs at most a needless deny in the PowerShell
@@ -356,15 +359,31 @@ allow becomes a zero-click merge path.
   - `Bash(*)` or `PowerShell(*)`;
   - wildcard interpreter one-liners (python, node, pwsh `-c`/`-e`/`-Command` forms);
   - **any rule that matches a merge as a wildcard pattern.** Each rule is also matched the way
-    Claude Code matches it (`*` is any run of characters, a trailing `:*` means ` *`) against
-    fixed probes. The probes are the canonical form with `--squash` and with `--merge`, the REST
-    route and `gh -R <repo> pr merge`, for each allowlisted repo, plus `gh pr merge 1 --squash`.
-    That catches `gh pr m*`, `g*` or `*merge*`, which no shape names. The shapes stay, because
-    they catch what no fixed probe can, such as an exact `gh pr merge <N> …` rule.
-  - **What neither catches:** a rule with a wildcard ahead of a PR number or SHA the probes do
-    not use, such as `gh pr m* 77*` or `*pr merge 77*`. A rule that pins the number after a
-    literal `gh pr merge`, such as `gh pr merge 77*`, is caught by its shape. Whether Claude
-    Code's legacy `X:*` also matches a bare `X` is unmeasured; the matcher reads it only as `X *`.
+    Claude Code matches it (`*` is any run of characters, a trailing `:*` means ` *`, and a
+    PowerShell rule ignores case) against fixed probes. The probes are the canonical form with
+    `--squash` and with `--merge`, the REST route and `gh -R <repo> pr merge`, for each
+    allowlisted repo, plus `gh pr merge 1 --squash`. That catches `gh pr m*`, `g*` or `*merge*`,
+    which no shape names. The shapes stay, because they catch what no fixed probe can, such as an
+    exact `gh pr merge <N> …` rule.
+  - **And every rule that matches this merge.** The probes cannot use the PR number and SHA of
+    a command the check has not parsed yet. So after the §5.1 full match, every allow rule the
+    check kept is read again, with the matched command as its only probe, under the same step
+    budget. Only a canonical command is ever asked, so a rule that matches it is the only one that
+    matters. This catches a rule with a wildcard ahead of the PR number or SHA (`gh pr m* 77*`,
+    `*pr merge 77*`, `*--match-head-commit 0123*`), and a rule ending in a character the probes do
+    not end in (`gh p*7` for a SHA ending in 7). A rule for another PR, such as `gh pr m* 77*`
+    while #12 is merged, still asks.
+  - **What is left is the matcher itself:** the check is only as faithful as its reading of
+    Claude Code's wildcard syntax, which its permissions docs state (re-read 2026-10-23). A
+    trailing `:*` equals a trailing ` *`, and either also matches the bare command when it is the
+    rule's only wildcard. The matcher misses that bare match, but for the one command ever asked
+    such a rule's literal part is the canonical command, which the `gh pr merge` shape denies.
+    PowerShell rules match case-insensitively, so for them both twins fold ASCII case in the rule
+    and in the probes or matched command, before the shapes; Bash rules stay case-exact.
+    **Unmeasured, and not covered:** how that match treats non-ASCII letters (Unicode folding
+    takes the Kelvin sign and the long s to `k` and `s`, which both twins would miss), and
+    whether a tool name in another case, such as `powershell(…)`, makes a rule at all; the
+    matcher reads only `Bash` and `PowerShell`.
   - **What runs this check at all:** only a command the classifier labels a merge. A spelling it
     labels `NONE`, such as `gh -R <repo> pr merge` or `gh --repo <repo> pr merge`, never reaches
     the helper, so an allow rule for it is the escape-spelling gap in §1, not something this check
@@ -375,14 +394,19 @@ allow becomes a zero-click merge path.
     glob (`*` as `.*`) backtracked exponentially: 10 stars took 23 s (measured 2026-10-21). So
     the wildcard matcher is a greedy one with a single backtrack point, at worst rule length ×
     probe length, and both twins share three limits: a 200,000-step budget over the whole check,
-    after which a rule counts as merge-capable; a rule length of 4,096 (UTF-16 units in
-    PowerShell, code points in Python; see below), above which a rule counts as merge-capable
-    unread; and the repo cap in §5.1. Whitespace is stripped with a plain
-    character-set strip, because a regex strip was quadratic in rule length: 33 ms per
+    the matched-command pass included, after which a rule counts as merge-capable; a rule
+    length of 4,096 (UTF-16 units in PowerShell, code points in Python; see below), above which
+    a rule counts as merge-capable unread; and the repo cap in §5.1. Whitespace is stripped
+    with a plain character-set strip, because a regex strip was quadratic in rule length: 33 ms per
     4,092-character rule in the Python twin and 6.4 ms in the PowerShell one (measured
-    2026-10-23), with no cap on the number of rules. The file size itself is not capped, so
+    2026-10-23), with no cap on the number of rules. The PowerShell twin lowercases with 26
+    ordinal character replacements, and for the interpreter check only when the rule holds a
+    `*`, because a regex evaluator had run a scriptblock per upper-case letter of every rule: 3,000
+    4,085-letter upper-case rules took 40 s in that twin before and 1.6 s after (measured
+    2026-10-23, one run each). The file size itself is not capped, so
     nothing fails closed on it; what remains grows linearly with it. This machine's real settings,
-    194 rules at the time, used about 1,085 steps (`/code-review` round 2, 2026-10-22).
+    186 rules on 2026-10-23, used 1,050 steps for the probes and 1,261 with the matched-command
+    pass, for a canonical command against the main checkout's allowlist.
   - **None of this stops an agent that can write a settings file.** The same write can set
     `disableAllHooks` (a documented Claude Code setting, not exercised here) and remove the whole
     hook layer. The limits guard against accidents, such as
@@ -430,9 +454,9 @@ allow becomes a zero-click merge path.
     approval for the canonical text. Planting one means writing outside the project, which prompts
     in default mode.
 - **Residuals recorded where they arise**, not repeated in the list above: the gh config
-  retarget through `XDG_CONFIG_HOME`, `AppData` or `HOME` (§5.1), a wildcard rule that pins a PR
-  number the probes do not use, an agent that writes a settings file, and the two twin
-  differences in reading a rule (all three earlier in §5.5).
+  retarget through `XDG_CONFIG_HOME`, `AppData` or `HOME` (§5.1), the matcher's reading of
+  non-ASCII case and of tool-name case in a rule, an agent that writes a settings file, and the
+  two twin differences in reading a rule (all three earlier in §5.5).
 
 ### 5.6 App and MCP merge routes (Opposition S7)
 
@@ -602,10 +626,14 @@ file. It runs against both twins and covers:
   - Look-alike JSON text inside the command does not spoof the mode or `agent_id`.
   - A `permission_mode` or `description` with U+200B appended denies, and so does a decoy
     `command` key with U+200B appended, placed before the real one.
+  - A payload that is a one-element JSON array denies.
 - **Environment and settings:**
   - `GH_REPO`, `GH_HOST` or `GH_CONFIG_DIR` set in the environment.
   - A fixture settings file with a `PermissionRequest` hook.
   - A fixture with each merge-capable allow prefix, and with rules caught only as wildcards.
+  - Rules that miss every probe but match the asked command (`gh pr m* 12*`, `*pr merge 12*`,
+    `* 12 -R *`, `*--match-head-commit 0123*`, `gh p*7` as Bash and as PowerShell) deny; the
+    same shapes for another PR or SHA (`gh pr m* 77*`, `gh p*8`) ask.
   - One merge-capable rule in each of the user, project and local settings files.
   - Rules with Unicode or `\x1c` whitespace, and an ASCII-case variant, denied in both twins; a
     long-s look-alike still asks.
@@ -622,8 +650,9 @@ file. It runs against both twins and covers:
   twin runs under `timeout 60` where timeout(1) exists, so a regression fails its row instead of
   hanging the suite. An over-long rule, 600 rules that
   exhaust the step budget, more than 10 repos, and an over-long owner each deny; 50 of the same
-  rules still ask. The strip's character set and the whitespace class are checked to be the same
-  set, in both twins.
+  rules still ask. 460 of them fit the budget for the probes alone (177,560 steps) but not with
+  the matched-command pass (225,400), so they deny only while that pass shares the budget. The
+  strip's character set and the whitespace class are checked to be the same set, in both twins.
 - **Matcher paths:** `Bash(g*:*)` needs the trailing `:*` reading, `Bash(gh pr m*e 1 --squash*)`
   the trailing-star loop, and `Bash(* --merge --match-head-commit*)` the `--merge` probe; each
   denies, in both twins.
@@ -670,15 +699,20 @@ Other suites:
 them to a temporary copy of `scripts/`, in both twins where the guard exists in both, and exits 1
 on any survivor. It is run by hand, not by `tests/run.sh`. Its KILLED means the harness's own
 fixture changed decision, which approximates, not proves, a red suite row. Beyond the list below
-it also covers the fallback-verdict guard, `GH_CONFIG_DIR`, the project settings file, the
-wildcard probes (all of them, and the `--merge` one alone), the matcher's trailing `:*` reading
-and trailing-star loop, the step budget, the rule-length and repo-count caps, ASCII folding, whitespace
-stripping (rule edges, body edges, trailing), strict JSON (`NaN` in Python; comments and
-`-NoEnumerate` in PowerShell), the PowerShell audit line's LF, and the PowerShell twin's ordinal
-comparisons of keys, mode, description and both halves of the bare-star body (`*` and `:*`),
-each reverted to `-ceq` or `-ccontains`. **Not covered:** the helper's own exception-to-deny
-handler (below), for want of a way to force an exception inside it; and the ordinal comparison of
-the merge method, whose input the canonical regex has already limited to `--squash` or `--merge`.
+it also covers the fallback-verdict guard, `GH_CONFIG_DIR`, the project settings file, the wildcard
+probes (all of them, and the `--merge` one alone), the matched-command pass (removed, and given its
+own budget), the matcher's trailing `:*` reading and trailing-star loop, the step budget, the
+rule-length and repo-count caps, ASCII folding, whitespace stripping (rule edges, body edges,
+trailing), strict JSON (`NaN` in Python; comments and `-NoEnumerate` in PowerShell, for settings and
+for the payload), the PowerShell audit line's LF, and the PowerShell twin's ordinal comparisons of
+keys, mode, description and both halves of the bare-star body (`*` and `:*`), each reverted to
+`-ceq` or `-ccontains`. Those ordinal fixtures prove something only where `-ceq` is culture-aware:
+under .NET invariant globalization it is ordinal, and the fixtures and mutations cannot fail. So
+`tests/merge-gate.Tests.ps1` has a canary that skips loudly when `('a' + [char]0x200b) -ceq 'a'` is
+False, and the harness prints a warning on such a host, where those mutations survive. **Not
+covered:** the helper's own exception-to-deny handler (below), for want of a way to force an
+exception inside it; and the ordinal comparison of the merge method, whose input the canonical regex
+has already limited to `--squash` or `--merge`.
 - ask changed to allow;
 - the `agent_id` check removed;
 - the mode check removed;

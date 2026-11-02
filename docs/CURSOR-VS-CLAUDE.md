@@ -196,7 +196,7 @@ files in memory-bank/...
 
 | Platform | Enforceable before compaction | Recovery after compaction |
 |----------|-------------------------------|---------------------------|
-| Claude Code | Yes — `.claude/settings.json` `PreCompact` can block | `CLAUDE.md` requires the Memory Bank reread |
+| Claude Code | Only in journal mode — `.claude/settings.json` `PreCompact` blocks there and allows elsewhere | `CLAUDE.md` requires the Memory Bank reread |
 | Codex | No — `PreCompact`'s `continue: false` behavior ends the active turn with no visible remedy in the desktop UI, so this repo ships recovery-only | `SessionStart(source=compact)` injects the recovery checklist immediately, once `.codex/hooks.json` is trusted via `/hooks` |
 | Cursor | No — `preCompact` is observational; the 40% trigger is advisory | `memory-bank.mdc` instructs the reread |
 
@@ -301,7 +301,7 @@ not by this script.
 | **User-Level Rules** | `~/.cursor/rules/` | `~/.claude/CLAUDE.md` (global) | `~/.codex/AGENTS.md` (global) |
 | **Auto-reload** | Yes | Yes | Yes |
 | **Memory Bank** | Full support | Full support | Full support |
-| **Handoff Protocol** | Advisory/proactive | Blocking `PreCompact` gate | Advisory — `SessionStart` recovery only, no blocking gate |
+| **Handoff Protocol** | Advisory/proactive | `SessionStart` recovery hook; `PreCompact` blocks only in journal mode | Advisory — `SessionStart` recovery only, no blocking gate |
 | **Quick Commands** | Works | Works | Works |
 
 ## Recommendations
