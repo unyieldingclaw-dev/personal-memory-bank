@@ -26,7 +26,7 @@ not deferred.
 - #118: docs still say `mb upgrade` overwrites settings.json, false since #111: `docs/COMMANDS-REFERENCE.md:19`, `docs/backlog/replace-the-gh-pr-merge-deny-with-a-forced-permiss.md:196`, `docs/backlog/shipped-allow-rules-skip-the-auto-mode-classifier.md:110`, `docs/superpowers/specs/2026-10-20-merge-gate-user-approval-design.md:484,499`.
 - #118 follow-ups (c8204c7, shipped by branch `fix/stop-hook-wiring-guard`); still open:
   - **(b)** `tests/test-hook-warn-output.sh:222` uses the TZ-skewed depth seed (4 failures under TZ=UTC+12).
-  - **(e)** a typo in the Stop string's `-File` path passes every suite: the output still holds the block JSON but starts with pwsh's usage text, so the block is ignored. (A typo in the guard's filename is caught by `tests/test-hook-wiring.sh`.)
+  - **(e)** a typo in the Stop string's `-File` path passes every suite: the output still holds the block JSON but starts with pwsh's usage text, so the block is ignored. The guard opened this gap: `tests/test-hook-wiring.sh` takes the script name from the first `scripts/*.ps1` in the string, which was the `-File` path and is now the guard's. (A typo in the guard's filename is caught there.) Fix: have `tests/test-pre-approval-check.sh` assert that the guard and `-File` paths match.
   - **(f)** the drain-then-crash limit is stated only for the merge gate.
   - **(g)** `docs/superpowers/specs/2026-09-21-pre-approval-protocol-design.md:294` quotes the Stop string without the guard.
   - **(h)** **[floor?]** a depth file stamped in the future never ages out (`delegation-depth-check.sh:20-24`, `.ps1:27`).
