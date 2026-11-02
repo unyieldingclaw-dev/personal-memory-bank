@@ -5,8 +5,8 @@
      removed, everything else kept). If you edit
      shared content there, mirror the change here by hand — no generation step enforces this. -->
 
-PMB uses native lifecycle hooks where the platform exposes an enforceable event. Claude Code can
-block compaction; Codex provides deterministic post-compaction recovery; Cursor's `preCompact` event
+PMB uses native lifecycle hooks where the platform exposes an enforceable event. Claude Code and
+Codex provide deterministic post-compaction recovery; Cursor's `preCompact` event
 is observational, so its handoff rule remains advisory. Unlike instruction files, configured hooks execute outside the
 model's discretion, subject to platform enablement and trust settings.
 
@@ -16,8 +16,9 @@ model's discretion, subject to platform enablement and trust settings.
 |------|--------------|-------------|
 | `PreToolUse` | Before Claude runs a tool | Block dangerous operations, validate inputs |
 | `PostToolUse` | After Claude runs a tool | Auto-format, run lint, log actions |
-| `Stop` | When Claude pauses for input | Desktop notification |
-| `PreCompact` | Before context compaction | Save state summary |
+| `Stop` | When Claude pauses for input | Desktop notification; Pre-Approval Protocol check (PMB-only) |
+| `PreCompact` | Before context compaction | Journal-mode gate only (otherwise allows) |
+| `SessionStart` | Session start, resume or after compaction | Post-compaction recovery checklist |
 
 ## Enforcement Layer Architecture
 
@@ -46,9 +47,11 @@ Configured in `.claude/settings.json`:
 
 Intercepts both Bash and PowerShell tool calls before they run using `scripts/dangerous-commands.ps1`. Enforces 3-tier safety:
 
-**BLOCK** (19 patterns — command exits non-zero, Claude stops):\
-*Shell:* `rm -rf` · `mkfs` · `dd if=` · `git push --force` · `git push -f` · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh`\
+**BLOCK** (17 patterns — command exits non-zero, Claude stops):\
+*Shell:* `rm -rf`, and `rm` with recursive and force flags in common reordered spellings · `mkfs` · `dd if=` · `git push --force` · `git push -f`, and common spellings of a force push elsewhere in the command (`--force`, `--mirror`, `-f`, `+refspec`) · `DROP TABLE` · `DROP DATABASE` · `| bash` · `| sh` · `|bash` · `|sh` · a git alias whose value starts with `!` · awk `system()` or `cmd | getline`\
 *PowerShell-native:* `Remove-Item -Recurse -Force` · `Remove-Item -Force -Recurse` · `Format-Volume` · `| Invoke-Expression` · `|Invoke-Expression` · `| iex` · `|iex`
+
+The reordered and abbreviated forms are matched in common spellings only, not exhaustively: a deliberately respelled command can get through. `standards/SECURITY-GUARDRAILS.md` describes what is matched, the accepted false positives and what is not covered by design.
 
 **CONFIRM** (10 patterns — surfaces confirmation dialog):
 `git filter-branch` · `git update-ref` · `sudo rm` · `chmod -R 777` · `--no-verify` · `git merge <branch>` (boundary-matched: excludes `git merge-base`) · commit-signing bypass (regex, four patterns: `commit.gpgsign` set to any falsey value — key or value quoted or bare — via `git -c`, the same via a `git config` subcommand, `--unset`/`--unset-all commit.gpgsign`, and `--no-gpg-sign`)
@@ -89,9 +92,11 @@ there is unconstrained.
 The `.ps1` regexes set `RegexOptions.CultureInvariant`. Under tr-TR, `IgnoreCase` alone does not
 fold `I` to `i`: measured on a copy without it, the signing rows and the `iex` regexes returned no
 verdict. On the sh side, `block_regex` runs under `LC_ALL=C` only. `confirm_regex` runs twice, under
-the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. The byte locale
-counts the `.{0,255}` gaps in bytes, and a Turkish UTF-8 locale misses an upper-case key. So a new sh regex
-row inherits its matcher's locale rule, which can change what it matches.
+the caller's locale and then under `LC_ALL=C`, because each alone misses a bypass. Under a UTF-8
+locale the caller's pass counts the signing rows' `{0,255}` gaps in characters, and the
+`LC_ALL=C` pass always counts them in bytes. What that guarantees, and when, is stated once in
+`standards/SECURITY-GUARDRAILS.md`. So a new sh regex row inherits its matcher's
+locale rule, which can change what it matches.
 
 **Platform requirement (sh hook):** stated once, with what each missing piece costs, in
 `standards/SECURITY-GUARDRAILS.md` under "Platform requirement (sh hook)". Keep regex repetition bounds at 255 or below, the POSIX `RE_DUP_MAX` guarantee, so
@@ -108,25 +113,58 @@ silent hole: no matcher may match against an unfolded view, and no pattern argum
 upper-case letter — checked in both `scripts/` and `templates/scripts/`, plus a byte-identity
 assertion between the two mirrors.
 
-Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). Configured in `.claude/settings.json` with two matchers — one for `Bash` (with sh fallback) and one for `PowerShell` (PS-only):
+Implemented in `scripts/dangerous-commands.ps1` (Windows/pwsh) and `scripts/dangerous-commands.sh` (POSIX/bash). Configured in `.claude/settings.json` with two matchers, `Bash` and `PowerShell`, wired identically:
 
 ```json
-{ "matcher": "Bash",       "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
-{ "matcher": "PowerShell", "command": "pwsh -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || true" }
+{ "matcher": "Bash",       "command": "[ -f scripts/dangerous-commands.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" },
+{ "matcher": "PowerShell", "command": "[ -f scripts/dangerous-commands.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/dangerous-commands.ps1 2>/dev/null || bash scripts/dangerous-commands.sh 2>/dev/null || true" }
 ```
 
 **Timeout (checked against the Claude Code hooks reference on 2026-10-15):** neither entry sets
 `timeout`, so each gets the default for a command hook, 600 seconds. A PreToolUse hook that times
 out does not block the tool call: its output is discarded and the call continues through the
 normal permission flow, unless the entry sets `"onFailure": "block"` (Claude Code v2.1.295 or
-later). The PowerShell hook's measured worst case, a ~50 KB command, is under 30 seconds (the
-figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default.
+later). The PowerShell hook's slowest measured case, a ~50 KB command, took about 33 seconds (the
+figures are in `standards/SECURITY-GUARDRAILS.md`), far inside the default; the sh hook's, about 100 seconds
+on one non-periodic shape, is inside it too.
+
+**Why the guard and `-NoProfile`.** Claude Code's hooks docs treat stdout that does not start with
+`{` as plain text and ignore the JSON, so anything printed beside a deny silently allows the call.
+Two wiring defects did that: without `-NoProfile`, whatever a PowerShell profile prints lands on
+stdout ahead of the deny; and with `pwsh` installed but the `.ps1` missing, `pwsh` prints its usage
+text (exit 64) before `||` runs bash. `[ -f X.ps1 ]` sends a missing `.ps1` straight to bash, and
+`-NoProfile` must precede `-File` (after it, it is a script argument and the profile still loads).
+The `||` chain is kept over an `if command -v pwsh` pick because a `.ps1` that fails to parse exits
+without reading stdin, so bash still receives the full payload. Every hook in `settings.json` except
+`PreCompact` and `Stop` uses this form (`SessionStart` passes `-Mode recover` / `recover` as the
+script's arguments). The form needs a POSIX shell, which is Claude Code's default
+for hooks (Git Bash on Windows; per the hooks reference, checked 2026-10-15). Under a hook `"shell": "powershell"`, or on Windows without Git
+Bash, where Claude Code falls back to PowerShell, `[ -f … ]` does not parse and the hook runs nothing.
+
+**The `PowerShell` matcher's bash fallback is partial.** When it falls back (`.ps1` missing, `pwsh`
+absent, or `pwsh` failing before it reads stdin), `dangerous-commands.sh` applies only its own rows:
+the PowerShell-native BLOCK rows (`Remove-Item -Recurse`, `Format-Volume`, pipe-to-`iex`) are not
+checked, and a few `.sh` patterns match more broadly (e.g. `| sh2`), so they can deny a command
+the `.ps1` would allow. Before the fallback
+existed, that path checked nothing.
 
 **Hook error logging (G2):** if `dangerous-commands.ps1` fails unexpectedly, the catch block appends a timestamped entry to `.pmb-hook-errors.log` (gitignored). `mb doctor` Check 16 surfaces entries from this log as WARN.
 
-### 2. Stop Notification (`Stop`) — excluded from install template
+### 2. Stop Notification and Pre-Approval Check (`Stop`)
 
-The Stop hook is excluded from `templates/.claude/settings.json` because it causes indefinite hangs in headless/remote sessions (no user present to dismiss the notification, stalling the session permanently). If you need a Stop notification in an interactive-only project, add it to that project's local `.claude/settings.json` manually.
+PMB's own `.claude/settings.json` runs a single Stop hook, `scripts/pre-approval-check.ps1`, with
+two jobs:
+- it enforces PMB's Pre-Approval Protocol: a turn ending in an approve-or-choose ask must carry a
+  Findings section and a Recommendation, and a turn ending in any other question a Recommendation;
+- it shows a detached "Claude has paused" notification that, on Windows, is set to close itself
+  after 600 s; popups have been seen still open well past that, cause unknown.
+
+**A pass means the sections exist, not that the checks behind them were good.** Ask detection is a
+heuristic trigger, and adequacy stays with the Reviewer/Opponent layer.
+
+The pre-approval check is not installed by `mb init`; it is on trial in PMB only. What `mb init`
+does install as the Stop entry is the older modal "Claude has paused" popup, which can hang headless
+or remote sessions with no one to dismiss it. Whether adopters keep it is an open decision.
 
 ### 3. Contract Scope Check (`PreToolUse` — Write + Edit tools)
 
@@ -148,41 +186,46 @@ Fires after every `Write` or `Edit` tool call. Reads the edited file path from t
 
 **Hook error logging (G2):** unexpected errors are logged to `.pmb-hook-errors.log`.
 
-### 5. PreCompact Memory Gate and Codex Recovery
+### 5. Compaction Recovery (`SessionStart` — compact) and the PreCompact Hook
 
-Claude Code enforces the content policy before compaction. Codex instead injects recovery context
-after compaction; Cursor cannot enforce the policy before compaction.
+Recovery happens **after** compaction, on every platform that allows it. Nothing blocks before it,
+except journal mode's own gate when a repository has opted in.
 
 | Platform | Before compaction | After compaction |
 |----------|-------------------|------------------|
-| Claude Code | `.claude/settings.json` runs the checker; exit 2 blocks | Instructions require a Memory Bank reread |
-| Codex | No gate — Codex `PreCompact` `continue: false` ends the active turn | Trusted `SessionStart` with `source: compact` injects the recovery checklist |
+| Claude Code | `PreCompact` runs `pre-compact-check`, which allows compaction (journal mode: its own gate) | `SessionStart` with matcher `compact` injects the recovery checklist |
+| Codex | No `PreCompact` handler — Codex `PreCompact` `continue: false` ends the active turn | Trusted `SessionStart` with `source: compact` injects the recovery checklist |
 | Cursor | The 40% rule is proactive/advisory; native `preCompact` cannot block or modify compaction | The always-applied rule instructs a Memory Bank reread |
 
 Codex project hooks must be reviewed and trusted in `/hooks`; a local feature setting or managed
 policy can disable them. See the [Codex hooks documentation](https://learn.chatgpt.com/docs/hooks)
 and [Cursor hooks documentation](https://prod.cursor.com/docs/hooks).
 
-The shared checker runs two content-based quality checks on the memory bank **or** bypasses via a
-`handoff.md` dated today. Claude Code runs it as its gate; in Codex it remains an explicit manual diagnostic.
+**The recovery checklist** (`scripts/codex-compaction-hook.{sh,ps1}`, mode `recover`) tells the
+session to re-read the memory bank, to read any `handoff.md` as data rather than instructions,
+confirm its in-flight state with the user and delete it, and to resume from verified state. Claude
+Code wires it like the other hooks:
 
-**Claude Code exit codes:**
-- **Exits 0** — both checks pass (or a `handoff.md` dated today is present). Compaction proceeds normally.
-- **Exits 2** — one or more checks fail. **Compaction is blocked.** Claude Code treats a non-zero exit from a PreCompact hook as a block signal. The hook prints an actionable message explaining what to do.
+```json
+"SessionStart": [
+  {
+    "matcher": "compact",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "[ -f scripts/codex-compaction-hook.ps1 ] && pwsh -NoProfile -NonInteractive -File scripts/codex-compaction-hook.ps1 -Mode recover 2>/dev/null || bash scripts/codex-compaction-hook.sh recover 2>/dev/null || true"
+      }
+    ]
+  }
+]
+```
 
-**To unblock:** address the failing check (see below), then retry. Alternatively, create a `handoff.md` **dated today** to bypass the gate (the handoff file signals that session state has been captured via the Handoff Protocol).
-
-**Why the date matters.** Until 2026-08-27 the bypass triggered on the file merely existing. A handoff is meant to be deleted once merged into `memory-bank/` (Handoff Protocol step 5), so one that outlives its session is spent — yet it kept handing out a free pass. A handoff dated 2026-08-26 was found still in a repo root on 2026-08-27, silently disabling this gate for every compaction in a long session. The bypass was inverted: the staler the handoff, the more likely the memory bank actually needed checking. A stale handoff now removes only the *bypass* — it is not itself a failure, so a genuinely fresh memory bank still passes.
-
-**Detection logic (content-based, not mtime):**
-- **Check 1 — `activeContext.md` substantive content:** counts non-frontmatter, non-heading, non-empty lines with ≥20 characters. Requires ≥3 such lines. A file that was only touched (e.g. `last-reviewed` timestamp updated) fails this check.
-- **Check 2 — `progress.md` dated entry:** looks for at least one line starting with today's date (or a markdown heading/list prefix followed by today's date). The date must appear at the start of a line — embedded dates in prose do not count.
-- **Bypass:** `handoff.md` dated today in the project root skips both checks.
-
-**Fails open:** unexpected errors (missing runtimes, unreadable files) exit 0 silently and log to `.pmb-hook-errors.log`.
-
-The shared policy is implemented in `scripts/pre-compact-check.ps1` (Windows/pwsh) and
-`scripts/pre-compact-check.sh` (POSIX/sh). Claude Code wires it directly:
+**Why the `PreCompact` gate no longer blocks** (docs/superpowers/specs/2026-11-01-derived-work-rules-and-compaction-recovery-design.md, D1′): in PMB's
+and the template's banks, its only check that could fail required a `progress.md` entry dated today. That forced a memory-bank
+write every day, its block reason reached only the user and never the model, and its
+`handoff.md`-dated-today bypass was a date-only check any session could satisfy. Outside journal
+mode `scripts/pre-compact-check.{sh,ps1}` now exits 0 and prints nothing. The `PreCompact` entry
+stays wired so journal mode can delegate to its own gate:
 
 ```json
 "PreCompact": [
@@ -190,18 +233,17 @@ The shared policy is implemented in `scripts/pre-compact-check.ps1` (Windows/pws
     "hooks": [
       {
         "type": "command",
-        "command": "pwsh -NonInteractive -File scripts/pre-compact-check.ps1 2>/dev/null || bash scripts/pre-compact-check.sh 2>/dev/null || true"
+        "command": "if command -v pwsh >/dev/null 2>&1; then pwsh -NonInteractive -File scripts/pre-compact-check.ps1 2>/dev/null; else bash scripts/pre-compact-check.sh 2>/dev/null; fi"
       }
     ]
   }
 ]
 ```
 
-That no-matcher note applies to this Claude Code wiring. Codex deliberately has no `PreCompact`
-handler: its documented `continue: false` behavior ends the active turn, which cannot safely enforce
-a state that needs agent or user action. Codex uses `matcher: "^compact$"` for `SessionStart`;
-its `scripts/codex-compaction-hook.{sh,ps1}` adapters emit only the post-compaction recovery
-checklist.
+Not an `||` chain like the other hooks: journal mode's gate blocks by exiting 2, and `|| bash … ||
+true` would run the bash twin after a deliberate block and then turn the exit status into 0.
+
+**Fails open:** unexpected errors exit 0 and log to `.pmb-hook-errors.log`.
 
 ### 6. Agent Spawn-Volume Advisory (`PreToolUse` — Agent tool)
 
@@ -215,7 +257,7 @@ Fires before every `Agent` tool call. Increments a CUMULATIVE SPAWN COUNT and em
 
 ### 7. Review Gate (`PreToolUse` — Bash tool)
 
-Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/`, mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is put to the user as a permission prompt in one exact form and denied in every other — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
+Fires before every Bash tool call and pattern-matches `git commit` / `git push` / `gh pr merge` (including compound commands like `cd X && git commit ...`). Denies the commit or push unless a matching, diff-bound review-ok marker exists in `.claude/` (a tag-only push of an already-merged commit is checked by where its tags point instead; see below), mechanically enforcing WORKFLOW.md's "review before commit/push" phases instead of relying on Claude following the prose. `gh pr merge` is put to the user as a permission prompt in one exact form and denied in every other — see below. Implemented in `scripts/review-reminders.ps1` and `scripts/review-reminders.sh`.
 
 **Marker files (single-use per diff, gitignored):**
 
@@ -228,7 +270,29 @@ Fires before every Bash tool call and pattern-matches `git commit` / `git push` 
 
 **Atomic consumption:** the marker is claimed via an atomic rename (`Move-Item`/`mv`) rather than a separate existence-check followed by delete, closing the TOCTOU window between the two steps. Only the path that allows the command consumes the marker: on a hash mismatch it is renamed back unconsumed, so a denial by this gate never burns an earned review (a later hook or a declined permission prompt can still burn it, because the allowing path has already consumed the marker; see the claim-then-restore comment in `review-reminders.sh`).
 
-**`gh pr merge` — a permission prompt for one exact form, deny for everything else:** unlike commit/push, this isn't a hash check. By merge time the diff already passed the commit gate, push gate, and CI; the remaining gap is authorization — the user deciding, now, to merge this PR — which no agent-written marker can encode, but Claude Code's own Allow/Deny prompt can. The hook returns `"ask"` only for exactly `gh pr merge <N> -R <owner/repo> --squash --match-head-commit <40-hex SHA>` (or `--merge`), with the repo listed in `.claude/merge-gate.json`, from the main agent, in default/acceptEdits/auto mode, when no settings file configures a `PermissionRequest` hook or an allow rule wide enough to run a merge silently. Everything else — other flags, chained commands, subagents, other modes, a missing or crashing helper — is denied. **One gap:** if the hook process itself fails (in both shells for the Bash matcher; the PowerShell matcher runs pwsh only), the wiring's `|| true` gives no decision, and the call goes to Claude Code's normal permission flow. `permissions.ask` rules for `Bash(gh pr merge:*)` and `PowerShell(gh pr merge:*)` are meant to make that case prompt too, for those spellings only (the REST route `gh api …/pulls/N/merge` matches neither); whether they prompt in auto mode is not yet measured. Put them in `.claude/settings.local.json` or your user settings, not `.claude/settings.json`, whose `permissions` block `mb upgrade` overwrites. **Create `.claude/merge-gate.json` (`{"repos": ["owner/repo"]}`) to enable it; without it every merge is denied, as before.** Logic: `scripts/_review-gate-merge.py` / `.ps1`.
+**A tag-only push of a merged commit needs no marker:** the push marker binds `git diff origin/main...HEAD`, which says nothing about what a tag push publishes. Before this, pushing a release tag needed a fresh `/change-review` of whatever branch was checked out, and from main it could not pass at all (that diff is empty). The gate now lets a push through with no marker, and without touching one, when all of these hold:
+
+- **The whole command is `cd "<absolute path>" && git push <remote>` followed only by `refs/tags/<tag>` or `tag <tag>` words.** Words are separated by spaces or tabs.
+  - It takes exactly one quoted cd, to an absolute path: `C:/…`, or `/…` outside Windows.
+  - The cd is meant to tie the repository the gate checks to the one the shell pushes from. A relative path, a second cd, or a leading `-`, `+` or `~` would be read differently by the shell. On Windows the PowerShell twin also refuses `/…`.
+  - The path must be printable ASCII without its own quote, `$`, a backtick, `\`, `[`, `]`, `*` or `?`. Use `C:/…` paths. Otherwise the shell's `cd` (expansion, escapes, pwsh wildcards, or pwsh's typographic quotes such as ’) could disagree with the gate's literal reading of the path.
+  - Remote and tag names are letters, digits, `.`, `_` and `-` (tags also `/`), starting with a letter, digit or `_`.
+- **Every tag exists as `refs/tags/<tag>`, is not a symbolic ref, and is on a commit in `refs/remotes/origin/main`.** Replace grafts are ignored. Run `git fetch origin` first if the merge is recent.
+- **No `remote.<name>.push` is configured.** Through one, git can map a tag refspec onto a branch.
+
+A tag-shaped push that fails the check is denied with a reason naming the tag. Everything else still needs the marker:
+
+- a bare name such as `git push origin v1.3.0` (the denial names the accepted spelling)
+- `--tags`, `--follow-tags`, `--mirror`, `--all`
+- force or delete forms
+- `src:dst` or wildcard refspecs
+- mixed tag and branch refspecs
+- `git -c`/`-C` or an environment assignment
+- no cd, a relative cd or a second cd, and anything else chained
+
+The check trusts the local `refs/remotes/origin/main`: anything that moves that ref lets a tag on any commit through with no marker. It is about review, not about authorizing the publish. Logic: `TAG_PUSH` in `scripts/_review-gate-classify.py` (`--tag-push`), with the same pattern in `_review-gate-classify.ps1`.
+
+**`gh pr merge` — a permission prompt for one exact form, deny for everything else:** unlike commit/push, this isn't a hash check. By merge time the diff already passed the commit gate, push gate, and CI; the remaining gap is authorization — the user deciding, now, to merge this PR — which no agent-written marker can encode, but Claude Code's own Allow/Deny prompt can. The hook returns `"ask"` only for exactly `gh pr merge <N> -R <owner/repo> --squash --match-head-commit <40-hex SHA>` (or `--merge`), with the repo listed in `.claude/merge-gate.json`, from the main agent, in default/acceptEdits/auto mode, when no settings file configures a `PermissionRequest` hook or an allow rule wide enough to run a merge silently. Everything else — other flags, chained commands, subagents, other modes, a missing or crashing helper — is denied. **One gap:** if the hook process itself fails (in both shells, for either matcher: the PowerShell matcher falls back to bash too), the wiring's `|| true` gives no decision, and the call goes to Claude Code's normal permission flow. `permissions.ask` rules for `Bash(gh pr merge:*)` and `PowerShell(gh pr merge:*)` are meant to make that case prompt too, for those spellings only (the REST route `gh api …/pulls/N/merge` matches neither); whether they prompt in auto mode is not yet measured. Put them in `.claude/settings.json` (`mb upgrade` keeps a project's permission rules; see below), `.claude/settings.local.json`, or your user settings. **Create `.claude/merge-gate.json` (`{"repos": ["owner/repo"]}`) to enable it; without it every merge is denied, as before.** Logic: `scripts/_review-gate-merge.py` / `.ps1`.
 
 ### 8. Review Gate Failure Recovery (`PostToolUse` — Bash tool)
 
@@ -253,6 +317,8 @@ PMB distributes two git hooks through the `.githooks/` directory, which is versi
 `core.hooksPath = .githooks` is a per-project git local config (stored in `.git/config`, not committed). When set, git resolves all hooks from `.githooks/` instead of `.git/hooks/`. The hook *files* are committed and versioned; the *activation* is a local git config that each `mb init`/`mb upgrade` run sets automatically.
 
 `mb upgrade` treats `.githooks/pre-push` and `.githooks/pre-commit` as `TEMPLATE_OWNED` — it overwrites them unconditionally if they differ from the template, so hook logic stays current across PMB version bumps.
+
+`.claude/settings.json` is `TEMPLATE_OWNED` for its hook wiring, `env` and `model`, but `mb upgrade` merges its `permissions` instead of overwriting them: every `allow`, `deny`, `ask` and `additionalDirectories` entry the project added is kept, as is `disableBypassPermissionsMode`. Any other key the template does not define (for example `disableAllHooks` or `apiKeyHelper`) is dropped, and named in the output. Each upgrade lists the kept rules and flags with `[!]` any rule PMB has since withdrawn from its template, any allow rule mentioning "merge", and any allow that is a bare tool name or `Tool()`, `Tool(*)` or `Tool(:*)`. If the merge cannot run (no runnable `python3`/`python` for `mb.sh`, or invalid JSON), the file is left untouched and a `[!] … not updated` line says to merge by hand. `mb upgrade --dry-run` prints the merged file's diff. The template's `deny` rules for signing bypass and `--no-verify` are a backstop for a failed hook process only: they match a command prefix, case-sensitively, so `git commit -m x --no-verify` passes them; the dangerous-commands hook is the control.
 
 ### The two hooks
 

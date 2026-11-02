@@ -1,8 +1,11 @@
 """Classify a PreToolUse payload as COMMIT / PUSH / MERGE / NONE.
 
-Reads the raw payload on stdin, writes one token on stdout, exits 0. Exits non-zero ONLY
-when the payload cannot be parsed at all, which the caller treats as "fall back to the
-conservative raw matcher" rather than as "allow".
+Reads the raw payload on stdin and exits 0. Writes, on stdout:
+  * by default, one verdict token;
+  * with --git-context, the command's repository path chain, or __UNSUPPORTED_GIT_CONTEXT__;
+  * with --tag-push, a TAG-PUSH header line and then the tag names, or nothing (see TAG_PUSH).
+Exits non-zero ONLY when the payload cannot be parsed at all, which the caller treats as "fall
+back to the conservative raw matcher" rather than as "allow".
 
 WHY a parser and not a substring match. The old gate matched two-word substrings against the
 whole raw payload. That produced both failure directions at once, and both were measured:
@@ -61,6 +64,50 @@ def basename(tok):
 ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
 TOKEN = re.compile(r'''"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|\S+''')
 CD_PREFIX = re.compile(r'''^cd\s+(?:"([^"]+)"|'([^']+)')\s*&&\s*''')
+
+# The one push the gate lets through without a marker. The WHOLE command must be
+# `cd "<absolute path>" && git push <remote>` followed only by `refs/tags/<t>` or `tag <t>` words.
+# The hook then checks that every named tag is on a commit already in refs/remotes/origin/main.
+# It lives here rather than in a helper of its own, like _review-gate-merge.py, so that it adds no
+# file which `mb upgrade` could leave out, as once happened to the lib.
+#
+# WHY a whole-command match on the raw string, not the parsed segments above (the approach
+# _review-gate-merge.py documents at its top):
+#   * The parser skips VAR= prefixes, wrappers and -c/-C options, and lifts $(...) out. Any of
+#     these can change what the push sends while the refspecs look the same.
+#   * A chained command can re-point a tag after this hook has checked it.
+#
+# WHY [ \t] and not \s: a newline separates commands, so `git push origin<newline>refs/tags/v1`
+# is a branch push.
+#
+# The name classes leave out ':' (src:dst, delete), '+' (force), '*' (pattern), '$' and quotes.
+#
+# WHY exactly one cd, and an absolute one: the hook checks the repository it resolves from the
+# cd, while the shell pushes from wherever its own cd lands. These are the ways found so far for
+# the two to part, each with rows in tests/test-review-gate-tag-push.sh:
+#   * No cd: the hook would use its own working directory, which can be another repository.
+#   * Relative paths, or a second cd: these resolve against two different directories.
+#   * A leading '-', '+' or '~': bash and pwsh read these as the previous directory, location
+#     history or HOME, which the .ps1 hook would read as a literal folder (a draft that allowed
+#     them let `cd "<A>" && cd "-"` through while the shell pushed from another repo, 2026-10-30).
+#
+# The cd path is otherwise an ALLOWLIST: printable ASCII except its own quote, '$', '`', '\',
+# '[', ']', '*' and '?'.
+#   * '$' and '`': bash and pwsh expand inside double quotes, so `cd "$(git tag -f v1 <sha>)"`
+#     would re-point the tag after the check.
+#   * '\': escapes a quote in bash, so the shell could end the string where this pattern does
+#     not. Use C:/... paths.
+#   * '[ ] * ?': pwsh's cd expands wildcards, while the hook resolves the path literally.
+#   * Anything non-ASCII: pwsh also ends a string at the typographic quotes U+2018-U+201E
+#     (measured 2026-10-26).
+#
+# Each hook adds platform checks the shape cannot express. The .ps1 hook refuses a path that is
+# not fully qualified (a Windows /...) and enters the resolved root with -LiteralPath. The .sh
+# hook refuses a C:/... path off Windows, where it is relative. The .sh hook needs neither of the
+# others: it resolves the path with the same bash cd that runs a Bash-tool push.
+# The .ps1 twin uses this exact pattern text, which tests/test-review-gate-tag-push.sh compares.
+TAG_PUSH = re.compile(r'''cd[ \t]+(?:"(?:[A-Za-z]:)?/[\x20\x21\x23\x25-\x29\x2B-\x3E\x40-\x5A\x5E\x5F\x61-\x7E]*"|'(?:[A-Za-z]:)?/[\x20-\x23\x25\x26\x28\x29\x2B-\x3E\x40-\x5A\x5E\x5F\x61-\x7E]*')[ \t]*&&[ \t]*git[ \t]+push[ \t]+[A-Za-z0-9_][A-Za-z0-9._-]*((?:[ \t]+(?:refs/tags/|tag[ \t]+)[A-Za-z0-9_][A-Za-z0-9._/-]*)+)''')
+TAG_PUSH_NAME = re.compile(r'''(?:refs/tags/|tag[ \t]+)([A-Za-z0-9_][A-Za-z0-9._/-]*)''')
 
 
 def _extract_dollar_paren(text, start):
@@ -393,6 +440,14 @@ def classify(cmd):
     return classify_details(cmd)[0]
 
 
+def tag_push_names(cmd):
+    """Tag names if `cmd` is exactly the tag-only push shape (TAG_PUSH), else []."""
+    match = TAG_PUSH.fullmatch(cmd)
+    if not match:
+        return []
+    return TAG_PUSH_NAME.findall(match.group(1))
+
+
 def main():
     raw = sys.stdin.read()
     if not raw.strip():
@@ -415,6 +470,14 @@ def main():
         # A payload with no command is not a commit. Distinguish this from an unparseable
         # payload: it is a definite NONE, not an unknown.
         sys.stdout.write('NONE')
+        return
+    if '--tag-push' in sys.argv:
+        # WHY a header line: a classifier from before --tag-push ignores the flag and prints its
+        # verdict, PUSH, which the hook would otherwise read as a tag name. The hook takes the tag
+        # route only when the first line is exactly this header.
+        names = tag_push_names(cmd)
+        if names:
+            sys.stdout.write('\n'.join(['TAG-PUSH'] + names))
         return
     verdict, context_paths, unsupported = classify_details(cmd)
     if '--git-context' in sys.argv:

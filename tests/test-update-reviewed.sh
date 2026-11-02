@@ -125,13 +125,19 @@ to_win_path() {
     fi
 }
 
+ps1_takes_test_paths() {
+    # True where to_win_path() yields a path pwsh can open: Windows with cygpath, or any other
+    # OS, where pwsh reads the POSIX path from mktemp as-is. Same guard as test-review-reminders.sh's;
+    # requiring cygpath everywhere skipped the update-reviewed.ps1 cases on Linux CI.
+    command -v cygpath >/dev/null 2>&1 && return 0
+    case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 1 ;; esac
+}
+
 # ── backslash (cygpath -w) path reaches perl as a forward-slash path ────────────────────────
-# WHY a perl shim rather than checking the file: perl -i places its temp file by splitting the
-# path on '/', so a backslash-only path puts the temp file in the cwd, and Cygwin perl unlinks
-# the original before renaming the temp over it. When the cwd is on another drive the rename
-# fails and the file is gone (SQA's windows-2025 CI: cwd on D:, files on C:). On a single-drive
-# box the rename succeeds and the file still updates, so only the argument perl receives
-# discriminates the fixed hook from the broken one here.
+# WHY a perl shim rather than checking the file: the hook's comment above FILE_PATH="$NORMALIZED"
+# explains how a backslash path loses the file when the cwd is on another drive. On a
+# single-drive box the rename succeeds and the file still updates, so only the argument perl
+# receives discriminates the fixed hook from the broken one here.
 if command -v cygpath >/dev/null 2>&1; then
   echo ""
   echo "--- a backslash Windows path is handed to perl with forward slashes, and the file is updated ---"
@@ -144,7 +150,7 @@ if command -v cygpath >/dev/null 2>&1; then
   printf '#!/usr/bin/env bash\nprintf "%%s" "${@: -1}" > "%s"\nexec "%s" "$@"\n' \
     "$PERL_ARG_LOG" "$REAL_PERL" > "$TMPDIR_WIN/shim/perl"
   chmod +x "$TMPDIR_WIN/shim/perl"
-  WIN_PATH=$(cygpath -w "$TMPDIR_WIN/memory-bank/activeContext.md" | sed 's/\\/\\\\/g')
+  WIN_PATH=$(to_win_path "$TMPDIR_WIN/memory-bank/activeContext.md" | sed 's/\\/\\\\/g')
   (
     cd "$TMPDIR_WIN/cwd" || exit 1
     printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$WIN_PATH" \
@@ -192,12 +198,12 @@ if command -v cygpath >/dev/null 2>&1 && command -v cmd >/dev/null 2>&1; then
   CLEANUP_DIRS+=("$TMPDIR_PIPE")
   mkdir -p "$TMPDIR_PIPE/memory-bank"
   make_reviewed_file "$TMPDIR_PIPE" "activeContext.md" "$OLD_DATE"
-  WIN_PATH_PIPE=$(cygpath -w "$TMPDIR_PIPE/memory-bank/activeContext.md" | sed 's/\\/\\\\/g')
+  WIN_PATH_PIPE=$(to_win_path "$TMPDIR_PIPE/memory-bank/activeContext.md" | sed 's/\\/\\\\/g')
   printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$WIN_PATH_PIPE" > "$TMPDIR_PIPE/payload.json"
-  printf '@type "%s" | "%s" "%s"\r\n' "$(cygpath -w "$TMPDIR_PIPE/payload.json")" \
-    "$(cygpath -w "$(command -v bash)")" "$(cygpath -w "$REPO_ROOT/scripts/update-reviewed.sh")" \
+  printf '@type "%s" | "%s" "%s"\r\n' "$(to_win_path "$TMPDIR_PIPE/payload.json")" \
+    "$(to_win_path "$(command -v bash)")" "$(to_win_path "$REPO_ROOT/scripts/update-reviewed.sh")" \
     > "$TMPDIR_PIPE/run.cmd"
-  cmd //c "$(cygpath -w "$TMPDIR_PIPE/run.cmd")" >/dev/null 2>&1
+  cmd //c "$(to_win_path "$TMPDIR_PIPE/run.cmd")" >/dev/null 2>&1
   if [ ! -f "$TMPDIR_PIPE/memory-bank/activeContext.md" ]; then
     echo "  FAIL: update-reviewed.sh: file missing after the hook ran from a native Windows pipe"
     FAIL=$((FAIL + 1))
@@ -210,7 +216,109 @@ else
   echo "--- native Windows pipe test: SKIPPED (cygpath and/or cmd not installed on this machine) ---"
 fi
 
-if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+# ── cases that can write .pmb-hook-errors.log ───────────────────────────────────────────────
+# WHY a scratch cwd for each: the hook appends to .pmb-hook-errors.log in its cwd, and run.sh
+# runs this file from the repo root, where mb doctor check 16 would then WARN until someone
+# deleted the log.
+hook_in_dir() {
+    # hook_in_dir <cwd> <json-payload> [dir to put first on PATH]
+    local dir="$1" payload="$2" extra="${3:-}"
+    (
+        cd "$dir" || exit 1
+        if [ -n "$extra" ]; then PATH="$extra:$PATH"; fi
+        printf '%s' "$payload" | bash "$REPO_ROOT/scripts/update-reviewed.sh" 2>/dev/null
+    )
+}
+payload_for() { printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$1"; }
+
+echo ""
+echo "--- a CRLF file is stamped and keeps its CRLF line ending ---"
+TMPDIR_CRLF="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-crlf)"
+CLEANUP_DIRS+=("$TMPDIR_CRLF")
+mkdir -p "$TMPDIR_CRLF/memory-bank" "$TMPDIR_CRLF/cwd"
+printf -- '---\r\nlast-reviewed: %s\r\n---\r\nbody\r\n' "$OLD_DATE" > "$TMPDIR_CRLF/memory-bank/progress.md"
+hook_in_dir "$TMPDIR_CRLF/cwd" "$(payload_for "$TMPDIR_CRLF/memory-bank/progress.md")"
+# WHY one grep for both the date and the \r: checking the \r alone would pass when nothing
+# was stamped, because the untouched old line keeps its \r.
+# WHY -U: Git for Windows' grep strips CRs in text mode, so without it no pattern containing
+# \r can match there (measured); GNU and BSD grep both accept -U.
+if grep -U -q "^last-reviewed: $TODAY"$'\r'"\$" "$TMPDIR_CRLF/memory-bank/progress.md"; then
+    echo "  PASS: update-reviewed.sh: a CRLF file is stamped and the stamped line keeps its \\r"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: update-reviewed.sh: a CRLF file was not stamped, or the stamped line lost its \\r"
+    FAIL=$((FAIL + 1))
+fi
+assert_file_not_exists "$TMPDIR_CRLF/cwd/.pmb-hook-errors.log" "update-reviewed.sh: a successful stamp writes nothing to .pmb-hook-errors.log"
+
+echo ""
+echo "--- a path that starts with '-' is stamped, not read as an option ---"
+TMPDIR_DASH="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-dash)"
+CLEANUP_DIRS+=("$TMPDIR_DASH")
+mkdir -p "$TMPDIR_DASH/-x/memory-bank"
+make_reviewed_file "$TMPDIR_DASH/-x" "activeContext.md" "$OLD_DATE"
+hook_in_dir "$TMPDIR_DASH" "$(payload_for "-x/memory-bank/activeContext.md")"
+content=$(cat "$TMPDIR_DASH/-x/memory-bank/activeContext.md")
+assert_contains "$content" "last-reviewed: $TODAY" "update-reviewed.sh: a relative path starting with '-' is stamped (grep and perl get --)"
+
+echo ""
+echo "--- a failed perl edit is logged and leaves the file intact ---"
+TMPDIR_PFAIL="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-pfail)"
+CLEANUP_DIRS+=("$TMPDIR_PFAIL")
+mkdir -p "$TMPDIR_PFAIL/memory-bank" "$TMPDIR_PFAIL/shim" "$TMPDIR_PFAIL/cwd"
+make_reviewed_file "$TMPDIR_PFAIL" "activeContext.md" "$OLD_DATE"
+printf '#!/usr/bin/env bash\necho "simulated perl failure" >&2\nexit 1\n' > "$TMPDIR_PFAIL/shim/perl"
+chmod +x "$TMPDIR_PFAIL/shim/perl"
+hook_in_dir "$TMPDIR_PFAIL/cwd" "$(payload_for "$TMPDIR_PFAIL/memory-bank/activeContext.md")" "$TMPDIR_PFAIL/shim"
+content=$(cat "$TMPDIR_PFAIL/memory-bank/activeContext.md")
+assert_contains "$content" "last-reviewed: $OLD_DATE" "update-reviewed.sh: a failed perl edit leaves the file as it was"
+log=$(cat "$TMPDIR_PFAIL/cwd/.pmb-hook-errors.log" 2>/dev/null)
+assert_contains "$log" "update-reviewed.sh: .*simulated perl failure" "update-reviewed.sh: a failed perl edit is logged with perl's error"
+
+echo ""
+echo "--- a file that is gone after the edit is logged ---"
+TMPDIR_GONE="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-gone)"
+CLEANUP_DIRS+=("$TMPDIR_GONE")
+mkdir -p "$TMPDIR_GONE/memory-bank" "$TMPDIR_GONE/shim" "$TMPDIR_GONE/cwd"
+make_reviewed_file "$TMPDIR_GONE" "activeContext.md" "$OLD_DATE"
+# WHY a shim that deletes the target and exits 0: it produces the PR #59 outcome (the original
+# gone) without perl reporting an error, so only the hook's after-edit check can catch it.
+printf '#!/usr/bin/env bash\nrm -f -- "${@: -1}"\nexit 0\n' > "$TMPDIR_GONE/shim/perl"
+chmod +x "$TMPDIR_GONE/shim/perl"
+hook_in_dir "$TMPDIR_GONE/cwd" "$(payload_for "$TMPDIR_GONE/memory-bank/activeContext.md")" "$TMPDIR_GONE/shim"
+log=$(cat "$TMPDIR_GONE/cwd/.pmb-hook-errors.log" 2>/dev/null)
+assert_contains "$log" "update-reviewed.sh: .*missing after the edit" "update-reviewed.sh: a file that is gone after the edit is logged"
+
+echo ""
+echo "--- empty stdin is logged ---"
+TMPDIR_EMPTY="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-empty)"
+CLEANUP_DIRS+=("$TMPDIR_EMPTY")
+hook_in_dir "$TMPDIR_EMPTY" ""
+log=$(cat "$TMPDIR_EMPTY/.pmb-hook-errors.log" 2>/dev/null)
+assert_contains "$log" "update-reviewed.sh: .*empty stdin" "update-reviewed.sh: empty stdin is logged, not silently ignored"
+
+# ── POSIX only: a filename containing a literal backslash ───────────────────────────────────
+# WHY: pins the trade-off documented in the hook (the slash form of the path is what gets
+# stamped), so changing it has to be deliberate. Windows cannot create such a filename.
+if ! command -v cygpath >/dev/null 2>&1; then
+  echo ""
+  echo "--- a POSIX filename with a literal backslash: the slash-form path is the one stamped ---"
+  TMPDIR_BS="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-bs)"
+  CLEANUP_DIRS+=("$TMPDIR_BS")
+  mkdir -p "$TMPDIR_BS/memory-bank/a" "$TMPDIR_BS/cwd"
+  printf -- '---\nlast-reviewed: %s\n---\n' "$OLD_DATE" > "$TMPDIR_BS/memory-bank/a\\b.md"
+  printf -- '---\nlast-reviewed: %s\n---\n' "$OLD_DATE" > "$TMPDIR_BS/memory-bank/a/b.md"
+  hook_in_dir "$TMPDIR_BS/cwd" "$(payload_for "$TMPDIR_BS/memory-bank/a\\\\b.md")"
+  content=$(cat "$TMPDIR_BS/memory-bank/a/b.md")
+  assert_contains "$content" "last-reviewed: $TODAY" "update-reviewed.sh: a literal-backslash filename stamps the file at its slash-form path"
+  content=$(cat "$TMPDIR_BS/memory-bank/a\\b.md")
+  assert_contains "$content" "last-reviewed: $OLD_DATE" "update-reviewed.sh: the literal-backslash file itself is left as it was"
+else
+  echo ""
+  echo "--- literal-backslash filename test: SKIPPED (Windows cannot create such a filename) ---"
+fi
+
+if command -v pwsh >/dev/null 2>&1 && ps1_takes_test_paths; then
   echo ""
   echo "--- cross-shell parity: update-reviewed.ps1 nested payload updates last-reviewed ---"
   TMPDIR_PS1="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-ps1)"
@@ -234,9 +342,29 @@ if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
     | pwsh -NoLogo -NonInteractive -File "$REPO_ROOT/scripts/update-reviewed.ps1" >/dev/null 2>&1
   content=$(cat "$TMPDIR_PS1FLAT/memory-bank/activeContext.md")
   assert_contains "$content" "last-reviewed: $OLD_DATE" "update-reviewed.ps1: a flat (pre-fix-shape) payload leaves last-reviewed untouched"
+
+  echo ""
+  echo "--- cross-shell parity: update-reviewed.ps1 stamps a CRLF file and keeps its CRLF ---"
+  TMPDIR_PS1CRLF="$(mktemp -d 2>/dev/null || mktemp -d -t mb-ur-ps1crlf)"
+  CLEANUP_DIRS+=("$TMPDIR_PS1CRLF")
+  mkdir -p "$TMPDIR_PS1CRLF/memory-bank" "$TMPDIR_PS1CRLF/cwd"
+  printf -- '---\r\nlast-reviewed: %s\r\n---\r\nbody\r\n' "$OLD_DATE" > "$TMPDIR_PS1CRLF/memory-bank/progress.md"
+  WIN_PATH_PS1CRLF=$(to_win_path "$TMPDIR_PS1CRLF/memory-bank/progress.md" | sed 's/\\/\\\\/g')
+  (
+    cd "$TMPDIR_PS1CRLF/cwd" || exit 1
+    printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$WIN_PATH_PS1CRLF" \
+      | pwsh -NoLogo -NonInteractive -File "$REPO_ROOT/scripts/update-reviewed.ps1" >/dev/null 2>&1
+  )
+  if grep -U -q "^last-reviewed: $TODAY"$'\r'"\$" "$TMPDIR_PS1CRLF/memory-bank/progress.md"; then
+      echo "  PASS: update-reviewed.ps1: a CRLF file is stamped and the stamped line keeps its \\r"
+      PASS=$((PASS + 1))
+  else
+      echo "  FAIL: update-reviewed.ps1: a CRLF file was not stamped, or the stamped line lost its \\r"
+      FAIL=$((FAIL + 1))
+  fi
 else
   echo ""
-  echo "--- update-reviewed.ps1 tests: SKIPPED (pwsh and/or cygpath not installed on this machine) ---"
+  echo "--- update-reviewed.ps1 tests: SKIPPED (pwsh not installed, or Windows without cygpath) ---"
 fi
 
 # WHY here, outside the cygpath-gated cases: the Windows workflow runs this file against

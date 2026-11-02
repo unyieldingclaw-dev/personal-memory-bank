@@ -138,11 +138,12 @@ rm -f "$TRAP_MARKER" "$TMPDIR_LIB/direct-call-output.txt"
 # form. Converting explicitly with cygpath -w (available in git-bash) avoids relying on MSYS's
 # argv-level heuristic for a path used mid-string.
 # WHY also require cygpath, not just pwsh (found on GitHub Actions ubuntu-latest, which ships
-# pwsh but not cygpath -- cygpath is git-bash/MSYS-only): matches the identical guard already
-# used by test-review-reminders.sh and test-update-reviewed.sh for the same reason -- without
-# it, this block runs on any Linux/macOS box with pwsh installed, cygpath's "command not found"
-# leaves the *_WIN vars empty, and the PowerShell calls fail for an environment reason having
-# nothing to do with Get-FileHashHex itself, turning a clean SKIP into a spurious FAIL.
+# pwsh but not cygpath -- cygpath is git-bash/MSYS-only): this block calls cygpath -w directly,
+# with no fallback, so without the guard it runs on any Linux/macOS box with pwsh installed,
+# cygpath's "command not found" leaves the *_WIN vars empty, and the PowerShell calls fail for
+# an environment reason having nothing to do with Get-FileHashHex itself, turning a clean SKIP
+# into a spurious FAIL. test-review-reminders.sh and test-update-reviewed.sh no longer share
+# this guard: their path helpers fall back to the raw POSIX path, which pwsh opens off Windows.
 if command -v pwsh >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
   echo ""
   echo "--- Get-FileHashHex: trailing-newline and empty-file hashes match sha256_file's bash output ---"
